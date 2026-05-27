@@ -2,10 +2,8 @@
 
 import base64
 import io
-import json
-import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional
 
 import json_repair
 
@@ -229,7 +227,7 @@ class SpeakerDiarizer:
                     messages.append({"role": "assistant", "content": content})
                     messages.append({
                         "role": "user",
-                        "content": f"输出必须是 JSON 字典格式，如 {{\"1\": \"说话人1\", \"2\": \"说话人2\"}}。请重新输出。",
+                        "content": "输出必须是 JSON 字典格式，如 {\"1\": \"说话人1\", \"2\": \"说话人2\"}。请重新输出。",
                     })
             except Exception as e:
                 logger.warning(f"Audio diarization step {step + 1} failed: {e}")

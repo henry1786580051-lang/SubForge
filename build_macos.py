@@ -18,7 +18,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent
 APP_NAME = "Subtitle"
 DMG_OUTPUT = Path.home() / "Desktop" / f"{APP_NAME}.dmg"
-SPEC_FILE = PROJECT_ROOT / "SubtitleWeb.spec"
+SPEC_FILE = PROJECT_ROOT / "SubForge.spec"
 
 
 def run_pyinstaller():
