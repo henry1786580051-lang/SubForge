@@ -47,47 +47,52 @@ AI 驱动的视频字幕工具 — 语音转录、字幕优化、智能翻译、
 
 ## 🧠 智能断句
 
-语音识别输出的原始文本通常是连续的长句，直接作为字幕会非常难读。SubForge 使用 LLM 按语义自然断点重新分段：
+语音识别输出的原始文本通常是冗长的连续句子，直接作为字幕难以阅读。SubForge 使用 LLM 按语义自然断点重新分段。
 
-**ASR 原始输出**：
+以「2026 Lexus ES 500e 试驾」视频为例：
+
+**ASR 原始输出**（Whisper 转录）：
 ```
-大家好今天我们带来的3d创意设计作品是进制演示器我是来自中山大学附属中学的方若涵
-我是陈欣然我们这一次作品介绍分为三个部分第一个部分提出问题第二个部分解决方案
+Hey everyone, welcome back to Tow4Drives where today you join me in Wisconsin
+at Road America at the 2026 MAMA Spring Rally, MAMA meaning Midwest Automotive
+Media Association, where it's a bit of an untraditional video today because
+you know at Tow4Drives usually I live with the car for an entire week.
 ```
 
 **LLM 智能断句后**：
 ```
-大家好
-今天我们带来的3d创意设计作品是
-进制演示器
-我是来自中山大学附属中学的方若涵
-我是陈欣然
-我们这一次作品介绍分为三个部分
-第一个部分提出问题
-第二个部分解决方案
+嘿，大家好。
+欢迎回到《Tow 4 Drives》。
+今天我在威斯康星州的Road America赛道。
+参加2026年MAMA春季拉力赛。
+MAMA全称是中西部汽车媒体协会。
+今天的视频形式有点特别。
+因为《Tow 4 Drives》通常会让一辆车陪伴我整整一周。
 ```
 
-断句规则：
-- 在语义自然断点处分段，不截断完整语义
-- 中文每段 ≤ 20 字，英文每段 ≤ 10 词
-- 保持原文不变，仅插入分段
+> 完整示例：[`examples/lexus_original.srt`](examples/lexus_original.srt)（ASR 原始输出）→ [`examples/lexus_processed.srt`](examples/lexus_processed.srt)（断句 + 翻译后）
+
+断句效果：
+- 冗长的连续文本被拆分为短小精悍的字幕段
+- 每段保持完整语义，不在句子中间断开
+- 自动补全标点符号，提升可读性
 
 ---
 
 ## 🌐 智能翻译
 
-与逐句机翻不同，SubForge 的 LLM 翻译会结合上下文理解整段内容：
+SubForge 的 LLM 翻译结合上下文理解整段内容，输出自然流畅的中文，而非逐词直译：
 
-| 原文（俄语） | LLM 翻译 |
+| ASR 原始英文 | LLM 中文翻译 |
 |------|----------|
-| Сегодня ещё раз обращаюсь ко всем гражданам России | 今天我再次向全体俄罗斯公民呼吁 |
-| Благодарю вас за выдержку, сплочённость и эту гражданскую солидарность | 感谢大家的坚韧、团结以及这种公民团结精神 |
-| Показала, что любой шантаж, попытки устроить внутреннюю смуту обречены на провал | 这表明任何胁迫和制造内乱的企图注定失败 |
+| This one's a 500e meaning it's fully electric which is the first time that the Lexus ES has ever been an EV | 这款是500e版本，也就是纯电动车。这在雷克萨斯ES历史上还是首次采用电动化动力 |
+| I've literally driven it I think 0.2 of a mile over to this parking lot so these will genuinely be my first impressions | 说实话我开过来总共才不到半英里，所以这绝对是实打实的初印象分享 |
+| so I really don't know a whole lot about it but I have tried my best to memorize some specs for you | 对它的了解其实相当有限，但我已经尽力背下了一些参数供参考 |
 
 翻译特点：
-- 理解上下文语境，使用地道表达
-- 专有名词保留原文或音译
-- 支持反思机制，多轮优化提升准确率
+- 理解上下文语境，使用地道中文表达
+- 车型名称「Lexus ES」「500e」保留原文
+- 长句自动拆分，中文译文简洁自然
 
 ---
 
