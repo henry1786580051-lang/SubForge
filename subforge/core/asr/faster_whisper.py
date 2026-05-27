@@ -54,6 +54,7 @@ class FasterWhisperASR(BaseASR):
         max_comma: int = 20,
         max_comma_cent: int = 50,
         prompt: Optional[str] = None,
+        compute_type: str = "default",
     ):
         super().__init__(audio_input, use_cache)
 
@@ -85,7 +86,7 @@ class FasterWhisperASR(BaseASR):
         self.prompt = prompt
 
         # Apple Silicon / 性能优化
-        self.compute_type = kwargs.get("compute_type", "default")
+        self.compute_type = compute_type
 
         self.process = None
 
