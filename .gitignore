@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment & secrets
+.env
+*.key
+*.pem
+cookies.txt
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node.js (docs site)
+node_modules/
+docs/.vitepress/cache/
+docs/.vitepress/dist/
+
+# Project-specific
+/resource/bin/
+!/resource/bin/bin_environment.txt
+/AppData/
+/work-dir/
+/*.srt
+/*.mp4
+*.log
+
+# Claude Code
+.claude/
+CLAUDE.md
+videocaptioner/_version.py
+
+# CodeGraph
+.codegraph/

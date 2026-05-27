@@ -1,0 +1,313 @@
+"use client";
+
+import { useState, useCallback, useEffect, useRef } from "react";
+import { useAppStore } from "@/store/appStore";
+import { subtitleApi, subtitlesApi, filesApi, configApi } from "@/lib/api";
+
+export function SubtitlePanel() {
+  const { subtitles, setSubtitles, updateSubtitle, selectedIds, toggleSelect, selectAll, deselectAll, subtitleFile, config } = useAppStore();
+  const [editingCell, setEditingCell] = useState<{ id: number; field: "text" | "translated" } | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: number | null } | null>(null);
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [promptExpanded, setPromptExpanded] = useState(false);
+  const promptDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (promptDebounceRef.current) clearTimeout(promptDebounceRef.current); }, []);
+
+  const startEdit = useCallback((id: number, field: "text" | "translated", value: string) => { setEditingCell({ id, field }); setEditValue(value); }, []);
+  const commitEdit = useCallback(() => { if (!editingCell) return; updateSubtitle(editingCell.id, editingCell.field, editValue); setEditingCell(null); }, [editingCell, editValue, updateSubtitle]);
+
+  const deleteSelected = useCallback(() => {
+    const ids = useAppStore.getState().selectedIds;
+    if (ids.size === 0) return;
+    setSubtitles(subtitles.filter((s) => !ids.has(s.id)));
+    deselectAll();
+  }, [subtitles, setSubtitles, deselectAll]);
+
+  const mergeSelected = useCallback(() => {
+    const ids = useAppStore.getState().selectedIds;
+    if (ids.size < 2) return;
+    const selected = subtitles.filter((s) => ids.has(s.id));
+    const others = subtitles.filter((s) => !ids.has(s.id));
+    const merged = { id: selected[0].id, start: selected[0].start, end: selected[selected.length - 1].end, text: selected.map((s) => s.text).join(""), translated: selected.map((s) => s.translated).filter(Boolean).join("") };
+    const result = [...others, merged].sort((a, b) => a.id - b.id).map((s, i) => ({ ...s, id: i + 1 }));
+    setSubtitles(result);
+    deselectAll();
+  }, [subtitles, setSubtitles, deselectAll]);
+
+  const translateSelected = useCallback(async () => {
+    const ids = useAppStore.getState().selectedIds;
+    if (ids.size === 0 || !subtitleFile) return;
+    setIsTranslating(true);
+    try {
+      const result = await subtitleApi.start({ subtitle_file: subtitleFile, target_language: config.targetLanguage, translator: config.translator, need_optimize: false, need_translate: true });
+      useAppStore.getState().setCurrentTaskId(result.task_id);
+    } catch (err) { useAppStore.getState().setError(err instanceof Error ? err.message : "Translation failed"); } finally { setIsTranslating(false); }
+  }, [subtitleFile, config]);
+
+  const retranslateAll = useCallback(async () => {
+    if (!subtitleFile) return;
+    setIsTranslating(true);
+    try {
+      const result = await subtitleApi.start({ subtitle_file: subtitleFile, target_language: config.targetLanguage, translator: config.translator, need_optimize: config.needOptimize, need_translate: true });
+      useAppStore.getState().setCurrentTaskId(result.task_id);
+    } catch (err) { useAppStore.getState().setError(err instanceof Error ? err.message : "Translation failed"); } finally { setIsTranslating(false); }
+  }, [subtitleFile, config]);
+
+  const [exportFormat, setExportFormat] = useState<"srt" | "vtt" | "ass" | "txt" | "json">("srt");
+  const [exportMode, setExportMode] = useState<"original" | "translated" | "bilingual">("bilingual");
+  const handleExport = useCallback((format?: string, mode?: string) => {
+    if (!subtitleFile) return;
+    const f = format || exportFormat;
+    const m = mode || exportMode;
+    window.open(subtitlesApi.exportUrl(subtitleFile, f, m), "_blank");
+    setShowExportMenu(false);
+  }, [subtitleFile, exportFormat, exportMode]);
+  const handleSave = useCallback(async () => { if (!subtitleFile || subtitles.length === 0) return; try { await subtitlesApi.save(subtitleFile, subtitles); } catch (err) { useAppStore.getState().setError(err instanceof Error ? err.message : "Save failed"); } }, [subtitleFile, subtitles]);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent, id: number) => { e.preventDefault(); e.stopPropagation(); if (!selectedIds.has(id)) toggleSelect(id); setContextMenu({ x: e.clientX, y: e.clientY, id }); }, [selectedIds, toggleSelect]);
+
+  useEffect(() => { const close = () => { setContextMenu(null); setShowExportMenu(false); }; window.addEventListener("click", close); return () => window.removeEventListener("click", close); }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (editingCell) return;
+      if (e.key === "Delete") { e.preventDefault(); deleteSelected(); }
+      if ((e.metaKey || e.ctrlKey) && e.key === "m") { e.preventDefault(); mergeSelected(); }
+      if ((e.metaKey || e.ctrlKey) && e.key === "t") { e.preventDefault(); translateSelected(); }
+      if ((e.metaKey || e.ctrlKey) && e.key === "a" && !(e.target instanceof HTMLInputElement)) { e.preventDefault(); selectAll(); }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [editingCell, deleteSelected, mergeSelected, translateSelected, selectAll]);
+
+  const allSelected = subtitles.length > 0 && selectedIds.size === subtitles.length;
+  const [showExportMenu, setShowExportMenu] = useState(false);
+
+  return (
+    <div className="flex flex-col h-full bg-[var(--surface)] relative">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)]">
+        <div className="flex items-center gap-3">
+          <h2 className="text-sm font-medium text-[var(--text-primary)]">字幕编辑</h2>
+          {subtitles.length > 0 && <span className="text-[10px] text-[var(--text-muted)] bg-[rgba(0,0,0,0.04)] px-2 py-0.5 rounded-full">{subtitles.length} 条</span>}
+          {selectedIds.size > 0 && <span className="text-[10px] text-[var(--accent)] bg-[var(--accent-dim)] px-2 py-0.5 rounded-full font-medium">已选 {selectedIds.size}</span>}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <label className="px-2.5 py-1.5 text-[11px] rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[rgba(0,0,0,0.04)] transition-all border border-[var(--border)] cursor-pointer">
+            导入
+            <input type="file" accept=".srt,.vtt,.ass" className="hidden" onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) { filesApi.upload(file).then(({ file_path }) => { useAppStore.getState().setSubtitleFile(file_path); subtitlesApi.load(file_path).then((subFile) => { useAppStore.getState().setSubtitles(subFile.segments); }); }); }
+            }} />
+          </label>
+          <button disabled={!subtitleFile || subtitles.length === 0} onClick={handleSave}
+            className="px-2.5 py-1.5 text-[11px] rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[rgba(0,0,0,0.04)] transition-all border border-[var(--border)] disabled:opacity-30 disabled:cursor-not-allowed">
+            保存
+          </button>
+          <div className="relative">
+            <button disabled={!subtitleFile} onClick={() => setShowExportMenu(!showExportMenu)}
+              className="px-2.5 py-1.5 text-[11px] rounded-md bg-[var(--accent-dim)] text-[var(--accent)] hover:bg-[var(--accent)]/15 transition-all font-medium disabled:opacity-30 disabled:cursor-not-allowed">
+              导出
+            </button>
+            {showExportMenu && (
+              <div className="absolute right-0 top-full mt-1 bg-[var(--surface)] border border-[var(--border)] rounded-xl z-50 p-3 w-56 space-y-3" style={{ boxShadow: "var(--shadow-lg)" }}>
+                {/* Format */}
+                <div>
+                  <label className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider font-medium block mb-1.5">格式</label>
+                  <div className="grid grid-cols-5 gap-1">
+                    {(["srt", "vtt", "ass", "txt", "json"] as const).map((fmt) => (
+                      <button key={fmt} onClick={() => setExportFormat(fmt)}
+                        className={`py-1 rounded text-[10px] font-medium transition-all ${
+                          exportFormat === fmt ? "bg-[var(--accent-dim)] text-[var(--accent)]" : "text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[rgba(0,0,0,0.03)]"
+                        }`}>
+                        {fmt.toUpperCase()}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {/* Language mode */}
+                <div>
+                  <label className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider font-medium block mb-1.5">语言</label>
+                  <div className="space-y-0.5">
+                    {([
+                      { id: "bilingual" as const, label: "中英双语", desc: "原文 + 译文" },
+                      { id: "original" as const, label: "仅原文", desc: "原始语言字幕" },
+                      { id: "translated" as const, label: "仅译文", desc: "翻译后的字幕" },
+                    ]).map((m) => (
+                      <button key={m.id} onClick={() => setExportMode(m.id)}
+                        className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-left transition-all ${
+                          exportMode === m.id ? "bg-[var(--accent-dim)] text-[var(--accent)]" : "text-[var(--text-secondary)] hover:bg-[rgba(0,0,0,0.03)]"
+                        }`}>
+                        <span className="text-[11px] font-medium">{m.label}</span>
+                        <span className="text-[9px] text-[var(--text-muted)]">{m.desc}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {/* Export button */}
+                <button onClick={() => handleExport()}
+                  className="w-full py-1.5 rounded-md bg-[var(--accent)] text-white text-[11px] font-medium hover:bg-[var(--accent-hover)] transition-all"
+                  style={{ boxShadow: "0 2px 6px rgba(212,149,106,0.25)" }}>
+                  导出 {exportFormat.toUpperCase()}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Toolbar */}
+      {subtitles.length > 0 && (
+        <div className="flex items-center gap-0.5 px-3 py-1.5 border-b border-[var(--border)] bg-[rgba(0,0,0,0.01)]">
+          <button onClick={allSelected ? deselectAll : selectAll} className="p-1.5 rounded text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[rgba(0,0,0,0.04)] transition-all" title="全选 (Ctrl+A)">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>
+          </button>
+          <div className="w-px h-3.5 bg-[var(--border)] mx-1" />
+          <button onClick={deleteSelected} disabled={selectedIds.size === 0} className="p-1.5 rounded text-[var(--text-muted)] hover:text-red-500 hover:bg-red-50 transition-all disabled:opacity-30" title="删除选中 (Delete)">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+          </button>
+          <button onClick={mergeSelected} disabled={selectedIds.size < 2} className="p-1.5 rounded text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[rgba(0,0,0,0.04)] transition-all disabled:opacity-30" title="合并选中 (Ctrl+M)">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
+          </button>
+          <div className="w-px h-3.5 bg-[var(--border)] mx-1" />
+          <button onClick={translateSelected} disabled={selectedIds.size === 0 || isTranslating} className="px-2 py-1 text-[11px] rounded text-[var(--text-muted)] hover:text-[var(--accent)] hover:bg-[var(--accent-dim)] transition-all disabled:opacity-30" title="翻译选中 (Ctrl+T)">
+            {isTranslating ? "翻译中..." : "翻译选中"}
+          </button>
+          <button onClick={retranslateAll} disabled={isTranslating} className="px-2 py-1 text-[11px] rounded text-[var(--text-muted)] hover:text-[var(--accent)] hover:bg-[var(--accent-dim)] transition-all disabled:opacity-30">
+            重新翻译全部
+          </button>
+        </div>
+      )}
+
+      {/* Custom prompt */}
+      {config.needOptimize && (
+        <div className="border-b border-[var(--border)]">
+          <button onClick={() => setPromptExpanded(!promptExpanded)} className="w-full flex items-center gap-2 px-4 py-2 text-[11px] text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[rgba(0,0,0,0.02)] transition-all">
+            <svg className={`w-3 h-3 transition-transform ${promptExpanded ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+            <span>自定义优化提示词</span>
+            {config.customPrompt && <span className="text-[9px] text-[var(--accent)] bg-[var(--accent-dim)] px-1.5 py-0.5 rounded-full">已设置</span>}
+          </button>
+          {promptExpanded && (
+            <div className="px-4 pb-3">
+              <textarea
+                value={config.customPrompt || ""}
+                onChange={(e) => {
+                  useAppStore.getState().setConfig({ customPrompt: e.target.value });
+                  if (promptDebounceRef.current) clearTimeout(promptDebounceRef.current);
+                  promptDebounceRef.current = setTimeout(() => { configApi.update("custom_prompt", e.target.value); }, 500);
+                }}
+                placeholder="输入自定义提示词，用于指导字幕优化和翻译..."
+                className="w-full h-28 text-[12px] text-[var(--text-primary)] bg-[var(--surface)] border border-[var(--border)] rounded-lg p-3 resize-none focus:outline-none focus:border-[var(--accent)] transition-colors placeholder:text-[var(--text-muted)]"
+              />
+              <p className="text-[10px] text-[var(--text-muted)] mt-1.5">提示词将用于指导 LLM 优化和翻译字幕内容</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Context menu */}
+      {contextMenu && (
+        <div className="fixed bg-[var(--surface)] border border-[var(--border)] rounded-lg z-50 py-1 min-w-[140px]" style={{ left: contextMenu.x, top: contextMenu.y, boxShadow: "var(--shadow-lg)" }}>
+          <button onClick={() => { deleteSelected(); setContextMenu(null); }} className="w-full px-3 py-1.5 text-left text-[11px] text-[var(--text-secondary)] hover:text-red-600 hover:bg-red-50 flex items-center gap-2">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+            删除
+          </button>
+          <button onClick={() => { mergeSelected(); setContextMenu(null); }} disabled={selectedIds.size < 2} className="w-full px-3 py-1.5 text-left text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[rgba(0,0,0,0.03)] flex items-center gap-2 disabled:opacity-30">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
+            合并
+          </button>
+          <div className="h-px bg-[var(--border)] my-1" />
+          <button onClick={() => { translateSelected(); setContextMenu(null); }} disabled={selectedIds.size === 0} className="w-full px-3 py-1.5 text-left text-[11px] text-[var(--accent)] hover:bg-[var(--accent-dim)] flex items-center gap-2 disabled:opacity-30">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" /></svg>
+            翻译选中
+          </button>
+          <button onClick={() => { if (contextMenu.id) { const sub = subtitles.find((s) => s.id === contextMenu.id); if (sub) startEdit(sub.id, "text", sub.text); } setContextMenu(null); }}
+            className="w-full px-3 py-1.5 text-left text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[rgba(0,0,0,0.03)] flex items-center gap-2">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+            编辑
+          </button>
+        </div>
+      )}
+
+      {/* Table */}
+      <div className="flex-1 overflow-auto">
+        {subtitles.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-center px-8">
+            <div className="w-12 h-12 rounded-xl bg-[rgba(0,0,0,0.03)] flex items-center justify-center mb-3">
+              <svg className="w-6 h-6 text-[var(--text-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+            </div>
+            <p className="text-sm text-[var(--text-muted)] mb-1">暂无字幕数据</p>
+            <p className="text-xs text-[var(--text-muted)]">转录完成后字幕将在此显示</p>
+          </div>
+        ) : (
+          <table className="w-full text-sm border-collapse">
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-[var(--surface)] border-b border-[var(--border)]">
+                <th className="text-left px-3 py-2 text-[10px] text-[var(--text-muted)] font-medium w-10"><input type="checkbox" checked={allSelected} onChange={allSelected ? deselectAll : selectAll} className="accent-[var(--accent)] w-3 h-3" /></th>
+                <th className="text-left px-3 py-2 text-[10px] text-[var(--text-muted)] font-medium w-10">#</th>
+                <th className="text-left px-3 py-2 text-[10px] text-[var(--text-muted)] font-medium w-36">时间</th>
+                <th className="text-left px-3 py-2 text-[10px] text-[var(--text-muted)] font-medium">原文</th>
+                <th className="text-left px-3 py-2 text-[10px] text-[var(--text-muted)] font-medium">译文</th>
+              </tr>
+            </thead>
+            <tbody>
+              {subtitles.map((sub, idx) => (
+                <tr key={sub.id} className={`subtitle-row group cursor-pointer transition-colors ${selectedIds.has(sub.id) ? "selected" : ""} ${idx % 2 === 0 ? "" : "bg-[rgba(0,0,0,0.015)]"}`}
+                  onClick={() => toggleSelect(sub.id)} onContextMenu={(e) => handleContextMenu(e, sub.id)}>
+                  <td className="px-3 py-2 border-b border-[rgba(0,0,0,0.04)]">
+                    <input type="checkbox" checked={selectedIds.has(sub.id)} onChange={() => toggleSelect(sub.id)} onClick={(e) => e.stopPropagation()} className="accent-[var(--accent)] w-3 h-3" />
+                  </td>
+                  <td className="px-3 py-2 text-[11px] text-[var(--text-muted)] font-mono border-b border-[rgba(0,0,0,0.04)]">{sub.id}</td>
+                  <td className="px-3 py-2 border-b border-[rgba(0,0,0,0.04)]">
+                    <div className="flex items-center gap-1">
+                      <span className="text-[11px] text-[var(--text-muted)] font-mono">{sub.start}</span>
+                      <span className="text-[10px] text-[var(--text-muted)]">&rarr;</span>
+                      <span className="text-[11px] text-[var(--text-muted)] font-mono">{sub.end}</span>
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 border-b border-[rgba(0,0,0,0.04)]" onDoubleClick={(e) => { e.stopPropagation(); startEdit(sub.id, "text", sub.text); }}>
+                    {editingCell?.id === sub.id && editingCell?.field === "text" ? (
+                      <input autoFocus className="inline-edit text-[var(--text-primary)]" value={editValue} onChange={(e) => setEditValue(e.target.value)} onBlur={commitEdit} onKeyDown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") setEditingCell(null); }} onClick={(e) => e.stopPropagation()} />
+                    ) : (
+                      <span className="text-[var(--text-primary)] group-hover:text-[var(--text-primary)] transition-colors">{sub.text}</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 border-b border-[rgba(0,0,0,0.04)]" onDoubleClick={(e) => { e.stopPropagation(); startEdit(sub.id, "translated", sub.translated); }}>
+                    {editingCell?.id === sub.id && editingCell?.field === "translated" ? (
+                      <input autoFocus className="inline-edit text-[var(--accent)]" value={editValue} onChange={(e) => setEditValue(e.target.value)} onBlur={commitEdit} onKeyDown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") setEditingCell(null); }} onClick={(e) => e.stopPropagation()} />
+                    ) : (
+                      <span className="text-[var(--text-muted)] group-hover:text-[var(--accent)] transition-colors">
+                        {sub.translated || <span className="text-[var(--text-muted)] italic">待翻译</span>}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Status bar */}
+      {subtitles.length > 0 && (
+        <div className="flex items-center justify-between px-4 py-1.5 border-t border-[var(--border)] bg-[rgba(0,0,0,0.015)]">
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] text-[var(--text-muted)]">{subtitles.length} 条字幕</span>
+            <span className="text-[10px] text-[var(--text-muted)]">{subtitles.filter((s) => s.translated).length} 已翻译</span>
+          </div>
+          <div className="flex items-center gap-4">
+            <span className="text-[10px] text-[var(--text-muted)]">Delete 删除 · Ctrl+M 合并 · Ctrl+T 翻译</span>
+            <div className="flex items-center gap-2">
+              {subtitles.every((s) => s.translated) ? (
+                <><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /><span className="text-[10px] text-emerald-600">翻译完成</span></>
+              ) : (
+                <><span className="w-1.5 h-1.5 rounded-full bg-amber-400" /><span className="text-[10px] text-[var(--text-muted)]">待翻译</span></>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

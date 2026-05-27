@@ -1,0 +1,173 @@
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Request failed");
+  }
+  return res.json();
+}
+
+// Tasks
+export const tasksApi = {
+  list: () => request<TaskInfo[]>("/api/tasks/"),
+  get: (id: string) => request<TaskInfo>(`/api/tasks/${id}`),
+  cancel: (id: string) => request(`/api/tasks/${id}/cancel`, { method: "POST" }),
+};
+
+// Files
+export const filesApi = {
+  upload: async (file: File): Promise<{ file_path: string; filename: string }> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch(`${API_BASE}/api/files/upload`, {
+      method: "POST",
+      body: formData,
+    });
+    if (!res.ok) throw new Error("Upload failed");
+    return res.json();
+  },
+  info: (path: string) =>
+    request<FileInfo>(`/api/files/info?path=${encodeURIComponent(path)}`),
+  thumbnailUrl: (path: string) =>
+    `${API_BASE}/api/files/thumbnail?path=${encodeURIComponent(path)}`,
+  streamUrl: (path: string) =>
+    `${API_BASE}/api/files/stream?path=${encodeURIComponent(path)}`,
+};
+
+// Subtitles
+export const subtitlesApi = {
+  load: (path: string) =>
+    request<SubtitleFile>(`/api/subtitles/load?path=${encodeURIComponent(path)}`),
+  exportUrl: (path: string, format: string, mode: string = "bilingual") =>
+    `${API_BASE}/api/subtitles/export?path=${encodeURIComponent(path)}&format=${format}&mode=${mode}`,
+  save: (file_path: string, segments: SubtitleSegment[]) =>
+    request<{ status: string; file_path: string; count: number }>("/api/subtitles/save", {
+      method: "POST",
+      body: JSON.stringify({ file_path, segments }),
+    }),
+};
+
+// Transcribe
+export const transcribeApi = {
+  start: (data: { file_path: string; model?: string; language?: string; audio_track?: number; device?: string; n_threads?: number; compute_type?: string }) =>
+    request<{ task_id: string; status: string }>("/api/transcribe/start", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  listModels: () => request<{ id: string; size: string; downloaded: boolean; path: string }[]>("/api/transcribe/models"),
+  hardware: () => request<{ platform: string; arch: string; chip: string; device: string; n_threads: number; compute_type: string; gpu: string }>("/api/transcribe/hardware"),
+  downloadModel: (model_id: string) =>
+    request<{ task_id?: string; status: string; path?: string }>("/api/transcribe/download-model", {
+      method: "POST",
+      body: JSON.stringify({ model_id }),
+    }),
+};
+
+// Subtitle processing
+export const subtitleApi = {
+  start: (data: {
+    subtitle_file: string;
+    target_language?: string;
+    translator?: string;
+    need_optimize?: boolean;
+    need_translate?: boolean;
+    need_reflect?: boolean;
+    custom_prompt?: string;
+  }) =>
+    request<{ task_id: string; status: string }>("/api/subtitle/start", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+};
+
+// Config
+export const configApi = {
+  get: () => request<Record<string, unknown>>("/api/config/"),
+  update: (key: string, value: unknown) =>
+    request("/api/config/", {
+      method: "POST",
+      body: JSON.stringify({ key, value }),
+    }),
+  fetchModels: () => request<{ models: string[]; error?: string }>("/api/config/models"),
+  testLlm: () => request<{ ok: boolean; model?: string; error?: string }>("/api/config/test-llm"),
+  testWhisper: () => request<{ ok: boolean; error?: string }>("/api/config/test-whisper"),
+  fetchWhisperModels: () => request<{ models: string[]; error?: string }>("/api/config/whisper-models"),
+};
+
+// LLM Logs
+export const llmLogsApi = {
+  list: (page = 1, search = "") =>
+    request<{ logs: LlmLogEntry[]; total: number; page: number; pages: number }>(
+      `/api/llm-logs/?page=${page}&search=${encodeURIComponent(search)}`
+    ),
+  clear: () => request("/api/llm-logs/", { method: "DELETE" }),
+};
+
+// Health
+export const healthApi = {
+  check: () => request<{ status: string; ffmpeg: boolean; ffprobe: boolean }>("/api/health"),
+};
+
+// Types
+export interface TaskInfo {
+  id: string;
+  type: string;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  progress: number;
+  message: string;
+  result?: Record<string, unknown> | null;
+  error?: string | null;
+}
+
+export interface FileInfo {
+  file_path: string;
+  filename: string;
+  duration: number;
+  size: number;
+  bit_rate: number;
+  video: {
+    width: number;
+    height: number;
+    codec: string;
+    fps: string;
+  } | null;
+  audio_tracks: {
+    index: number;
+    codec: string;
+    channels: number;
+    sample_rate: number;
+    language: string;
+  }[];
+}
+
+export interface SubtitleSegment {
+  id: number;
+  start: string;
+  end: string;
+  text: string;
+  translated: string;
+}
+
+export interface SubtitleFile {
+  file_path: string;
+  format: string;
+  segments: SubtitleSegment[];
+  count: number;
+}
+
+export interface LlmLogEntry {
+  timestamp?: string;
+  task_id?: string;
+  file_name?: string;
+  stage?: string;
+  model?: string;
+  duration_ms?: number;
+  tokens?: number;
+  request?: unknown;
+  response?: unknown;
+}
