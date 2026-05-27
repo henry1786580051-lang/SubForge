@@ -6,7 +6,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 
-AI 驱动的视频字幕工具 — 语音转录、字幕优化、智能翻译、视频合成，一站完成。
+AI 驱动的视频字幕工具 — 语音转录、字幕优化、智能翻译，一站完成。
 
 > **👉 [下载桌面应用](https://github.com/henry1786580051-lang/SubForge/releases/latest)**，macOS / Windows 一键安装，开箱即用。
 
