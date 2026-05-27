@@ -21,6 +21,19 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-accent: var(--accent);
+  --color-accent-dim: var(--accent-dim);
+  --color-accent-hover: var(--accent-hover);
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-raised: var(--surface-raised);
+  --color-border: var(--border);
+  --color-border-active: var(--border-active);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --shadow-sm: var(--shadow);
+  --shadow-md: var(--shadow-lg);
   --font-sans: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: var(--font-geist-mono), "SF Mono", "Fira Code", monospace;
 }
@@ -65,6 +78,11 @@ body {
   background: rgba(212, 149, 106, 0.04);
 }
 
+/* Drop zone subtle gradient */
+.drop-zone-idle {
+  background: linear-gradient(135deg, rgba(250, 249, 246, 0.5) 0%, rgba(245, 243, 240, 0.8) 100%);
+}
+
 /* Progress bar glow */
 @keyframes progress-glow {
   0% { box-shadow: 0 0 4px rgba(212, 149, 106, 0.2); }
@@ -74,6 +92,16 @@ body {
 
 .progress-glow {
   animation: progress-glow 2s ease-in-out infinite;
+}
+
+/* Progress bar height transition on hover */
+.progress-track:hover .progress-bar {
+  height: 6px;
+  margin-top: -1px;
+}
+
+.progress-track .progress-bar {
+  transition: height 0.15s ease, margin-top 0.15s ease;
 }
 
 /* Grid background */
@@ -92,31 +120,40 @@ select {
 }
 
 /* Table row */
+.subtitle-row {
+  transition: background 0.15s ease, border-left-color 0.15s ease;
+}
+
 .subtitle-row:hover {
-  background: rgba(0, 0, 0, 0.02);
+  background: rgba(0, 0, 0, 0.025);
 }
 
 .subtitle-row.selected {
-  background: rgba(212, 149, 106, 0.07);
-  border-left: 2px solid rgba(212, 149, 106, 0.5);
+  background: rgba(212, 149, 106, 0.06);
+  border-left: 2px solid var(--accent);
 }
 
 /* Inline edit */
 .inline-edit {
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 4px;
-  padding: 2px 6px;
+  border-radius: 6px;
+  padding: 3px 8px;
   color: inherit;
   font: inherit;
   width: 100%;
   outline: none;
-  transition: all 0.15s;
+  transition: all 0.2s ease;
+}
+
+.inline-edit:hover {
+  background: rgba(0, 0, 0, 0.02);
 }
 
 .inline-edit:focus {
   background: rgba(0, 0, 0, 0.02);
   border-color: rgba(212, 149, 106, 0.35);
+  box-shadow: 0 0 0 3px rgba(212, 149, 106, 0.06);
 }
 
 /* Shared input field */
@@ -124,16 +161,17 @@ select {
   width: 100%;
   background: rgba(0, 0, 0, 0.03);
   border: 1px solid var(--border);
-  border-radius: 0.375rem;
+  border-radius: 0.5rem;
   padding: 0.5rem 0.75rem;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-primary);
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .input-field:focus {
   border-color: var(--border-active);
+  box-shadow: 0 0 0 3px rgba(212, 149, 106, 0.08);
 }
 
 /* Toast slide-in */
@@ -144,4 +182,34 @@ select {
 
 .animate-slide-in {
   animation: slide-in 0.25s ease-out;
+}
+
+/* Active nav item pattern */
+.nav-item-active {
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* Tactile button press */
+.btn-press:active {
+  transform: scale(0.97);
+  transition: transform 0.08s ease;
+}
+
+/* Subtle card hover lift */
+.card-hover {
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.card-hover:hover {
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-1px);
+}
+
+/* Smooth focus ring for inputs */
+.input-field:focus {
+  border-color: var(--border-active);
+  box-shadow: 0 0 0 3px rgba(212, 149, 106, 0.08);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }

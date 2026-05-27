@@ -178,15 +178,15 @@ export function SettingsPanel() {
     }
   };
 
-  if (loading) return <div className="flex items-center justify-center h-full"><div className="w-6 h-6 rounded-full border-2 border-[var(--accent)]/20 border-t-[var(--accent)] animate-spin" /></div>;
+  if (loading) return <div className="flex items-center justify-center h-full"><div className="w-6 h-6 rounded-full border-2 border-accent/20 border-t-accent animate-spin" /></div>;
 
   const currentProvider = LLM_PROVIDERS.find((p) => p.id === selectedProvider);
 
   return (
-    <div className="flex flex-col h-full bg-[var(--background)] overflow-auto">
-      <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--border)] sticky top-0 bg-[var(--surface)] z-10">
-        <h2 className="text-sm font-medium text-[var(--text-primary)]">设置</h2>
-        <button onClick={() => setActiveView("workflow")} className="p-1.5 rounded-md text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[rgba(0,0,0,0.04)] transition-all">
+    <div className="flex flex-col h-full bg-background overflow-auto">
+      <div className="flex items-center justify-between px-5 py-3 border-b border-border sticky top-0 bg-surface z-10">
+        <h2 className="text-[13px] font-medium text-text-primary">设置</h2>
+        <button onClick={() => setActiveView("workflow")} className="p-1.5 rounded-md text-text-muted hover:text-text-secondary hover:bg-surface-hover transition-all btn-press">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
       </div>
@@ -198,10 +198,10 @@ export function SettingsPanel() {
             <div className="grid grid-cols-4 gap-2">
               {LLM_PROVIDERS.map((p) => (
                 <button key={p.id} onClick={() => handleProviderChange(p.id)}
-                  className={`py-2 px-2 rounded-lg border text-[11px] transition-all text-center ${
+                  className={`py-2 px-2 rounded-lg border text-[12px] transition-all text-center btn-press ${
                     selectedProvider === p.id
-                      ? "border-[var(--accent)] bg-[var(--accent-dim)] text-[var(--accent)] font-medium"
-                      : "border-[var(--border)] text-[var(--text-secondary)] hover:border-[rgba(0,0,0,0.12)]"
+                      ? "border-accent bg-accent-dim text-accent font-medium"
+                      : "border-border text-text-secondary hover:border-[rgba(0,0,0,0.12)]"
                   }`}>
                   {p.name}
                 </button>
@@ -223,7 +223,7 @@ export function SettingsPanel() {
           <SettingsField label="模型" description="点击「检测模型」从服务商获取可用模型列表">
             <div className="flex items-center gap-2 mb-2">
               <button onClick={handleDetectModels} disabled={detectingModels || !settings.llm_base_url}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] rounded-md bg-[var(--accent-dim)] text-[var(--accent)] hover:bg-[var(--accent)]/15 transition-all font-medium disabled:opacity-40 disabled:cursor-not-allowed">
+                className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] rounded-md bg-accent-dim text-accent hover:bg-accent/15 transition-all font-medium disabled:opacity-40 disabled:cursor-not-allowed btn-press">
                 {detectingModels ? (
                   <>
                     <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" strokeDasharray="42 21" strokeLinecap="round" /></svg>
@@ -238,7 +238,7 @@ export function SettingsPanel() {
               </button>
               {(detectedModels !== null || detectError) && (
                 <button onClick={() => { setDetectedModels(null); setDetectError(null); }}
-                  className="text-[10px] text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors">
+                  className="text-[10px] text-text-muted hover:text-text-secondary transition-colors">
                   清除
                 </button>
               )}
@@ -257,15 +257,15 @@ export function SettingsPanel() {
                     <button key={m} onClick={() => handleSave("llm_model", m)}
                       className={`px-2.5 py-1 rounded-lg border text-[11px] transition-all ${
                         (settings.llm_model as string) === m
-                          ? "border-[var(--accent)] bg-[var(--accent-dim)] text-[var(--accent)] font-medium"
-                          : "border-[var(--border)] text-[var(--text-secondary)] hover:border-[rgba(0,0,0,0.12)]"
+                          ? "border-accent bg-accent-dim text-accent font-medium"
+                          : "border-border text-text-secondary hover:border-[rgba(0,0,0,0.12)]"
                       }`}>
                       {m}
                     </button>
                   ))}
                 </div>
               ) : (
-                !detectError && <p className="text-[11px] text-[var(--text-muted)]">未发现可用模型</p>
+                !detectError && <p className="text-[11px] text-text-muted">未发现可用模型</p>
               )
             )}
 
@@ -279,7 +279,7 @@ export function SettingsPanel() {
                 setTestingLlm(true); setLlmTestResult(null);
                 try { const r = await configApi.testLlm(); setLlmTestResult(r); } catch (err) { setLlmTestResult({ ok: false, error: err instanceof Error ? err.message : "测试失败" }); } finally { setTestingLlm(false); }
               }} disabled={testingLlm || !settings.llm_api_key || !settings.llm_model}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] rounded-md bg-[var(--accent-dim)] text-[var(--accent)] hover:bg-[var(--accent)]/15 transition-all font-medium disabled:opacity-40 disabled:cursor-not-allowed">
+                className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] rounded-md bg-accent-dim text-accent hover:bg-accent/15 transition-all font-medium disabled:opacity-40 disabled:cursor-not-allowed btn-press">
                 {testingLlm ? (<><svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" strokeDasharray="42 21" strokeLinecap="round" /></svg>测试中...</>) : "测试连接"}
               </button>
               {llmTestResult && (
@@ -303,13 +303,13 @@ export function SettingsPanel() {
                 <button key={e.id} onClick={async () => { await handleSave("transcribe_model", e.id); useAppStore.getState().setConfig({ transcribeModel: e.id }); }}
                   className={`p-3 rounded-xl border-2 text-left transition-all ${
                     (settings.transcribe_model as string) === e.id
-                      ? "border-[var(--accent)] bg-[var(--accent-dim)]"
-                      : "border-[var(--border)] hover:border-[rgba(0,0,0,0.12)]"
+                      ? "border-accent bg-accent-dim"
+                      : "border-border hover:border-[rgba(0,0,0,0.12)]"
                   }`}>
                   <div className="flex items-center gap-2">
-                    <span className="text-[12px] font-medium text-[var(--text-primary)]">{e.name}</span>
+                    <span className="text-[12px] font-medium text-text-primary">{e.name}</span>
                   </div>
-                  <span className="text-[10px] text-[var(--text-muted)]">{e.desc}</span>
+                  <span className="text-[10px] text-text-muted">{e.desc}</span>
                 </button>
               ))}
             </div>
@@ -323,23 +323,23 @@ export function SettingsPanel() {
 
           {/* Hardware detection info */}
           {hwInfo && hwInfo.chip !== "Unknown" && (
-            <div className="rounded-xl border border-[var(--accent)]/20 bg-gradient-to-br from-[var(--accent-dim)] to-[rgba(212,149,106,0.04)] p-4">
+            <div className="rounded-xl border border-accent/20 bg-gradient-to-br from-accent-dim to-[rgba(212,149,106,0.04)] p-4">
               <div className="flex items-center gap-2 mb-2.5">
-                <svg className="w-4 h-4 text-[var(--accent)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" /></svg>
-                <span className="text-[12px] font-medium text-[var(--text-primary)]">硬件加速</span>
+                <svg className="w-4 h-4 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" /></svg>
+                <span className="text-[12px] font-medium text-text-primary">硬件加速</span>
                 <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 font-medium">已优化</span>
               </div>
               <div className="flex flex-wrap gap-x-5 gap-y-1 text-[11px]">
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[var(--text-muted)]">芯片</span>
-                  <span className="text-[var(--text-primary)] font-medium">{hwInfo.chip}</span>
+                  <span className="text-text-muted">芯片</span>
+                  <span className="text-text-primary font-medium">{hwInfo.chip}</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[var(--text-muted)]">加速</span>
-                  <span className="text-[var(--text-primary)] font-medium">{hwInfo.gpu}</span>
+                  <span className="text-text-muted">加速</span>
+                  <span className="text-text-primary font-medium">{hwInfo.gpu}</span>
                 </div>
               </div>
-              <p className="text-[10px] text-[var(--text-muted)] mt-2">系统已自动检测硬件并应用最优配置，无需手动调整。</p>
+              <p className="text-[10px] text-text-muted mt-2">系统已自动检测硬件并应用最优配置，无需手动调整。</p>
             </div>
           )}
 
@@ -379,13 +379,13 @@ export function SettingsPanel() {
                     setDetectingWhisperModels(false);
                   }
                 }} disabled={detectingWhisperModels || !settings.whisper_base_url}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] rounded-md bg-[var(--accent-dim)] text-[var(--accent)] hover:bg-[var(--accent)]/15 transition-all font-medium disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap">
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] rounded-md bg-accent-dim text-accent hover:bg-accent/15 transition-all font-medium disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap btn-press">
                   {detectingWhisperModels ? (<><svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" strokeDasharray="42 21" strokeLinecap="round" /></svg>检测中...</>) : "检测模型"}
                 </button>
               </div>
               {whisperModels && whisperModels.length > 0 && (
-                <div className="mt-2 p-2 rounded-lg border border-[var(--border)] bg-[rgba(0,0,0,0.01)] max-h-40 overflow-y-auto">
-                  <p className="text-[10px] text-[var(--text-muted)] mb-1.5">点击选择模型：</p>
+                <div className="mt-2 p-2 rounded-lg border border-border bg-[rgba(0,0,0,0.01)] max-h-40 overflow-y-auto">
+                  <p className="text-[10px] text-text-muted mb-1.5">点击选择模型：</p>
                   <div className="flex flex-wrap gap-1.5">
                     {whisperModels.map((m) => (
                       <button key={m} onClick={() => {
@@ -395,8 +395,8 @@ export function SettingsPanel() {
                       }}
                         className={`px-2 py-1 text-[11px] rounded-md border transition-all ${
                           (settings.whisper_api_model as string) === m
-                            ? "border-[var(--accent)] bg-[var(--accent-dim)] text-[var(--accent)]"
-                            : "border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                            ? "border-accent bg-accent-dim text-accent"
+                            : "border-border text-text-secondary hover:border-accent hover:text-accent"
                         }`}>
                         {m}
                       </button>
@@ -413,7 +413,7 @@ export function SettingsPanel() {
                 setTestingWhisper(true); setWhisperTestResult(null);
                 try { const r = await configApi.testWhisper(); setWhisperTestResult(r); } catch (err) { setWhisperTestResult({ ok: false, error: err instanceof Error ? err.message : "测试失败" }); } finally { setTestingWhisper(false); }
               }} disabled={testingWhisper}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] rounded-md bg-[var(--accent-dim)] text-[var(--accent)] hover:bg-[var(--accent)]/15 transition-all font-medium disabled:opacity-40 disabled:cursor-not-allowed">
+                className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] rounded-md bg-accent-dim text-accent hover:bg-accent/15 transition-all font-medium disabled:opacity-40 disabled:cursor-not-allowed btn-press">
                 {testingWhisper ? (<><svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" strokeDasharray="42 21" strokeLinecap="round" /></svg>测试中...</>) : "测试连接"}
               </button>
               {whisperTestResult && (
@@ -437,19 +437,19 @@ export function SettingsPanel() {
             <SettingsField label="模型下载" description={settings.transcribe_model === "faster_whisper" ? "FasterWhisper 模型（HuggingFace）" : "Whisper.cpp GGML 模型"}>
               <div className="space-y-2">
                 {(settings.transcribe_model === "faster_whisper" ? FASTER_WHISPER_MODELS : WHISPER_CPP_MODELS).map((m) => (
-                  <div key={m.id} className="flex items-center justify-between p-3 rounded-lg border border-[var(--border)] bg-[rgba(0,0,0,0.01)]">
+                  <div key={m.id} className="flex items-center justify-between p-3 rounded-lg border border-border bg-[rgba(0,0,0,0.01)]">
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-[12px] font-medium text-[var(--text-primary)]">{m.name}</span>
-                        <span className="text-[10px] text-[var(--text-muted)] font-mono">{m.size}</span>
+                        <span className="text-[12px] font-medium text-text-primary">{m.name}</span>
+                        <span className="text-[10px] text-text-muted font-mono">{m.size}</span>
                       </div>
-                      <span className="text-[10px] text-[var(--text-muted)]">{m.desc}</span>
+                      <span className="text-[10px] text-text-muted">{m.desc}</span>
                     </div>
                     <button onClick={() => handleDownloadModel(m.id)} disabled={downloadingModel === m.id || downloadedModels.has(m.id)}
                       className={`px-3 py-1.5 text-[11px] rounded-md transition-all font-medium disabled:opacity-50 ${
                         downloadedModels.has(m.id)
                           ? "bg-emerald-50 text-emerald-600 cursor-default"
-                          : "bg-[var(--accent-dim)] text-[var(--accent)] hover:bg-[var(--accent)]/15"
+                          : "bg-accent-dim text-accent hover:bg-accent/15"
                       }`}>
                       {downloadedModels.has(m.id) ? (
                         <span className="flex items-center gap-1.5">
@@ -478,11 +478,11 @@ export function SettingsPanel() {
                   <button key={m.id} onClick={() => handleSave("whisper_model_size", m.id)}
                     className={`px-2.5 py-1.5 rounded-lg border text-[11px] transition-all flex items-center gap-1.5 ${
                       ((settings.whisper_model_size as string) || "base") === m.id
-                        ? "border-[var(--accent)] bg-[var(--accent-dim)] text-[var(--accent)] font-medium"
-                        : "border-[var(--border)] text-[var(--text-secondary)] hover:border-[rgba(0,0,0,0.12)]"
+                        ? "border-accent bg-accent-dim text-accent font-medium"
+                        : "border-border text-text-secondary hover:border-[rgba(0,0,0,0.12)]"
                     }`}>
                     {m.name}
-                    <span className="text-[9px] text-[var(--text-muted)]">{m.size}</span>
+                    <span className="text-[9px] text-text-muted">{m.size}</span>
                     {downloadedModels.has(m.id) && (
                       <svg className="w-3 h-3 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>
                     )}
@@ -497,13 +497,13 @@ export function SettingsPanel() {
               <div className="flex items-center gap-3">
                 <button onClick={() => handleSave("ff_mdx_kim2", !(settings.ff_mdx_kim2))}
                   className={`relative w-10 h-[22px] rounded-full transition-all duration-200 ${
-                    settings.ff_mdx_kim2 ? "bg-[var(--accent)]" : "bg-[rgba(0,0,0,0.1)]"
+                    settings.ff_mdx_kim2 ? "bg-accent" : "bg-[rgba(0,0,0,0.1)]"
                   }`}>
                   <div className={`absolute top-[3px] w-4 h-4 rounded-full bg-white shadow-sm transition-all duration-200 ${
                     settings.ff_mdx_kim2 ? "left-[22px]" : "left-[3px]"
                   }`} />
                 </button>
-                <span className="text-[11px] text-[var(--text-muted)]">{settings.ff_mdx_kim2 ? "已开启" : "关闭"}</span>
+                <span className="text-[11px] text-text-muted">{settings.ff_mdx_kim2 ? "已开启" : "关闭"}</span>
               </div>
             </SettingsField>
           )}
@@ -547,13 +547,13 @@ export function SettingsPanel() {
             }}
               className={`flex items-center gap-2 group ${false ? "opacity-40 cursor-not-allowed" : ""}`}>
               <div className={`w-7 h-[15px] rounded-full transition-all duration-200 relative flex items-center ${
-                settings.need_reflect ? "bg-[var(--accent)]/20" : "bg-[rgba(0,0,0,0.06)]"
+                settings.need_reflect ? "bg-accent/20" : "bg-[rgba(0,0,0,0.06)]"
               }`}>
                 <div className={`absolute w-[11px] h-[11px] rounded-full transition-all duration-200 shadow-sm ${
-                  settings.need_reflect ? "left-[13px] bg-[var(--accent)]" : "left-[2px] bg-[var(--text-muted)]"
+                  settings.need_reflect ? "left-[13px] bg-accent" : "left-[2px] bg-text-muted"
                 }`} />
               </div>
-              <span className="text-[11px] text-[var(--text-muted)] group-hover:text-[var(--text-secondary)] transition-colors">
+              <span className="text-[12px] text-text-muted group-hover:text-text-secondary transition-colors">
                 {settings.need_reflect ? "已开启" : "已关闭"}
               </span>
             </button>
@@ -566,24 +566,24 @@ export function SettingsPanel() {
             <div className="flex items-center gap-3">
               <input type="range" min={10} max={40} value={(settings.max_word_count_cjk as number) || 25}
                 onChange={(e) => handleSave("max_word_count_cjk", parseInt(e.target.value))}
-                className="flex-1 accent-[var(--accent)]" />
-              <span className="text-[12px] text-[var(--text-primary)] font-mono w-8 text-right">{(settings.max_word_count_cjk as number) || 25}</span>
+                className="flex-1 accent-accent" />
+              <span className="text-[12px] text-text-primary font-mono w-8 text-right">{(settings.max_word_count_cjk as number) || 25}</span>
             </div>
           </SettingsField>
           <SettingsField label="英文字幕每行最多字数" description="每段字幕的单词数上限">
             <div className="flex items-center gap-3">
               <input type="range" min={10} max={60} value={(settings.max_word_count_english as number) || 18}
                 onChange={(e) => handleSave("max_word_count_english", parseInt(e.target.value))}
-                className="flex-1 accent-[var(--accent)]" />
-              <span className="text-[12px] text-[var(--text-primary)] font-mono w-8 text-right">{(settings.max_word_count_english as number) || 18}</span>
+                className="flex-1 accent-accent" />
+              <span className="text-[12px] text-text-primary font-mono w-8 text-right">{(settings.max_word_count_english as number) || 18}</span>
             </div>
           </SettingsField>
           <SettingsField label="翻译批处理大小" description="每次发送给翻译的字幕条数">
             <div className="flex items-center gap-3">
               <input type="range" min={1} max={50} value={(settings.batch_size as number) || 10}
                 onChange={(e) => handleSave("batch_size", parseInt(e.target.value))}
-                className="flex-1 accent-[var(--accent)]" />
-              <span className="text-[12px] text-[var(--text-primary)] font-mono w-8 text-right">{(settings.batch_size as number) || 10}</span>
+                className="flex-1 accent-accent" />
+              <span className="text-[12px] text-text-primary font-mono w-8 text-right">{(settings.batch_size as number) || 10}</span>
             </div>
           </SettingsField>
           {/* Custom prompt moved to subtitle page */}
@@ -599,7 +599,7 @@ export function SettingsPanel() {
           </SettingsField>
         </SettingsSection>
 
-        {saving && <div className="text-[11px] text-[var(--accent)] flex items-center gap-2"><svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" strokeDasharray="42 21" strokeLinecap="round" /></svg>保存中...</div>}
+        {saving && <div className="text-[11px] text-accent flex items-center gap-2"><svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" strokeDasharray="42 21" strokeLinecap="round" /></svg>保存中...</div>}
       </div>
     </div>
   );
@@ -609,10 +609,10 @@ function SettingsSection({ title, description, children }: { title: string; desc
   return (
     <div className="space-y-3">
       <div>
-        <h3 className="text-[11px] text-[var(--text-muted)] uppercase tracking-wider font-medium">{title}</h3>
-        {description && <p className="text-[10px] text-[var(--text-muted)] mt-0.5">{description}</p>}
+        <h3 className="text-[12px] text-text-muted uppercase tracking-wider font-medium">{title}</h3>
+        {description && <p className="text-[11px] text-text-muted mt-0.5">{description}</p>}
       </div>
-      <div className="space-y-4 bg-[var(--surface)] rounded-xl border border-[var(--border)] p-5" style={{ boxShadow: "var(--shadow)" }}>{children}</div>
+      <div className="space-y-4 bg-surface rounded-xl border border-border p-5 shadow-sm">{children}</div>
     </div>
   );
 }
@@ -620,8 +620,8 @@ function SettingsSection({ title, description, children }: { title: string; desc
 function SettingsField({ label, description, children }: { label: string; description?: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1.5">
-      <label className="text-[12px] text-[var(--text-secondary)] font-medium">{label}</label>
-      {description && <p className="text-[10px] text-[var(--text-muted)]">{description}</p>}
+      <label className="text-[13px] text-text-secondary font-medium">{label}</label>
+      {description && <p className="text-[11px] text-text-muted">{description}</p>}
       {children}
     </div>
   );

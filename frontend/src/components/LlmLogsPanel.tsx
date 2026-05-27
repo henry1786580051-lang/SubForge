@@ -44,22 +44,22 @@ export function LlmLogsPanel() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-[var(--background)] overflow-hidden">
-      <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--border)] bg-[var(--surface)]">
-        <h2 className="text-sm font-medium text-[var(--text-primary)]">LLM 请求日志</h2>
+    <div className="flex flex-col h-full bg-background overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-3 border-b border-border bg-surface">
+        <h2 className="text-[13px] font-medium text-text-primary">LLM 请求日志</h2>
         <div className="flex items-center gap-2">
           <button onClick={handleClear}
-            className="px-2.5 py-1 text-[11px] rounded-md text-[var(--text-muted)] hover:text-red-500 hover:bg-red-50 transition-all border border-[var(--border)]">
+            className="px-2.5 py-1 text-[12px] rounded-md text-text-muted hover:text-red-500 hover:bg-red-50 transition-all border border-border btn-press">
             清除日志
           </button>
-          <button onClick={() => setActiveView("workflow")} className="p-1.5 rounded-md text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[rgba(0,0,0,0.04)] transition-all">
+          <button onClick={() => setActiveView("workflow")} className="p-1.5 rounded-md text-text-muted hover:text-text-secondary hover:bg-surface-hover transition-all btn-press">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
         </div>
       </div>
 
       {/* Search */}
-      <div className="px-5 py-3 border-b border-[var(--border)]">
+      <div className="px-5 py-3 border-b border-border">
         <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
           placeholder="搜索任务ID、文件名、模型、阶段..." className="input-field" />
       </div>
@@ -68,13 +68,13 @@ export function LlmLogsPanel() {
         {/* Table */}
         <div className={`${selected ? "w-1/2" : "flex-1"} overflow-auto transition-all`}>
           {loading ? (
-            <div className="flex items-center justify-center h-40"><div className="w-6 h-6 rounded-full border-2 border-[var(--accent)]/20 border-t-[var(--accent)] animate-spin" /></div>
+            <div className="flex items-center justify-center h-40"><div className="w-6 h-6 rounded-full border-2 border-accent/20 border-t-accent animate-spin" /></div>
           ) : logs.length === 0 ? (
-            <div className="flex items-center justify-center h-40 text-[12px] text-[var(--text-muted)]">暂无日志记录</div>
+            <div className="flex items-center justify-center h-40 text-[13px] text-text-muted">暂无日志记录</div>
           ) : (
-            <table className="w-full text-[11px]">
-              <thead className="sticky top-0 bg-[var(--surface)]">
-                <tr className="border-b border-[var(--border)] text-[var(--text-muted)]">
+            <table className="w-full text-[12px]">
+              <thead className="sticky top-0 bg-surface">
+                <tr className="border-b border-border text-text-muted">
                   <th className="px-3 py-2 text-left font-medium">时间</th>
                   <th className="px-3 py-2 text-left font-medium">文件</th>
                   <th className="px-3 py-2 text-left font-medium">阶段</th>
@@ -86,10 +86,10 @@ export function LlmLogsPanel() {
               <tbody>
                 {logs.map((log, i) => (
                   <tr key={i} onClick={() => setSelected(log)}
-                    className={`border-b border-[var(--border)] cursor-pointer hover:bg-[rgba(0,0,0,0.02)] transition-colors ${
-                      selected === log ? "bg-[var(--accent-dim)]" : ""
+                    className={`border-b border-border cursor-pointer hover:bg-[rgba(0,0,0,0.02)] transition-colors ${
+                      selected === log ? "bg-accent-dim" : ""
                     }`}>
-                    <td className="px-3 py-2 font-mono text-[10px] text-[var(--text-muted)]">{log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : "-"}</td>
+                    <td className="px-3 py-2 font-mono text-[10px] text-text-muted">{log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : "-"}</td>
                     <td className="px-3 py-2 truncate max-w-[120px]">{log.file_name || "-"}</td>
                     <td className="px-3 py-2"><span className="px-1.5 py-0.5 rounded bg-[rgba(0,0,0,0.04)] text-[10px]">{log.stage || "-"}</span></td>
                     <td className="px-3 py-2 font-mono text-[10px]">{log.model || "-"}</td>
@@ -103,42 +103,42 @@ export function LlmLogsPanel() {
 
           {/* Pagination */}
           {pages > 1 && (
-            <div className="flex items-center justify-center gap-2 py-3 border-t border-[var(--border)]">
+            <div className="flex items-center justify-center gap-2 py-3 border-t border-border">
               <button onClick={() => fetchLogs(page - 1, search)} disabled={page <= 1}
-                className="px-2 py-1 text-[11px] rounded border border-[var(--border)] disabled:opacity-30">上一页</button>
-              <span className="text-[11px] text-[var(--text-muted)]">{page} / {pages} ({total}条)</span>
+                className="px-2 py-1 text-[12px] rounded border border-border disabled:opacity-30 btn-press">上一页</button>
+              <span className="text-[12px] text-text-muted">{page} / {pages} ({total}条)</span>
               <button onClick={() => fetchLogs(page + 1, search)} disabled={page >= pages}
-                className="px-2 py-1 text-[11px] rounded border border-[var(--border)] disabled:opacity-30">下一页</button>
+                className="px-2 py-1 text-[12px] rounded border border-border disabled:opacity-30 btn-press">下一页</button>
             </div>
           )}
         </div>
 
         {/* Detail panel */}
         {selected && (
-          <div className="w-1/2 border-l border-[var(--border)] overflow-auto p-4 space-y-3 bg-[var(--surface)]">
+          <div className="w-1/2 border-l border-border overflow-auto p-4 space-y-3 bg-surface">
             <div className="flex items-center justify-between">
-              <h3 className="text-[12px] font-medium text-[var(--text-primary)]">请求详情</h3>
-              <button onClick={() => setSelected(null)} className="p-1 rounded text-[var(--text-muted)] hover:text-[var(--text-secondary)]">
+              <h3 className="text-[13px] font-medium text-text-primary">请求详情</h3>
+              <button onClick={() => setSelected(null)} className="p-1 rounded text-text-muted hover:text-text-secondary">
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
-            <div className="space-y-1.5 text-[11px]">
-              <div className="flex justify-between"><span className="text-[var(--text-muted)]">任务ID</span><span className="font-mono">{selected.task_id || "-"}</span></div>
-              <div className="flex justify-between"><span className="text-[var(--text-muted)]">文件</span><span className="truncate ml-2">{selected.file_name || "-"}</span></div>
-              <div className="flex justify-between"><span className="text-[var(--text-muted)]">阶段</span><span>{selected.stage || "-"}</span></div>
-              <div className="flex justify-between"><span className="text-[var(--text-muted)]">模型</span><span className="font-mono">{selected.model || "-"}</span></div>
-              <div className="flex justify-between"><span className="text-[var(--text-muted)]">耗时</span><span className="font-mono">{fmtDuration(selected.duration_ms)}</span></div>
+            <div className="space-y-1.5 text-[12px]">
+              <div className="flex justify-between"><span className="text-text-muted">任务ID</span><span className="font-mono">{selected.task_id || "-"}</span></div>
+              <div className="flex justify-between"><span className="text-text-muted">文件</span><span className="truncate ml-2">{selected.file_name || "-"}</span></div>
+              <div className="flex justify-between"><span className="text-text-muted">阶段</span><span>{selected.stage || "-"}</span></div>
+              <div className="flex justify-between"><span className="text-text-muted">模型</span><span className="font-mono">{selected.model || "-"}</span></div>
+              <div className="flex justify-between"><span className="text-text-muted">耗时</span><span className="font-mono">{fmtDuration(selected.duration_ms)}</span></div>
             </div>
             {!!selected.request && (
               <div>
-                <h4 className="text-[11px] font-medium text-[var(--text-muted)] mb-1">请求内容</h4>
-                <pre className="text-[10px] bg-[rgba(0,0,0,0.03)] rounded-lg p-3 overflow-auto max-h-60 font-mono whitespace-pre-wrap break-all">{String(JSON.stringify(selected.request, null, 2))}</pre>
+                <h4 className="text-[12px] font-medium text-text-muted mb-1">请求内容</h4>
+                <pre className="text-[11px] bg-[rgba(0,0,0,0.03)] rounded-lg p-3 overflow-auto max-h-60 font-mono whitespace-pre-wrap break-all">{String(JSON.stringify(selected.request, null, 2))}</pre>
               </div>
             )}
             {!!selected.response && (
               <div>
-                <h4 className="text-[11px] font-medium text-[var(--text-muted)] mb-1">响应内容</h4>
-                <pre className="text-[10px] bg-[rgba(0,0,0,0.03)] rounded-lg p-3 overflow-auto max-h-60 font-mono whitespace-pre-wrap break-all">{String(JSON.stringify(selected.response, null, 2))}</pre>
+                <h4 className="text-[12px] font-medium text-text-muted mb-1">响应内容</h4>
+                <pre className="text-[11px] bg-[rgba(0,0,0,0.03)] rounded-lg p-3 overflow-auto max-h-60 font-mono whitespace-pre-wrap break-all">{String(JSON.stringify(selected.response, null, 2))}</pre>
               </div>
             )}
           </div>

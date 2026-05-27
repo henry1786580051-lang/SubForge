@@ -12,14 +12,13 @@ export function ToastContainer() {
       {toasts.map((toast) => (
         <div
           key={toast.id}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-lg text-[12px] font-medium animate-slide-in ${
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-md text-[13px] font-medium animate-slide-in ${
             toast.type === "success"
               ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
               : toast.type === "error"
               ? "bg-red-50 text-red-700 border border-red-200"
-              : "bg-[var(--surface)] text-[var(--text-primary)] border border-[var(--border)]"
+              : "bg-surface text-text-primary border border-border"
           }`}
-          style={{ boxShadow: "var(--shadow-lg)" }}
         >
           {toast.type === "success" && (
             <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -32,7 +31,7 @@ export function ToastContainer() {
             </svg>
           )}
           <span className="flex-1">{toast.message}</span>
-          <button onClick={() => removeToast(toast.id)} className="p-0.5 rounded hover:bg-[rgba(0,0,0,0.06)] transition-colors">
+          <button onClick={() => removeToast(toast.id)} className="p-0.5 rounded hover:bg-surface-hover transition-colors btn-press">
             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>

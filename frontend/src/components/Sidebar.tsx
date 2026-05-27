@@ -13,23 +13,23 @@ export function Sidebar() {
 
   return (
     <aside
-      className={`h-screen flex flex-col border-r border-[var(--border)] bg-[var(--surface)] transition-all duration-300 relative ${
+      className={`h-screen flex flex-col border-r border-border bg-surface transition-all duration-300 relative ${
         sidebarCollapsed ? "w-16" : "w-56"
       }`}
     >
       {/* Logo */}
-      <div className="flex items-center gap-3 p-4 border-b border-[var(--border)]">
-        <div className="w-8 h-8 rounded-lg bg-[var(--accent-dim)] flex items-center justify-center shrink-0">
-          <svg className="w-4.5 h-4.5 text-[var(--accent)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div className="flex items-center gap-3 p-4 border-b border-border">
+        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-accent-dim to-[rgba(212,149,106,0.15)] flex items-center justify-center shrink-0">
+          <svg className="w-4.5 h-4.5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
           </svg>
         </div>
         {!sidebarCollapsed && (
           <div className="flex flex-col min-w-0">
-            <span className="font-semibold text-[13px] tracking-wide text-[var(--text-primary)] truncate">
+            <span className="font-semibold text-[13px] tracking-wide text-text-primary truncate">
               SubForge
             </span>
-            <span className="text-[10px] text-[var(--text-muted)]">AI 视频字幕工具</span>
+            <span className="text-[11px] text-text-muted">AI 视频字幕工具</span>
           </div>
         )}
       </div>
@@ -37,8 +37,7 @@ export function Sidebar() {
       {/* Collapse toggle */}
       <button
         onClick={toggleSidebar}
-        className="absolute -right-3 top-7 w-6 h-6 rounded-full bg-[var(--surface)] border border-[var(--border)] flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-all z-10"
-        style={{ boxShadow: "var(--shadow)" }}
+        className="absolute -right-3 top-7 w-6 h-6 rounded-full bg-surface border border-border flex items-center justify-center text-text-muted hover:text-text-secondary shadow-sm transition-all z-10"
       >
         <svg className={`w-3 h-3 transition-transform duration-300 ${sidebarCollapsed ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -48,7 +47,7 @@ export function Sidebar() {
       {/* Workflow Steps */}
       <nav className="flex-1 p-2.5 space-y-0.5">
         {!sidebarCollapsed && (
-          <span className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider px-3 py-2 block">
+          <span className="text-[11px] text-text-muted uppercase tracking-wider px-3 py-2 block">
             工作流程
           </span>
         )}
@@ -56,10 +55,10 @@ export function Sidebar() {
           <button
             key={s.id}
             onClick={() => { setStep(s.id); setActiveView("workflow"); }}
-            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] transition-all duration-200 ${
+            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] transition-all duration-200 btn-press ${
               step === s.id && activeView === "workflow"
-                ? "bg-[var(--accent-dim)] text-[var(--accent)] font-medium"
-                : "text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[rgba(0,0,0,0.03)]"
+                ? "nav-item-active"
+                : "text-text-muted hover:text-text-secondary hover:bg-surface-hover"
             }`}
           >
             <div className="relative">
@@ -67,7 +66,7 @@ export function Sidebar() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d={s.icon} />
               </svg>
               {!sidebarCollapsed && step === s.id && activeView === "workflow" && (
-                <div className="absolute -left-[13px] top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[var(--accent)] rounded-full" />
+                <div className="absolute -left-[13px] top-1/2 -translate-y-1/2 w-[2px] h-4 bg-accent rounded-full" />
               )}
             </div>
             {!sidebarCollapsed && <span className="flex-1 text-left">{s.label}</span>}
@@ -76,13 +75,13 @@ export function Sidebar() {
 
         {!sidebarCollapsed && (
           <>
-            <div className="h-px bg-[var(--border)] my-2 mx-3" />
+            <div className="h-px bg-border my-2 mx-3" />
             <button
               onClick={() => setActiveView("llm-logs")}
-              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] transition-all ${
+              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] transition-all btn-press ${
                 activeView === "llm-logs"
-                  ? "bg-[var(--accent-dim)] text-[var(--accent)] font-medium"
-                  : "text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[rgba(0,0,0,0.03)]"
+                  ? "nav-item-active"
+                  : "text-text-muted hover:text-text-secondary hover:bg-surface-hover"
               }`}
             >
               <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -95,13 +94,13 @@ export function Sidebar() {
       </nav>
 
       {/* Bottom */}
-      <div className="p-2.5 border-t border-[var(--border)] space-y-0.5">
+      <div className="p-2.5 border-t border-border space-y-0.5">
         <button
           onClick={() => setActiveView(activeView === "settings" ? "workflow" : "settings")}
-          className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] transition-all ${
+          className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] transition-all btn-press ${
             activeView === "settings"
-              ? "bg-[var(--accent-dim)] text-[var(--accent)] font-medium"
-              : "text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[rgba(0,0,0,0.03)]"
+              ? "nav-item-active"
+              : "text-text-muted hover:text-text-secondary hover:bg-surface-hover"
           }`}
         >
           <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -114,8 +113,8 @@ export function Sidebar() {
         {!sidebarCollapsed && (
           <div className="px-3 pt-2">
             <div className="flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)]/50" />
-              <span className="text-[10px] text-[var(--text-muted)]">v1.0.0</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-accent/50" />
+              <span className="text-[11px] text-text-muted">v1.0.0</span>
             </div>
           </div>
         )}
