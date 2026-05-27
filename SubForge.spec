@@ -29,8 +29,8 @@ if os.path.isdir(backend_dir):
                 dest = os.path.relpath(root, os.path.join(ROOT, 'backend'))
                 backend_src.append((src, dest))
 
-# Collect videocaptioner prompt/resource files
-vc_datas = collect_data_files('videocaptioner.core.prompts', include_py_files=False)
+# Collect subforge prompt/resource files
+vc_datas = collect_data_files('subforge.core.prompts', include_py_files=False)
 
 a = Analysis(
     [os.path.join(ROOT, 'launcher.py')],
@@ -39,8 +39,6 @@ a = Analysis(
     datas=frontend_datas + backend_datas + vc_datas + backend_src,
     hiddenimports=[
         'webview',
-        'webview.platforms',
-        'webview.platforms.cocoa',
         'uvicorn',
         'uvicorn.logging',
         'uvicorn.loops',
@@ -56,20 +54,17 @@ a = Analysis(
         'app.api.tasks',
         'app.api.transcribe',
         'app.api.subtitle',
-        'app.api.synthesis',
         'app.api.config',
         'app.api.websocket',
         'app.api.files',
         'app.api.subtitles',
         'app.api.llm_logs',
-        'app.api.batch',
-        'videocaptioner.cli.main',
-        'videocaptioner.core.asr',
-        'videocaptioner.core.translate',
-        'videocaptioner.core.split',
-        'videocaptioner.core.optimize',
-        'videocaptioner.core.subtitle',
-        'videocaptioner.core.llm',
+        'subforge.core.asr',
+        'subforge.core.translate',
+        'subforge.core.split',
+        'subforge.core.optimize',
+        'subforge.core.subtitle',
+        'subforge.core.llm',
     ],
     hookspath=[],
     hooksconfig={},
@@ -97,7 +92,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='SubtitleWeb',
+    name='SubForge',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -114,7 +109,7 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='SubtitleWeb',
+    name='SubForge',
 )
 
 app = BUNDLE(
