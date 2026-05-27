@@ -8,8 +8,6 @@
 
 AI 驱动的视频字幕工具 — 语音转录、字幕优化、智能翻译，一站完成。
 
-> **👉 [下载桌面应用](https://github.com/henry1786580051-lang/SubForge/releases/latest)**，macOS / Windows 一键安装，开箱即用。
-
 <p align="center">
   <img src="furnace_app_icon_v2.svg" alt="SubForge Logo" width="120" />
 </p>
@@ -41,7 +39,6 @@ AI 驱动的视频字幕工具 — 语音转录、字幕优化、智能翻译，
 | **双语字幕** | 原文 + 译文对照输出，支持 SRT / VTT / ASS / TXT / JSON |
 | **多引擎 ASR** | Whisper.cpp（GPU 加速）、Whisper API、Faster Whisper |
 | **Web 界面** | 浏览器直接使用，拖拽上传、实时进度、在线编辑字幕 |
-| **桌面应用** | Electron 封装，原生体验，支持 macOS 和 Windows |
 
 ---
 
@@ -117,19 +114,6 @@ SubForge 提供现代化的 Web 界面，三步完成字幕处理：
 
 ## 🚀 快速开始
 
-### 方式一：下载桌面应用（推荐）
-
-前往 [Releases](https://github.com/henry1786580051-lang/SubForge/releases/latest) 页面下载安装包：
-
-| 平台 | 文件 |
-|------|------|
-| **macOS** | `SubForge-*-arm64.dmg` |
-| **Windows** | `SubForge-Setup-*.exe` |
-
-> 💡 macOS 首次打开需在「系统设置 → 隐私与安全性」中点击「仍要打开」。
-
-### 方式二：从源码运行
-
 ```bash
 git clone https://github.com/henry1786580051-lang/SubForge.git
 cd SubForge
@@ -187,7 +171,6 @@ Whisper.cpp 支持下载不同大小的模型（Tiny 75MB → Large V3 3.1GB）�
 | [Tailwind CSS](https://tailwindcss.com/) | 样式框架 |
 | [FastAPI](https://fastapi.tiangolo.com/) | 后端 API |
 | [Whisper.cpp](https://github.com/ggerganov/whisper.cpp) | 本地语音识别 |
-| [Electron](https://www.electronjs.org/) | 桌面应用封装 |
 
 ---
 
