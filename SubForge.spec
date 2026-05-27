@@ -32,11 +32,30 @@ if os.path.isdir(backend_dir):
 # Collect subforge prompt/resource files
 vc_datas = collect_data_files('subforge.core.prompts', include_py_files=False)
 
+# Collect resource directory (assets, fonts, subtitle_style)
+resource_datas = []
+resource_dir = os.path.join(ROOT, 'resource')
+if os.path.isdir(resource_dir):
+    for root, dirs, files in os.walk(resource_dir):
+        for f in files:
+            src = os.path.join(root, f)
+            dest = os.path.relpath(root, ROOT)
+            resource_datas.append((src, dest))
+
+# Also bundle ffmpeg/ffprobe from desktop-runtime if available
+runtime_datas = []
+runtime_bin = os.path.join(ROOT, 'build', 'desktop-runtime', 'resource', 'bin')
+if os.path.isdir(runtime_bin):
+    for f in os.listdir(runtime_bin):
+        src = os.path.join(runtime_bin, f)
+        if os.path.isfile(src):
+            runtime_datas.append((src, 'resource/bin'))
+
 a = Analysis(
     [os.path.join(ROOT, 'launcher.py')],
     pathex=[ROOT, os.path.join(ROOT, 'backend')],
     binaries=[],
-    datas=frontend_datas + backend_datas + vc_datas + backend_src,
+    datas=frontend_datas + backend_datas + vc_datas + backend_src + resource_datas + runtime_datas,
     hiddenimports=[
         'webview',
         'uvicorn',
