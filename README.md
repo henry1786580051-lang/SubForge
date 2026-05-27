@@ -39,7 +39,7 @@ AI 驱动的视频字幕工具 — 语音转录、字幕优化、智能翻译、
 | **智能翻译** | 上下文感知翻译，理解整段语境，输出地道表达而非逐词直译 |
 | **纠错优化** | 自动去除语气词、修正错别字、规范标点格式 |
 | **双语字幕** | 原文 + 译文对照输出，支持 SRT / VTT / ASS / TXT / JSON |
-| **多引擎 ASR** | Whisper.cpp（GPU 加速）、Whisper API、Faster Whisper、剪映、必剪 |
+| **多引擎 ASR** | Whisper.cpp（GPU 加速）、Whisper API、Faster Whisper |
 | **Web 界面** | 浏览器直接使用，拖拽上传、实时进度、在线编辑字幕 |
 | **桌面应用** | Electron 封装，原生体验，支持 macOS 和 Windows |
 
@@ -171,8 +171,6 @@ npm run dev
 | **Whisper.cpp** | 本地 | 推荐，支持 Metal / CUDA GPU 加速 |
 | **Whisper API** | 云端 | OpenAI Whisper API |
 | **Faster Whisper** | 本地 | CTranslate2 加速，性能优秀 |
-| **剪映 ASR** | 云端 | 剪映同款引擎，中文效果好 |
-| **必剪 ASR** | 云端 | B 站必剪引擎，免费使用 |
 
 Whisper.cpp 支持下载不同大小的模型（Tiny 75MB → Large V3 3.1GB），在设置页面一键下载。
 
