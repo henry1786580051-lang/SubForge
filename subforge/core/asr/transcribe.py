@@ -19,6 +19,8 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None) -> ASRD
     Returns:
         ASRData: Transcription result data
     """
+    import logging
+    logger = logging.getLogger(__name__)
 
     def _default_callback(x, y):
         pass
@@ -29,20 +31,47 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None) -> ASRD
     if config.transcribe_model is None:
         raise ValueError("Transcription model not set")
 
-    # Create ASR instance based on model type
-    asr = _create_asr_instance(audio_path, config)
+    # Enhance audio with DeepFilterNet (speech denoising)
+    enhanced_path = None
+    try:
+        from subforge.core.asr.audio_enhancer import enhance_audio, is_available
+        if is_available():
+            logger.info("Enhancing audio with DeepFilterNet3...")
+            enhanced_path = enhance_audio(audio_path)
+            audio_for_asr = enhanced_path
+            logger.info(f"Using enhanced audio: {enhanced_path}")
+        else:
+            logger.info("DeepFilterNet not available, using original audio")
+            audio_for_asr = audio_path
+    except Exception as e:
+        logger.warning(f"Audio enhancement failed, using original: {e}")
+        import traceback
+        traceback.print_exc()
+        audio_for_asr = audio_path
 
-    # Run transcription
-    asr_data = asr.run(callback=callback)
+    try:
+        # Create ASR instance based on model type
+        asr = _create_asr_instance(audio_for_asr, config)
 
-    # Filter hallucinated segments in silent areas
-    asr_data.filter_hallucinations()
+        # Run transcription
+        asr_data = asr.run(callback=callback)
 
-    # Optimize subtitle timing if not using word timestamps
-    if not config.need_word_time_stamp:
-        asr_data.optimize_timing()
+        # Filter hallucinated segments using audio energy analysis
+        asr_data.filter_hallucinations(audio_path=audio_for_asr)
 
-    return asr_data
+        # Optimize subtitle timing if not using word timestamps
+        if not config.need_word_time_stamp:
+            asr_data.optimize_timing()
+
+        return asr_data
+    finally:
+        # Clean up enhanced audio
+        if enhanced_path:
+            try:
+                from pathlib import Path
+                Path(enhanced_path).unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 def _create_asr_instance(audio_path: str, config: TranscribeConfig) -> ChunkedASR:

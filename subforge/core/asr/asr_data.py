@@ -490,21 +490,149 @@ class ASRData:
         self.segments[index] = merged_seg
         del self.segments[index + 1]
 
-    def filter_hallucinations(self) -> "ASRData":
-        """Remove segments likely caused by ASR hallucination in silent areas.
+    def filter_hallucinations(self, audio_path: Optional[str] = None) -> "ASRData":
+        """Remove segments likely caused by ASR hallucination.
 
-        Filters out:
-        - Very short segments (< 500ms) with minimal text
-        - Segments containing only common filler/hallucination words
-        - Segments that are fragments with no meaningful content
+        If audio_path is provided, uses audio energy analysis to detect speech
+        regions and removes segments in non-speech areas. Otherwise falls back
+        to text-based heuristics.
+
+        Args:
+            audio_path: Path to audio file for energy-based speech detection
 
         Returns:
             Self for method chaining
         """
+        import logging
+        logger = logging.getLogger(__name__)
+
         if not self.segments:
             return self
 
-        # Common whisper hallucination patterns (single words/phrases in silence)
+        logger.info(f"filter_hallucinations called with audio_path={audio_path}, segments={len(self.segments)}")
+
+        if audio_path:
+            self._filter_by_audio_energy(audio_path)
+        else:
+            logger.info("No audio_path provided, using text heuristics")
+            self._filter_by_text_heuristics()
+
+        return self
+
+    def _filter_by_audio_energy(self, audio_path: str) -> None:
+        """Filter segments using audio energy-based speech detection.
+
+        Two-pass approach:
+        1. Remove segments in long silent regions (> 1s)
+        2. Insert micro-gaps between segments where audio energy drops significantly
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        try:
+            from pydub import AudioSegment
+        except ImportError:
+            logger.warning("pydub not available, falling back to text heuristics")
+            self._filter_by_text_heuristics()
+            return
+
+        try:
+            logger.info(f"Analyzing audio for speech detection: {audio_path}")
+            audio = AudioSegment.from_file(audio_path)
+            logger.info(f"Audio loaded: {len(audio)/1000:.1f}s")
+        except Exception as e:
+            logger.error(f"Failed to load audio: {e}")
+            return
+
+        # Pass 1: Calculate RMS energy for each 50ms window
+        window_ms = 50
+        energies = []
+        for i in range(0, len(audio), window_ms):
+            chunk = audio[i:i + window_ms]
+            rms = chunk.rms
+            energies.append({'time_ms': i, 'rms': rms})
+
+        if not energies:
+            return
+
+        # Calculate energy statistics
+        rms_values = [e['rms'] for e in energies]
+        avg_rms = sum(rms_values) / len(rms_values)
+        # Silence threshold: 30% of average RMS, but at least 100
+        silence_threshold = max(avg_rms * 0.3, 100)
+
+        logger.info(f"Audio energy: avg={avg_rms:.0f}, threshold={silence_threshold:.0f}")
+
+        # Pass 2: Detect micro-pauses between segments and insert gaps
+        new_segments = []
+        for i, seg in enumerate(self.segments):
+            new_segments.append(seg)
+
+            if i < len(self.segments) - 1:
+                next_seg = self.segments[i + 1]
+                boundary_ms = seg.end_time
+
+                # Check energy in a 200ms window around the boundary
+                check_start = max(0, boundary_ms - 100)
+                check_end = min(len(audio), boundary_ms + 100)
+
+                # Count silent windows in this region
+                silent_windows = 0
+                total_windows = 0
+                for e in energies:
+                    if check_start <= e['time_ms'] < check_end:
+                        total_windows += 1
+                        if e['rms'] < silence_threshold:
+                            silent_windows += 1
+
+                # If more than 60% of windows are silent, this is a natural pause
+                if total_windows > 0 and (silent_windows / total_windows) > 0.6:
+                    # Keep the natural gap (don't let optimize_timing fill it)
+                    pass
+                elif seg.end_time == next_seg.start_time:
+                    # No gap exists - check if we should create one
+                    # Look at energy drop between end of current and start of next
+                    end_energy = audio[max(0, seg.end_time - 50):seg.end_time].rms if seg.end_time > 50 else 0
+                    start_energy = audio[next_seg.start_time:min(len(audio), next_seg.start_time + 50)].rms if next_seg.start_time < len(audio) - 50 else 0
+
+                    # If both ends have low energy, insert a small gap
+                    if end_energy < silence_threshold and start_energy < silence_threshold:
+                        seg.end_time = boundary_ms
+                        next_seg.start_time = boundary_ms
+
+        # Pass 3: Remove segments that are entirely in silent regions
+        original_count = len(self.segments)
+        filtered = []
+        for seg in self.segments:
+            # Check average energy during this segment
+            start_ms = max(0, seg.start_time)
+            end_ms = min(len(audio), seg.end_time)
+
+            if start_ms >= end_ms:
+                continue
+
+            # Sample energy in the segment
+            segment_energies = []
+            for e in energies:
+                if start_ms <= e['time_ms'] < end_ms:
+                    segment_energies.append(e['rms'])
+
+            if segment_energies:
+                avg_segment_rms = sum(segment_energies) / len(segment_energies)
+                # Keep segment if it has enough energy (likely speech)
+                if avg_segment_rms > silence_threshold * 0.5:
+                    filtered.append(seg)
+                else:
+                    logger.debug(f"Removed silent segment: {seg.start_time/1000:.1f}-{seg.end_time/1000:.1f}s")
+            else:
+                filtered.append(seg)
+
+        logger.info(f"Filtered segments: {original_count} -> {len(filtered)} (removed {original_count - len(filtered)})")
+        self.segments = filtered
+
+    def _filter_by_text_heuristics(self) -> None:
+        """Filter segments using text-based heuristics (fallback)."""
+        # Common whisper hallucination patterns
         hallucination_patterns = {
             "thank you", "thanks", "you", "the", "a", "an", "is", "it", "we",
             "um", "uh", "hmm", "ah", "oh", "like", "so", "well", "yeah",
@@ -517,26 +645,23 @@ class ASRData:
             text = seg.text.strip().lower().rstrip(".,!?。，！？")
             duration = seg.end_time - seg.start_time
 
-            # Keep if duration is reasonable
             if duration >= 500:
                 filtered.append(seg)
                 continue
 
-            # For very short segments, check if text is meaningful
             if len(text) >= 3 and text not in hallucination_patterns:
                 filtered.append(seg)
 
         self.segments = filtered
-        return self
 
-    def optimize_timing(self, threshold_ms: int = 300) -> "ASRData":
+    def optimize_timing(self, threshold_ms: int = 100) -> "ASRData":
         """Optimize subtitle display timing by adjusting adjacent segment boundaries.
 
-        If gap between adjacent segments is below threshold, adjust the boundary
-        to 3/4 point between them (reduces flicker).
+        Only adjusts very small gaps (< threshold) to reduce flicker.
+        Larger gaps are preserved as natural speech pauses.
 
         Args:
-            threshold_ms: Time gap threshold in milliseconds (default 300ms)
+            threshold_ms: Time gap threshold in milliseconds (default 100ms)
 
         Returns:
             Self for method chaining
@@ -549,6 +674,7 @@ class ASRData:
             next_seg = self.segments[i + 1]
             time_gap = next_seg.start_time - current_seg.end_time
 
+            # Only adjust very small gaps (micro-flicker), preserve larger pauses
             if 0 < time_gap < threshold_ms:
                 mid_time = (
                     current_seg.end_time + next_seg.start_time

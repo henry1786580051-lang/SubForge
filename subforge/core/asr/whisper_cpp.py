@@ -128,7 +128,8 @@ class WhisperCppASR(BaseASR):
             whisper_params.extend([
                 "--vad",
                 "--vad-model", self.vad_model_path,
-                "--vad-min-silence-duration-ms", "500",
+                "--vad-min-silence-duration-ms", "1000",
+                "--vad-threshold", "0.7",
             ])
 
         return whisper_params
@@ -257,7 +258,7 @@ class WhisperCppASR(BaseASR):
                 raise RuntimeError(f"SRT generation failed: {str(e)}")
 
     def _get_key(self):
-        return f"{self.crc32_hex}-{self.need_word_time_stamp}-{self.model_path}-{self.language}"
+        return f"{self.crc32_hex}-{self.need_word_time_stamp}-{self.model_path}-{self.language}-vad{self.use_vad}"
 
     def get_audio_duration(self, filepath: str) -> int:
         """Get audio file duration in seconds using ffmpeg."""
