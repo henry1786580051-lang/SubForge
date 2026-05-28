@@ -44,9 +44,9 @@ def enhance_audio(input_path: str, output_path: str = None) -> str:
     Returns:
         Path to enhanced audio file
     """
-    import torch
-    import soundfile as sf
     import numpy as np
+    import soundfile as sf
+    import torch
     from df.enhance import enhance
 
     _load_model()
@@ -109,8 +109,5 @@ def enhance_audio(input_path: str, output_path: str = None) -> str:
 
 def is_available() -> bool:
     """Check if DeepFilterNet is available."""
-    try:
-        import df.enhance
-        return True
-    except ImportError:
-        return False
+    import importlib.util
+    return importlib.util.find_spec("df") is not None
