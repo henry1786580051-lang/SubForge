@@ -50,3 +50,7 @@ videocaptioner/_version.py
 
 # CodeGraph
 .codegraph/
+
+# Test output files
+*.srt
+backend/*.srt

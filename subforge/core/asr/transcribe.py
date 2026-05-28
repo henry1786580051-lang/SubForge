@@ -35,6 +35,9 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None) -> ASRD
     # Run transcription
     asr_data = asr.run(callback=callback)
 
+    # Filter hallucinated segments in silent areas
+    asr_data.filter_hallucinations()
+
     # Optimize subtitle timing if not using word timestamps
     if not config.need_word_time_stamp:
         asr_data.optimize_timing()

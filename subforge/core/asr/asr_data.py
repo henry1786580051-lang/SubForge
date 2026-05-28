@@ -490,14 +490,53 @@ class ASRData:
         self.segments[index] = merged_seg
         del self.segments[index + 1]
 
-    def optimize_timing(self, threshold_ms: int = 1000) -> "ASRData":
+    def filter_hallucinations(self) -> "ASRData":
+        """Remove segments likely caused by ASR hallucination in silent areas.
+
+        Filters out:
+        - Very short segments (< 500ms) with minimal text
+        - Segments containing only common filler/hallucination words
+        - Segments that are fragments with no meaningful content
+
+        Returns:
+            Self for method chaining
+        """
+        if not self.segments:
+            return self
+
+        # Common whisper hallucination patterns (single words/phrases in silence)
+        hallucination_patterns = {
+            "thank you", "thanks", "you", "the", "a", "an", "is", "it", "we",
+            "um", "uh", "hmm", "ah", "oh", "like", "so", "well", "yeah",
+            "okay", "ok", "right", "yes", "no", "and", "but", "or",
+            "字幕", "字幕由", "感谢", "谢谢", "订阅", "观看",
+        }
+
+        filtered = []
+        for seg in self.segments:
+            text = seg.text.strip().lower().rstrip(".,!?。，！？")
+            duration = seg.end_time - seg.start_time
+
+            # Keep if duration is reasonable
+            if duration >= 500:
+                filtered.append(seg)
+                continue
+
+            # For very short segments, check if text is meaningful
+            if len(text) >= 3 and text not in hallucination_patterns:
+                filtered.append(seg)
+
+        self.segments = filtered
+        return self
+
+    def optimize_timing(self, threshold_ms: int = 300) -> "ASRData":
         """Optimize subtitle display timing by adjusting adjacent segment boundaries.
 
         If gap between adjacent segments is below threshold, adjust the boundary
         to 3/4 point between them (reduces flicker).
 
         Args:
-            threshold_ms: Time gap threshold in milliseconds (default 1000ms)
+            threshold_ms: Time gap threshold in milliseconds (default 300ms)
 
         Returns:
             Self for method chaining
@@ -510,7 +549,7 @@ class ASRData:
             next_seg = self.segments[i + 1]
             time_gap = next_seg.start_time - current_seg.end_time
 
-            if time_gap < threshold_ms:
+            if 0 < time_gap < threshold_ms:
                 mid_time = (
                     current_seg.end_time + next_seg.start_time
                 ) // 2 + time_gap // 4
