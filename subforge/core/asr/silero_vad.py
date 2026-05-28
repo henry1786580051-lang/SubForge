@@ -28,7 +28,7 @@ def detect_speech_segments(
     audio_path: str,
     threshold: float = 0.5,
     min_speech_ms: int = 250,
-    min_silence_ms: int = 100,
+    min_silence_ms: int = 300,
     speech_pad_ms: int = 300,
 ) -> List[Tuple[int, int]]:
     """Detect speech segments in audio using Silero VAD.
