@@ -50,11 +50,24 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None) -> ASRD
         audio_for_asr = audio_path
 
     try:
-        # Create ASR instance based on model type
-        asr = _create_asr_instance(audio_for_asr, config)
+        # Try Silero VAD preprocessing to skip silence
+        asr_data = None
+        try:
+            from subforge.core.asr.silero_vad import detect_speech_segments
+            from subforge.core.asr.silero_vad import is_available as vad_available
+            if vad_available():
+                speech_segments = detect_speech_segments(audio_for_asr)
+                if speech_segments and len(speech_segments) > 1:
+                    asr_data = _transcribe_segments(audio_for_asr, speech_segments, config, callback)
+        except Exception as e:
+            logger.warning(f"Silero VAD preprocessing failed, using full transcription: {e}")
+            import traceback
+            traceback.print_exc()
 
-        # Run transcription
-        asr_data = asr.run(callback=callback)
+        # Fallback: transcribe full audio
+        if asr_data is None:
+            asr = _create_asr_instance(audio_for_asr, config)
+            asr_data = asr.run(callback=callback)
 
         # Filter hallucinated segments using audio energy analysis
         asr_data.filter_hallucinations(audio_path=audio_for_asr)
@@ -101,6 +114,108 @@ def _create_asr_instance(audio_path: str, config: TranscribeConfig) -> ChunkedAS
     elif model_type == TranscribeModelEnum.FASTER_WHISPER:
         return _create_faster_whisper_asr(audio_path, config)
 
+    else:
+        raise ValueError(f"Invalid transcription model: {model_type}")
+
+
+def _transcribe_segments(
+    audio_path: str,
+    speech_segments: list,
+    config: TranscribeConfig,
+    callback=None,
+) -> ASRData:
+    """Transcribe only speech segments detected by VAD.
+
+    Extracts each speech segment as a temporary WAV, transcribes it,
+    then adjusts timestamps back to the original audio timeline.
+    """
+    import logging
+    import tempfile
+    from pathlib import Path
+
+    from pydub import AudioSegment
+
+    logger = logging.getLogger(__name__)
+    audio = AudioSegment.from_file(audio_path)
+    all_segments = []
+    total = len(speech_segments)
+
+    def _default_callback(x, y):
+        pass
+    if callback is None:
+        callback = _default_callback
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        for idx, (start_ms, end_ms) in enumerate(speech_segments):
+            chunk_audio = audio[start_ms:end_ms]
+            chunk_path = str(Path(tmp_dir) / f"vad_{idx:04d}.wav")
+            chunk_audio.export(chunk_path, format="wav")
+
+            logger.info(f"Transcribing segment {idx+1}/{total}: {start_ms/1000:.1f}s - {end_ms/1000:.1f}s")
+
+            # Each segment is short (< 1 min), use ASR directly without ChunkedASR
+            asr = _create_single_asr(chunk_path, config)
+            chunk_result = asr.run(callback=_default_callback)
+
+            # Shift timestamps back to original timeline
+            for seg in chunk_result.segments:
+                seg.start_time += start_ms
+                seg.end_time += start_ms
+            all_segments.extend(chunk_result.segments)
+
+            progress = int((idx + 1) / total * 100)
+            callback(progress, f"Segment {idx+1}/{total}")
+
+    callback(100, "All segments transcribed")
+    return ASRData(all_segments)
+
+
+def _create_single_asr(audio_path: str, config: TranscribeConfig):
+    """Create a single ASR instance (no chunking) for a short audio segment."""
+    from subforge.core.asr.bcut import BcutASR
+    from subforge.core.asr.faster_whisper import FasterWhisperASR
+    from subforge.core.asr.jianying import JianYingASR
+    from subforge.core.asr.whisper_api import WhisperAPI
+    from subforge.core.asr.whisper_cpp import WhisperCppASR
+
+    model_type = config.transcribe_model
+    kwargs = {
+        "use_cache": False,  # Don't cache individual segments
+        "need_word_time_stamp": config.need_word_time_stamp,
+    }
+
+    if model_type == TranscribeModelEnum.WHISPER_CPP:
+        kwargs.update({
+            "language": config.transcribe_language,
+            "whisper_model": config.whisper_model.value if config.whisper_model else None,
+            "n_threads": getattr(config, "whisper_n_threads", 4),
+            "use_vad": False,  # VAD already done, don't re-run
+        })
+        return WhisperCppASR(audio_path, **kwargs)
+    elif model_type == TranscribeModelEnum.WHISPER_API:
+        kwargs.update({
+            "language": config.transcribe_language,
+            "whisper_model": config.whisper_api_model or "whisper-1",
+            "api_key": config.whisper_api_key or "",
+            "base_url": config.whisper_api_base or "",
+            "prompt": config.whisper_api_prompt or "",
+        })
+        return WhisperAPI(audio_path, **kwargs)
+    elif model_type == TranscribeModelEnum.FASTER_WHISPER:
+        kwargs.update({
+            "faster_whisper_program": config.faster_whisper_program or "",
+            "language": config.transcribe_language,
+            "whisper_model": config.faster_whisper_model.value if config.faster_whisper_model else "base",
+            "model_dir": config.faster_whisper_model_dir or "",
+            "device": config.faster_whisper_device,
+            "vad_filter": False,
+            "compute_type": getattr(config, "faster_whisper_compute_type", "default"),
+        })
+        return FasterWhisperASR(audio_path, **kwargs)
+    elif model_type == TranscribeModelEnum.JIANYING:
+        return JianYingASR(audio_path, **kwargs)
+    elif model_type == TranscribeModelEnum.BIJIAN:
+        return BcutASR(audio_path, **kwargs)
     else:
         raise ValueError(f"Invalid transcription model: {model_type}")
 
