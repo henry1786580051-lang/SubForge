@@ -44,4 +44,4 @@ uv run ruff check --select I --fix .
 - [架构设计](/dev/architecture)
 - [API 文档](/dev/api)
 
-更多信息请参考 [GitHub Issues](https://github.com/WEIFENG2333/SubForge/issues)。
+更多信息请参考 [GitHub Issues](https://github.com/henry1786580051-lang/SubForge/issues)。

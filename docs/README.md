@@ -6,7 +6,7 @@
 
 文档已自动部署到 GitHub Pages：
 
-**[https://weifeng2333.github.io/SubForge/](https://weifeng2333.github.io/SubForge/)**
+**[https://henry1786580051-lang.github.io/SubForge/](https://henry1786580051-lang.github.io/SubForge/)**
 
 ## 🚀 本地开发
 
@@ -153,7 +153,7 @@ head:
 1. **Google Search Console**
    - 访问 https://search.google.com/search-console
    - 添加网站并验证
-   - 提交 sitemap: `https://weifeng2333.github.io/SubForge/sitemap.xml`
+   - 提交 sitemap: `https://henry1786580051-lang.github.io/SubForge/sitemap.xml`
 
 2. **Bing Webmaster Tools**
    - 访问 https://www.bing.com/webmasters

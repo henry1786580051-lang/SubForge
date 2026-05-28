@@ -361,4 +361,4 @@ SubForge 支持多种 LLM 服务商，你可以根据自己的需求选择：
 
 ---
 
-如果还有其他问题，欢迎在 [GitHub Issues](https://github.com/WEIFENG2333/SubForge/issues) 提问。
+如果还有其他问题，欢迎在 [GitHub Issues](https://github.com/henry1786580051-lang/SubForge/issues) 提问。

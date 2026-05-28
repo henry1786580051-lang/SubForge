@@ -56,9 +56,9 @@ denoise = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/WEIFENG2333/SubForge"
-Repository = "https://github.com/WEIFENG2333/SubForge"
-Issues = "https://github.com/WEIFENG2333/SubForge/issues"
+Homepage = "https://github.com/henry1786580051-lang/SubForge"
+Repository = "https://github.com/henry1786580051-lang/SubForge"
+Issues = "https://github.com/henry1786580051-lang/SubForge/issues"
 
 [project.scripts]
 subforge = "subforge.cli.main:main"

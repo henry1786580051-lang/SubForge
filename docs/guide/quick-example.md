@@ -360,4 +360,4 @@ SubForge 使用**反思翻译**技术，每句字幕都经过两次优化：
 
 ---
 
-需要帮助？欢迎在 [GitHub Issues](https://github.com/WEIFENG2333/SubForge/issues) 提问！
+需要帮助？欢迎在 [GitHub Issues](https://github.com/henry1786580051-lang/SubForge/issues) 提问！

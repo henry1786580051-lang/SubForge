@@ -16,7 +16,7 @@ head:
       content: 免费开源的AI视频字幕处理助手。支持Whisper语音识别、LLM智能断句与翻译、多语言字幕生成。适用于YouTube、B站等平台，支持99种语言。一键处理，专业质量。
   - - meta
     - property: og:url
-      content: https://weifeng2333.github.io/SubForge/
+      content: https://henry1786580051-lang.github.io/SubForge/
   - - meta
     - property: og:type
       content: website

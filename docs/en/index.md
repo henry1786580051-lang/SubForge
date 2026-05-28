@@ -16,7 +16,7 @@ head:
       content: Free & open-source AI subtitle tool powered by Whisper & LLM. Supports 99 languages with intelligent segmentation, professional translation, and one-click processing. Perfect for content creators on YouTube, Bilibili, and other platforms.
   - - meta
     - property: og:url
-      content: https://weifeng2333.github.io/SubForge/en/
+      content: https://henry1786580051-lang.github.io/SubForge/en/
   - - meta
     - property: og:locale
       content: en_US
@@ -49,7 +49,7 @@ hero:
       link: /en/guide/getting-started
     - theme: alt
       text: GitHub Repository
-      link: https://github.com/WEIFENG2333/SubForge
+      link: https://github.com/henry1786580051-lang/SubForge
 
 features:
   - icon: ⚡
@@ -66,7 +66,7 @@ features:
 
   - icon: 📖
     title: Fully Open Source & Free
-    details: MIT license, no hidden fees. Run locally for complete data privacy control. Community-driven continuous improvement.
+    details: GPL-3.0 license, no hidden fees. Run locally for complete data privacy control. Community-driven continuous improvement.
 
   - icon: 💻
     title: No High-End Hardware
@@ -102,14 +102,14 @@ features:
 ```bash [Windows]
 # Download and run the installer directly
 # Or run from source
-git clone https://github.com/WEIFENG2333/SubForge.git
+git clone https://github.com/henry1786580051-lang/SubForge.git
 cd SubForge
 run.bat
 ```
 
 ```bash [macOS/Linux]
 # Use automatic installation script
-git clone https://github.com/WEIFENG2333/SubForge.git
+git clone https://github.com/henry1786580051-lang/SubForge.git
 cd SubForge
 chmod +x run.sh
 ./run.sh

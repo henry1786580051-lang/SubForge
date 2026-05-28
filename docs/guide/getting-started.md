@@ -25,7 +25,7 @@ head:
 
 软件较为轻量，打包大小不足 60M，已集成所有必要环境，下载后可直接运行。
 
-1. 从 [Release](https://github.com/WEIFENG2333/SubForge/releases) 页面下载最新版本的可执行程序
+1. 从 [Release](https://github.com/henry1786580051-lang/SubForge/releases) 页面下载最新版本的可执行程序
 
    或者：[蓝奏盘下载](https://wwwm.lanzoue.com/ii14G2pdsbej)
 
@@ -39,7 +39,7 @@ head:
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/WEIFENG2333/SubForge.git
+git clone https://github.com/henry1786580051-lang/SubForge.git
 cd SubForge
 
 # 2. 运行安装脚本
@@ -85,7 +85,7 @@ sudo dnf install ffmpeg aria2 python3.11
 **2. 克隆项目并安装 Python 依赖**
 
 ```bash
-git clone https://github.com/WEIFENG2333/SubForge.git
+git clone https://github.com/henry1786580051-lang/SubForge.git
 cd SubForge
 
 # 创建虚拟环境
@@ -330,4 +330,4 @@ LLM 用于字幕断句、优化和翻译。软件内置了基础模型，但配�
 
 ---
 
-如果在使用过程中遇到问题，欢迎提交 [Issue](https://github.com/WEIFENG2333/SubForge/issues) 或加入社区讨论。
+如果在使用过程中遇到问题，欢迎提交 [Issue](https://github.com/henry1786580051-lang/SubForge/issues) 或加入社区讨论。
