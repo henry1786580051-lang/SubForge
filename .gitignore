@@ -54,3 +54,4 @@ videocaptioner/_version.py
 # Test output files
 *.srt
 backend/*.srt
+!examples/*.srt

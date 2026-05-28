@@ -46,25 +46,27 @@ AI 驱动的视频字幕工具 — 语音转录、字幕优化、智能翻译，
 
 语音识别输出的原始文本通常是冗长的连续句子，直接作为字幕难以阅读。SubForge 使用 LLM 按语义自然断点重新分段。
 
-以「2026 Lexus ES 500e 试驾」视频为例：
+以「2026 Lexus ES 350h 试驾」视频为例：
 
 **ASR 原始输出**（Whisper 转录）：
 ```
-Hey everyone, welcome back to Tow4Drives where today you join me in Wisconsin
-at Road America at the 2026 MAMA Spring Rally, MAMA meaning Midwest Automotive
-Media Association, where it's a bit of an untraditional video today because
-you know at Tow4Drives usually I live with the car for an entire week.
+As specced, this gets about 48 miles per gallon on the highway, about 44 in the city, 46 combined,
+which is an amazing fuel economy, 244 net combined horsepower, and a completely new
+interior and exterior. Let's walk you guys around it, talk about what it's been like
+to spend the first 30, 40 minutes behind the wheel of this car, and give you guys
+some first driving impressions.
 ```
 
 **LLM 智能断句后**：
 ```
-嘿，大家好。
-欢迎回到《Tow 4 Drives》。
-今天我在威斯康星州的Road America赛道。
-参加2026年MAMA春季拉力赛。
-MAMA全称是中西部汽车媒体协会。
-今天的视频形式有点特别。
-因为《Tow 4 Drives》通常会让一辆车陪伴我整整一周。
+官方数据显示，它高速巡航的油耗大概在百公里4.9升左右。
+市区大概百公里5.4升，综合下来5.1升左右。
+这油耗表现相当惊人。
+综合马力有244匹。
+内外饰都是全新的设计。
+我带大家先绕车看一圈。
+刚才开了三四十分钟，跟大家聊聊我的感受。
+分享一下初驾感受。
 ```
 
 > 完整示例：[`examples/lexus_original.srt`](examples/lexus_original.srt)（ASR 原始输出）→ [`examples/lexus_processed.srt`](examples/lexus_processed.srt)（断句 + 翻译后）
@@ -82,14 +84,18 @@ SubForge 的 LLM 翻译结合上下文理解整段内容，输出自然流畅的
 
 | ASR 原始英文 | LLM 中文翻译 |
 |------|----------|
-| This one's a 500e meaning it's fully electric which is the first time that the Lexus ES has ever been an EV | 这款是500e版本，也就是纯电动车。这在雷克萨斯ES历史上还是首次采用电动化动力 |
-| I've literally driven it I think 0.2 of a mile over to this parking lot so these will genuinely be my first impressions | 说实话我开过来总共才不到半英里，所以这绝对是实打实的初印象分享 |
-| so I really don't know a whole lot about it but I have tried my best to memorize some specs for you | 对它的了解其实相当有限，但我已经尽力背下了一些参数供参考 |
+| Today we are driving the all-new 2026 Lexus ES 350h. | 今天来试试2026新款雷克萨斯ES 350h。 |
+| This is the premium front-wheel drive. | 这回选的是顶配的前驱版。 |
+| As tested, this is about $53,000. | 这台测试车的售价，大概在五万三千美金左右，折合人民币差不多三十八万。 |
+| We have the palomino interior, which looks very nice on here. | 内饰配的是帕洛米诺棕，质感确实很棒。 |
+| Of course this is a fully redesigned inside and out. | 而且，这次是彻头彻尾的换代，里里外外都是新的。 |
+| It's available as an EV or as this 350h hybrid. | 它有两种动力可选：纯电版，以及像咱们这台350h的混动版。 |
 
 翻译特点：
 - 理解上下文语境，使用地道中文表达
-- 车型名称「Lexus ES」「500e」保留原文
-- 长句自动拆分，中文译文简洁自然
+- 车型名称「Lexus ES」「350h」保留原文
+- 单位自动换算（英里/加仑 → 百公里油耗，美元 → 人民币）
+- 口语化表达，匹配视频博主的轻松语气
 
 ### 反思翻译模式
 
@@ -98,6 +104,20 @@ SubForge 支持「反思翻译」模式（Inspired by Andrew Ng's Reflection Pat
 1. **初译** — LLM 完成第一遍翻译
 2. **反思** — 自动检测机翻痕迹：语序生硬、用词机械、文化不匹配、语域不当
 3. **重写** — 基于反思结果，输出母语者表达习惯的自然译文
+
+以「2026 Lexus ES 350h 试驾」为例，反思模式的实际效果：
+
+| 阶段 | 内容 |
+|------|------|
+| **初译** | 今天我们驾驶的是全新2026款雷克萨斯ES 350h。 |
+| **反思** | "今天我们驾驶的是"照搬英文语序，中文博主会说"今天来试试"。"全新2026款"像新闻稿，口语中说"2026新款"。 |
+| **重写** | 今天来试试2026新款雷克萨斯ES 350h。 |
+
+| 阶段 | 内容 |
+|------|------|
+| **初译** | 测试车的价格大约是53,000美元。 |
+| **反思** | "测试车的价格大约是"过于正式。中文观众习惯"万"为单位，需换算。博主语气应更口语化。 |
+| **重写** | 这台测试车的售价，大概在五万三千美金左右，折合人民币差不多三十八万。 |
 
 开启后，翻译耗时会略有增加，但译文质量显著提升，尤其适合对表达地道程度要求较高的内容。
 

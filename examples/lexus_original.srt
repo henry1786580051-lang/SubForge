@@ -1,767 +1,979 @@
 1
-00:00:04,160 --> 00:00:09,660
- Hey everyone, welcome back to Tow4Drives where today you join me in Wisconsin at Road America
+00:00:10,660 --> 00:00:16,140
+ Today we are driving the all-new 2026 Lexus ES 350h.
 
 2
-00:00:09,660 --> 00:00:16,560
- at the 2026 MAMA Spring Rally, MAMA meaning Midwest Automotive Media Association, where
+00:00:16,140 --> 00:00:18,740
+ This is the premium front-wheel drive.
 
 3
-00:00:16,560 --> 00:00:20,460
- it's a bit of an untraditional video today because you know at Tow4Drives usually I live
+00:00:18,740 --> 00:00:21,860
+ As tested, this is about $53,000.
 
 4
-00:00:20,460 --> 00:00:21,960
- with the car for an entire week.
+00:00:21,860 --> 00:00:25,740
+ We have the palomino interior, which looks very nice on here.
 
 5
-00:00:21,960 --> 00:00:25,240
- We run a commute or we show you what it's like to live with or we go on a road trip
+00:00:25,740 --> 00:00:28,860
+ A little bit larger of an ES for the 2026 model year.
 
 6
-00:00:25,240 --> 00:00:26,560
- or something like that.
+00:00:28,860 --> 00:00:31,440
+ Of course, this is a fully redesigned inside and out.
 
 7
-00:00:26,560 --> 00:00:31,140
- But today I have a very special opportunity to give you some first driving impressions
+00:00:31,440 --> 00:00:35,380
+ It's available as an EV or as this 350h hybrid.
 
 8
-00:00:31,140 --> 00:00:35,280
- on the brand new 8th generation Lexus ES.
+00:00:35,380 --> 00:00:37,620
+ This is the front-wheel drive model.
 
 9
-00:00:35,280 --> 00:00:40,760
- This one's a 500e meaning it's fully electric which is the first time that the Lexus ES
+00:00:37,620 --> 00:00:40,300
+ You can also get the hybrid in all-wheel drive.
 
 10
-00:00:40,760 --> 00:00:42,680
- has ever been an EV.
+00:00:40,300 --> 00:00:46,260
+ As specced, this gets about 48 miles per gallon on the highway, about 44 in the city, 46 combined,
 
 11
-00:00:42,680 --> 00:00:44,000
- So I'm excited to see what this is like.
+00:00:46,260 --> 00:00:53,180
+ which is an amazing fuel economy, 244 net combined horsepower, and a completely new
 
 12
-00:00:44,000 --> 00:00:48,120
- I've literally driven it I think 0.2 of a mile over to this parking lot so these will
+00:00:53,180 --> 00:00:54,460
+ interior and exterior.
 
 13
-00:00:48,120 --> 00:00:52,540
- genuinely be my first impressions and this is also my first time seeing this car so I
+00:00:54,460 --> 00:00:58,220
+ Let's walk you guys around it, talk about what it's been like to spend the first 30,
 
 14
-00:00:52,540 --> 00:00:56,880
- really don't know a whole lot about it but I have tried my best to memorize some specs
+00:00:58,220 --> 00:01:03,580
+ 40 minutes behind the wheel of this car, and give you guys some first driving impressions.
 
 15
-00:00:56,880 --> 00:00:57,880
- for you.
+00:01:03,580 --> 00:01:05,300
+ Let's start off with this interior.
 
 16
-00:00:57,880 --> 00:01:03,880
- The Lexus ES is the second level up or the top powertrain trim for the EV.
+00:01:05,300 --> 00:01:12,460
+ Very similar to the Lexus TZ that we did a walk-around of, or a tease of, a couple videos
 
 17
-00:01:03,880 --> 00:01:05,840
- There's a 350 then there's a 500.
+00:01:12,460 --> 00:01:13,370
+ ago.
 
 18
-00:01:05,840 --> 00:01:08,800
- Lexus will also sell you a hybrid 8th generation ES.
+00:01:13,370 --> 00:01:17,850
+ So, we've got this massive 14-point-some-inch touchscreen.
 
 19
-00:01:08,800 --> 00:01:09,800
- This is not that.
+00:01:17,850 --> 00:01:22,730
+ It's very similar to what we've seen in the new Toyota RAV4, and I like that.
 
 20
-00:01:09,800 --> 00:01:13,920
- So this has dual electric motors with 338 horsepower.
+00:01:22,730 --> 00:01:27,210
+ Except for the EV, Lexus ES, it has lots of route planning features, which is really nice
 
 21
-00:01:13,920 --> 00:01:20,440
- It has a 75 kilowatt hour battery and it has about 276 miles of range which whenever I
+00:01:27,210 --> 00:01:28,250
+ to see.
 
 22
-00:01:20,440 --> 00:01:24,860
- think 276 I always think about the gentleman's agreement in Japan back in the 90s.
+00:01:28,250 --> 00:01:32,250
+ You've got a whole climate menu right here, but you have physical climate buttons right
 
 23
-00:01:24,860 --> 00:01:26,880
- But this is what this is now.
+00:01:32,250 --> 00:01:33,250
+ here.
 
 24
-00:01:26,880 --> 00:01:30,260
- This is kind of a lot to take in because the Lexus ES it's been around forever.
+00:01:33,250 --> 00:01:37,210
+ They're push-in, they're not haptic like they look like they are.
 
 25
-00:01:30,260 --> 00:01:36,600
- It's a very iconic car and seeing it now very much designed there's a lot of styling going
+00:01:37,210 --> 00:01:43,580
+ We've got a front defrost volume, physical button for your hazard switch, USB-C ports,
 
 26
-00:01:36,600 --> 00:01:39,720
- on with this here and hopefully we'll have one of these back at home so we can dive a
+00:01:43,580 --> 00:01:48,450
+ and then buttons down here for your parking brake, brake hold, EV mode, and traction off.
 
 27
-00:01:39,720 --> 00:01:41,480
- bit deeper into it.
+00:01:48,450 --> 00:01:54,450
+ The Premium only comes with a reverse camera, though I think the Premium Plus has the 360
 
 28
-00:01:41,480 --> 00:01:44,920
- But again just excited to give you guys some first driving impressions today.
+00:01:54,450 --> 00:01:55,450
+ cam.
 
 29
-00:01:44,920 --> 00:01:46,000
- So this is a premium.
+00:01:55,450 --> 00:01:57,730
+ We have some really nice materials in this interior.
 
 30
-00:01:46,000 --> 00:01:50,680
- This is the trim levels I'm a little bit confused on them still but this is the base trim of
+00:01:57,730 --> 00:02:02,230
+ For just kind of being the base model, you've got this nice suede Alcantara piece right
 
 31
-00:01:50,680 --> 00:01:52,340
- the top motor.
+00:02:02,230 --> 00:02:06,170
+ next to the gauge cluster, the screens are bright, high-resolution, the graphics look
 
 32
-00:01:52,340 --> 00:01:58,450
- So this starts at 50 grand it's finished in ultra white with a white interior aspect about
+00:02:06,170 --> 00:02:07,170
+ beautiful.
 
 33
-00:01:58,450 --> 00:02:00,490
- $56,000.
+00:02:07,170 --> 00:02:11,970
+ Definitely a step up for Lexus in terms of graphical display quality here, which I appreciate.
 
 34
-00:02:00,490 --> 00:02:07,030
- But what I'm understanding now is that since the Lexus LS is now gone from the lineup.
+00:02:11,970 --> 00:02:16,890
+ You have some quick access controls here to adjust brightness, which is great, though
 
 35
-00:02:07,030 --> 00:02:12,530
- This doesn't completely take its spot but it kind of leans more towards that side.
+00:02:16,890 --> 00:02:19,890
+ that is only in the infotainment, not for all displays.
 
 36
-00:02:12,530 --> 00:02:15,170
- Obviously the ES has always been a luxury car.
+00:02:19,890 --> 00:02:20,890
+ It should be for everything.
 
 37
-00:02:15,170 --> 00:02:19,710
- It's always leaned more towards luxury than the IS which is kind of the sports sedan but
+00:02:20,890 --> 00:02:23,330
+ I don't know why Lexus always does that.
 
 38
-00:02:19,710 --> 00:02:24,090
- even more emphasis on that now because the LS is no more.
+00:02:23,330 --> 00:02:27,570
+ CarPlay is wireless, it's massive, you can see everything, all your apps all at once,
 
 39
-00:02:24,090 --> 00:02:29,670
- So as we said this is an EV it's got 276 miles of range we already talked about that but
+00:02:27,570 --> 00:02:29,650
+ which is always a good thing.
 
 40
-00:02:29,670 --> 00:02:37,040
- this is the charge port up here and this has the NAX port so that is standard of course
+00:02:29,650 --> 00:02:33,730
+ And you've got some temperature control here, heated and ventilated seats, you can automatically
 
 41
-00:02:37,040 --> 00:02:40,970
- for this new generation.
+00:02:33,730 --> 00:02:40,650
+ set those, heated steering wheel, and one wireless charge pad right here.
 
 42
-00:02:40,970 --> 00:02:45,570
- Interesting sort of mechanism there for this and then well we've got these big wheels with
+00:02:40,650 --> 00:02:45,490
+ The center console opens up from both sides, and there is just an enormous amount of rear
 
 43
-00:02:45,570 --> 00:02:50,170
- some additional little arrow covers here that you could snap on and off but all in the name
+00:02:45,490 --> 00:02:46,490
+ seat room.
 
 44
-00:02:50,170 --> 00:02:52,290
- of efficiency and range.
+00:02:46,490 --> 00:02:48,570
+ I'll talk outside and show you what this thing looks like.
 
 45
-00:02:52,290 --> 00:02:58,450
- This is a 235/45 R21 on the front and on the back the same 235/45 R21.
+00:02:48,570 --> 00:02:53,880
+ It is a striking new design for Lexus.
 
 46
-00:02:58,450 --> 00:03:04,500
- So a squared setup on this and there are styling cues around this that do tell me that it is
+00:02:53,880 --> 00:03:00,890
+ This is painted in Iridium Silver, nice-looking color on this ES, a little bit of language
 
 47
-00:03:04,500 --> 00:03:05,500
- an Lexus.
+00:03:00,890 --> 00:03:07,950
+ taken from the Camry, from the Prius, from a lot of Toyota's new models.
 
 48
-00:03:05,500 --> 00:03:11,250
- For the most part I mean this thing just looks brand new.
+00:03:07,950 --> 00:03:13,510
+ This has the standard 19-inch wheels, 19s are the only wheel option on the Hybrid, as
 
 49
-00:03:11,250 --> 00:03:13,810
- Massive trunk well it looks brand new because it is.
+00:03:13,510 --> 00:03:15,510
+ a jet flies over us.
 
 50
-00:03:13,810 --> 00:03:18,570
- Massive trunk me when I have it prepared for a car review you guys are seeing the raw version
+00:03:15,510 --> 00:03:25,310
+ Anyway, these are 235 and 55R19 Bridgestone Turanza EL450 tires, quiet, grippy, efficient,
 
 51
-00:03:18,570 --> 00:03:19,570
- of me today.
+00:03:25,310 --> 00:03:26,310
+ you guys know the deal.
 
 52
-00:03:19,570 --> 00:03:23,050
- I've got my backpack here in the trunk along with what looks like the charging cable.
+00:03:26,310 --> 00:03:29,010
+ Take a look at the side profile.
 
 53
-00:03:23,050 --> 00:03:29,650
- We've got a first aid kit and some other stuff and then underneath here we have well nothing.
+00:03:29,010 --> 00:03:35,650
+ Look at these new door handles, they actually work really well while maintaining some aerodynamic
 
 54
-00:03:29,650 --> 00:03:33,130
- There's a little bit of extra storage with this little foam insert but that is it but
+00:03:35,650 --> 00:03:37,190
+ advantages.
 
 55
-00:03:33,130 --> 00:03:37,130
- this is a seriously big trunk and especially for an EV I guess when you have batteries
+00:03:37,190 --> 00:03:44,020
+ The rear view of this new ES is pretty striking, I like the roofline, the way it tapers down
 
 56
-00:03:37,130 --> 00:03:43,010
- and things underneath it's nice to see a big open space for should I say it golf clubs
+00:03:44,020 --> 00:03:45,020
+ into the trunk.
 
 57
-00:03:43,010 --> 00:03:45,170
- because they will they will go in.
+00:03:45,020 --> 00:03:52,730
+ Now I have a Lexus text instead of a full-on Lexus badge.
 
 58
-00:03:45,170 --> 00:03:46,930
- Okay let's check out the back seat.
+00:03:52,730 --> 00:03:59,060
+ All ES trunks are power-operated, and then there is just an enormous amount of trunk
 
 59
-00:03:46,930 --> 00:03:52,600
- These door handles are electronic you just reach in and open them but like the new Highlander
+00:03:59,060 --> 00:04:00,340
+ space in the back of this.
 
 60
-00:03:52,600 --> 00:03:56,920
- we have these manual releases on the outside as well in case those electronic door handles
+00:04:00,340 --> 00:04:05,750
+ Again, this package is both a Hybrid and an EV, you get tons of room in the back no matter
 
 61
-00:03:56,920 --> 00:03:58,400
- fail.
+00:04:05,750 --> 00:04:06,750
+ what you're running.
 
 62
-00:03:58,400 --> 00:04:02,360
- On the inside told you guys this has the white interior and since this is the premium we
+00:04:06,750 --> 00:04:10,330
+ I'm just going to put the backpack here so it doesn't fly around during the review.
 
 63
-00:04:02,360 --> 00:04:10,180
- don't have the crazy power back seats like you get in the luxury but it is still a decent
+00:04:10,330 --> 00:04:15,080
+ Press this button to close that trunk, look at that opening.
 
 64
-00:04:10,180 --> 00:04:14,180
- place to be back here at five foot eleven sat behind myself I've just got loads of room
+00:04:15,080 --> 00:04:19,950
+ Taillights are pretty cool-looking, you've got that single strip in the back.
 
 65
-00:04:14,180 --> 00:04:18,740
- and you do kind of sit a little bit leaned back in this like a proper luxury sedan so
+00:04:19,950 --> 00:04:26,710
+ This will do almost 600 miles on a tank, so hybrid range here with the ES350h is fantastic.
 
 66
-00:04:18,740 --> 00:04:22,580
- we love to see that too otherwise back here not a whole lot going on there's a couple
+00:04:26,710 --> 00:04:33,070
+ We've got a couple USB ports back here and this premium vents, and that's kind of about
 
 67
-00:04:22,580 --> 00:04:27,660
- USB-C ports some climate vents you've got a fold-down armrest with some cup holders
+00:04:33,070 --> 00:04:34,070
+ it.
 
 68
-00:04:27,660 --> 00:04:32,860
- that pop out from there lucky guess and then I thought maybe this was a console but now
+00:04:34,070 --> 00:04:40,660
+ Enormous amounts of legroom, look at this, this is just Lexus LS amounts of legroom back
 
 69
-00:04:32,860 --> 00:04:36,660
- I'm thinking it's not I think it's just a really big armrest and you've got a spot for
+00:04:40,660 --> 00:04:42,420
+ here.
 
 70
-00:04:36,660 --> 00:04:42,260
- a phone right there hopefully someday I can drive the luxury trim too because that's what
+00:04:42,420 --> 00:04:48,210
+ Nice materials, this is the new Luxe interior, got some cup holders, water bottle holders
 
 71
-00:04:42,260 --> 00:04:46,100
- I'm really looking forward to black headliner I think that contrasts nicely with this white
+00:04:48,210 --> 00:04:50,010
+ right there.
 
 72
-00:04:46,100 --> 00:04:50,700
- interior and then you have a little drivetrain hump in here as well but I think you could
+00:04:50,010 --> 00:04:53,570
+ Just a nice, open, spacious, airy interior.
 
 73
-00:04:50,700 --> 00:04:55,740
- probably still sit in the middle okay my head does touch the ceiling here in the middle
+00:04:53,570 --> 00:04:56,230
+ Pretty low beltline with the windows.
 
 74
-00:04:55,740 --> 00:04:59,980
- so maybe treat this as a bit of a four passenger setup but you do seriously sink down into
+00:04:56,230 --> 00:05:00,550
+ I think this is a very nice place to be, it's very quiet in here too.
 
 75
-00:04:59,980 --> 00:05:07,120
- these back seats and they do feel really nice got the Lexus NX and RX style door buttons
+00:05:00,550 --> 00:05:05,620
+ Of course you've got these same electronically operated door handles, you can pull them out
 
 76
-00:05:07,120 --> 00:05:11,760
- to get out but of course these act as a manual release as well you pull those twice and you
+00:05:05,620 --> 00:05:09,940
+ twice to manually operate them if something happens, but it's nice to just have these
 
 77
-00:05:11,760 --> 00:05:17,540
- can get yourself out if the battery is dead or something like that now we're gonna find
+00:05:09,940 --> 00:05:14,540
+ that are easy to operate.
 
 78
-00:05:17,540 --> 00:05:22,500
- out together if this has a frunk or not because I have not opened this yet so let's go ahead
+00:05:14,540 --> 00:05:21,020
+ Pop the hood, take a look at this 2.5 liter naturally aspirated engine.
 
 79
-00:05:22,500 --> 00:05:29,200
- and find out and see not holding my breath but hey it's a $56,000 luxury car so maybe
+00:05:21,020 --> 00:05:27,350
+ Lots of beeping and bonging, we have hood struts, look at that.
 
 80
-00:05:29,200 --> 00:05:34,440
- it does I'm gonna lean towards no it's just a big piece of plastic under here but at least
+00:05:27,350 --> 00:05:33,580
+ This all looks very well packaged, nicely presented here with the plastic engine cover,
 
 81
-00:05:34,440 --> 00:05:39,360
- it doesn't just have everything exposed I don't want to mess with this because many
+00:05:33,580 --> 00:05:35,940
+ and it's going to be enormously efficient.
 
 82
-00:05:39,360 --> 00:05:43,720
- other people have to drive it today so I guess that's it that's all you get under the hood
+00:05:35,940 --> 00:05:41,140
+ This is Lexus' 6th generation hybrid system, it's smoother, it's quieter, it's more refined,
 
 83
-00:05:43,720 --> 00:05:49,160
- of the new electric Lexus ES excited to experience the hybrid too but this is our choice for
+00:05:41,140 --> 00:05:48,930
+ and it takes 0W8 engine oil, look at that.
 
 84
-00:05:49,160 --> 00:05:53,720
- today the EV now okay all right now we have to get an elephant out of the room of course
+00:05:48,930 --> 00:05:50,810
+ Can't wait for 0W0 someday.
 
 85
-00:05:53,720 --> 00:05:59,940
- what was everyone's initial reaction when they saw the press release and all of the
+00:05:50,810 --> 00:05:57,700
+ Check out these door handles, there's a little, it's an actual button that you pull inside
 
 86
-00:05:59,940 --> 00:06:05,720
- photos when they announced this new Lexus ES well that was of course the entire new
+00:05:57,700 --> 00:06:00,120
+ the handle.
 
 87
-00:06:05,720 --> 00:06:10,780
- dashboard display which got rid of a lot of the physical controls now if you're new to
+00:06:00,120 --> 00:06:02,840
+ Super easy to use, very satisfying.
 
 88
-00:06:10,780 --> 00:06:16,260
- tow for drives I'm not the biggest fan of this sort of setup however I am relieved to
+00:06:02,840 --> 00:06:08,000
+ More buttons right here that are kind of hidden and integrated nicely into the dashboard material.
 
 89
-00:06:16,260 --> 00:06:21,120
- see that we still have a volume knob we still have standalone controls for climate we have
+00:06:08,000 --> 00:06:11,920
+ 3 seat memory settings, auto up/down windows for all four corners.
 
 90
-00:06:21,120 --> 00:06:24,540
- our hazard switch here in the middle and we even have our little memory seat controls
+00:06:11,920 --> 00:06:15,280
+ You've got a button right here to pop your trunk, your fuel filler cap, and then here's
 
 91
-00:06:24,540 --> 00:06:28,000
- over here on the left so let's go ahead and start this up and we'll talk about it some
+00:06:15,280 --> 00:06:18,440
+ your gauge cluster brightness, that's a physical switch.
 
 92
-00:06:28,000 --> 00:06:42,090
- more you can see this ES 500e charged up to 100% showing 270 miles of range on this very
+00:06:18,440 --> 00:06:26,720
+ So at least that's not hidden somewhere, thank you Lexus for giving us that.
 
 93
-00:06:42,090 --> 00:06:47,770
- interesting like floating gauge cluster with like Alcantara behind it that's kind of cool
+00:06:26,720 --> 00:06:28,180
+ It's a nice looking interior.
 
 94
-00:06:47,770 --> 00:06:54,130
- to see I'll be honest okay and this is kind of the way things go when photos are released
+00:06:28,180 --> 00:06:33,140
+ At first I was a big fan of this rubberized steering wheel material, but after using it
 
 95
-00:06:54,130 --> 00:06:58,330
- initially of cars they always do seem worse in the photographs and this does actually
+00:06:33,140 --> 00:06:36,360
+ for about an hour, I'm not so sure.
 
 96
-00:06:58,330 --> 00:07:03,170
- feel pretty decent inside obviously I would like to have a more standalone climate control
+00:06:36,360 --> 00:06:39,860
+ It just feels kind of plasticky, but I guess it's okay.
 
 97
-00:07:03,170 --> 00:07:09,180
- unit in here but this is interesting I've never seen this before it's leather they've
+00:06:39,860 --> 00:06:44,660
+ It's super smooth, you've got nice paddle shifters behind the wheel, turn signal operation
 
 98
-00:07:09,180 --> 00:07:17,080
- got you're pressing on leather to do this so that's that's very interesting and then
+00:06:44,660 --> 00:06:50,620
+ feels really good here, and then we've got physical buttons for our cruise control, and
 
 99
-00:07:17,080 --> 00:07:20,540
- the volume knob here in the middle is neural since this is the premium we don't have the
+00:06:50,620 --> 00:06:53,340
+ our track volume selection, all that stuff.
 
 100
-00:07:20,540 --> 00:07:24,580
- upgraded Mark Levinson sound system so just a base system in this and when we get this
+00:06:53,340 --> 00:06:57,900
+ These lower buttons feel really nice in hand, they're kind of grippy and knurled, which
 
 101
-00:07:24,580 --> 00:07:28,460
- back at home we'll do a full test and you know all of our normal stuff but today we're
+00:06:57,900 --> 00:06:58,900
+ feels very good.
 
 102
-00:07:28,460 --> 00:07:34,400
- just kind of taking this all in together cup holders hide away you've got a wireless charger
+00:06:58,900 --> 00:07:02,020
+ And then you've got a bunch of configurations here for your gauge clusters.
 
 103
-00:07:34,400 --> 00:07:39,980
- up here in front of it little Porsche 911 bronze shaver style shifter here in the middle
+00:07:02,020 --> 00:07:06,620
+ Of course you can customize this, variations on a theme from what we've seen from Lexus
 
 104
-00:07:39,980 --> 00:07:46,040
- and then typical Lexus we have this center console that opens both ways now another big
+00:07:06,620 --> 00:07:10,330
+ and Toyota and their other cluster designs.
 
 105
-00:07:46,040 --> 00:07:49,560
- change that they've done they've been doing with some of these newer cars they're ditching
+00:07:10,330 --> 00:07:13,090
+ So you've got a nice EcoCharge power meter there.
 
 106
-00:07:49,560 --> 00:07:54,360
- the Lexus badge in favor of the Lexus script we're seeing other companies do this Mazda
+00:07:13,090 --> 00:07:16,250
+ I like this dual pod layout, it's pretty useful.
 
 107
-00:07:54,360 --> 00:07:58,680
- is doing this now too but the actual design of the steering wheel I don't hate it you
+00:07:16,250 --> 00:07:20,000
+ Let's delve into this infotainment system some.
 
 108
-00:07:58,680 --> 00:08:04,130
- know I don't know that I completely love it and the buttons on here seem to be about the
+00:07:20,000 --> 00:07:25,560
+ So we've got our native navigation, you've got some different widgets here showing you
 
 109
-00:08:04,130 --> 00:08:08,690
- same as the ones below the screen it's kind of like this leather material that we have
+00:07:25,560 --> 00:07:31,560
+ your music, your phone, your drive mode, and then you can customize all of this stuff,
 
 110
-00:08:08,690 --> 00:08:14,970
- over this stuff which is better under first impressions than the buttons that aren't labeled
+00:07:31,560 --> 00:07:32,560
+ which is great.
 
 111
-00:08:14,970 --> 00:08:20,650
- in the RX and the NX where you have to kind of use the head-up display to operate those
+00:07:32,560 --> 00:07:37,790
+ You can see your weather, your media, and then save all of that.
 
 112
-00:08:20,650 --> 00:08:24,350
- power just steering column in this nice to see considering this is the entry trim for
+00:07:37,790 --> 00:07:39,430
+ Very cool.
 
 113
-00:08:24,350 --> 00:08:32,670
- the 500e white seat belts and seems like pretty good seat adjustment infotainment I think
+00:07:39,430 --> 00:07:44,470
+ The climate menu doesn't really give you much more functionality, I guess you can customize
 
 114
-00:08:32,670 --> 00:08:38,760
- is also new definitely looks new yeah this is definitely a new infotainment system we've
+00:07:44,470 --> 00:07:50,090
+ different things like S-Flow, de-icer, and then auto-adjust the seat temperature, but
 
 115
-00:08:38,760 --> 00:08:42,800
- got constant icons here on the bottom for your heated seats ventilated seats whatever
+00:07:50,090 --> 00:07:54,370
+ most of your controls for temperature and fan speed are easily accessible right here.
 
 116
-00:08:42,800 --> 00:08:47,600
- this has an auto function as well heated steering wheel vent speed controls are all right here
+00:07:54,370 --> 00:07:58,090
+ Some of these icons are a little bit small, but you've got a little ridge underneath the
 
 117
-00:08:47,600 --> 00:08:52,590
- your auto button I mean at least you have temperature controls but I really do hate
+00:07:58,090 --> 00:08:01,410
+ screen to rest and stabilize your hand, which I appreciate.
 
 118
-00:08:52,590 --> 00:08:56,470
- this trend lately where we're just we're taking climate control panels away I don't know that
+00:08:01,410 --> 00:08:06,710
+ Of course, heated and ventilated seats, heated steering wheel, all that stuff, and then your
 
 119
-00:08:56,470 --> 00:09:00,450
- that's necessarily the answer but whatever let's go drive it see what it's like into
+00:08:06,710 --> 00:08:08,830
+ temperature control is right there.
 
 120
-00:09:00,450 --> 00:09:10,320
- reverse we have a reversing camera and no 360 cam but we do have a little washer there
+00:08:08,830 --> 00:08:13,990
+ Volume is a nice slider, and like I mentioned earlier, we only get a reverse camera in this
 
 121
-00:09:10,320 --> 00:09:16,470
- when I've just gotten blue fluid all over the back of the car sorry Lexus into drive
+00:08:13,990 --> 00:08:19,280
+ premium Lexus ES 350h.
 
 122
-00:09:16,470 --> 00:09:24,520
- since we have no 360 camera that will not pull up any sort of front camera here we go
+00:08:19,280 --> 00:08:21,200
+ Anything else I need to cover?
 
 123
-00:09:24,520 --> 00:09:30,080
- let's see what this thing is like to drive now I am expecting this to be absolutely whisper
+00:08:21,200 --> 00:08:28,360
+ Here are the visors, they slide, we've got a big panoramic sunroof there, the seats are
 
 124
-00:09:30,080 --> 00:09:39,840
- quiet because I don't think the Lexus ES is necessarily a bad candidate to be an EV because
+00:08:28,360 --> 00:08:32,800
+ nice and thin, but very well padded and comfortable, appreciate that.
 
 125
-00:09:39,840 --> 00:09:44,320
- it's just it's never really been about performance with this car it's just about being comfortable
+00:08:32,800 --> 00:08:37,680
+ You can hide your water bottle and cup holders with this, and there's a little bit of storage
 
 126
-00:09:44,320 --> 00:09:51,000
- about being quiet and about having room to go to the golf course so it should still be
+00:08:37,680 --> 00:08:41,360
+ underneath here, as well as some ambient lighting that you probably can't see too well during
 
 127
-00:09:51,000 --> 00:10:05,370
- able to do all of that and maybe in an even quieter way speed there's our GMC Sierra that
+00:08:41,360 --> 00:08:43,590
+ the day right now.
 
 128
-00:10:05,370 --> 00:10:12,680
- we drove here that other people are now driving nice hopefully they save us some fuel to get
+00:08:43,590 --> 00:08:52,170
+ Let's head out onto the road, we will enable our route, we've got a route to scan here,
 
 129
-00:10:12,680 --> 00:10:20,160
- home you know what let's go straight into sport and see what performance is like in
+00:08:52,170 --> 00:09:08,100
+ and let's give you guys some first driving impressions on this new Lexus ES.
 
 130
-00:10:20,160 --> 00:10:33,910
- this right off the bat why not okay not too bad for 338 horsepower okay regen braking
+00:09:08,100 --> 00:09:21,210
+ Doing Austin Powers four-point turn here, looks like we're going right, so we don't
 
 131
-00:10:33,910 --> 00:10:37,470
- limited probably because we have 100% charge so not much it can do with that we do have
+00:09:21,210 --> 00:09:23,850
+ need to wait ten minutes for this traffic light to turn.
 
 132
-00:10:37,470 --> 00:10:40,750
- the steering wheel mounted paddle shifters to adjust your regen however it seems like
+00:09:23,850 --> 00:09:31,760
+ The biggest thing you notice with this new ES is just how smooth and torquey it is.
 
 133
-00:10:40,750 --> 00:10:47,450
- right now they're not really doing a whole lot let's put this back into normal that is
+00:09:31,760 --> 00:09:34,910
+ Very little engine noise, very little NVH.
 
 134
-00:10:47,450 --> 00:11:05,700
- the quintessential drive mode for Lexus ES but just take a second to soak in wow yeah
+00:09:34,910 --> 00:09:41,340
+ The ride is slightly firmer than I was expecting it to be, for what this car is, but once you
 
 135
-00:11:05,700 --> 00:11:14,390
- this is properly quiet also might not be the biggest fan of the design of the steering
+00:09:41,340 --> 00:09:46,660
+ get up to speed, it seems really nicely damped, and really well isolated.
 
 136
-00:11:14,390 --> 00:11:27,730
- wheel but I do really like the way it feels in the hands and it looks like this has somewhat
+00:09:46,660 --> 00:10:01,270
+ Good body control, it's a nice blend between sporting intentions but also good ride comfort.
 
 137
-00:11:27,730 --> 00:11:50,040
- of a driver assist system here as well yep it does okay nice you have a brakes feel brakes
+00:10:01,270 --> 00:10:12,500
+ Throttle response, even in normal mode, is pretty instant, and overall power feels great.
 
 138
-00:11:50,040 --> 00:12:04,670
- feel pretty natural for an EV yeah I mean it's just adequate power for something like
+00:10:12,500 --> 00:10:19,310
+ Brake pedal calibration, linear, responsive, none of that hybrid squish that sometimes
 
 139
-00:12:04,670 --> 00:12:09,230
- this I know these days like we're so used to EVs having a thousand horsepower and going
+00:10:19,310 --> 00:10:22,760
+ we get in Toyota and Lexus hybrids.
 
 140
-00:12:09,230 --> 00:12:14,190
- zero to 60 in two and a half seconds like the Rivian R1T I was just driving but do you
+00:10:22,760 --> 00:10:26,720
+ Everything just feels a little bit tighter, a little bit better calibrated in this new
 
 141
-00:12:14,190 --> 00:12:19,150
- really need more than 338 horsepower I don't know I don't know how much torque this has
+00:10:26,720 --> 00:10:29,190
+ ES.
 
 142
-00:12:19,150 --> 00:12:23,750
- because Toyota and Lexus is weird about releasing torque figures for EVs and hybrids but I'd
+00:10:29,190 --> 00:10:35,580
+ And I feel like even though this is a pretty basic, simple interior, it's functional enough,
 
 143
-00:12:23,750 --> 00:12:27,790
- imagine it's probably somewhere around that 338 mark I read something that said it was
+00:10:35,580 --> 00:10:39,740
+ the stuff that is in the screen is easily and quickly accessible, and the materials
 
 144
-00:12:27,790 --> 00:12:33,470
- like 324 I don't know if that's true or not wasn't a verified source under first impressions
+00:10:39,740 --> 00:10:45,380
+ feel like an improvement over what Lexus has maybe been giving us over the last couple
 
 145
-00:12:33,470 --> 00:12:42,660
- this is just ultra serene in this car quite nice okay let's go back into sport take some
+00:10:45,380 --> 00:10:51,520
+ years in some of their new products.
 
 146
-00:12:42,660 --> 00:12:55,740
- corners here get a little bit of piped in engine noise there I'm not engine noise motor
+00:10:51,520 --> 00:11:17,780
+ No shakes, no rattles, very little wind noise in this new ES, 44 horsepower for getting
 
 147
-00:12:55,740 --> 00:13:16,380
- noise does come to a halt pretty well brake pedal feels great I imagine we do have some
+00:11:17,780 --> 00:11:18,780
+ in front of the Prius.
 
 148
-00:13:16,380 --> 00:13:21,380
- programmable shortcuts or we can try this ask Lexus thing that's what we should do test
+00:11:18,780 --> 00:11:31,420
+ Alright.
 
 149
-00:13:21,380 --> 00:13:31,560
- out the new infotainment hey Lexus put me into sport mode sorry I didn't get that I
+00:11:31,420 --> 00:11:40,970
+ It also feels surprisingly light and nimble on its feet, agile, I have good visibility.
 
 150
-00:13:31,560 --> 00:13:42,890
- think I'm already in hey Lexus turn my heated seat on setting driver seat there you go interesting
+00:11:40,970 --> 00:11:44,450
+ If you want the full summary, it's a perfectly fine automobile.
 
 151
-00:13:42,890 --> 00:13:56,550
- it's a man's voice hey Lexus navigate to the Ashtoff Resort Aston Flats on East Rhine Street
+00:11:44,450 --> 00:11:50,050
+ I don't think it's outrageously priced, I could do with some premium plus features in
 
 152
-00:13:56,550 --> 00:14:06,980
- is about six minutes away no no you can confirm you're just no okay well you know maybe it
+00:11:50,050 --> 00:11:51,590
+ this.
 
 153
-00:14:06,980 --> 00:14:17,330
- could use a little bit of work but we at least we have a voice assistant definitely not as
+00:11:51,590 --> 00:11:57,650
+ Now the EV has a luxury trim, but you save a little bit of money with the EV too, trim
 
 154
-00:14:17,330 --> 00:14:23,450
- good as some other ones that I've tested recently but whatever okay that is very a very hot
+00:11:57,650 --> 00:11:58,650
+ to trim.
 
 155
-00:14:23,450 --> 00:14:38,060
- heated seat let's get this off the line I think I'm still in sport mode I am okay there
+00:11:58,650 --> 00:12:00,610
+ This is about $2,000 going with the EV.
 
 156
-00:14:38,060 --> 00:14:45,150
- you go zero to sixty in I think claimed like five and a half seconds feels about right
+00:12:00,610 --> 00:12:05,090
+ Of course you could always get this in all-wheel drive if you need it, but this has great traction
 
 157
-00:14:45,150 --> 00:14:57,820
- let's try eco mode eco mode and we'll talk about things that actually matter in this
+00:12:05,090 --> 00:12:09,630
+ in the drive as a front-wheel drive platform.
 
 158
-00:14:57,820 --> 00:15:03,420
- car like ride quality which seems to be fantastic even on these larger wheels with a smaller
+00:12:09,630 --> 00:12:13,750
+ First time Lexus is ever offering the ES as an all-wheel drive configuration.
 
 159
-00:15:03,420 --> 00:15:12,970
- sidewall ride quality seems to be good I'm also not hearing any super invasive NVH or
+00:12:13,750 --> 00:12:18,490
+ I mean, they have the powertrains, why not swap them in?
 
 160
-00:15:12,970 --> 00:15:30,570
- interior rattles in this a little bit of volume there from some of these expansion joints
+00:12:18,490 --> 00:12:23,910
+ It's kind of a surprise seeing Toyota add so many EV options to the lineup, it's basically
 
 161
-00:15:30,570 --> 00:15:38,520
- here on these lovely Wisconsin roads reminds me of Michigan even using the brake pedal
+00:12:23,910 --> 00:12:29,280
+ just the same packs that we've seen with the BZs, and they're just putting them in a bunch
 
 162
-00:15:38,520 --> 00:15:45,020
- here okay coming up to a stop one thing I found quite hard to do with EVs that can't
+00:12:29,280 --> 00:12:33,610
+ of different models.
 
 163
-00:15:45,020 --> 00:15:50,720
- fully one pedal drive is completing a limo stop and you're able to do a limo stop here
+00:12:33,610 --> 00:12:40,490
+ But the luxury ES has a lot more features, it's got lounge chairs in the back.
 
 164
-00:15:50,720 --> 00:16:15,270
- in this in this ES500e which is important for something like this steering is I don't
+00:12:40,490 --> 00:12:45,970
+ But if you just want a Lexus ES, the bare necessity, the bare-bones experience that
 
 165
-00:16:15,270 --> 00:16:21,860
- know that I'd say ultralight but it's quite light and it still has that velvety feeling
+00:12:45,970 --> 00:12:52,090
+ gives you the luxurious feel and the look, this ES 350h I think is probably going to
 
 166
-00:16:21,860 --> 00:16:35,890
- that I always think of when I think of Lexus okay well that's just about gonna be it we
+00:12:52,090 --> 00:12:53,090
+ be the way to go.
 
 167
-00:16:35,890 --> 00:16:40,890
- really only have about 20 minutes with these cars here at this event so I'm gonna flash
+00:12:53,090 --> 00:12:59,010
+ It's got tons and tons of driving range as a hybrid, super fuel-efficient, very comfortable.
 
 168
-00:16:40,890 --> 00:16:46,230
- my pink wristband at this guy and he's gonna let me in give me the thumbs up thank you
+00:12:59,010 --> 00:13:04,640
+ I think it kind of hits the nail on the head and does what you need it to do.
 
 169
-00:16:46,230 --> 00:16:51,210
- sir and they've got some speed bumps here this year too so test out the ride quality
+00:13:04,640 --> 00:13:09,160
+ Really, the only thing I feel like I'm lacking in here is the Mark Levinson sound and a 360
 
 170
-00:16:51,210 --> 00:16:58,220
- a little bit more we sometimes like to get some sound clips here in the tunnel but I
+00:13:09,160 --> 00:13:15,810
+ cam, and you can option those things.
 
 171
-00:16:58,220 --> 00:17:14,090
- don't know let's test out the exterior EV noise that we have with this thing not a whole
+00:13:15,810 --> 00:13:33,480
+ Let's do a sound system test with our standard sound system here, and see what that's like.
 
 172
-00:17:14,090 --> 00:17:23,280
- lot of anything but very quiet window motors how about that another little baby speed bump
+00:13:33,480 --> 00:13:47,410
+ Volume controls here to the left, we're going to get a left lane on some of this traffic.
 
 173
-00:17:23,280 --> 00:17:35,760
- we're gonna jump in here and wrap up right where we started okay well under first impressions
+00:13:47,410 --> 00:13:49,530
+ Still very clear.
 
 174
-00:17:35,760 --> 00:17:42,080
- this seems exactly how it should be for a Lexus ES electrified which is just what this
+00:13:49,530 --> 00:14:19,510
+ Honestly, first impressions, this premium/base model sound system sounds great.
 
 175
-00:17:42,080 --> 00:17:47,620
- is feel bad doubting Lexus a little bit but from seeing the initial launch photos with
+00:14:19,510 --> 00:14:23,030
+ I mean, they're still calling the base model a premium, and then you can upgrade to the
 
 176
-00:17:47,620 --> 00:17:51,620
- this new interior I was a little bit scared but it does seem decently intuitive again
+00:14:23,030 --> 00:14:33,380
+ premium plus with the hybrid, and you get the EV if you want to get into luxury, etc.
 
 177
-00:17:51,620 --> 00:17:55,060
- I still have to live with this car so I can't really give you guys like a definitive answer
+00:14:33,380 --> 00:14:36,980
+ Maybe not as sweet as the Mark Levinson would be.
 
 178
-00:17:55,060 --> 00:18:03,720
- yet on what this is like but under first impressions does seem pretty good so okay well that's
+00:14:36,980 --> 00:14:39,780
+ I haven't listened to the Mark Levinson yet, but this is great.
 
 179
-00:18:03,720 --> 00:18:09,680
- gonna wrap it up for this very quick untraditional tow for drives video gives you an option to
+00:14:39,780 --> 00:14:51,100
+ For $53,000, this is a fantastic sound system.
 
 180
-00:18:09,680 --> 00:18:14,780
- open your charge port when you turn off that's nice I mean the car is still at 99% so don't
+00:14:51,100 --> 00:14:59,710
+ I also feel like this is a really nice interior direction for a Lexus.
 
 181
-00:18:14,780 --> 00:18:19,810
- know that I really need to be offered that right now but there you go let's give you
+00:14:59,710 --> 00:15:03,850
+ I like the functionality, I like the layout and organization of everything.
 
 182
-00:18:19,810 --> 00:18:28,660
- guys one last look here at this ES 500e what seems to be quite a nice effort here from
+00:15:03,850 --> 00:15:05,910
+ It's just easy to acclimate to and easy to use.
 
 183
-00:18:28,660 --> 00:18:33,440
- Lexus I mean we know that they're not really the best with EVs at the moment the RZ was
+00:15:05,910 --> 00:15:10,990
+ I jumped into this car and immediately had an idea of where everything should be, and
 
 184
-00:18:33,440 --> 00:18:36,680
- a bit of a flop when it came out I know that's just been updated recently to have some more
+00:15:10,990 --> 00:15:15,200
+ even in the infotainment where stuff could be buried a little bit deeper here and there,
 
 185
-00:18:36,680 --> 00:18:40,440
- range and we may see someday this have over 300 miles but Lexus you know they're usually
+00:15:15,200 --> 00:15:19,990
+ I felt like I had a good grasp on where different settings should be.
 
 186
-00:18:40,440 --> 00:18:44,120
- pretty conservative with their range on these EVs so gotta let me know if you guys think
+00:15:19,990 --> 00:15:24,710
+ They pretty much moved a lot of the settings into here, instead of splitting them up between
 
 187
-00:18:44,120 --> 00:18:47,920
- it's worth it and one day we'll get into the hybrid as well I don't think the hybrid is
+00:15:24,710 --> 00:15:28,940
+ the screen and the gauge cluster, which I appreciate.
 
 188
-00:18:47,920 --> 00:18:52,520
- quite out yet I think that's coming in June a little bit later this year well I guess
+00:15:28,940 --> 00:15:31,370
+ I don't really have any complaints about this interior space.
 
 189
-00:18:52,520 --> 00:18:57,600
- June is next month jeez that's pretty crazy but alright that's gonna be it thank you guys
+00:15:31,370 --> 00:15:35,090
+ I think it does exactly what it needs to do for the Lexus ES.
 
 190
-00:18:57,600 --> 00:19:00,600
- all so much for watching let me know if you have any questions about this or if I left
+00:15:35,090 --> 00:15:41,850
+ It's the exterior design that might be a point of contention for some buyers, whether they're
 
 191
-00:19:00,600 --> 00:19:04,700
- anything out I'm sure I did because we had very limited time but that's gonna wrap it
+00:15:41,850 --> 00:15:48,050
+ kind of into the swooping lines and crazy hard surfaces and all the things that Lexus
 
 192
-00:19:04,700 --> 00:19:07,950
- thank you again and we'll see you in the next one take care
+00:15:48,050 --> 00:15:50,330
+ has done with their new design language.
+
+193
+00:15:50,330 --> 00:15:52,970
+ I think people will ultimately get used to it.
+
+194
+00:15:52,970 --> 00:15:54,620
+ We always do.
+
+195
+00:15:54,620 --> 00:15:58,980
+ It's a pretty striking car to look at on first impressions, and it might turn off a few buyers
+
+196
+00:15:58,980 --> 00:16:16,030
+ who want something a bit more sedate and subdued, which is understandable.
+
+197
+00:16:16,030 --> 00:16:19,790
+ On a pretty bumpy section of road here, NVH is good.
+
+198
+00:16:19,790 --> 00:16:26,920
+ Again, it's just a couple bumps are a bit more harsh than I was expecting with this
+
+199
+00:16:26,920 --> 00:16:27,920
+ ES.
+
+200
+00:16:27,920 --> 00:16:38,790
+ It's not as Lexus soft as I wanted it to be.
+
+201
+00:16:38,790 --> 00:16:40,990
+ Driving around the city, it's super comfy.
+
+202
+00:16:40,990 --> 00:16:47,130
+ You've got throttle control is nice and linear, no complaints there.
+
+203
+00:16:47,130 --> 00:16:52,650
+ It'll remain in EV mode pretty readily at lower speeds, that transition from EV to internal
+
+204
+00:16:52,650 --> 00:16:59,990
+ combustion engine turning on is seamless, it's silent, barely notice it.
+
+205
+00:16:59,990 --> 00:17:34,790
+ I love how responsive this powertrain is.
+
+206
+00:17:34,790 --> 00:17:50,740
+ There's no adaptive suspension in this 350H Premium, so changing drive modes doesn't really
+
+207
+00:17:50,740 --> 00:17:58,570
+ do a whole lot except for steering, weight, and throttle response.
+
+208
+00:17:58,570 --> 00:18:03,370
+ Even though it's a much longer and larger car, it doesn't feel difficult or tedious to
+
+209
+00:18:03,370 --> 00:18:04,370
+ place on the road.
+
+210
+00:18:04,370 --> 00:18:15,280
+ It's still narrow enough to fit through small gaps.
+
+211
+00:18:15,280 --> 00:18:19,320
+ Seats are super comfortable, and great visibility from this driving position too.
+
+212
+00:18:19,320 --> 00:18:24,660
+ I don't know if we're going to get a chance to go on the highway with this route, so I
+
+213
+00:18:24,660 --> 00:18:27,900
+ will just kind of sum up some thoughts on that.
+
+214
+00:18:27,900 --> 00:18:35,780
+ The Toyota Safety, or sorry, Lexus Safety Assist 4.0, or whatever it's called, is fine.
+
+215
+00:18:35,780 --> 00:18:38,950
+ It's about the same as it's always been.
+
+216
+00:18:38,950 --> 00:18:42,750
+ The lane centering works well enough, it's not perfect.
+
+217
+00:18:42,750 --> 00:18:46,510
+ The lane change is something I could probably just do without.
+
+218
+00:18:46,510 --> 00:18:48,390
+ You have to keep your hands on the wheel, it does okay.
+
+219
+00:18:48,390 --> 00:18:51,950
+ There's a lot of beeping going on, it's whatever.
+
+220
+00:18:51,950 --> 00:18:56,150
+ Adaptive cruise control, following distance changes are easily made right here, and it's
+
+221
+00:18:56,150 --> 00:19:00,430
+ pretty much the same button layout that we've had in a lot of other Toyota models and Lexus
+
+222
+00:19:00,430 --> 00:19:04,710
+ models but just with this new pad here.
+
+223
+00:19:04,710 --> 00:19:08,110
+ And it seems to work just fine, everything is nicely differentiated, and I like that
+
+224
+00:19:08,110 --> 00:19:13,620
+ I don't have to look up into a head-up display to see what I'm pressing.
+
+225
+00:19:13,620 --> 00:19:18,300
+ Lexus is employing the use of wheel covers now, it's kind of interesting to see those
+
+226
+00:19:18,300 --> 00:19:19,300
+ make a comeback.
+
+227
+00:19:19,300 --> 00:19:26,940
+ When I was growing up, every car had hubcaps, and these are wheel covers for better aerodynamics,
+
+228
+00:19:26,940 --> 00:19:31,470
+ which they're basically hubcaps.
+
+229
+00:19:31,470 --> 00:19:39,490
+ Lexus has three interior options, this Palermo, which looks fantastic, black, and white.
+
+230
+00:19:39,490 --> 00:19:45,570
+ Something that I will note is that there is a built-in dash camera in all Lexus ES's now.
+
+231
+00:19:45,570 --> 00:19:49,450
+ It's hidden, so it's integrated into somewhere up here.
+
+232
+00:19:50,000 --> 00:19:54,760
+ going off pretty much every time I accelerated and hit the brakes so I had
+
+233
+00:19:54,760 --> 00:19:58,840
+ to go into the settings adjust that it was set to normal sensitivity which was
+
+234
+00:19:58,840 --> 00:20:05,240
+ not acting normally at all it was acting like I was just doing some crazy stuff
+
+235
+00:20:05,240 --> 00:20:09,080
+ driving around San Diego and I guess maybe I am a little bit but I don't know
+
+236
+00:20:09,080 --> 00:20:13,280
+ I turned the sensitivity completely off so that it only records when there's an
+
+237
+00:20:13,280 --> 00:20:20,540
+ airbag trigger and I guess you could manually record stuff otherwise or just
+
+238
+00:20:20,540 --> 00:20:27,270
+ tap into a looped recording from your drive it's not the most seamless
+
+239
+00:20:27,270 --> 00:20:37,850
+ integration of a dash cam but I think once you get used to it it's okay there
+
+240
+00:20:37,850 --> 00:20:44,840
+ is this home page where you can go up here and record an event so you can
+
+241
+00:20:44,840 --> 00:20:50,380
+ access that pretty quickly all right we're gonna get back to the resort and
+
+242
+00:20:50,380 --> 00:20:54,140
+ drive some other variants but those are some first impressions on the new Lexus
+
+243
+00:20:54,140 --> 00:20:59,950
+ ES we'll go see what the EV Lexus ES feels like and drives like and we'll
+
+244
+00:20:59,950 --> 00:21:03,470
+ come back to you guys with another video on those driving impressions until then
+
+245
+00:21:03,470 --> 00:21:06,320
+ thank you so much for watching we'll see you in the next one
