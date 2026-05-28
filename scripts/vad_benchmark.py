@@ -24,7 +24,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -242,11 +242,16 @@ def run_benchmark(video_path: str, params: VADParams, content_type: str = "gener
     elif coverage > cov_max:
         warnings.append(f"HIGH coverage {coverage:.1f}% > {cov_max}% — silence may not be detected")
 
-    if seg_stats.p5_ms < 500:
-        warnings.append(f"Many very short segments (P5={seg_stats.p5_ms}ms) — possible fragmentation")
+    if seg_stats.p5_ms < 300:
+        warnings.append(f"Very short segments (P5={seg_stats.p5_ms}ms) — min_speech_ms may be too low")
+    elif seg_stats.p5_ms < 500:
+        warnings.append(f"Short segments (P5={seg_stats.p5_ms}ms) — possible fragmentation")
+
+    if seg_stats.p95_ms > 15000:
+        warnings.append(f"Very long segments (P95={seg_stats.p95_ms}ms) — min_silence_ms/speech_pad_ms may over-merge")
 
     if warnings:
-        print(f"\n  WARNINGS:")
+        print("\n  WARNINGS:")
         for w in warnings:
             print(f"    {w}")
 
@@ -301,7 +306,11 @@ def print_report():
     print(f"\n{'='*90}")
     print("VAD Benchmark Report")
     print(f"{'='*90}")
-    print(f"Total: {len(results)} runs across {len(videos)} videos\n")
+    print(f"Total: {len(results)} runs across {len(videos)} videos")
+    if len(videos) < 3:
+        print(f"NOTE: n={len(videos)} — conclusions are provisional, need 3+ videos for stable parameters\n")
+    else:
+        print()
 
     for video_name, video_results in videos.items():
         dur = video_results[0].video_duration_s
@@ -331,14 +340,35 @@ def print_report():
     print("Recommended parameters (CIS > 0.90, highest gap density):")
     for video_name, video_results in videos.items():
         safe = [r for r in video_results if r.content_integrity >= 0.90]
+        n = len(video_results)
+        caveat = f" @ n={n}" if n < 5 else ""
         if safe:
             best = max(safe, key=lambda r: r.gap_density)
             p = best.params
             print(f"  {video_name}:")
-            print(f"    t={p.threshold} pad={p.speech_pad_ms} sil={p.min_silence_ms} min={p.min_speech_ms}")
+            print(f"    t={p.threshold} pad={p.speech_pad_ms} sil={p.min_silence_ms} min={p.min_speech_ms}{caveat}")
             print(f"    CIS={best.content_integrity:.3f} Cov={best.coverage_pct}% GapD={best.gap_density}/min")
         else:
             print(f"  {video_name}: NO SAFE PARAMETERS (all CIS < 0.90)")
+
+    # CIS trend analysis
+    print(f"\n{'='*90}")
+    print("CIS Trend Analysis:")
+    all_cis = [r.content_integrity for r in results]
+    if len(all_cis) < 3:
+        print(f"  Insufficient data ({len(all_cis)} samples). Need 3+ for trend analysis.")
+    else:
+        window = min(5, len(all_cis))
+        recent = all_cis[-window:]
+        slope = (recent[-1] - recent[0]) / window
+        avg_cis = statistics.mean(recent)
+        print(f"  Last {window} samples: CIS avg={avg_cis:.3f}, slope={slope:+.4f}/sample")
+        if slope < -0.01:
+            print(f"  WARNING: CIS trending downward ({slope:+.4f}/sample) — investigate parameter drift")
+        elif slope > 0.005:
+            print(f"  POSITIVE: CIS improving ({slope:+.4f}/sample)")
+        else:
+            print("  STABLE: CIS trend flat")
 
 
 def sensitivity_analysis(video_paths: List[str]):
