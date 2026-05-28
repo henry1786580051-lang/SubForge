@@ -55,3 +55,6 @@ videocaptioner/_version.py
 *.srt
 backend/*.srt
 !examples/*.srt
+
+# Benchmark results
+scripts/vad_benchmark_results.jsonl

@@ -1,6 +1,7 @@
 """Audio enhancement using DeepFilterNet3 for speech denoising."""
 
 import logging
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -49,22 +50,24 @@ def enhance_audio(input_path: str, output_path: str = None) -> str:
     import torch
     from df.enhance import enhance
 
+    if not input_path or not Path(input_path).is_file():
+        raise FileNotFoundError(f"Input audio not found: {input_path}")
+
     _load_model()
 
     if output_path is None:
         fd, output_path = tempfile.mkstemp(suffix="_enhanced.wav")
-        import os
         os.close(fd)
 
     # Convert input to 48kHz WAV (DeepFilterNet requires 48kHz)
     fd, temp_48k = tempfile.mkstemp(suffix="_48k.wav")
-    import os
     os.close(fd)
+    temp_enhanced_48k = None
 
     try:
         subprocess.run(
             ['ffmpeg', '-y', '-i', input_path, '-ac', '1', '-ar', '48000', temp_48k],
-            capture_output=True, check=True
+            capture_output=True, check=True,
         )
 
         # Load and enhance
@@ -91,20 +94,16 @@ def enhance_audio(input_path: str, output_path: str = None) -> str:
 
         subprocess.run(
             ['ffmpeg', '-y', '-i', temp_enhanced_48k, '-ac', '1', '-ar', '16000', output_path],
-            capture_output=True, check=True
+            capture_output=True, check=True,
         )
 
         logger.info(f"Enhanced audio saved: {output_path}")
         return output_path
 
     finally:
-        # Clean up temp files
-        for f in [temp_48k, temp_enhanced_48k if 'temp_enhanced_48k' in dir() else None]:
-            try:
-                if f:
-                    Path(f).unlink(missing_ok=True)
-            except Exception:
-                pass
+        for f in [temp_48k, temp_enhanced_48k]:
+            if f:
+                Path(f).unlink(missing_ok=True)
 
 
 def is_available() -> bool:
