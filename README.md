@@ -46,7 +46,7 @@ AI 驱动的视频字幕工具 — 语音转录、字幕优化、智能翻译，
 
 语音识别输出的原始文本通常是冗长的连续句子，直接作为字幕难以阅读。SubForge 使用 LLM 按语义自然断点重新分段。
 
-以「2026 Lexus ES 350h 试驾」视频为例：
+以「[2026 Lexus ES 350h 试驾](https://www.youtube.com/watch?v=mozncOwkny4)」视频为例：
 
 **ASR 原始输出**（Whisper 转录）：
 ```
@@ -105,7 +105,7 @@ SubForge 支持「反思翻译」模式（Inspired by Andrew Ng's Reflection Pat
 2. **反思** — 自动检测机翻痕迹：语序生硬、用词机械、文化不匹配、语域不当
 3. **重写** — 基于反思结果，输出母语者表达习惯的自然译文
 
-以「2026 Lexus ES 350h 试驾」为例，反思模式的实际效果：
+以「[2026 Lexus ES 350h 试驾](https://www.youtube.com/watch?v=mozncOwkny4)」为例，反思模式的实际效果：
 
 | 阶段 | 内容 |
 |------|------|
