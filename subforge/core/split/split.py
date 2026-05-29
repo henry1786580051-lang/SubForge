@@ -670,6 +670,7 @@ class SubtitleSplitter:
         1. 对每个LLM句子,寻找最佳匹配的ASRSegments序列
         2. 使用相似度算法进行匹配
         3. 合并匹配的Segments
+        4. 未匹配或间隙的ASR片段保守落回结果,保证不丢词
 
         Args:
             segments: ASRSegments列表
@@ -686,6 +687,15 @@ class SubtitleSplitter:
         def preprocess_text(s: str) -> str:
             """文本标准化:小写+空格规范化"""
             return " ".join(s.lower().split())
+
+        def _add_original_segments(start: int, end: int, reason: str) -> None:
+            """将原始ASR片段以原样加入结果,保证不丢词"""
+            for i in range(start, min(end, asr_len)):
+                logger.warning(
+                    f"Fallback segment [{reason}]: "
+                    f"index={i}, text={segments[i].text!r}"
+                )
+                new_segments.append(segments[i])
 
         asr_texts = [seg.text for seg in segments]
         asr_len = len(asr_texts)
@@ -739,6 +749,12 @@ class SubtitleSplitter:
                 start_seg_index = best_pos
                 end_seg_index = best_pos + best_window_size - 1
 
+                # 间隙片段保守落回:匹配位置之前有未覆盖的ASR片段
+                if start_seg_index > asr_index:
+                    _add_original_segments(
+                        asr_index, start_seg_index, "gap before match"
+                    )
+
                 segs_to_merge = segments[start_seg_index : end_seg_index + 1]
 
                 # 按时间切分避免跨度过大
@@ -763,10 +779,16 @@ class SubtitleSplitter:
             else:
                 logger.warning(f"Cannot match sentence: {sentence}")
                 unmatched_count += 1
+                # 未匹配的句子:将当前ASR片段以原样保留
+                _add_original_segments(asr_index, asr_index + 1, "unmatched sentence")
                 if unmatched_count > max_unmatched:
                     raise ValueError(f"Unmatched sentences exceeded threshold {max_unmatched},processing aborted")
                 max_shift = MATCH_LARGE_SHIFT
                 asr_index = min(asr_index + 1, asr_len - 1)
+
+        # 尾部片段保守落回:最后一个匹配之后还有未消费的ASR片段
+        if asr_index < asr_len:
+            _add_original_segments(asr_index, asr_len, "trailing segments")
 
         return new_segments
 
