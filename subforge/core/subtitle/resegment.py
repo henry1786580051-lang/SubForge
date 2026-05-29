@@ -17,6 +17,14 @@ DEFAULT_MAX_CHARS_CJK = 16  # CJK每行最大字符数
 DEFAULT_MAX_LINES = 2  # 每条字幕最大行数
 
 
+def _is_mainly_cjk(text: str) -> bool:
+    """判断文本是否主要是CJK字符"""
+    if not text:
+        return False
+    cjk_count = sum(1 for c in text if '一' <= c <= '鿿' or '぀' <= c <= 'ヿ' or '가' <= c <= '힯')
+    return cjk_count > len(text) * 0.3
+
+
 def resegment_subtitles(
     asr_data: ASRData,
     max_chars_en: int = DEFAULT_MAX_CHARS_EN,
@@ -38,15 +46,28 @@ def resegment_subtitles(
 
     for seg in asr_data.segments:
         # 处理原文和译文
-        en_text = seg.text.strip()
-        zh_text = seg.translated_text.strip() if seg.translated_text else ""
+        text1 = seg.text.strip()
+        text2 = seg.translated_text.strip() if seg.translated_text else ""
 
-        if not en_text and not zh_text:
+        if not text1 and not text2:
             continue
 
+        # 检测语言并分配正确的字符限制
+        # text 字段可能是中文也可能是英文，取决于布局
+        if _is_mainly_cjk(text1):
+            # text 是中文，translated_text 是英文
+            zh_text, en_text = text1, text2
+            zh_field = 'text'
+            en_field = 'translated_text'
+        else:
+            # text 是英文，translated_text 是中文
+            en_text, zh_text = text1, text2
+            en_field = 'text'
+            zh_field = 'translated_text'
+
         # 判断是否需要拆分
-        en_needs_split = _needs_split(en_text, max_chars_en, max_lines)
-        zh_needs_split = _needs_split(zh_text, max_chars_cjk, max_lines)
+        en_needs_split = _needs_split(en_text, max_chars_en, max_lines) if en_text else False
+        zh_needs_split = _needs_split(zh_text, max_chars_cjk, max_lines) if zh_text else False
 
         if not en_needs_split and not zh_needs_split:
             # 不需要拆分，直接保留
@@ -54,7 +75,8 @@ def resegment_subtitles(
         else:
             # 需要拆分
             split_segments = _split_segment(
-                seg, en_text, zh_text, max_chars_en, max_chars_cjk, max_lines
+                seg, en_text, zh_text, max_chars_en, max_chars_cjk, max_lines,
+                en_field, zh_field
             )
             new_segments.extend(split_segments)
 
@@ -79,6 +101,8 @@ def _split_segment(
     max_chars_en: int,
     max_chars_cjk: int,
     max_lines: int,
+    en_field: str = 'text',
+    zh_field: str = 'translated_text',
 ) -> List[ASRDataSeg]:
     """拆分单个字幕段
 
@@ -92,8 +116,8 @@ def _split_segment(
     zh_max_total = max_chars_cjk * max_lines
 
     # 将文本拆分成块
-    en_chunks = _split_text_to_chunks(en_text, en_max_total, max_chars_en)
-    zh_chunks = _split_text_to_chunks(zh_text, zh_max_total, max_chars_cjk)
+    en_chunks = _split_text_to_chunks(en_text, en_max_total, max_chars_en) if en_text else [""]
+    zh_chunks = _split_text_to_chunks(zh_text, zh_max_total, max_chars_cjk) if zh_text else [""]
 
     # 确定拆分数量（取最大值）
     num_splits = max(len(en_chunks), len(zh_chunks))
@@ -116,11 +140,12 @@ def _split_segment(
         en_formatted = _format_chunk(en_chunk, max_chars_en)
         zh_formatted = _format_chunk(zh_chunk, max_chars_cjk)
 
+        # 根据字段名分配文本
         new_seg = ASRDataSeg(
-            text=en_formatted,
+            text=en_formatted if en_field == 'text' else zh_formatted,
             start_time=start,
             end_time=end,
-            translated_text=zh_formatted,
+            translated_text=zh_formatted if zh_field == 'translated_text' else en_formatted,
             speaker_id=seg.speaker_id,
         )
         result.append(new_seg)
@@ -240,9 +265,57 @@ def _format_chunk(chunk: str, max_chars_per_line: int) -> str:
             line1 = chunk[:best_pos].strip()
             line2 = chunk[best_pos:].strip()
         else:
-            # 如果找不到好的断点，直接在中间断
-            line1 = chunk[:mid].strip()
-            line2 = chunk[mid:].strip()
+            # 如果找不到好的断点，尝试在合适的边界断
+            # 避免在数字中间断行（如 2026 -> 20\n26）
+            # 避免在字母+数字组合中间断行（如 FA24 -> FA\n24）
+            for i in range(mid, max(0, mid - 8), -1):
+                if i < len(chunk) - 1:
+                    curr = chunk[i]
+                    next_char = chunk[i + 1]
+
+                    # 在空格处断
+                    if curr == ' ' or next_char == ' ':
+                        if curr == ' ':
+                            line1 = chunk[:i].strip()
+                            line2 = chunk[i + 1:].strip()
+                        else:
+                            line1 = chunk[:i + 1].strip()
+                            line2 = chunk[i + 1:].strip()
+                        break
+
+                    # 在CJK标点处断
+                    if curr in '，。！？；：、':
+                        line1 = chunk[:i + 1].strip()
+                        line2 = chunk[i + 1:].strip()
+                        break
+                    if next_char in '，。！？；：、':
+                        line1 = chunk[:i + 1].strip()
+                        line2 = chunk[i + 1:].strip()
+                        break
+
+                    # 在数字和CJK文字之间断（但不在数字和字母之间断）
+                    if curr.isdigit() and '一' <= next_char <= '鿿':
+                        line1 = chunk[:i + 1].strip()
+                        line2 = chunk[i + 1:].strip()
+                        break
+                    if '一' <= curr <= '鿿' and next_char.isdigit():
+                        line1 = chunk[:i + 1].strip()
+                        line2 = chunk[i + 1:].strip()
+                        break
+
+                    # 在CJK文字和字母之间断
+                    if '一' <= curr <= '鿿' and next_char.isascii() and next_char.isalpha():
+                        line1 = chunk[:i + 1].strip()
+                        line2 = chunk[i + 1:].strip()
+                        break
+                    if curr.isascii() and curr.isalpha() and '一' <= next_char <= '鿿':
+                        line1 = chunk[:i + 1].strip()
+                        line2 = chunk[i + 1:].strip()
+                        break
+            else:
+                # 如果找不到好的断点，直接在中间断
+                line1 = chunk[:mid].strip()
+                line2 = chunk[mid:].strip()
 
     return f"{line1}\n{line2}"
 
