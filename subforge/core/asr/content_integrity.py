@@ -38,9 +38,10 @@ def compute_cis(
         CIS score (0.0 - 1.0+)
     """
     try:
-        from subforge.core.asr.silero_vad import run_vad_inference
-        from pydub import AudioSegment
         import numpy as np
+        from pydub import AudioSegment
+
+        from subforge.core.asr.silero_vad import run_vad_inference
 
         # Load audio
         audio = AudioSegment.from_file(audio_path)
