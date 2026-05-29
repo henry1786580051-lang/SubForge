@@ -1,6 +1,7 @@
 """字幕重断句模块
 
 翻译后的字幕可能包含过长的段落，需要重新断句以符合字幕显示要求。
+每条字幕只有一行中文 + 一行英文，如果太长就拆分成多条字幕。
 """
 
 import re
@@ -12,9 +13,8 @@ from subforge.core.utils.logger import setup_logger
 logger = setup_logger("subtitle_resegment")
 
 # 默认字符限制
-DEFAULT_MAX_CHARS_EN = 42  # 英文每行最大字符数（含空格）
-DEFAULT_MAX_CHARS_CJK = 16  # CJK每行最大字符数
-DEFAULT_MAX_LINES = 2  # 每条字幕最大行数
+DEFAULT_MAX_CHARS_EN = 50  # 英文每行最大字符数（含空格）
+DEFAULT_MAX_CHARS_CJK = 20  # CJK每行最大字符数
 
 
 def _is_mainly_cjk(text: str) -> bool:
@@ -29,15 +29,16 @@ def resegment_subtitles(
     asr_data: ASRData,
     max_chars_en: int = DEFAULT_MAX_CHARS_EN,
     max_chars_cjk: int = DEFAULT_MAX_CHARS_CJK,
-    max_lines: int = DEFAULT_MAX_LINES,
 ) -> ASRData:
     """对翻译后的字幕进行重断句
+
+    每条字幕只有一行中文 + 一行英文。
+    如果文本超过字符限制，就拆分成多条字幕。
 
     Args:
         asr_data: 包含翻译文本的ASR数据
         max_chars_en: 英文每行最大字符数
         max_chars_cjk: CJK每行最大字符数
-        max_lines: 每条字幕最大行数
 
     Returns:
         重断句后的ASR数据
@@ -53,21 +54,18 @@ def resegment_subtitles(
             continue
 
         # 检测语言并分配正确的字符限制
-        # text 字段可能是中文也可能是英文，取决于布局
         if _is_mainly_cjk(text1):
             # text 是中文，translated_text 是英文
             zh_text, en_text = text1, text2
-            zh_field = 'text'
-            en_field = 'translated_text'
+            zh_field, en_field = 'text', 'translated_text'
         else:
             # text 是英文，translated_text 是中文
             en_text, zh_text = text1, text2
-            en_field = 'text'
-            zh_field = 'translated_text'
+            en_field, zh_field = 'text', 'translated_text'
 
         # 判断是否需要拆分
-        en_needs_split = _needs_split(en_text, max_chars_en, max_lines) if en_text else False
-        zh_needs_split = _needs_split(zh_text, max_chars_cjk, max_lines) if zh_text else False
+        en_needs_split = len(en_text) > max_chars_en if en_text else False
+        zh_needs_split = len(zh_text) > max_chars_cjk if zh_text else False
 
         if not en_needs_split and not zh_needs_split:
             # 不需要拆分，直接保留
@@ -75,7 +73,7 @@ def resegment_subtitles(
         else:
             # 需要拆分
             split_segments = _split_segment(
-                seg, en_text, zh_text, max_chars_en, max_chars_cjk, max_lines,
+                seg, en_text, zh_text, max_chars_en, max_chars_cjk,
                 en_field, zh_field
             )
             new_segments.extend(split_segments)
@@ -84,43 +82,29 @@ def resegment_subtitles(
     return ASRData(new_segments)
 
 
-def _needs_split(text: str, max_chars: int, max_lines: int) -> bool:
-    """判断文本是否需要拆分"""
-    if not text:
-        return False
-
-    # 计算文本总字符数是否超过 max_lines * max_chars
-    max_total = max_chars * max_lines
-    return len(text) > max_total
-
-
 def _split_segment(
     seg: ASRDataSeg,
     en_text: str,
     zh_text: str,
     max_chars_en: int,
     max_chars_cjk: int,
-    max_lines: int,
     en_field: str = 'text',
     zh_field: str = 'translated_text',
 ) -> List[ASRDataSeg]:
     """拆分单个字幕段
 
     策略：
-    1. 将文本拆分成适合 max_lines * max_chars 的块
-    2. 每个块成为一个新的字幕段
-    3. 均匀分配时间戳
+    1. 将中文和英文分别拆分成多行
+    2. 配对中文和英文行
+    3. 每对成为一个新的字幕段
+    4. 均匀分配时间戳
     """
-    # 计算每个块的最大字符数
-    en_max_total = max_chars_en * max_lines
-    zh_max_total = max_chars_cjk * max_lines
-
-    # 将文本拆分成块
-    en_chunks = _split_text_to_chunks(en_text, en_max_total, max_chars_en) if en_text else [""]
-    zh_chunks = _split_text_to_chunks(zh_text, zh_max_total, max_chars_cjk) if zh_text else [""]
+    # 将文本拆分成行（每行不超过字符限制）
+    en_lines = _split_text_to_lines(en_text, max_chars_en) if en_text else [""]
+    zh_lines = _split_text_to_lines(zh_text, max_chars_cjk) if zh_text else [""]
 
     # 确定拆分数量（取最大值）
-    num_splits = max(len(en_chunks), len(zh_chunks))
+    num_splits = max(len(en_lines), len(zh_lines))
     if num_splits <= 1:
         return [seg]
 
@@ -133,19 +117,15 @@ def _split_segment(
         start = int(seg.start_time + i * segment_duration)
         end = int(seg.start_time + (i + 1) * segment_duration)
 
-        en_chunk = en_chunks[i] if i < len(en_chunks) else ""
-        zh_chunk = zh_chunks[i] if i < len(zh_chunks) else ""
-
-        # 格式化块为多行文本
-        en_formatted = _format_chunk(en_chunk, max_chars_en)
-        zh_formatted = _format_chunk(zh_chunk, max_chars_cjk)
+        en_line = en_lines[i] if i < len(en_lines) else ""
+        zh_line = zh_lines[i] if i < len(zh_lines) else ""
 
         # 根据字段名分配文本
         new_seg = ASRDataSeg(
-            text=en_formatted if en_field == 'text' else zh_formatted,
+            text=en_line if en_field == 'text' else zh_line,
             start_time=start,
             end_time=end,
-            translated_text=zh_formatted if zh_field == 'translated_text' else en_formatted,
+            translated_text=zh_line if zh_field == 'translated_text' else en_line,
             speaker_id=seg.speaker_id,
         )
         result.append(new_seg)
@@ -153,193 +133,86 @@ def _split_segment(
     return result
 
 
-def _split_text_to_chunks(text: str, max_total_chars: int, max_chars_per_line: int) -> List[str]:
-    """将文本拆分成适合显示的块
+def _split_text_to_lines(text: str, max_chars: int) -> List[str]:
+    """将文本拆分成多行，每行不超过max_chars
 
-    每个块的字符数不超过 max_total_chars
-    优先在句子边界拆分
+    优先在句子边界、标点处拆分
     """
     if not text:
         return [""]
 
-    if len(text) <= max_total_chars:
+    if len(text) <= max_chars:
         return [text]
 
     # 按句子拆分
     sentences = _split_into_sentences(text)
 
-    chunks = []
-    current_chunk = ""
+    lines = []
+    current_line = ""
 
     for sentence in sentences:
-        # 如果当前块加上新句子不超过限制
-        if current_chunk and len(current_chunk) + len(sentence) + 1 <= max_total_chars:
-            current_chunk += " " + sentence if current_chunk else sentence
-        elif not current_chunk:
-            # 当前块为空，检查句子是否太长
-            if len(sentence) <= max_total_chars:
-                current_chunk = sentence
+        # 如果当前行加上新句子不超过限制
+        if current_line and len(current_line) + len(sentence) + 1 <= max_chars:
+            current_line += " " + sentence if current_line else sentence
+        elif not current_line:
+            # 当前行为空，检查句子是否太长
+            if len(sentence) <= max_chars:
+                current_line = sentence
             else:
                 # 句子太长，需要进一步拆分
-                sub_chunks = _split_long_sentence(sentence, max_total_chars, max_chars_per_line)
-                chunks.extend(sub_chunks[:-1])
-                current_chunk = sub_chunks[-1] if sub_chunks else ""
+                sub_lines = _split_long_sentence(sentence, max_chars)
+                lines.extend(sub_lines)
+                current_line = ""
         else:
-            # 当前块已满，开始新块
-            chunks.append(current_chunk)
-            if len(sentence) <= max_total_chars:
-                current_chunk = sentence
+            # 当前行已满，开始新行
+            lines.append(current_line)
+            if len(sentence) <= max_chars:
+                current_line = sentence
             else:
-                sub_chunks = _split_long_sentence(sentence, max_total_chars, max_chars_per_line)
-                chunks.extend(sub_chunks[:-1])
-                current_chunk = sub_chunks[-1] if sub_chunks else ""
+                sub_lines = _split_long_sentence(sentence, max_chars)
+                lines.extend(sub_lines)
+                current_line = ""
 
-    if current_chunk:
-        chunks.append(current_chunk)
+    if current_line:
+        lines.append(current_line)
 
-    return chunks if chunks else [""]
-
-
-def _split_long_sentence(sentence: str, max_total_chars: int, max_chars_per_line: int) -> List[str]:
-    """拆分过长的句子"""
-    if len(sentence) <= max_total_chars:
-        return [sentence]
-
-    # 按标点或空格拆分
-    chunks = []
-    remaining = sentence
-
-    while remaining:
-        if len(remaining) <= max_total_chars:
-            chunks.append(remaining)
-            break
-
-        # 在 max_total_chars 范围内寻找最佳断点
-        break_pos = max_total_chars
-
-        # 优先在空格处断
-        space_pos = remaining.rfind(' ', 0, max_total_chars + 1)
-        if space_pos > max_total_chars * 0.5:
-            break_pos = space_pos
-        else:
-            # 在标点处断
-            for punct in ['，', ',', '。', '.', '；', ';', '：', ':', '！', '!', '？', '?']:
-                pos = remaining.rfind(punct, 0, max_total_chars + 1)
-                if pos > max_total_chars * 0.5:
-                    break_pos = pos + 1
-                    break
-
-        chunks.append(remaining[:break_pos].strip())
-        remaining = remaining[break_pos:].strip()
-
-    return chunks if chunks else [sentence]
-
-
-def _format_chunk(chunk: str, max_chars_per_line: int) -> str:
-    """将块格式化为多行文本（最多2行）"""
-    if not chunk:
-        return ""
-
-    if len(chunk) <= max_chars_per_line:
-        return chunk
-
-    # 尝试在中间位置找空格断行
-    mid = len(chunk) // 2
-
-    # 优先在空格处断
-    space_pos = chunk.rfind(' ', 0, mid + 10)
-    if space_pos > len(chunk) * 0.3:
-        line1 = chunk[:space_pos].strip()
-        line2 = chunk[space_pos + 1:].strip()
-    else:
-        # 对于CJK文本，在标点处断
-        cjk_puncts = ['，', '。', '！', '？', '；', '：', '、']
-        best_pos = -1
-        for punct in cjk_puncts:
-            pos = chunk.rfind(punct, 0, mid + 5)
-            if pos > len(chunk) * 0.3:
-                best_pos = pos + 1
-                break
-
-        if best_pos > 0:
-            line1 = chunk[:best_pos].strip()
-            line2 = chunk[best_pos:].strip()
-        else:
-            # 如果找不到好的断点，尝试在合适的边界断
-            # 避免在数字中间断行（如 2026 -> 20\n26）
-            # 避免在字母+数字组合中间断行（如 FA24 -> FA\n24）
-            for i in range(mid, max(0, mid - 8), -1):
-                if i < len(chunk) - 1:
-                    curr = chunk[i]
-                    next_char = chunk[i + 1]
-
-                    # 在空格处断
-                    if curr == ' ' or next_char == ' ':
-                        if curr == ' ':
-                            line1 = chunk[:i].strip()
-                            line2 = chunk[i + 1:].strip()
-                        else:
-                            line1 = chunk[:i + 1].strip()
-                            line2 = chunk[i + 1:].strip()
-                        break
-
-                    # 在CJK标点处断
-                    if curr in '，。！？；：、':
-                        line1 = chunk[:i + 1].strip()
-                        line2 = chunk[i + 1:].strip()
-                        break
-                    if next_char in '，。！？；：、':
-                        line1 = chunk[:i + 1].strip()
-                        line2 = chunk[i + 1:].strip()
-                        break
-
-                    # 在数字和CJK文字之间断（但不在数字和字母之间断）
-                    if curr.isdigit() and '一' <= next_char <= '鿿':
-                        line1 = chunk[:i + 1].strip()
-                        line2 = chunk[i + 1:].strip()
-                        break
-                    if '一' <= curr <= '鿿' and next_char.isdigit():
-                        line1 = chunk[:i + 1].strip()
-                        line2 = chunk[i + 1:].strip()
-                        break
-
-                    # 在CJK文字和字母之间断
-                    if '一' <= curr <= '鿿' and next_char.isascii() and next_char.isalpha():
-                        line1 = chunk[:i + 1].strip()
-                        line2 = chunk[i + 1:].strip()
-                        break
-                    if curr.isascii() and curr.isalpha() and '一' <= next_char <= '鿿':
-                        line1 = chunk[:i + 1].strip()
-                        line2 = chunk[i + 1:].strip()
-                        break
-            else:
-                # 如果找不到好的断点，直接在中间断
-                line1 = chunk[:mid].strip()
-                line2 = chunk[mid:].strip()
-
-    return f"{line1}\n{line2}"
+    return lines if lines else [""]
 
 
 def _split_into_sentences(text: str) -> List[str]:
-    """按句子边界拆分文本"""
-    # 英文句子结束符
-    # 中文句子结束符
-    # 也按分号、冒号等拆分
-    pattern = r'(?<=[.!?。！？；;:\n])\s*'
-    sentences = re.split(pattern, text)
-    return [s.strip() for s in sentences if s.strip()]
+    """按句子边界拆分文本
 
-
-def _wrap_text(text: str, max_chars: int) -> List[str]:
-    """将长文本按字符限制换行
-
-    优先在空格、标点处断行
+    注意：不拆分小数点（如2.4）、缩写（如Dr.）等
     """
-    if len(text) <= max_chars:
-        return [text]
+    # 先保护小数点和常见缩写
+    # 将 2.4 替换为 2￭4，Dr. 替换为 Dr￭
+    protected = re.sub(r'(\d)\.(\d)', r'\1￭\2', text)
+    protected = re.sub(r'(\b[A-Za-z]{1,4})\.', r'\1￭', protected)
+
+    # 英文句子结束符 + 中文句子结束符 + 分号冒号等
+    pattern = r'(?<=[.!?。！？；;:\n])\s*'
+    sentences = re.split(pattern, protected)
+
+    # 恢复保护的字符
+    result = []
+    for s in sentences:
+        s = s.replace('￭', '.').strip()
+        if s:
+            result.append(s)
+
+    return result
+
+
+def _split_long_sentence(sentence: str, max_chars: int) -> List[str]:
+    """拆分过长的句子
+
+    优先在标点、空格处拆分，避免在关键参数处断句
+    """
+    if len(sentence) <= max_chars:
+        return [sentence]
 
     lines = []
-    remaining = text
+    remaining = sentence
 
     while remaining:
         if len(remaining) <= max_chars:
@@ -347,26 +220,82 @@ def _wrap_text(text: str, max_chars: int) -> List[str]:
             break
 
         # 在max_chars范围内寻找最佳断点
-        break_pos = max_chars
-
-        # 优先在空格处断（向前搜索）
-        space_pos = remaining.rfind(' ', 0, max_chars + 1)
-        if space_pos > max_chars * 0.3:  # 至少在30%位置之后
-            break_pos = space_pos
-        else:
-            # 向后搜索空格（允许稍微超过max_chars）
-            next_space = remaining.find(' ', max_chars)
-            if next_space != -1 and next_space - max_chars < max_chars * 0.2:
-                break_pos = next_space
-            else:
-                # 在标点处断
-                for punct in ['，', ',', '。', '.', '；', ';', '：', ':', '！', '!', '？', '?']:
-                    pos = remaining.rfind(punct, 0, max_chars + 1)
-                    if pos > max_chars * 0.3:
-                        break_pos = pos + 1
-                        break
+        break_pos = _find_best_break_point(remaining, max_chars)
 
         lines.append(remaining[:break_pos].strip())
         remaining = remaining[break_pos:].strip()
 
-    return lines if lines else [text]
+    return lines if lines else [sentence]
+
+
+def _find_best_break_point(text: str, max_chars: int) -> int:
+    """在文本中找到最佳断点
+
+    优先级：
+    1. 标点符号后（但不是小数点）
+    2. 空格处
+    3. CJK/字母边界
+    4. 数字/字母边界（但不在数字中间）
+    """
+    if len(text) <= max_chars:
+        return len(text)
+
+    # 优先在标点处断（但排除小数点）
+    puncts = ['，', '。', '；', '：', '！', '？', '、']
+    for punct in puncts:
+        pos = text.rfind(punct, 0, max_chars + 1)
+        if pos > max_chars * 0.3:
+            return pos + 1
+
+    # 英文标点（需要检查前后字符，排除小数点）
+    en_puncts = [',', '.', ';', ':', '!', '?']
+    for punct in en_puncts:
+        pos = text.rfind(punct, 0, max_chars + 1)
+        if pos > max_chars * 0.3:
+            # 检查是否是小数点（前后都是数字）
+            if punct == '.' and pos > 0 and pos < len(text) - 1:
+                if text[pos - 1].isdigit() and text[pos + 1].isdigit():
+                    continue  # 跳过小数点
+            return pos + 1
+
+    # 在空格处断
+    space_pos = text.rfind(' ', 0, max_chars + 1)
+    if space_pos > max_chars * 0.3:
+        return space_pos
+
+    # 向后搜索空格（允许稍微超过max_chars）
+    next_space = text.find(' ', max_chars)
+    if next_space != -1 and next_space - max_chars < max_chars * 0.2:
+        return next_space
+
+    # 在CJK/字母边界处断
+    for i in range(min(max_chars, len(text) - 1), max(0, max_chars - 10), -1):
+        if i < len(text) - 1:
+            curr = text[i]
+            next_char = text[i + 1]
+
+            # CJK和字母之间
+            if _is_cjk(curr) and not _is_cjk(next_char):
+                return i + 1
+            if not _is_cjk(curr) and _is_cjk(next_char):
+                return i + 1
+
+    # 在数字和非数字边界处断（但不在数字中间）
+    for i in range(min(max_chars, len(text) - 1), max(0, max_chars - 10), -1):
+        if i < len(text) - 1:
+            curr = text[i]
+            next_char = text[i + 1]
+
+            # 数字和CJK文字之间
+            if curr.isdigit() and _is_cjk(next_char):
+                return i + 1
+            if _is_cjk(curr) and next_char.isdigit():
+                return i + 1
+
+    # 最后才在max_chars处断
+    return max_chars
+
+
+def _is_cjk(char: str) -> bool:
+    """判断字符是否是CJK字符"""
+    return '一' <= char <= '鿿' or '぀' <= char <= 'ヿ' or '가' <= char <= '힯'
