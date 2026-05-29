@@ -232,6 +232,11 @@ def _find_break_char_skip_digit_cjk(
     策略：
     1. 先找所有不会拆散 digit+CJK 的候选，按距离排序
     2. 如果没有安全候选，回退到会拆散 digit+CJK 的候选（选择距离最近的）
+
+    检测两种 digit+CJK 拆分模式：
+    - 前向：断点后紧跟数字，数字后跟CJK（如 "，260马力" 在逗号后断）
+    - 后向：断点前是数字，断点后是数字，数字后跟CJK（如 "发动机，260" 在逗号后断，
+      但"260"实际从逗号前的文本延续——这种情况下标点前后数字属于同一个数）
     """
     safe_candidates = []  # 不会拆散 digit+CJK
     unsafe_candidates = []  # 会拆散 digit+CJK
@@ -242,14 +247,8 @@ def _find_break_char_skip_digit_cjk(
         if text[pos] == "." and pos > 0 and pos < len(text) - 1:
             if text[pos - 1].isdigit() and text[pos + 1].isdigit():
                 continue
-        # 检查断点后面是否紧跟"数字+CJK"组合
-        splits_digit_cjk = False
-        if pos + 1 < len(text) and text[pos + 1].isdigit():
-            digit_end = pos + 1
-            while digit_end < len(text) and text[digit_end].isdigit():
-                digit_end += 1
-            if digit_end < len(text) and _is_cjk(text[digit_end]):
-                splits_digit_cjk = True
+
+        splits_digit_cjk = _would_split_digit_cjk(text, pos)
 
         distance = abs(pos - target)
         if splits_digit_cjk:
@@ -268,6 +267,37 @@ def _find_break_char_skip_digit_cjk(
         return unsafe_candidates[0][1]
 
     return None
+
+
+def _would_split_digit_cjk(text: str, punct_pos: int) -> bool:
+    """检查在标点位置断开是否会拆散 digit+CJK 组合。
+
+    检测两种模式：
+    1. 前向：标点后紧跟数字，数字后跟CJK → "，260马力" 在逗号后断会拆散
+    2. 后向：标点前是数字，标点后也是数字，数字后跟CJK → "发动机，260马力"
+       断在逗号后会把"260"的首位从前面的数字序列中拆走
+    """
+    after = punct_pos + 1
+
+    # 前向检查：标点后紧跟数字
+    if after < len(text) and text[after].isdigit():
+        digit_end = after
+        while digit_end < len(text) and text[digit_end].isdigit():
+            digit_end += 1
+        if digit_end < len(text) and _is_cjk(text[digit_end]):
+            return True
+
+    # 后向检查：标点前是数字，标点后也是数字（同一个数被标点分隔）
+    if punct_pos > 0 and text[punct_pos - 1].isdigit() and after < len(text) and text[after].isdigit():
+        # 标点前后都是数字 → 属于同一个数（如 "发动机，260" 中的 "260"）
+        # 检查数字序列后面是否跟CJK
+        digit_end = after
+        while digit_end < len(text) and text[digit_end].isdigit():
+            digit_end += 1
+        if digit_end < len(text) and _is_cjk(text[digit_end]):
+            return True
+
+    return False
 
 
 def _closest_break_char(
