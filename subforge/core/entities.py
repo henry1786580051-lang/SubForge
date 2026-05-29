@@ -116,8 +116,6 @@ class LLMServiceEnum(Enum):
 class TranscribeModelEnum(Enum):
     """转录模型"""
 
-    BIJIAN = "B 接口"
-    JIANYING = "J 接口"
     WHISPER_API = "Whisper [API] ✨"
     FASTER_WHISPER = "FasterWhisper ✨"
     WHISPER_CPP = "WhisperCpp"
@@ -479,20 +477,6 @@ def _get_all_languages_except_auto() -> list[TranscribeLanguageEnum]:
 
 
 ASR_LANGUAGE_CAPABILITIES: dict[TranscribeModelEnum, ASRLanguageCapability] = {
-    TranscribeModelEnum.BIJIAN: ASRLanguageCapability(
-        supported_languages=[
-            TranscribeLanguageEnum.CHINESE,
-            TranscribeLanguageEnum.ENGLISH,
-        ],
-        supports_auto=True,
-    ),
-    TranscribeModelEnum.JIANYING: ASRLanguageCapability(
-        supported_languages=[
-            TranscribeLanguageEnum.CHINESE,
-            TranscribeLanguageEnum.ENGLISH,
-        ],
-        supports_auto=True,
-    ),
     TranscribeModelEnum.FASTER_WHISPER: ASRLanguageCapability(
         supported_languages=_get_all_languages_except_auto(),
         supports_auto=False,

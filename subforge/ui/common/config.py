@@ -144,7 +144,7 @@ class Config(QConfig):
     transcribe_model = OptionsConfigItem(
         "Transcribe",
         "TranscribeModel",
-        TranscribeModelEnum.BIJIAN,
+        TranscribeModelEnum.WHISPER_API,
         PlatformAwareTranscribeModelValidator(),
         EnumSerializer(TranscribeModelEnum),
     )

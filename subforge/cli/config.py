@@ -74,7 +74,7 @@ DEFAULTS: Dict[str, Any] = {
         "prompt": "",
     },
     "transcribe": {
-        "asr": "bijian",
+        "asr": "whisper-api",
         "language": "auto",
         "faster_whisper": {
             "model": "large-v3",

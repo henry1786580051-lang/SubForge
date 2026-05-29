@@ -79,8 +79,6 @@ def run(args: Namespace, config: dict) -> int:
     asr_map = {
         "faster-whisper": TranscribeModelEnum.FASTER_WHISPER,
         "whisper-api": TranscribeModelEnum.WHISPER_API,
-        "bijian": TranscribeModelEnum.BIJIAN,
-        "jianying": TranscribeModelEnum.JIANYING,
         "whisper-cpp": TranscribeModelEnum.WHISPER_CPP,
     }
 

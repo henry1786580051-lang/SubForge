@@ -399,11 +399,7 @@ class TranscriptionInterface(QWidget):
         # 只显示当前平台可用的模型（macOS 上不显示 FasterWhisper）
         available_models = get_available_transcribe_models()
         for model in available_models:
-            if (
-                model == TranscribeModelEnum.WHISPER_API
-                or model == TranscribeModelEnum.BIJIAN
-                or model == TranscribeModelEnum.JIANYING
-            ):
+            if model == TranscribeModelEnum.WHISPER_API:
                 self.model_menu.addActions(
                     [
                         Action(FluentIcon.GLOBE, model.value),

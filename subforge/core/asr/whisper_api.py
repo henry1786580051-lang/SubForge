@@ -1,3 +1,5 @@
+import base64
+from pathlib import Path
 from typing import Any, Callable, List, Optional, Union
 
 from openai import OpenAI
@@ -10,11 +12,16 @@ from .base import BaseASR
 
 logger = setup_logger("whisper_api")
 
+# Models that use chat completions + audio_url instead of /audio/transcriptions
+_AUDIO_CHAT_MODELS = {"mimo-v2-omni", "mimo-omni"}
+
 
 class WhisperAPI(BaseASR):
     """OpenAI-compatible Whisper API implementation.
 
-    Supports any OpenAI-compatible ASR API endpoint.
+    Supports two modes:
+    - Standard Whisper API: /v1/audio/transcriptions (OpenAI, etc.)
+    - Audio chat models: /v1/chat/completions with audio_url (mimo-omni, etc.)
     """
 
     def __init__(
@@ -32,7 +39,7 @@ class WhisperAPI(BaseASR):
 
         Args:
             audio_input: Path to audio file or raw audio bytes
-            whisper_model: Model name
+            whisper_model: Model name (e.g. whisper-1, mimo-v2-omni)
             need_word_time_stamp: Return word-level timestamps
             language: Language code (default: zh)
             prompt: Initial prompt for model
@@ -54,15 +61,25 @@ class WhisperAPI(BaseASR):
         self.need_word_time_stamp = need_word_time_stamp
 
         self.client = OpenAI(base_url=self.base_url, api_key=self.api_key)
+        self._use_audio_chat = whisper_model.lower() in _AUDIO_CHAT_MODELS
 
     def _run(
         self, callback: Optional[Callable[[int, str], None]] = None, **kwargs: Any
     ) -> dict:
         """Execute ASR via API."""
-        return self._submit()
+        if self._use_audio_chat:
+            return self._submit_audio_chat()
+        return self._submit_whisper()
 
     def _make_segments(self, resp_data: dict) -> List[ASRDataSeg]:
         """Convert API response to segments."""
+        if self._use_audio_chat:
+            # mimo-omni returns plain text, no timestamps
+            text = resp_data.get("text", "").strip()
+            if not text:
+                return []
+            return [ASRDataSeg(text=text, start_time=0, end_time=0)]
+
         if self.need_word_time_stamp and "words" in resp_data:
             return [
                 ASRDataSeg(
@@ -86,8 +103,8 @@ class WhisperAPI(BaseASR):
         """Get cache key including model and language."""
         return f"{self.crc32_hex}-{self.model}-{self.language}-{self.prompt}"
 
-    def _submit(self) -> dict:
-        """Submit audio for transcription."""
+    def _submit_whisper(self) -> dict:
+        """Submit audio via standard Whisper /audio/transcriptions endpoint."""
         try:
             if self.language == "zh" and not self.prompt:
                 self.prompt = "你好，我们需要使用简体中文，以下是普通话的句子"
@@ -102,7 +119,6 @@ class WhisperAPI(BaseASR):
                 "prompt": self.prompt,
                 "timestamp_granularities": ["word", "segment"],
             }
-            # 空字符串表示自动检测，不传 language 参数让 API 自行判断
             if self.language:
                 api_kwargs["language"] = self.language
 
@@ -114,4 +130,71 @@ class WhisperAPI(BaseASR):
             return completion.to_dict()
         except Exception:
             logger.exception("WhisperAPI failed")
+            raise
+
+    def _submit_audio_chat(self) -> dict:
+        """Submit audio via chat completions with audio_url (for mimo-omni etc.)."""
+        try:
+            # Read audio bytes
+            if isinstance(self.audio_input, bytes):
+                audio_bytes = self.audio_input
+            elif isinstance(self.audio_input, str):
+                audio_bytes = Path(self.audio_input).read_bytes()
+            else:
+                raise ValueError(f"Invalid audio input type: {type(self.audio_input)}")
+
+            audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+
+            # Detect format
+            if isinstance(self.audio_input, str):
+                ext = Path(self.audio_input).suffix.lower().lstrip(".")
+                fmt = {"wav": "wav", "mp3": "mp3", "m4a": "m4a", "flac": "flac", "ogg": "ogg"}.get(ext, "wav")
+            else:
+                fmt = "wav"
+
+            # Build language-aware prompt
+            lang_hint = {
+                "zh": "请逐字转录这段音频，使用简体中文。",
+                "en": "Please transcribe this audio verbatim in English.",
+                "ja": "この音声を逐字的に書き起こしてください。",
+                "auto": "Please transcribe this audio verbatim in the original language.",
+            }.get(self.language, "Please transcribe this audio verbatim.")
+
+            system_prompt = "You are a professional audio transcription assistant. Output ONLY the transcription text, nothing else."
+            user_prompt = lang_hint
+            if self.prompt:
+                user_prompt += f"\n\nContext: {self.prompt}"
+
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "audio_url",
+                                "audio_url": {"url": f"data:audio/{fmt};base64,{audio_b64}"},
+                            },
+                            {"type": "text", "text": user_prompt},
+                        ],
+                    },
+                ],
+                temperature=0.1,
+            )
+
+            # Check content first, then reasoning_content (mimo-omni puts transcription in reasoning)
+            text = response.choices[0].message.content or ""
+            if not text:
+                text = getattr(response.choices[0].message, "reasoning_content", "") or ""
+            text = text.strip()
+
+            if not text:
+                raise ValueError("Audio chat model returned empty transcription")
+
+            logger.info(f"Audio chat transcription ({self.model}): {text[:100]}...")
+            return {"text": text}
+
+        except Exception:
+            logger.exception("Audio chat ASR failed")
             raise

@@ -167,7 +167,7 @@ def validate_transcribe(config: dict) -> bool:
         return validate_faster_whisper()
     if asr == "whisper-cpp":
         return validate_whisper_cpp()
-    # bijian/jianying: no config needed (public endpoints)
+    # whisper-api: needs API key (validated elsewhere)
     return True
 
 

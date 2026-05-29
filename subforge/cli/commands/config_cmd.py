@@ -129,7 +129,7 @@ def _interactive_init(args: Namespace, config_data: dict) -> int:
     print()
 
     try:
-        _set_nested(config_data, "transcribe.asr", _prompt("ASR engine [bijian]: ", "bijian"))
+        _set_nested(config_data, "transcribe.asr", _prompt("ASR engine [whisper-api]: ", "whisper-api"))
         _set_nested(config_data, "subtitle.optimize", _yes_no("Enable AI subtitle polish? It fixes obvious ASR errors and punctuation. [Y/n]: ", True))
         _set_nested(config_data, "subtitle.split", _yes_no("Enable subtitle re-segmentation? [Y/n]: ", True))
         translator = _prompt("Translator [bing] (bing/google/llm): ", "bing")
@@ -202,7 +202,7 @@ def _render_onboarding_template(config_data: dict) -> str:
     f.write("# Keep API keys private. This file is written with 0600 permissions on Unix.\n\n")
     f.write("# [llm] is used for AI subtitle polish, LLM translation, reflective translation, and dubbing length adaptation.\n")
     f.write("# [whisper_api] is only needed when transcribe.asr = \"whisper-api\".\n")
-    f.write("# [transcribe] controls speech-to-text. bijian/jianying need no key; whisper-cpp needs a local binary/model.\n")
+    f.write("# [transcribe] controls speech-to-text. whisper-api needs API key; whisper-cpp needs a local binary/model.\n")
     f.write("# [subtitle] split and AI polish use LLM; [translate] can use bing/google/llm.\n")
     f.write("# [synthesize] controls subtitle embedding/burning.\n")
     f.write("# [dubbing] preset selects provider/model/voice defaults; edge-* presets need no API key but require network access.\n")

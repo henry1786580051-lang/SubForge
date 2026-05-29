@@ -119,12 +119,12 @@ def _check_config_file() -> Check:
 
 
 def _check_transcribe(config: dict) -> list[Check]:
-    asr = get(config, "transcribe.asr", "bijian")
+    asr = get(config, "transcribe.asr", "whisper-api")
     checks = [Check("transcribe.asr", "ok", f"default ASR: {asr}")]
     if asr == "whisper-api" and not get(config, "whisper_api.api_key", ""):
         checks.append(Check("whisper_api.api_key", "error", "Whisper API key is missing", "Run 'subforge config set whisper_api.api_key <key>'"))
     if asr == "whisper-cpp" and not any(shutil.which(n) for n in ["whisper-cpp", "whisper", "whisper-cpp-main"]):
-        checks.append(Check("whisper-cpp", "error", "whisper.cpp binary not found", "Install whisper.cpp or choose --asr bijian/whisper-api"))
+        checks.append(Check("whisper-cpp", "error", "whisper.cpp binary not found", "Install whisper.cpp or choose --asr whisper-api"))
     return checks
 
 
