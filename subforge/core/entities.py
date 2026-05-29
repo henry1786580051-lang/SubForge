@@ -628,6 +628,9 @@ class SubtitleConfig:
     max_word_count_cjk: int = 12
     max_word_count_english: int = 18
     need_split: bool = True
+    # 重断句字符限制
+    max_chars_en: int = 42  # 英文每行最大字符数
+    max_chars_cjk: int = 16  # CJK每行最大字符数
     target_language: Optional["TargetLanguage"] = None
     subtitle_style: Optional[str] = None
     custom_prompt_text: Optional[str] = None

@@ -21,6 +21,7 @@ from subforge.core.llm.context import (
 )
 from subforge.core.optimize.optimize import SubtitleOptimizer
 from subforge.core.split.split import SubtitleSplitter
+from subforge.core.subtitle.resegment import resegment_subtitles
 from subforge.core.translate.factory import TranslatorFactory
 from subforge.core.translate.types import TranslatorType
 from subforge.core.utils.logger import setup_logger
@@ -185,6 +186,16 @@ class SubtitleThread(QThread):
 
                 # 移除末尾标点符号
                 asr_data.remove_punctuation()
+
+                # 5. 重断句（翻译后的字幕可能过长）
+                update_stage("resegment")
+                self.progress.emit(90, self.tr("字幕重断句..."))
+                logger.info("正在字幕重断句...")
+                asr_data = resegment_subtitles(
+                    asr_data,
+                    max_chars_en=subtitle_config.max_chars_en,
+                    max_chars_cjk=subtitle_config.max_chars_cjk,
+                )
                 self.update_all.emit(asr_data.to_json())
 
                 # 保存翻译结果(单语、双语)

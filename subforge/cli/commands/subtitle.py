@@ -238,6 +238,18 @@ def run(args: Namespace, config: dict) -> int:
             asr_data = translator.translate_subtitle(asr_data)
             asr_data.remove_punctuation()
 
+            # 3.5 Resegment (split long translated subtitles)
+            if progress:
+                progress.update(90, "Resegmenting subtitles...")
+            from subforge.core.subtitle.resegment import resegment_subtitles
+            max_chars_en = get(config, "subtitle.max_chars_en", 42)
+            max_chars_cjk = get(config, "subtitle.max_chars_cjk", 16)
+            asr_data = resegment_subtitles(
+                asr_data,
+                max_chars_en=max_chars_en,
+                max_chars_cjk=max_chars_cjk,
+            )
+
         # 4. Save
         from subforge.cli.validators import resolve_layout
         layout = resolve_layout(layout_str)

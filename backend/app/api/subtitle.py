@@ -68,8 +68,8 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
             pass
 
         from subforge.core.asr.asr_data import ASRData
-        from subforge.core.split.split import SubtitleSplitter
         from subforge.core.optimize.optimize import SubtitleOptimizer
+        from subforge.core.split.split import SubtitleSplitter
         from subforge.core.translate.factory import TranslatorFactory
         from subforge.core.translate.types import TargetLanguage
 
@@ -150,6 +150,12 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
             )
             asr_data = await loop.run_in_executor(None, translator.translate_subtitle, asr_data)
             task_manager.update_progress(task_id, 90, "Translation complete")
+
+            # Resegment (split long translated subtitles)
+            task_manager.update_progress(task_id, 92, "Resegmenting subtitles...")
+            from subforge.core.subtitle.resegment import resegment_subtitles
+            asr_data = resegment_subtitles(asr_data)
+            task_manager.update_progress(task_id, 95, "Resegmentation complete")
 
         # Save result
         task_manager.update_progress(task_id, 95, "Saving result...")

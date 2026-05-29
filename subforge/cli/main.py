@@ -198,6 +198,8 @@ def _build_subtitle_parser(subparsers) -> None:
     sub = p.add_argument_group("Subtitle options")
     sub.add_argument("--max-cjk", type=int, metavar="N", help="Max characters per line for CJK text (default: 18)")
     sub.add_argument("--max-english", type=int, metavar="N", help="Max words per line for English text (default: 12)")
+    sub.add_argument("--max-chars-en", type=int, metavar="N", help="Max characters per line for English after translation (default: 42)")
+    sub.add_argument("--max-chars-cjk", type=int, metavar="N", help="Max characters per line for CJK after translation (default: 16)")
     sub.add_argument("--prompt", metavar="TEXT", help="Custom prompt for LLM optimization/translation")
     sub.add_argument("--thread-num", type=int, metavar="N", help="Number of concurrent threads (default: 4)")
     sub.add_argument("--batch-size", type=int, metavar="N", help="Batch size for processing (default: 20)")
@@ -571,6 +573,8 @@ def _build_cli_overrides(args: argparse.Namespace) -> dict:
         _set("subtitle.split", False)
     _set("subtitle.max_word_count_cjk", getattr(args, "max_cjk", None))
     _set("subtitle.max_word_count_english", getattr(args, "max_english", None))
+    _set("subtitle.max_chars_en", getattr(args, "max_chars_en", None))
+    _set("subtitle.max_chars_cjk", getattr(args, "max_chars_cjk", None))
     _set("subtitle.thread_num", getattr(args, "thread_num", None))
     _set("subtitle.batch_size", getattr(args, "batch_size", None))
 
