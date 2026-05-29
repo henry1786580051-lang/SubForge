@@ -191,7 +191,7 @@ def _find_balanced_break_point(text: str, target: int, max_chars: int) -> int:
         return len(text)
 
     upper = min(len(text) - 1, max(target + 8, int(target * 1.35)), max_chars)
-    lower = max(1, min(int(target * 0.55), upper - 1))
+    lower = max(1, min(int(target * 0.35), upper - 1))
 
     candidate_groups = [
         set("。！？!?；;"),
@@ -209,10 +209,16 @@ def _find_balanced_break_point(text: str, target: int, max_chars: int) -> int:
     if boundary is not None:
         return boundary
 
-    # 如果标准范围内找不到好的断点，扩展搜索到 max_chars*1.2
+    # 如果标准范围内找不到好的断点，扩展搜索到 max_chars*1.3
     # 用于保护"数字+量词"等技术参数组合（如"260马力"）
-    extended_upper = min(len(text) - 1, int(max_chars * 1.2))
+    extended_upper = min(len(text) - 1, int(max_chars * 1.3))
     if extended_upper > upper:
+        # 优先在扩展范围内找安全标点
+        for chars in candidate_groups:
+            pos = _find_break_char_skip_digit_cjk(text, chars, lower, extended_upper, target)
+            if pos is not None:
+                return pos + (0 if text[pos] == " " else 1)
+        # 再找语言边界
         boundary = _closest_language_boundary(text, lower, extended_upper, target)
         if boundary is not None:
             return boundary
@@ -227,19 +233,17 @@ def _find_break_char_skip_digit_cjk(
     upper: int,
     target: int,
 ) -> int | None:
-    """找最近的断点字符，优先选择不会拆散"数字+CJK"组合的位置。
+    """找最近的断点字符，只返回不会拆散"数字+CJK"组合的位置。
 
-    策略：
-    1. 先找所有不会拆散 digit+CJK 的候选，按距离排序
-    2. 如果没有安全候选，回退到会拆散 digit+CJK 的候选（选择距离最近的）
+    如果所有候选标点都会拆散 digit+CJK，返回 None（让调用方尝试语言边界）。
 
     检测两种 digit+CJK 拆分模式：
     - 前向：断点后紧跟数字，数字后跟CJK（如 "，260马力" 在逗号后断）
     - 后向：断点前是数字，断点后是数字，数字后跟CJK（如 "发动机，260" 在逗号后断，
       但"260"实际从逗号前的文本延续——这种情况下标点前后数字属于同一个数）
     """
-    safe_candidates = []  # 不会拆散 digit+CJK
-    unsafe_candidates = []  # 会拆散 digit+CJK
+    best_pos = None
+    best_distance = float("inf")
 
     for pos in range(lower, upper + 1):
         if text[pos] not in chars:
@@ -248,49 +252,73 @@ def _find_break_char_skip_digit_cjk(
             if text[pos - 1].isdigit() and text[pos + 1].isdigit():
                 continue
 
-        splits_digit_cjk = _would_split_digit_cjk(text, pos)
+        # 跳过会拆散 digit+CJK 的候选
+        if _would_split_digit_cjk(text, pos):
+            continue
 
         distance = abs(pos - target)
-        if splits_digit_cjk:
-            unsafe_candidates.append((distance, pos))
-        else:
-            safe_candidates.append((distance, pos))
+        if distance < best_distance:
+            best_pos = pos
+            best_distance = distance
 
-    # 优先选择安全候选
-    if safe_candidates:
-        safe_candidates.sort()
-        return safe_candidates[0][1]
-
-    # 回退到不安全候选（当没有安全选项时）
-    if unsafe_candidates:
-        unsafe_candidates.sort()
-        return unsafe_candidates[0][1]
-
-    return None
+    return best_pos
 
 
 def _would_split_digit_cjk(text: str, punct_pos: int) -> bool:
     """检查在标点位置断开是否会拆散 digit+CJK 组合。
 
-    检测两种模式：
-    1. 前向：标点后紧跟数字，数字后跟CJK → "，260马力" 在逗号后断会拆散
-    2. 后向：标点前是数字，标点后也是数字，数字后跟CJK → "发动机，260马力"
-       断在逗号后会把"260"的首位从前面的数字序列中拆走
+    核心逻辑：标点后面紧跟"数字+CJK"组合时，检查标点前面是否也是数字（同一个数被标点分隔）。
+    - "发动机，260马力"：逗号后是"260马力"，逗号前是"机"（非数字）→ 拆散 → True
+    - "马力，376牛·米"：逗号后是"376牛"，逗号前是"力"（非数字）→ 但逗号前有"260马力"作为独立单元
+      需要判断：逗号前的 CJK 是否属于一个 digit+CJK 单元的结尾
     """
     after = punct_pos + 1
 
-    # 前向检查：标点后紧跟数字
+    # 前向检查：标点后紧跟数字，数字后跟CJK
     if after < len(text) and text[after].isdigit():
         digit_end = after
         while digit_end < len(text) and text[digit_end].isdigit():
             digit_end += 1
         if digit_end < len(text) and _is_cjk(text[digit_end]):
+            # 标点后有 digit+CJK 组合（如 "260马力" 或 "376牛"）
+            # 检查标点前是否有 digit → 同一个数被标点分隔（"发动机，260"）
+            if punct_pos > 0 and text[punct_pos - 1].isdigit():
+                return True  # 标点前是数字，标点后也是数字 → 拆散同一个数
+
+            # 检查标点前是否紧邻一个"数字+CJK"单元（如 "260马力，376牛"）
+            # 规则：从标点前一个字符开始，向前找"CJK序列 + 数字序列"
+            # 只有当整个模式紧邻标点时才算"两个独立单元的分隔"
+            if punct_pos > 0 and _is_cjk(text[punct_pos - 1]):
+                # 向前跳过紧邻标点的 CJK 字符
+                before_cjk = punct_pos - 1
+                while before_cjk >= 0 and _is_cjk(text[before_cjk]):
+                    before_cjk -= 1
+                # CJK 前面是数字 → 检查是否是"数字CJK"模式紧邻标点
+                if before_cjk >= 0 and text[before_cjk].isdigit():
+                    # 再向前跳过数字
+                    before_digit = before_cjk
+                    while before_digit >= 0 and text[before_digit].isdigit():
+                        before_digit -= 1
+                    # 如果数字CJK模式紧邻标点（中间没有其他字符），是分隔
+                    # "260马力，376牛"：before_digit指向"马"之前，即数字前有CJK或其他
+                    # "发动机，260马力"：before_digit指向"4"之前
+                    # 关键区别：在 "260马力，" 中，CJK序列"马力"紧邻标点，前面是数字"260"
+                    # 在 "发动机，260马力" 中，CJK序列"发动机"紧邻标点，前面是"4"（FA24的一部分）
+                    # 两者看起来相同，但含义不同
+                    # 简化：CJK + 数字前面如果还有 CJK → 可能是 "FA24发动机" 模式，不算独立单元
+                    # 只有当数字CJK模式是独立的（前面没有紧跟的CJK）才算分隔
+                    if before_digit >= 0 and _is_cjk(text[before_digit]):
+                        # "FA24发动机，260马力" → 前面CJK不属于独立digit+CJK单元
+                        return True
+                    return False
+                # CJK 前面不是数字 → "发动机，260马力" 模式，标点会拆散
+                return True
+
+            # 标点前是空格或其他 → 标点后是新的 digit+CJK，断开会拆散
             return True
 
     # 后向检查：标点前是数字，标点后也是数字（同一个数被标点分隔）
     if punct_pos > 0 and text[punct_pos - 1].isdigit() and after < len(text) and text[after].isdigit():
-        # 标点前后都是数字 → 属于同一个数（如 "发动机，260" 中的 "260"）
-        # 检查数字序列后面是否跟CJK
         digit_end = after
         while digit_end < len(text) and text[digit_end].isdigit():
             digit_end += 1
@@ -355,21 +383,29 @@ def _closest_language_boundary(
 
         # CJK <-> ASCII字母
         if _is_cjk(prev_char) and curr_char.isascii() and curr_char.isalpha():
-            is_boundary = True
+            # 检查：如果当前位置是数字且数字后跟CJK，这不是真正的语言边界
+            # 例："发动机，260马力" — "，"→"2" 看起来像 CJK→ASCII，但 "260马力" 应该在一起
+            if curr_char.isdigit():
+                digit_end = pos
+                while digit_end < len(text) and text[digit_end].isdigit():
+                    digit_end += 1
+                next_after = text[digit_end] if digit_end < len(text) else ""
+                if next_after and _is_cjk(next_after):
+                    pass  # 数字后跟CJK → 跳过，保护"260马力"等组合
+                else:
+                    is_boundary = True
+            else:
+                is_boundary = True
         elif prev_char.isascii() and prev_char.isalpha() and _is_cjk(curr_char):
             is_boundary = True
         # CJK -> 数字：需要检查数字序列后面是否跟着CJK
-        # "升24升" → 断（数字后是CJK，数字是独立的）
-        # "升24FA" → 断（数字后是ASCII字母，数字是独立的）
-        # 不处理：数字→CJK（"260马力"不应被拆散）
         elif _is_cjk(prev_char) and curr_char.isdigit():
-            # 检查数字序列后面的字符
             digit_end = pos
             while digit_end < len(text) and text[digit_end].isdigit():
                 digit_end += 1
             next_after_digits = text[digit_end] if digit_end < len(text) else ""
             if next_after_digits and _is_cjk(next_after_digits):
-                pass  # 数字后跟CJK → 数字是"CJK数字CJK"组合的一部分，不作为边界
+                pass  # 数字后跟CJK → 数字是"CJK数字CJK"组合的一部分
             else:
                 is_boundary = True
         # ASCII字母 <-> 空格（英文单词边界）
@@ -398,9 +434,52 @@ def _adjust_break_for_remaining_parts(
         return break_pos - 1
 
     if remaining_parts > 0 and remaining_len > remaining_parts * max_chars:
-        return max(1, len(text) - remaining_parts * max_chars)
+        new_pos = max(1, len(text) - remaining_parts * max_chars)
+        # 确保新断点不会拆散 digit+CJK 组合
+        new_pos = _snap_to_safe_boundary(text, new_pos, break_pos)
+        return new_pos
 
     return break_pos
+
+
+def _snap_to_safe_boundary(text: str, pos: int, fallback: int) -> int:
+    """将断点调整到安全位置，避免拆散 digit+CJK 组合。
+
+    如果 pos 位于数字序列中且该数字后跟 CJK，向前移动到数字序列之前。
+    """
+    if pos >= len(text):
+        return fallback
+
+    # 检查 pos 是否在数字序列中
+    if text[pos].isdigit():
+        # 向后找数字序列的开头
+        digit_start = pos
+        while digit_start > 0 and text[digit_start - 1].isdigit():
+            digit_start -= 1
+        # 向前找数字序列的结尾
+        digit_end = pos
+        while digit_end < len(text) and text[digit_end].isdigit():
+            digit_end += 1
+        # 如果数字后跟 CJK → 这是 digit+CJK 单元的一部分
+        if digit_end < len(text) and _is_cjk(text[digit_end]):
+            return digit_start  # 移到数字序列之前
+        # 数字后不是 CJK → 检查数字前是否是 CJK（CJK→digit 边界，如 "升24"）
+        if digit_start > 0 and _is_cjk(text[digit_start - 1]):
+            return digit_start  # 移到 CJK 之后、数字之前
+
+    # 检查 pos 是否在 CJK 序列中，且前面是数字（digit+CJK 单元的 CJK 部分）
+    if _is_cjk(text[pos]):
+        cjk_start = pos
+        while cjk_start > 0 and _is_cjk(text[cjk_start - 1]):
+            cjk_start -= 1
+        if cjk_start > 0 and text[cjk_start - 1].isdigit():
+            # 向前找到数字序列的开头
+            digit_start = cjk_start - 1
+            while digit_start > 0 and text[digit_start - 1].isdigit():
+                digit_start -= 1
+            return digit_start
+
+    return pos
 
 
 def _split_text_to_lines(text: str, max_chars: int) -> List[str]:
