@@ -3,6 +3,7 @@ from pathlib import Path
 
 from subforge.core.asr.asr_data import ASRData, ASRDataSeg
 from subforge.core.asr.chunked_asr import ChunkedASR
+from subforge.core.asr.content_integrity import check_cis_health, compute_cis
 from subforge.core.asr.faster_whisper import FasterWhisperASR
 from subforge.core.asr.whisper_api import WhisperAPI
 from subforge.core.asr.whisper_cpp import WhisperCppASR
@@ -57,7 +58,22 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None) -> ASRD
             if vad_available():
                 speech_segments = detect_speech_segments(audio_for_asr)
                 if speech_segments and len(speech_segments) > 1:
-                    asr_data = _transcribe_segments(audio_for_asr, speech_segments, config, callback)
+                    # Compute Content Integrity Score (CIS)
+                    vad_params = {
+                        "threshold": 0.5,
+                        "min_speech_ms": 250,
+                        "min_silence_ms": 300,
+                        "speech_pad_ms": 300,
+                    }
+                    cis = compute_cis(audio_for_asr, speech_segments, vad_params)
+                    status, message = check_cis_health(cis)
+                    logger.info(f"CIS Health: {status} — {message}")
+
+                    if status == "FAIL":
+                        logger.warning(f"CIS too low ({cis:.3f}), falling back to full transcription")
+                        asr_data = None
+                    else:
+                        asr_data = _transcribe_segments(audio_for_asr, speech_segments, config, callback)
         except Exception as e:
             logger.warning(f"Silero VAD preprocessing failed, using full transcription: {e}", exc_info=True)
 

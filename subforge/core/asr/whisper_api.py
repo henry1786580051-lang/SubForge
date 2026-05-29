@@ -152,16 +152,29 @@ class WhisperAPI(BaseASR):
             else:
                 fmt = "wav"
 
-            # Build language-aware prompt
-            lang_hint = {
-                "zh": "请逐字转录这段音频，使用简体中文。",
-                "en": "Please transcribe this audio verbatim in English.",
-                "ja": "この音声を逐字的に書き起こしてください。",
-                "auto": "Please transcribe this audio verbatim in the original language.",
-            }.get(self.language, "Please transcribe this audio verbatim.")
+            # Build language-aware prompt with improved instructions
+            lang_hints = {
+                "zh": {
+                    "task": "请逐字转录这段音频，使用简体中文。",
+                    "rules": "保留所有技术术语和专有名词。移除填充词（嗯、啊、那个）。使用正确的标点符号和大小写。",
+                },
+                "en": {
+                    "task": "Transcribe this audio verbatim in English.",
+                    "rules": "Keep technical terms and proper nouns intact (e.g., FA24, CVT, Bridgestone, Topher Drives). Remove filler words: um, uh, like (when used as filler), you know (when filler). Use proper punctuation and capitalization. Output complete sentences.",
+                },
+                "ja": {
+                    "task": "この音声を逐字的に書き起こしてください。",
+                    "rules": "技術用語や固有名詞はそのまま保持。フィラー（えーと、あの）は削除。正しい句読点と大文字小文字を使用。",
+                },
+                "auto": {
+                    "task": "Transcribe this audio verbatim in the original language.",
+                    "rules": "Keep technical terms and proper nouns intact. Remove filler words. Use proper punctuation and capitalization.",
+                },
+            }
+            hint = lang_hints.get(self.language, lang_hints["en"])
 
             system_prompt = "You are a professional audio transcription assistant. Output ONLY the transcription text, nothing else."
-            user_prompt = lang_hint
+            user_prompt = f"{hint['task']}\n\n{hint['rules']}"
             if self.prompt:
                 user_prompt += f"\n\nContext: {self.prompt}"
 
