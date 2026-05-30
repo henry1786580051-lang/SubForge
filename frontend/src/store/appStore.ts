@@ -82,6 +82,14 @@ interface AppState {
   // FFmpeg status
   ffmpegOk: boolean;
   setFfmpegOk: (v: boolean) => void;
+
+  // Video playback
+  currentTime: number;
+  setCurrentTime: (t: number) => void;
+  isPlaying: boolean;
+  setIsPlaying: (v: boolean) => void;
+  seekToTime: number | null;
+  setSeekToTime: (t: number | null) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -169,4 +177,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   ffmpegOk: false,
   setFfmpegOk: (v) => set({ ffmpegOk: v }),
+
+  currentTime: 0,
+  setCurrentTime: (t) => set({ currentTime: t }),
+  isPlaying: false,
+  setIsPlaying: (v) => set({ isPlaying: v }),
+  seekToTime: null,
+  setSeekToTime: (t) => set({ seekToTime: t }),
 }));

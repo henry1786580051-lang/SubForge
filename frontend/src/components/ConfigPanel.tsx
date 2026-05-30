@@ -74,11 +74,14 @@ export function ConfigPanel() {
           ) : (
             <>
               <button onClick={() => {
+                cancelTask();
                 useAppStore.getState().setVideoFile(null);
                 useAppStore.getState().setFileInfo(null);
                 useAppStore.getState().setSubtitleFile(null);
                 useAppStore.getState().setSubtitles([]);
                 useAppStore.getState().setStep("import");
+                useAppStore.getState().setCurrentTaskId(null);
+                useAppStore.getState().setTaskState(0, "", "idle");
               }} className="px-3 py-1.5 text-[12px] rounded-md text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-all border border-border btn-press">
                 重置
               </button>

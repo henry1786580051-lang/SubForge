@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import platform
 import subprocess
@@ -8,8 +9,13 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.core.task_manager import task_manager
+from app.security import validate_path
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_background_tasks: set[asyncio.Task] = set()
 
 
 def detect_hardware() -> dict:
@@ -97,13 +103,19 @@ class TranscribeRequest(BaseModel):
 
 @router.post("/start")
 async def start_transcription(req: TranscribeRequest):
-    file_path = Path(req.file_path)
+    try:
+        file_path = validate_path(req.file_path)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied")
     if not file_path.exists():
         raise HTTPException(status_code=400, detail="File not found")
 
     task = task_manager.create_task("transcribe")
     # Run transcription in background
-    asyncio.create_task(_run_transcription(task.id, req))
+    task_obj = asyncio.create_task(_run_transcription(task.id, req))
+    task_manager.register_running_task(task.id, task_obj)
+    _background_tasks.add(task_obj)
+    task_obj.add_done_callback(_background_tasks.discard)
     return {"task_id": task.id, "status": "started"}
 
 
@@ -116,6 +128,7 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
     from subforge.core.utils.video_utils import video2audio
 
     temp_audio_path = None
+    partial_srt_path = None
     try:
         task_manager.update_progress(task_id, 5, "Initializing transcription...")
 
@@ -204,8 +217,28 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
 
         task_manager.update_progress(task_id, 30, "Running ASR engine...")
 
+        # Partial SRT file for real-time preview
+        partial_srt = tempfile.NamedTemporaryFile(suffix="_partial.srt", delete=False)
+        partial_srt_path = partial_srt.name
+        partial_srt.close()
+
+        # Progress callback: map ASR progress (0-100) to overall (30-95%)
+        def _on_progress(asr_progress: int, message: str):
+            overall = 30 + int(asr_progress * 0.65)
+            task_manager.update_progress(task_id, overall, message or "Transcribing...")
+
+        # Save partial results as segments are transcribed
+        def _on_segment(partial_data):
+            try:
+                partial_data.save(partial_srt_path)
+                task = task_manager.get_task(task_id)
+                if task:
+                    task_manager.update_progress(task_id, task.progress, subtitle_file=partial_srt_path)
+            except Exception as e:
+                logger.warning(f"Failed to save partial segment: {e}")
+
         # Run transcription on the extracted audio
-        result = await loop.run_in_executor(None, transcribe, temp_audio_path, config)
+        result = await loop.run_in_executor(None, transcribe, temp_audio_path, config, _on_progress, _on_segment)
 
         # Save subtitle file
         if result:
@@ -225,6 +258,8 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
     finally:
         if temp_audio_path:
             PathLib(temp_audio_path).unlink(missing_ok=True)
+        if partial_srt_path:
+            PathLib(partial_srt_path).unlink(missing_ok=True)
 
 
 def _get_models_dir() -> Path:
@@ -274,7 +309,9 @@ async def download_whisper_model(req: DownloadModelRequest):
         return {"status": "already_exists", "path": str(model_path)}
 
     task = task_manager.create_task("download_model")
-    asyncio.create_task(_download_model(task.id, req.model_id, model_path))
+    task_obj = asyncio.create_task(_download_model(task.id, req.model_id, model_path))
+    _background_tasks.add(task_obj)
+    task_obj.add_done_callback(_background_tasks.discard)
     return {"task_id": task.id, "status": "started"}
 
 

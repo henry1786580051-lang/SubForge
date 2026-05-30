@@ -50,9 +50,12 @@ export function SettingsPanel() {
   const [downloadingModel, setDownloadingModel] = useState<string | null>(null);
   const [downloadedModels, setDownloadedModels] = useState<Set<string>>(new Set());
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
-  const downloadPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const downloadPollsRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
 
-  useEffect(() => () => { if (downloadPollRef.current) clearInterval(downloadPollRef.current); }, []);
+  useEffect(() => () => {
+    downloadPollsRef.current.forEach((id) => clearInterval(id));
+    downloadPollsRef.current.clear();
+  }, []);
   const [detectedModels, setDetectedModels] = useState<string[] | null>(null);
   const [detectingModels, setDetectingModels] = useState(false);
   const [detectError, setDetectError] = useState<string | null>(null);
@@ -158,19 +161,25 @@ export function SettingsPanel() {
             const task = await tasksApi.get(result.task_id!);
             setDownloadProgress((prev) => ({ ...prev, [modelId]: task.progress }));
             if (task.status === "completed") {
-              clearInterval(pollId);
+              clearInterval(downloadPollsRef.current.get(modelId)!);
+              downloadPollsRef.current.delete(modelId);
               setDownloadedModels((prev) => new Set([...prev, modelId]));
               setDownloadingModel(null);
               setDownloadProgress((prev) => { const n = { ...prev }; delete n[modelId]; return n; });
             } else if (task.status === "failed") {
-              clearInterval(pollId);
+              clearInterval(downloadPollsRef.current.get(modelId)!);
+              downloadPollsRef.current.delete(modelId);
               useAppStore.getState().setError(task.error || "下载失败");
               setDownloadingModel(null);
               setDownloadProgress((prev) => { const n = { ...prev }; delete n[modelId]; return n; });
             }
-          } catch { clearInterval(pollId); setDownloadingModel(null); }
+          } catch {
+            clearInterval(downloadPollsRef.current.get(modelId)!);
+            downloadPollsRef.current.delete(modelId);
+            setDownloadingModel(null);
+          }
         }, 1000);
-        downloadPollRef.current = pollId;
+        downloadPollsRef.current.set(modelId, pollId);
       }
     } catch (err) {
       useAppStore.getState().setError(err instanceof Error ? err.message : "下载失败");
@@ -576,6 +585,14 @@ export function SettingsPanel() {
                 onChange={(e) => handleSave("max_word_count_english", parseInt(e.target.value))}
                 className="flex-1 accent-accent" />
               <span className="text-[12px] text-text-primary font-mono w-8 text-right">{(settings.max_word_count_english as number) || 18}</span>
+            </div>
+          </SettingsField>
+          <SettingsField label="并发线程数" description="同时处理的LLM请求数量（过高可能触发限流）">
+            <div className="flex items-center gap-3">
+              <input type="range" min={1} max={20} value={(settings.thread_num as number) || 3}
+                onChange={(e) => handleSave("thread_num", parseInt(e.target.value))}
+                className="flex-1 accent-accent" />
+              <span className="text-[12px] text-text-primary font-mono w-8 text-right">{(settings.thread_num as number) || 3}</span>
             </div>
           </SettingsField>
           <SettingsField label="翻译批处理大小" description="每次发送给翻译的字幕条数">

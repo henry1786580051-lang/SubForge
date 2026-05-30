@@ -9,7 +9,7 @@ import { SettingsPanel } from "@/components/SettingsPanel";
 import { LlmLogsPanel } from "@/components/LlmLogsPanel";
 import { ToastContainer } from "@/components/Toast";
 import { useAppStore, WorkflowStep } from "@/store/appStore";
-import { healthApi } from "@/lib/api";
+import { healthApi, configApi } from "@/lib/api";
 
 const WORKFLOW_STEPS: { id: WorkflowStep; label: string }[] = [
   { id: "import", label: "导入媒体" },
@@ -37,6 +37,22 @@ export default function Home() {
     const interval = setInterval(check, 10000);
     return () => clearInterval(interval);
   }, [setBackendOnline]);
+
+  // Load backend config on startup to sync with store
+  useEffect(() => {
+    configApi.get().then((data: Record<string, unknown>) => {
+      useAppStore.getState().setConfig({
+        transcribeModel: (data.transcribe_model as string) || "whisper_cpp",
+        sourceLanguage: (data.source_language as string) || "auto",
+        targetLanguage: (data.target_language as string) || "english",
+        translator: (data.translator as string) || "bing",
+        needOptimize: (data.need_optimize as boolean) ?? true,
+        needTranslate: (data.need_translate as boolean) ?? true,
+        needReflect: (data.need_reflect as boolean) ?? false,
+        customPrompt: (data.custom_prompt as string) || "",
+      });
+    }).catch(() => {});
+  }, []);
 
   return (
     <div className="flex h-screen overflow-hidden">

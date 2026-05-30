@@ -1,19 +1,16 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useAppStore } from "@/store/appStore";
-import { filesApi } from "@/lib/api";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { filesApi, API_BASE } from "@/lib/api";
+import { formatTime, formatDuration, formatSize, parseSrtTime } from "@/lib/format";
 
 export function VideoPanel() {
-  const { videoFile, setVideoFile, fileInfo, setFileInfo, setStep } = useAppStore();
+  const { videoFile, setVideoFile, fileInfo, setFileInfo, setStep, subtitles, currentTime, setCurrentTime, isPlaying, setIsPlaying, seekToTime, setSeekToTime } = useAppStore();
   const [isDragging, setIsDragging] = useState(false);
   const [urlInput, setUrlInput] = useState("");
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -24,6 +21,13 @@ export function VideoPanel() {
     filesApi.info(videoFile).then(setFileInfo).catch(() => {});
     setThumbnailUrl(filesApi.thumbnailUrl(videoFile));
   }, [videoFile, setFileInfo]);
+
+  // Seek video when subtitle double-clicked
+  useEffect(() => {
+    if (seekToTime === null || !videoRef.current) return;
+    videoRef.current.currentTime = seekToTime;
+    setSeekToTime(null);
+  }, [seekToTime, setSeekToTime]);
 
   const handleFile = useCallback(async (file: File) => {
     setIsUploading(true);
@@ -48,7 +52,12 @@ export function VideoPanel() {
   const togglePlay = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
-    if (video.paused) { video.play(); setIsPlaying(true); } else { video.pause(); setIsPlaying(false); }
+    if (video.paused) {
+      video.play().then(() => setIsPlaying(true)).catch(() => {});
+    } else {
+      video.pause();
+      setIsPlaying(false);
+    }
   }, []);
 
   const seek = useCallback((seconds: number) => {
@@ -64,14 +73,23 @@ export function VideoPanel() {
     video.currentTime = ((e.clientX - rect.left) / rect.width) * duration;
   }, [duration]);
 
-  const formatTime = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
-  const formatDuration = (s: number) => {
-    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
-    return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
-  };
-  const formatSize = (b: number) => b > 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b > 1e6 ? `${(b / 1e6).toFixed(1)} MB` : `${(b / 1e3).toFixed(0)} KB`;
-
   const hasVideo = videoFile && videoFile.startsWith("/") && fileInfo?.video;
+
+  // Pre-parse subtitle times for performance
+  const parsedSubtitles = useMemo(() =>
+    subtitles.map((s) => ({
+      ...s,
+      startSec: parseSrtTime(s.start),
+      endSec: parseSrtTime(s.end),
+    })),
+    [subtitles]
+  );
+
+  // Find current subtitle for overlay
+  const currentSubtitle = useMemo(() =>
+    parsedSubtitles.find((s) => currentTime >= s.startSec && currentTime <= s.endSec),
+    [parsedSubtitles, currentTime]
+  );
 
   return (
     <div className="flex flex-col h-full bg-surface relative">
@@ -116,8 +134,24 @@ export function VideoPanel() {
                 onPlay={() => setIsPlaying(true)}
                 onPause={() => setIsPlaying(false)}
                 onEnded={() => setIsPlaying(false)}
-                onError={(e) => { (e.target as HTMLVideoElement).style.display = "none"; }}
+                onError={(e) => {
+                  const v = e.target as HTMLVideoElement;
+                  v.style.opacity = "0.3";
+                  v.style.pointerEvents = "none";
+                  useAppStore.getState().setError("视频加载失败，请检查文件格式或网络连接");
+                }}
               />
+            )}
+            {/* Subtitle overlay */}
+            {currentSubtitle && isPlaying && (
+              <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-20 max-w-[90%] text-center pointer-events-none">
+                <div className="inline-block bg-black/75 text-white text-sm px-3 py-1.5 rounded-md backdrop-blur-sm leading-relaxed shadow-lg">
+                  <span>{currentSubtitle.text}</span>
+                  {currentSubtitle.translated && (
+                    <><br /><span className="text-white/80">{currentSubtitle.translated}</span></>
+                  )}
+                </div>
+              </div>
             )}
             {thumbnailUrl && !isPlaying && (
               <img src={thumbnailUrl} className="absolute inset-0 w-full h-full object-contain opacity-30" alt="" />

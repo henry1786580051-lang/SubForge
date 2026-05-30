@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
-"""Test subtitle optimization and translation."""
+"""Test subtitle optimization and translation.
+
+Requires environment variables:
+  OPENAI_API_KEY   — LLM API key
+  OPENAI_BASE_URL  — LLM base URL (e.g. https://token-plan-cn.xiaomimimo.com/v1)
+"""
 import os
 import sys
 
-# Set environment variables
-os.environ['HTTP_PROXY'] = 'http://127.0.0.1:7897'
-os.environ['HTTPS_PROXY'] = 'http://127.0.0.1:7897'
-os.environ['OPENAI_API_KEY'] = 'tp-c3fni8mj1ffe9wtj6vj0pkyttbv595sk0jg1xmdovqtaj045'
-os.environ['OPENAI_BASE_URL'] = 'https://token-plan-cn.xiaomimimo.com/v1'
+# Set proxy if needed
+os.environ.setdefault('HTTP_PROXY', 'http://127.0.0.1:7897')
+os.environ.setdefault('HTTPS_PROXY', 'http://127.0.0.1:7897')
+
+if not os.environ.get('OPENAI_API_KEY'):
+    print("ERROR: Set OPENAI_API_KEY environment variable first")
+    sys.exit(1)
 
 sys.path.insert(0, 'backend')
 

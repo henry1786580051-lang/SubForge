@@ -1,10 +1,11 @@
 import logging
 from pathlib import Path
 
-from subforge.core.asr.asr_data import ASRData, ASRDataSeg
+from subforge.core.asr.asr_data import ASRData
+from subforge.core.asr.bcut import BcutASR
 from subforge.core.asr.chunked_asr import ChunkedASR
-from subforge.core.asr.content_integrity import check_cis_health, compute_cis
 from subforge.core.asr.faster_whisper import FasterWhisperASR
+from subforge.core.asr.jianying import JianYingASR
 from subforge.core.asr.whisper_api import WhisperAPI
 from subforge.core.asr.whisper_cpp import WhisperCppASR
 from subforge.core.entities import TranscribeConfig, TranscribeModelEnum
@@ -16,13 +17,14 @@ def _noop_callback(x, y):
     pass
 
 
-def transcribe(audio_path: str, config: TranscribeConfig, callback=None) -> ASRData:
+def transcribe(audio_path: str, config: TranscribeConfig, callback=None, on_segment=None) -> ASRData:
     """Transcribe audio file using specified configuration.
 
     Args:
         audio_path: Path to audio file
         config: Transcription configuration
         callback: Progress callback function(progress: int, message: str)
+        on_segment: Optional callback(ASRData) for partial results during VAD-segmented transcription
 
     Returns:
         ASRData: Transcription result data
@@ -58,29 +60,17 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None) -> ASRD
             if vad_available():
                 speech_segments = detect_speech_segments(audio_for_asr)
                 if speech_segments and len(speech_segments) > 1:
-                    # Compute Content Integrity Score (CIS)
-                    vad_params = {
-                        "threshold": 0.5,
-                        "min_speech_ms": 250,
-                        "min_silence_ms": 300,
-                        "speech_pad_ms": 300,
-                    }
-                    cis = compute_cis(audio_for_asr, speech_segments, vad_params)
-                    status, message = check_cis_health(cis)
-                    logger.info(f"CIS Health: {status} — {message}")
-
-                    if status == "FAIL":
-                        logger.warning(f"CIS too low ({cis:.3f}), falling back to full transcription")
-                        asr_data = None
-                    else:
-                        asr_data = _transcribe_segments(audio_for_asr, speech_segments, config, callback)
+                    asr_data = _transcribe_segments(audio_for_asr, speech_segments, config, callback, on_segment=on_segment)
         except Exception as e:
             logger.warning(f"Silero VAD preprocessing failed, using full transcription: {e}", exc_info=True)
 
         # Fallback: transcribe full audio
         if asr_data is None:
+            callback(10, "Preparing transcription...")
             asr = _create_asr_instance(audio_for_asr, config)
+            callback(30, "Sending audio to ASR engine...")
             asr_data = asr.run(callback=callback)
+            callback(90, "Processing results...")
 
         # Filter hallucinated segments using audio energy analysis
         asr_data.filter_hallucinations(audio_path=audio_for_asr)
@@ -98,48 +88,21 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None) -> ASRD
                 pass
 
 
-def _merge_vad_segments(speech_segments: list, min_duration_ms: int = 30000, max_gap_ms: int = 2000) -> list:
-    """Merge adjacent VAD segments into longer segments for better ASR quality.
-
-    Args:
-        speech_segments: List of (start_ms, end_ms) tuples from VAD
-        min_duration_ms: Minimum segment duration before merging (default 30s)
-        max_gap_ms: Maximum gap between segments to merge (default 2s)
-
-    Returns:
-        Merged list of (start_ms, end_ms) tuples
-    """
-    if not speech_segments:
-        return []
-
-    merged = []
-    current_start, current_end = speech_segments[0]
-
-    for start, end in speech_segments[1:]:
-        gap = start - current_end
-        current_duration = current_end - current_start
-
-        # Merge if: gap is small AND current segment is shorter than min_duration
-        if gap <= max_gap_ms and current_duration < min_duration_ms:
-            current_end = end
-        else:
-            merged.append((current_start, current_end))
-            current_start, current_end = start, end
-
-    merged.append((current_start, current_end))
-    return merged
-
-
 def _transcribe_segments(
     audio_path: str,
     speech_segments: list,
     config: TranscribeConfig,
     callback=None,
+    on_segment=None,
 ) -> ASRData:
     """Transcribe only speech segments detected by VAD.
 
     Extracts each speech segment as a temporary WAV, transcribes it,
     then adjusts timestamps back to the original audio timeline.
+
+    Args:
+        on_segment: Optional callback(ASRData) called after each segment is transcribed,
+                    used for saving partial results during processing.
     """
     import tempfile
 
@@ -147,11 +110,6 @@ def _transcribe_segments(
 
     if callback is None:
         callback = _noop_callback
-
-    # Merge short VAD segments into longer ones for better ASR quality
-    # mimo-omni works better with 15-30s segments than 2-10s
-    speech_segments = _merge_vad_segments(speech_segments, min_duration_ms=15000, max_gap_ms=2000)
-    logger.info(f"Merged VAD segments: {len(speech_segments)} segments for transcription")
 
     audio = AudioSegment.from_file(audio_path)
     all_segments = []
@@ -165,36 +123,27 @@ def _transcribe_segments(
 
             logger.info(f"Transcribing segment {idx+1}/{total}: {start_ms/1000:.1f}s - {end_ms/1000:.1f}s")
 
-            try:
-                asr = _create_single_asr(chunk_path, config)
-                chunk_result = asr.run()
+            asr = _create_single_asr(chunk_path, config)
+            chunk_result = asr.run()
 
-                # Shift timestamps back to original timeline
-                for seg in chunk_result.segments:
-                    if seg.start_time == 0 and seg.end_time == 0:
-                        # ASR returned no timestamps (e.g. mimo-omni), use VAD timestamps
-                        seg.start_time = start_ms
-                        seg.end_time = end_ms
-                    else:
-                        seg.start_time += start_ms
-                        seg.end_time += start_ms
-                all_segments.extend(chunk_result.segments)
-            except Exception as e:
-                logger.warning(f"Failed to transcribe segment {idx+1}/{total} ({start_ms/1000:.1f}s-{end_ms/1000:.1f}s): {e}")
-                # Use VAD timestamps with empty text as fallback
-                all_segments.append(ASRDataSeg(text="", start_time=start_ms, end_time=end_ms))
+            # Shift timestamps back to original timeline
+            for seg in chunk_result.segments:
+                seg.start_time += start_ms
+                seg.end_time += start_ms
+                # For models without timestamps (e.g. mimo-omni), use VAD boundaries
+                if seg.end_time <= seg.start_time:
+                    seg.end_time = end_ms
+            all_segments.extend(chunk_result.segments)
 
             progress = int((idx + 1) / total * 100)
             callback(progress, f"Transcribing segment {idx+1}/{total}")
 
+            # Notify with partial results
+            if on_segment:
+                on_segment(ASRData(list(all_segments)))
+
     callback(100, "All segments transcribed")
-
-    # Filter out empty segments (from failed transcriptions)
-    valid_segments = [seg for seg in all_segments if seg.text.strip()]
-    if not valid_segments:
-        logger.warning("All segments failed transcription, returning empty result")
-
-    return ASRData(valid_segments)
+    return ASRData(all_segments)
 
 
 # --- ASR factory: shared kwargs builders ---
@@ -247,6 +196,13 @@ def _build_faster_whisper_kwargs(config: TranscribeConfig, use_cache: bool = Tru
     }
 
 
+def _build_simple_kwargs(config: TranscribeConfig, use_cache: bool = True) -> dict:
+    return {
+        "use_cache": use_cache,
+        "need_word_time_stamp": config.need_word_time_stamp,
+    }
+
+
 # --- ASR instance creation ---
 
 def _create_single_asr(audio_path: str, config: TranscribeConfig):
@@ -261,6 +217,10 @@ def _create_single_asr(audio_path: str, config: TranscribeConfig):
         kwargs = _build_faster_whisper_kwargs(config, use_cache=False)
         kwargs["vad_filter"] = False  # VAD already done
         return FasterWhisperASR(audio_path, **kwargs)
+    elif model_type == TranscribeModelEnum.JIANYING:
+        return JianYingASR(audio_path, **_build_simple_kwargs(config, use_cache=False))
+    elif model_type == TranscribeModelEnum.BIJIAN:
+        return BcutASR(audio_path, **_build_simple_kwargs(config, use_cache=False))
     else:
         raise ValueError(f"Invalid transcription model: {model_type}")
 
@@ -269,7 +229,15 @@ def _create_asr_instance(audio_path: str, config: TranscribeConfig) -> ChunkedAS
     """Create appropriate ASR instance based on configuration."""
     model_type = config.transcribe_model
 
-    if model_type == TranscribeModelEnum.WHISPER_CPP:
+    if model_type == TranscribeModelEnum.JIANYING:
+        return ChunkedASR(asr_class=JianYingASR, audio_path=audio_path,
+                          asr_kwargs=_build_simple_kwargs(config))
+
+    elif model_type == TranscribeModelEnum.BIJIAN:
+        return ChunkedASR(asr_class=BcutASR, audio_path=audio_path,
+                          asr_kwargs=_build_simple_kwargs(config))
+
+    elif model_type == TranscribeModelEnum.WHISPER_CPP:
         return ChunkedASR(asr_class=WhisperCppASR, audio_path=audio_path,
                           asr_kwargs=_build_whisper_cpp_kwargs(config),
                           chunk_concurrency=1, chunk_length=60 * 20)

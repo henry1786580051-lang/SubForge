@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -5,6 +6,14 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.core.task_manager import task_manager
 
 router = APIRouter()
+
+_loop: asyncio.AbstractEventLoop | None = None
+
+
+def set_event_loop(loop: asyncio.AbstractEventLoop):
+    """Set the event loop reference for cross-thread coroutine scheduling."""
+    global _loop
+    _loop = loop
 
 
 class ConnectionManager:
@@ -22,11 +31,14 @@ class ConnectionManager:
             pass
 
     async def broadcast(self, message: dict):
+        dead = []
         for connection in self.active_connections:
             try:
                 await connection.send_json(message)
             except Exception:
-                pass
+                dead.append(connection)
+        for conn in dead:
+            self.disconnect(conn)
 
 
 manager = ConnectionManager()
@@ -34,15 +46,11 @@ manager = ConnectionManager()
 
 def on_task_update(task_id: str, task_data: dict):
     """Called by TaskManager when a task updates."""
-    import asyncio
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.ensure_future(
-                manager.broadcast({"type": "task_update", "data": task_data})
-            )
-    except RuntimeError:
-        pass
+    if _loop and _loop.is_running():
+        asyncio.run_coroutine_threadsafe(
+            manager.broadcast({"type": "task_update", "data": task_data}),
+            _loop,
+        )
 
 
 task_manager.add_listener(on_task_update)

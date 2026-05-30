@@ -5,15 +5,20 @@ from fastapi import APIRouter, Query
 
 router = APIRouter()
 
-# LLM log file path (shared with subforge core)
-_LOG_CANDIDATES = [
-    Path.home() / "SubForge" / "logs" / "llm_requests.jsonl",
-    Path.home() / "Desktop" / "Project" / "SubForge" / "AppData" / "logs" / "llm_requests.jsonl",
-]
-
 
 def _find_log_path() -> Path | None:
-    for p in _LOG_CANDIDATES:
+    # Try centralized config first
+    from subforge.config import LLM_LOG_FILE
+    if LLM_LOG_FILE.exists():
+        return LLM_LOG_FILE
+    # Fallback candidates
+    candidates = [
+        Path.home() / "SubForge" / "logs" / "llm_requests.jsonl",
+        Path.home() / "Desktop" / "Project" / "SubForge" / "AppData" / "logs" / "llm_requests.jsonl",
+        Path.home() / "Subtitle" / "logs" / "llm_requests.jsonl",
+        Path.home() / "Desktop" / "Project" / "Subtitle" / "AppData" / "logs" / "llm_requests.jsonl",
+    ]
+    for p in candidates:
         if p.exists():
             return p
     return None

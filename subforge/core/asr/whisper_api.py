@@ -14,6 +14,8 @@ logger = setup_logger("whisper_api")
 
 # Models that use chat completions + audio_url instead of /audio/transcriptions
 _AUDIO_CHAT_MODELS = {"mimo-v2-omni", "mimo-omni"}
+# Max audio size for base64 encoding (200MB)
+_MAX_AUDIO_BYTES = 200 * 1024 * 1024
 
 
 class WhisperAPI(BaseASR):
@@ -78,7 +80,9 @@ class WhisperAPI(BaseASR):
             text = resp_data.get("text", "").strip()
             if not text:
                 return []
-            return [ASRDataSeg(text=text, start_time=0, end_time=0)]
+            # Use audio duration as end_time (model doesn't provide timestamps)
+            duration_ms = int(self._get_audio_duration() * 1000)
+            return [ASRDataSeg(text=text, start_time=0, end_time=max(duration_ms, 1))]
 
         if self.need_word_time_stamp and "words" in resp_data:
             return [
@@ -143,6 +147,11 @@ class WhisperAPI(BaseASR):
             else:
                 raise ValueError(f"Invalid audio input type: {type(self.audio_input)}")
 
+            if len(audio_bytes) > _MAX_AUDIO_BYTES:
+                raise ValueError(
+                    f"Audio file too large ({len(audio_bytes) / 1024 / 1024:.0f}MB). "
+                    f"Max for base64 encoding: {_MAX_AUDIO_BYTES // 1024 // 1024}MB"
+                )
             audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
 
             # Detect format
@@ -152,29 +161,16 @@ class WhisperAPI(BaseASR):
             else:
                 fmt = "wav"
 
-            # Build language-aware prompt with improved instructions
-            lang_hints = {
-                "zh": {
-                    "task": "请逐字转录这段音频，使用简体中文。",
-                    "rules": "保留所有技术术语和专有名词。移除填充词（嗯、啊、那个）。使用正确的标点符号和大小写。",
-                },
-                "en": {
-                    "task": "Transcribe this audio verbatim in English.",
-                    "rules": "Keep technical terms and proper nouns intact (e.g., FA24, CVT, Bridgestone, Topher Drives). Remove filler words: um, uh, like (when used as filler), you know (when filler). Use proper punctuation and capitalization. Output complete sentences.",
-                },
-                "ja": {
-                    "task": "この音声を逐字的に書き起こしてください。",
-                    "rules": "技術用語や固有名詞はそのまま保持。フィラー（えーと、あの）は削除。正しい句読点と大文字小文字を使用。",
-                },
-                "auto": {
-                    "task": "Transcribe this audio verbatim in the original language.",
-                    "rules": "Keep technical terms and proper nouns intact. Remove filler words. Use proper punctuation and capitalization.",
-                },
-            }
-            hint = lang_hints.get(self.language, lang_hints["en"])
+            # Build language-aware prompt
+            lang_hint = {
+                "zh": "请逐字转录这段音频，使用简体中文。",
+                "en": "Please transcribe this audio verbatim in English.",
+                "ja": "この音声を逐字的に書き起こしてください。",
+                "auto": "Please transcribe this audio verbatim in the original language.",
+            }.get(self.language, "Please transcribe this audio verbatim.")
 
             system_prompt = "You are a professional audio transcription assistant. Output ONLY the transcription text, nothing else."
-            user_prompt = f"{hint['task']}\n\n{hint['rules']}"
+            user_prompt = lang_hint
             if self.prompt:
                 user_prompt += f"\n\nContext: {self.prompt}"
 

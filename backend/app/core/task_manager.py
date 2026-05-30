@@ -22,6 +22,7 @@ class TaskInfo(BaseModel):
     message: str = ""
     result: dict[str, Any] | None = None
     error: str | None = None
+    subtitle_file: str | None = None  # partial results during processing
 
 
 class TaskManager:
@@ -30,6 +31,7 @@ class TaskManager:
     def __init__(self):
         self._tasks: dict[str, TaskInfo] = {}
         self._listeners: list[Callable] = []
+        self._running_tasks: dict[str, asyncio.Task] = {}
 
     def create_task(self, task_type: str) -> TaskInfo:
         self.cleanup_old_tasks()
@@ -44,11 +46,13 @@ class TaskManager:
     def get_all_tasks(self) -> list[TaskInfo]:
         return list(self._tasks.values())
 
-    def update_progress(self, task_id: str, progress: int, message: str = ""):
+    def update_progress(self, task_id: str, progress: int, message: str = "", subtitle_file: str | None = None):
         if task := self._tasks.get(task_id):
             task.progress = progress
             task.message = message
             task.status = TaskStatus.RUNNING
+            if subtitle_file is not None:
+                task.subtitle_file = subtitle_file
             self._notify_listeners(task_id)
 
     def complete_task(self, task_id: str, result: dict[str, Any] | None = None):
@@ -64,9 +68,15 @@ class TaskManager:
             task.error = error
             self._notify_listeners(task_id)
 
+    def register_running_task(self, task_id: str, async_task: asyncio.Task):
+        """Register an asyncio task for a given task_id so it can be cancelled."""
+        self._running_tasks[task_id] = async_task
+
     def cancel_task(self, task_id: str):
         if task := self._tasks.get(task_id):
             task.status = TaskStatus.CANCELLED
+            if async_task := self._running_tasks.pop(task_id, None):
+                async_task.cancel()
             self._notify_listeners(task_id)
 
     def cleanup_old_tasks(self, keep: int = 50):

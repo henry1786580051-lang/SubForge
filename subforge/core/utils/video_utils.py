@@ -101,7 +101,6 @@ def video2audio(input_file: str, output: str = "", audio_track_index: int = 0) -
         result = subprocess.run(
             cmd,
             capture_output=True,
-            check=True,
             encoding="utf-8",
             errors="replace",
             creationflags=(
@@ -170,6 +169,13 @@ def check_cuda_available() -> bool:
         return False
 
 
+def _escape_ffmpeg_path(path: str) -> str:
+    """Escape path for FFmpeg filter strings."""
+    for ch in ["\\", "'", ":", "[", "]"]:
+        path = path.replace(ch, f"\\{ch}")
+    return path
+
+
 def add_subtitles(
     input_file: str,
     subtitle_file: str,
@@ -190,8 +196,10 @@ def add_subtitles(
     soft_subtitle: bool = False,
     progress_callback: Optional[Callable] = None,
 ) -> None:
-    assert Path(input_file).is_file(), "输入文件不存在"
-    assert Path(subtitle_file).is_file(), "字幕文件不存在"
+    if not Path(input_file).is_file():
+        raise FileNotFoundError(f"输入文件不存在: {input_file}")
+    if not Path(subtitle_file).is_file():
+        raise FileNotFoundError(f"字幕文件不存在: {subtitle_file}")
 
     # 使用临时文件上下文管理器处理字幕（自动清理）
     with temporary_subtitle_file(subtitle_file) as temp_subtitle_path:
@@ -250,8 +258,8 @@ def add_subtitles(
                 raise
         else:
             # 使用硬字幕
-            subtitle_path_escaped = (
-                Path(processed_subtitle).as_posix().replace(":", r"\:")
+            subtitle_path_escaped = _escape_ffmpeg_path(
+                Path(processed_subtitle).as_posix()
             )
 
             # Use ass= filter for ASS subtitle files, subtitles= for SRT/others

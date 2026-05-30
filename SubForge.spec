@@ -57,6 +57,8 @@ a = Analysis(
     binaries=[],
     datas=frontend_datas + backend_datas + vc_datas + backend_src + resource_datas + runtime_datas,
     hiddenimports=[
+        'torch',
+        'torch.hub',
         'webview',
         'uvicorn',
         'uvicorn.logging',
@@ -79,6 +81,7 @@ a = Analysis(
         'app.api.subtitles',
         'app.api.llm_logs',
         'subforge.core.asr',
+        'subforge.core.asr.silero_vad',
         'subforge.core.translate',
         'subforge.core.split',
         'subforge.core.optimize',
@@ -89,7 +92,7 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        'torch', 'torchvision', 'torchaudio',
+        'torchvision', 'torchaudio',
         'transformers', 'tokenizers',
         'modelscope',
         'tensorflow', 'keras',
@@ -133,11 +136,11 @@ coll = COLLECT(
 
 app = BUNDLE(
     coll,
-    name='Subtitle.app',
-    icon=None,
-    bundle_identifier='com.subtitle.web',
+    name='SubForge.app',
+    icon=os.path.join(ROOT, 'resource', 'assets', 'SubForge.icns'),
+    bundle_identifier='com.subforge.app',
     info_plist={
-        'CFBundleDisplayName': 'Subtitle',
+        'CFBundleDisplayName': 'SubForge',
         'CFBundleShortVersionString': '1.0.0',
         'NSHighResolutionCapable': True,
         'NSRequiresAquaSystemAppearance': False,

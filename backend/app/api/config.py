@@ -1,10 +1,14 @@
 import json
+import threading
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 router = APIRouter()
+
+_settings_lock = threading.Lock()
 
 # Path to subforge settings.json
 _SETTINGS_CANDIDATES = [
@@ -21,28 +25,45 @@ def _find_settings_path() -> Path | None:
 
 
 def _read_settings() -> dict:
-    path = _find_settings_path()
-    if path:
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
+    with _settings_lock:
+        path = _find_settings_path()
+        if path:
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                pass
+        return {}
+
+
+_settings_cache: dict | None = None
+_cache_time: float = 0
+_CACHE_TTL = 5.0
 
 
 def get_config_value(key: str, default=None):
-    """Read a single config value with fallback to defaults."""
-    config = {**_DEFAULTS, **_read_settings()}
-    return config.get(key, default)
+    """Read a single config value with TTL cache."""
+    global _settings_cache, _cache_time
+    now = time.monotonic()
+    if _settings_cache is None or (now - _cache_time) > _CACHE_TTL:
+        _settings_cache = {**_DEFAULTS, **_read_settings()}
+        _cache_time = now
+    return _settings_cache.get(key, default)
+
+
+def invalidate_config_cache():
+    """Invalidate the config cache so next read fetches fresh values."""
+    global _settings_cache
+    _settings_cache = None
 
 
 def _write_settings(data: dict):
-    path = _find_settings_path()
-    if not path:
-        # Create in the first candidate location
-        path = _SETTINGS_CANDIDATES[0]
-        path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    with _settings_lock:
+        path = _find_settings_path()
+        if not path:
+            # Create in the first candidate location
+            path = _SETTINGS_CANDIDATES[0]
+            path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 # Default config values
@@ -104,6 +125,7 @@ async def update_config(update: ConfigUpdate):
     stored = _read_settings()
     stored[update.key] = update.value
     _write_settings(stored)
+    invalidate_config_cache()
     return {"status": "ok", "key": update.key, "value": update.value}
 
 

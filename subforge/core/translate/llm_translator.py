@@ -17,6 +17,8 @@ class LLMTranslator(BaseTranslator):
     """LLM 翻译器（OpenAI兼容API）"""
 
     MAX_STEPS = 3
+    # Max ratio of untranslated entries before we reject the LLM response
+    UNTRANSLATED_THRESHOLD = 0.15
 
     def __init__(
         self,
@@ -106,11 +108,13 @@ class LLMTranslator(BaseTranslator):
         ]
         last_response_dict = None
         # llm 反馈循环
-        for _ in range(self.MAX_STEPS):
+        for step in range(self.MAX_STEPS):
             response = call_llm(messages=messages, model=self.model)
-            response_dict = json_repair.loads(
-                response.choices[0].message.content.strip()
-            )
+            content = response.choices[0].message.content
+            if not content:
+                logger.warning(f"LLM returned empty content, step {step + 1}/{self.MAX_STEPS}")
+                continue
+            response_dict = json_repair.loads(content.strip())
             last_response_dict = response_dict
             is_valid, error_message = self._validate_llm_response(
                 response_dict, subtitle_dict
@@ -131,6 +135,13 @@ class LLMTranslator(BaseTranslator):
                     }
                 )
 
+        if last_response_dict is None:
+            raise RuntimeError("LLM translation failed after all retry attempts")
+        # Validate last attempt before returning
+        is_valid, error_msg = self._validate_llm_response(last_response_dict, subtitle_dict)
+        if not is_valid:
+            logger.warning(f"LLM translation failed validation after {self.MAX_STEPS} retries: {error_msg}")
+            raise RuntimeError(f"LLM translation failed validation: {error_msg}")
         return last_response_dict
 
     def _validate_llm_response(
@@ -140,6 +151,7 @@ class LLMTranslator(BaseTranslator):
 
         Returns: (is_valid, error_feedback)
         """
+        import re
         if not isinstance(response_dict, dict):
             return (
                 False,
@@ -148,6 +160,32 @@ class LLMTranslator(BaseTranslator):
 
         expected_keys = set(subtitle_dict.keys())
         actual_keys = set(response_dict.keys())
+
+        # Helper: extract translated text from a response value
+        def _extract_text(val):
+            if isinstance(val, dict):
+                return val.get("native_translation", val.get("initial_translation", ""))
+            return str(val)
+
+        # Check if translated text is actually in the target language
+        _cjk_langs = {"简体中文", "繁體中文", "日本語", "한국어"}
+        _is_cjk_target = self.target_language.value in _cjk_langs
+        if _is_cjk_target:
+            untranslated = []
+            for key in actual_keys:
+                if key not in expected_keys:
+                    continue
+                text = _extract_text(response_dict[key])
+                if text and not re.search(r'[一-鿿぀-ヿ가-힯]', text):
+                    original = subtitle_dict.get(key, "")
+                    if text.strip() == original.strip() or not re.search(r'[一-鿿぀-ヿ가-힯]', text):
+                        untranslated.append(key)
+            if len(untranslated) > len(expected_keys) * self.UNTRANSLATED_THRESHOLD:
+                return (
+                    False,
+                    f"Translation to {self.target_language.value} failed: {len(untranslated)}/{len(expected_keys)} entries are still in the source language. "
+                    f"You MUST translate ALL entries to {self.target_language.value}. Output Chinese characters, not English.",
+                )
 
         def sort_keys(keys):
             return sorted(keys, key=lambda x: int(x) if x.isdigit() else x)
@@ -209,6 +247,7 @@ class LLMTranslator(BaseTranslator):
                 data.translated_text = translated_text
             except Exception as e:
                 logger.error(f"Single item translation failed {data.index}: {str(e)}")
+                data.translated_text = data.original_text
 
         return subtitle_chunk
 

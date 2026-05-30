@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -9,7 +9,13 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || "Request failed");
   }
-  return res.json();
+  const text = await res.text();
+  if (!text) return undefined as unknown as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`Invalid JSON response from ${path}`);
+  }
 }
 
 // Tasks
@@ -45,6 +51,15 @@ export const subtitlesApi = {
     request<SubtitleFile>(`/api/subtitles/load?path=${encodeURIComponent(path)}`),
   exportUrl: (path: string, format: string, mode: string = "bilingual") =>
     `${API_BASE}/api/subtitles/export?path=${encodeURIComponent(path)}&format=${format}&mode=${mode}`,
+  exportPost: async (segments: SubtitleSegment[], format: string, mode: string, filename: string): Promise<Blob> => {
+    const res = await fetch(`${API_BASE}/api/subtitles/export`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ segments, format, mode, filename }),
+    });
+    if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+    return res.blob();
+  },
   save: (file_path: string, segments: SubtitleSegment[]) =>
     request<{ status: string; file_path: string; count: number }>("/api/subtitles/save", {
       method: "POST",
@@ -122,6 +137,7 @@ export interface TaskInfo {
   message: string;
   result?: Record<string, unknown> | null;
   error?: string | null;
+  subtitle_file?: string | null;
 }
 
 export interface FileInfo {

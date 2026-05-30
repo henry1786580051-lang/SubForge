@@ -5,7 +5,7 @@ import { useAppStore } from "@/store/appStore";
 import { subtitleApi, subtitlesApi, filesApi, configApi } from "@/lib/api";
 
 export function SubtitlePanel() {
-  const { subtitles, setSubtitles, updateSubtitle, selectedIds, toggleSelect, selectAll, deselectAll, subtitleFile, config } = useAppStore();
+  const { subtitles, setSubtitles, updateSubtitle, selectedIds, toggleSelect, selectAll, deselectAll, subtitleFile, config, setSeekToTime } = useAppStore();
   const [editingCell, setEditingCell] = useState<{ id: number; field: "text" | "translated" } | null>(null);
   const [editValue, setEditValue] = useState("");
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: number | null } | null>(null);
@@ -14,13 +14,19 @@ export function SubtitlePanel() {
   const promptDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (promptDebounceRef.current) clearTimeout(promptDebounceRef.current); }, []);
 
+  const parseSrtTime = (t: string) => { const p = t.replace(",", ".").split(":"); return (parseFloat(p[0]) || 0) * 3600 + (parseFloat(p[1]) || 0) * 60 + (parseFloat(p[2]) || 0); };
+  const seekToSubtitle = useCallback((start: string) => { setSeekToTime(parseSrtTime(start)); }, [setSeekToTime]);
+
   const startEdit = useCallback((id: number, field: "text" | "translated", value: string) => { setEditingCell({ id, field }); setEditValue(value); }, []);
   const commitEdit = useCallback(() => { if (!editingCell) return; updateSubtitle(editingCell.id, editingCell.field, editValue); setEditingCell(null); }, [editingCell, editValue, updateSubtitle]);
 
   const deleteSelected = useCallback(() => {
     const ids = useAppStore.getState().selectedIds;
     if (ids.size === 0) return;
-    setSubtitles(subtitles.filter((s) => !ids.has(s.id)));
+    const updated = subtitles
+      .filter((s) => !ids.has(s.id))
+      .map((s, i) => ({ ...s, id: i + 1 }));
+    setSubtitles(updated);
     deselectAll();
   }, [subtitles, setSubtitles, deselectAll]);
 
@@ -35,9 +41,8 @@ export function SubtitlePanel() {
     deselectAll();
   }, [subtitles, setSubtitles, deselectAll]);
 
-  const translateSelected = useCallback(async () => {
-    const ids = useAppStore.getState().selectedIds;
-    if (ids.size === 0 || !subtitleFile) return;
+  const translateAll = useCallback(async () => {
+    if (!subtitleFile) return;
     setIsTranslating(true);
     try {
       const result = await subtitleApi.start({ subtitle_file: subtitleFile, target_language: config.targetLanguage, translator: config.translator, need_optimize: false, need_translate: true });
@@ -56,13 +61,61 @@ export function SubtitlePanel() {
 
   const [exportFormat, setExportFormat] = useState<"srt" | "vtt" | "ass" | "txt" | "json">("srt");
   const [exportMode, setExportMode] = useState<"original" | "translated" | "bilingual">("bilingual");
-  const handleExport = useCallback((format?: string, mode?: string) => {
+  const handleExport = useCallback(async (format?: string, mode?: string) => {
     if (!subtitleFile) return;
     const f = format || exportFormat;
     const m = mode || exportMode;
-    window.open(subtitlesApi.exportUrl(subtitleFile, f, m), "_blank");
-    setShowExportMenu(false);
-  }, [subtitleFile, exportFormat, exportMode]);
+    const defaultName = subtitleFile.replace(/\.[^.]+$/, `.${f}`);
+    try {
+      // pywebview: use POST endpoint + native save dialog
+      if (typeof window !== "undefined" && "pywebview" in window) {
+        const pywin = window as unknown as { pywebview?: { api?: { save_file?: (b: string, n: string) => Promise<{ ok: boolean; path?: string; error?: string }> } } };
+        // Wait for API to be ready (max 3s)
+        if (!pywin.pywebview?.api?.save_file) {
+          for (let i = 0; i < 30; i++) {
+            await new Promise(r => setTimeout(r, 100));
+            if (pywin.pywebview?.api?.save_file) break;
+          }
+        }
+        if (!pywin.pywebview?.api?.save_file) {
+          useAppStore.getState().setError("原生保存 API 未就绪，请重启应用");
+          return;
+        }
+        const blob = await subtitlesApi.exportPost(subtitles, f, m, defaultName);
+        const reader = new FileReader();
+        reader.onerror = () => { useAppStore.getState().setError("文件读取失败"); };
+        reader.onload = async () => {
+          const base64 = (reader.result as string).split(",")[1];
+          try {
+            const result = await pywin.pywebview!.api!.save_file!(base64, defaultName);
+            if (result && !result.ok && result.error) {
+              useAppStore.getState().setError(`保存失败: ${result.error}`);
+            }
+          } catch (e) {
+            console.error("pywebview save_file failed:", e);
+            useAppStore.getState().setError("保存失败: " + String(e));
+          }
+        };
+        reader.readAsDataURL(blob);
+      } else {
+        // Browser: use blob download
+        const url = subtitlesApi.exportUrl(subtitleFile, f, m);
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`Export failed: ${resp.status}`);
+        const blob = await resp.blob();
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = defaultName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+      }
+      setShowExportMenu(false);
+    } catch (err) {
+      useAppStore.getState().setError(err instanceof Error ? err.message : "Export failed");
+    }
+  }, [subtitleFile, subtitles, exportFormat, exportMode]);
   const handleSave = useCallback(async () => { if (!subtitleFile || subtitles.length === 0) return; try { await subtitlesApi.save(subtitleFile, subtitles); } catch (err) { useAppStore.getState().setError(err instanceof Error ? err.message : "Save failed"); } }, [subtitleFile, subtitles]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent, id: number) => { e.preventDefault(); e.stopPropagation(); if (!selectedIds.has(id)) toggleSelect(id); setContextMenu({ x: e.clientX, y: e.clientY, id }); }, [selectedIds, toggleSelect]);
@@ -74,12 +127,12 @@ export function SubtitlePanel() {
       if (editingCell) return;
       if (e.key === "Delete") { e.preventDefault(); deleteSelected(); }
       if ((e.metaKey || e.ctrlKey) && e.key === "m") { e.preventDefault(); mergeSelected(); }
-      if ((e.metaKey || e.ctrlKey) && e.key === "t") { e.preventDefault(); translateSelected(); }
+      if ((e.metaKey || e.ctrlKey) && e.key === "t") { e.preventDefault(); translateAll(); }
       if ((e.metaKey || e.ctrlKey) && e.key === "a" && !(e.target instanceof HTMLInputElement)) { e.preventDefault(); selectAll(); }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [editingCell, deleteSelected, mergeSelected, translateSelected, selectAll]);
+  }, [editingCell, deleteSelected, mergeSelected, translateAll, selectAll]);
 
   const allSelected = subtitles.length > 0 && selectedIds.size === subtitles.length;
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -98,7 +151,7 @@ export function SubtitlePanel() {
             导入
             <input type="file" accept=".srt,.vtt,.ass" className="hidden" onChange={(e) => {
               const file = e.target.files?.[0];
-              if (file) { filesApi.upload(file).then(({ file_path }) => { useAppStore.getState().setSubtitleFile(file_path); subtitlesApi.load(file_path).then((subFile) => { useAppStore.getState().setSubtitles(subFile.segments); }); }); }
+              if (file) { filesApi.upload(file).then(({ file_path }) => { useAppStore.getState().setSubtitleFile(file_path); subtitlesApi.load(file_path).then((subFile) => { useAppStore.getState().setSubtitles(subFile.segments); }).catch((err) => { useAppStore.getState().setError(err instanceof Error ? err.message : "Failed to load subtitle file"); useAppStore.getState().setSubtitleFile(null); }); }).catch((err) => { useAppStore.getState().setError(err instanceof Error ? err.message : "Upload failed"); }); }
             }} />
           </label>
           <button disabled={!subtitleFile || subtitles.length === 0} onClick={handleSave}
@@ -170,8 +223,8 @@ export function SubtitlePanel() {
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
           </button>
           <div className="w-px h-3.5 bg-border mx-1" />
-          <button onClick={translateSelected} disabled={selectedIds.size === 0 || isTranslating} className="px-2 py-1 text-[12px] rounded text-text-muted hover:text-accent hover:bg-accent-dim transition-all disabled:opacity-30 btn-press" title="翻译选中 (Ctrl+T)">
-            {isTranslating ? "翻译中..." : "翻译选中"}
+          <button onClick={translateAll} disabled={!subtitleFile || isTranslating} className="px-2 py-1 text-[12px] rounded text-text-muted hover:text-accent hover:bg-accent-dim transition-all disabled:opacity-30 btn-press" title="翻译全部 (Ctrl+T)">
+            {isTranslating ? "翻译中..." : "翻译全部"}
           </button>
           <button onClick={retranslateAll} disabled={isTranslating} className="px-2 py-1 text-[12px] rounded text-text-muted hover:text-accent hover:bg-accent-dim transition-all disabled:opacity-30 btn-press">
             重新翻译全部
@@ -217,9 +270,9 @@ export function SubtitlePanel() {
             合并
           </button>
           <div className="h-px bg-border my-1" />
-          <button onClick={() => { translateSelected(); setContextMenu(null); }} disabled={selectedIds.size === 0} className="w-full px-3 py-1.5 text-left text-[12px] text-accent hover:bg-accent-dim flex items-center gap-2 disabled:opacity-30">
+          <button onClick={() => { translateAll(); setContextMenu(null); }} disabled={!subtitleFile} className="w-full px-3 py-1.5 text-left text-[12px] text-accent hover:bg-accent-dim flex items-center gap-2 disabled:opacity-30">
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" /></svg>
-            翻译选中
+            翻译全部
           </button>
           <button onClick={() => { if (contextMenu.id) { const sub = subtitles.find((s) => s.id === contextMenu.id); if (sub) startEdit(sub.id, "text", sub.text); } setContextMenu(null); }}
             className="w-full px-3 py-1.5 text-left text-[12px] text-text-secondary hover:text-text-primary hover:bg-[rgba(0,0,0,0.03)] flex items-center gap-2">
@@ -258,7 +311,7 @@ export function SubtitlePanel() {
                     <input type="checkbox" checked={selectedIds.has(sub.id)} onChange={() => toggleSelect(sub.id)} onClick={(e) => e.stopPropagation()} className="accent-accent w-3 h-3" />
                   </td>
                   <td className="px-3 py-2 text-[12px] text-text-muted font-mono border-b border-[rgba(0,0,0,0.04)]">{sub.id}</td>
-                  <td className="px-3 py-2 border-b border-[rgba(0,0,0,0.04)]">
+                  <td className="px-3 py-2 border-b border-[rgba(0,0,0,0.04)] cursor-pointer hover:bg-accent-dim transition-colors" onDoubleClick={(e) => { e.stopPropagation(); seekToSubtitle(sub.start); }} title="双击跳转到此时间">
                     <div className="flex items-center gap-1">
                       <span className="text-[12px] text-text-muted font-mono">{sub.start}</span>
                       <span className="text-[11px] text-text-muted">&rarr;</span>
@@ -296,7 +349,7 @@ export function SubtitlePanel() {
             <span className="text-[11px] text-text-muted">{subtitles.filter((s) => s.translated).length} 已翻译</span>
           </div>
           <div className="flex items-center gap-4">
-            <span className="text-[11px] text-text-muted">Delete 删除 · Ctrl+M 合并 · Ctrl+T 翻译</span>
+            <span className="text-[11px] text-text-muted">Delete 删除 · Ctrl+M 合并 · Ctrl+T 翻译 · 双击时间跳转</span>
             <div className="flex items-center gap-2">
               {subtitles.every((s) => s.translated) ? (
                 <><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /><span className="text-[11px] text-emerald-600">翻译完成</span></>

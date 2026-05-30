@@ -16,7 +16,10 @@ from app.api import tasks, transcribe, subtitle, config, websocket, files, subti
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: create necessary directories
+    # Startup: create necessary directories and set event loop
+    import asyncio
+    from app.api.websocket import set_event_loop
+    set_event_loop(asyncio.get_running_loop())
     from subforge.config import APPDATA_PATH
     APPDATA_PATH.mkdir(parents=True, exist_ok=True)
     yield
@@ -78,7 +81,9 @@ if _static_dir:
 
     @app.get("/{full_path:path}")
     async def serve_frontend(full_path: str):
-        file_path = _static_dir / full_path
+        file_path = (_static_dir / full_path).resolve()
+        if not file_path.is_relative_to(_static_dir.resolve()):
+            return FileResponse(str(_static_dir / "index.html"))
         if file_path.is_file():
             return FileResponse(str(file_path))
         return FileResponse(str(_static_dir / "index.html"))

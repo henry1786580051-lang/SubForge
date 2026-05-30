@@ -16,7 +16,7 @@ import tempfile
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent
-APP_NAME = "Subtitle"
+APP_NAME = "SubForge"
 DMG_OUTPUT = Path.home() / "Desktop" / f"{APP_NAME}.dmg"
 SPEC_FILE = PROJECT_ROOT / "SubForge.spec"
 

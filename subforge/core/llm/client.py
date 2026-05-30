@@ -25,6 +25,9 @@ _client_lock = threading.Lock()
 
 logger = setup_logger("llm_client")
 
+# Timeout for LLM API calls (seconds)
+LLM_TIMEOUT = 120.0
+
 
 def normalize_base_url(base_url: str) -> str:
     """Normalize API base URL by ensuring /v1 suffix when needed."""
@@ -49,6 +52,19 @@ def normalize_base_url(base_url: str) -> str:
     return normalized
 
 
+def create_client(base_url: str, api_key: str) -> OpenAI:
+    """Create a new OpenAI client with explicit credentials (avoids global state)."""
+    base_url = normalize_base_url(base_url)
+    if not base_url or not api_key:
+        raise ValueError("base_url and api_key are required")
+    return OpenAI(
+        base_url=base_url,
+        api_key=api_key,
+        timeout=LLM_TIMEOUT,
+        http_client=create_logging_http_client(),
+    )
+
+
 def get_llm_client() -> OpenAI:
     """Get global LLM client instance (thread-safe singleton)."""
     global _global_client
@@ -68,6 +84,7 @@ def get_llm_client() -> OpenAI:
                 _global_client = OpenAI(
                     base_url=base_url,
                     api_key=api_key,
+                    timeout=LLM_TIMEOUT,
                     http_client=create_logging_http_client(),
                 )
 
@@ -90,10 +107,12 @@ def _call_llm_api(
     messages: List[dict],
     model: str,
     temperature: float = 1,
+    client: Optional[OpenAI] = None,
     **kwargs: Any,
 ) -> Any:
     """实际调用 LLM API（带重试）"""
-    client = get_llm_client()
+    if client is None:
+        client = get_llm_client()
 
     response = client.chat.completions.create(
         model=model,
@@ -108,15 +127,27 @@ def _call_llm_api(
     return response
 
 
-@memoize(get_llm_cache(), expire=3600, typed=True)
 def call_llm(
     messages: List[dict],
     model: str,
     temperature: float = 1,
+    client: Optional[OpenAI] = None,
     **kwargs: Any,
 ) -> Any:
-    """Call LLM API with automatic caching."""
-    response = _call_llm_api(messages, model, temperature, **kwargs)
+    """Call LLM API with optional caching.
+
+    Args:
+        client: Optional pre-created OpenAI client. When provided, bypasses the
+            global singleton and its environment-variable dependency — avoids
+            race conditions when multiple tasks use different credentials.
+            Also bypasses cache (client object is not serializable).
+    """
+    if client is not None:
+        # Explicit client: skip cache, call directly
+        response = _call_llm_api(messages, model, temperature, client=client, **kwargs)
+    else:
+        # Global singleton path: use cache
+        response = _call_llm_cached(messages, model, temperature, **kwargs)
 
     if not (
         response
@@ -129,3 +160,14 @@ def call_llm(
         raise ValueError("Invalid OpenAI API response: empty choices or content")
 
     return response
+
+
+@memoize(get_llm_cache(), expire=3600, typed=True)
+def _call_llm_cached(
+    messages: List[dict],
+    model: str,
+    temperature: float = 1,
+    **kwargs: Any,
+) -> Any:
+    """Cached LLM call via global singleton."""
+    return _call_llm_api(messages, model, temperature, **kwargs)

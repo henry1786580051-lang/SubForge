@@ -5,8 +5,11 @@ from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from app.core.task_manager import task_manager
+from app.security import validate_path
 
 router = APIRouter()
+
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024 * 1024  # 10 GB
 
 UPLOAD_DIR = Path("/tmp/subforge/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -25,8 +28,14 @@ async def upload_file(file: UploadFile):
         raise HTTPException(status_code=400, detail="Invalid filename")
     dest = UPLOAD_DIR / safe_name
 
+    size = 0
     with open(dest, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+        while chunk := await file.read(1024 * 1024):
+            size += len(chunk)
+            if size > MAX_UPLOAD_SIZE:
+                dest.unlink(missing_ok=True)
+                raise HTTPException(status_code=413, detail="File too large")
+            f.write(chunk)
 
     return {"file_path": str(dest), "filename": safe_name}
 
@@ -37,7 +46,10 @@ async def get_file_info(path: str = Query(..., description="File path")):
     import json
     import subprocess
 
-    file_path = Path(path)
+    try:
+        file_path = validate_path(path)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied")
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
 
@@ -106,7 +118,10 @@ async def get_thumbnail(path: str = Query(...)):
     """Generate a video thumbnail."""
     import subprocess
 
-    file_path = Path(path)
+    try:
+        file_path = validate_path(path)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied")
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
 
@@ -137,7 +152,10 @@ async def stream_video(path: str = Query(...), request: Request = None):
     import mimetypes
     import os
 
-    file_path = Path(path)
+    try:
+        file_path = validate_path(path)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied")
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
 

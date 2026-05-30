@@ -58,3 +58,6 @@ backend/*.srt
 
 # Benchmark results
 scripts/vad_benchmark_results.jsonl
+extract_subtitles.py
+examples/*_processed.srt
+settings.json

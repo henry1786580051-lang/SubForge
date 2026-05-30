@@ -7,10 +7,9 @@ import {
   transcribeApi,
   subtitleApi,
   subtitlesApi,
+  API_BASE,
   type TaskInfo,
 } from "@/lib/api";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export function useTaskMonitor() {
   const {
@@ -28,6 +27,10 @@ export function useTaskMonitor() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const wsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const aliveRef = useRef(true);
+  const handleTaskUpdateRef = useRef<(task: TaskInfo) => void>(() => {});
+
+  // Track last loaded partial file to avoid redundant loads
+  const lastPartialRef = useRef<string | null>(null);
 
   function handleTaskUpdate(task: TaskInfo) {
     // Guard against stale task updates (e.g., after cancel)
@@ -39,6 +42,18 @@ export function useTaskMonitor() {
       task.message,
       task.status as "idle" | "running" | "completed" | "failed"
     );
+
+    // Load partial subtitle results during processing (real-time preview)
+    if (task.status === "running" && task.subtitle_file && task.subtitle_file !== lastPartialRef.current) {
+      lastPartialRef.current = task.subtitle_file;
+      subtitlesApi
+        .load(task.subtitle_file)
+        .then((subFile) => {
+          setSubtitles(subFile.segments);
+          if (!store.subtitleFile) setStep("subtitle");
+        })
+        .catch(() => {});
+    }
 
     if (task.status === "completed") {
       if (pollRef.current) clearInterval(pollRef.current);
@@ -53,10 +68,20 @@ export function useTaskMonitor() {
             setSubtitles(subFile.segments);
             setStep("subtitle");
           })
-          .catch(() => {});
+          .catch((err) => {
+            setError(err instanceof Error ? err.message : "Failed to load subtitles");
+          });
       }
       if (task.type === "subtitle" && result?.subtitle_file) {
-        // subtitle processing complete
+        setSubtitleFile(result.subtitle_file as string);
+        subtitlesApi
+          .load(result.subtitle_file as string)
+          .then((subFile) => {
+            setSubtitles(subFile.segments);
+          })
+          .catch((err) => {
+            setError(err instanceof Error ? err.message : "Failed to load translated subtitles");
+          });
       }
     }
 
@@ -67,8 +92,18 @@ export function useTaskMonitor() {
     }
   }
 
+  // Keep ref in sync with latest handleTaskUpdate
+  useEffect(() => {
+    handleTaskUpdateRef.current = handleTaskUpdate;
+  });
+
   // Connect WebSocket for real-time updates
   const connectWs = useCallback(() => {
+    // Close existing connection first
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
     try {
       const ws = new WebSocket(`${API_BASE.replace("http", "ws")}/ws/tasks`);
       ws.onopen = () => {};
@@ -79,7 +114,7 @@ export function useTaskMonitor() {
             const task: TaskInfo = msg.data;
             const store = useAppStore.getState();
             if (task.id === store.currentTaskId) {
-              handleTaskUpdate(task);
+              handleTaskUpdateRef.current(task);
             }
           }
         } catch {
@@ -118,7 +153,7 @@ export function useTaskMonitor() {
     pollRef.current = setInterval(async () => {
       try {
         const task = await tasksApi.get(currentTaskId);
-        handleTaskUpdate(task);
+        handleTaskUpdateRef.current(task);
       } catch {
         // ignore poll errors
       }
@@ -136,6 +171,7 @@ export function useTaskMonitor() {
     ) => {
       setError(null);
       setTaskState(0, "Starting...", "running");
+      lastPartialRef.current = null;
 
       try {
         let result: { task_id: string };
@@ -152,9 +188,10 @@ export function useTaskMonitor() {
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to start task");
         setTaskState(0, "", "idle");
+        setIsProcessing(false);
       }
     },
-    [setCurrentTaskId, setError, setTaskState]
+    [setCurrentTaskId, setError, setTaskState, setIsProcessing]
   );
 
   const cancelTask = useCallback(async () => {

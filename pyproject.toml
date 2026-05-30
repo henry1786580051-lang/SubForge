@@ -44,6 +44,8 @@ dependencies = [
     "python-multipart>=0.0.29",
     "websockets>=16.0",
     "pydantic>=2.12.5",
+    "pywebview>=6.2.1",
+    "cairosvg>=2.9.0",
 ]
 
 [project.optional-dependencies]
@@ -119,6 +121,8 @@ dev = [
     "modelscope>=1.32.0",
     "psutil>=7.0.0",
     "GPUtil>=1.4.0",
+    "pyinstaller>=6.20.0",
+    "dmgbuild>=1.6.7",
 ]
 
 [tool.pyright]
