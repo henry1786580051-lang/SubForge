@@ -140,3 +140,49 @@ class TestRunVadInference:
         from subforge.core.asr.silero_vad import run_vad_inference
         result = run_vad_inference(np.array([], dtype=np.float32), audio_len_ms=0)
         assert result == []
+
+    def test_no_overlap_with_large_padding(self):
+        """Gap-aware padding must never produce overlapping segments."""
+        from subforge.core.asr.silero_vad import run_vad_inference
+        # Simulate speech-like signal with 3 bursts separated by 500ms silence
+        sr = 16000
+        samples = np.zeros(sr * 10, dtype=np.float32)  # 10 seconds
+        # Burst 1: 0.5s - 2.0s
+        samples[int(sr * 0.5):int(sr * 2.0)] = 0.5 * np.random.default_rng(42).uniform(-1, 1, int(sr * 1.5))
+        # Burst 2: 2.5s - 4.0s (only 500ms gap from burst 1)
+        samples[int(sr * 2.5):int(sr * 4.0)] = 0.5 * np.random.default_rng(43).uniform(-1, 1, int(sr * 1.5))
+        # Burst 3: 4.5s - 6.0s (only 500ms gap from burst 2)
+        samples[int(sr * 4.5):int(sr * 6.0)] = 0.5 * np.random.default_rng(44).uniform(-1, 1, int(sr * 1.5))
+
+        result = run_vad_inference(
+            samples, audio_len_ms=10000,
+            threshold=0.5, min_speech_ms=200, min_silence_ms=300,
+            speech_pad_ms=300,  # 300ms padding each side -> 600ms total per gap, but gap only 500ms
+        )
+        for i in range(1, len(result)):
+            assert result[i][0] >= result[i - 1][1], \
+                f"Overlap at segment {i}: end={result[i-1][1]}ms start={result[i][0]}ms"
+
+    def test_gap_split_evenly(self):
+        """When gap < 2 * speech_pad_ms, padding should be split evenly."""
+        from subforge.core.asr.silero_vad import run_vad_inference
+        sr = 16000
+        samples = np.zeros(sr * 5, dtype=np.float32)
+        # Two bursts: 1.0s-2.0s and 2.4s-3.0s (400ms gap)
+        rng = np.random.default_rng(99)
+        samples[int(sr * 1.0):int(sr * 2.0)] = 0.5 * rng.uniform(-1, 1, int(sr * 1.0))
+        samples[int(sr * 2.4):int(sr * 3.0)] = 0.5 * rng.uniform(-1, 1, int(sr * 0.6))
+
+        result = run_vad_inference(
+            samples, audio_len_ms=5000,
+            threshold=0.5, min_speech_ms=200, min_silence_ms=100,
+            speech_pad_ms=300,  # 2*300=600ms > 400ms gap, must split
+        )
+        if len(result) >= 2:
+            # Verify segments abut exactly (no gap, no overlap) when padding limited by gap
+            gap_between = result[1][0] - result[0][1]
+            assert gap_between >= 0, f"Overlap: {gap_between}ms"
+            # When gap < 2*pad, the segments should either meet or have a tiny gap
+            # (integer division may leave 1ms gap)
+            assert gap_between <= 1, \
+                f"Gap too large ({gap_between}ms) — padding was not applied correctly"

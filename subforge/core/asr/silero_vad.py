@@ -102,12 +102,23 @@ def run_vad_inference(
         else:
             merged.append((start, end))
 
-    # Apply padding and clamp to audio bounds
+    # Apply gap-aware padding to avoid overlap between adjacent segments.
+    # Each segment can extend by up to speech_pad_ms into the silence on
+    # either side, but never more than half the gap to the neighbor --
+    # mathematically guarantees p_end[i] <= p_start[i+1].
     padded = []
-    for start, end in merged:
-        p_start = max(0, start - speech_pad_ms)
-        p_end = min(audio_len_ms, end + speech_pad_ms)
-        padded.append((int(p_start), int(p_end)))
+    for i, (start, end) in enumerate(merged):
+        left_room = speech_pad_ms
+        if i > 0:
+            left_room = min(left_room, (start - merged[i - 1][1]) // 2)
+
+        right_room = speech_pad_ms
+        if i < len(merged) - 1:
+            right_room = min(right_room, (merged[i + 1][0] - end) // 2)
+
+        p_start = max(0, int(start - left_room))
+        p_end = min(audio_len_ms, int(end + right_room))
+        padded.append((p_start, p_end))
 
     return padded
 
