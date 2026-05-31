@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import platform
 import subprocess
 from pathlib import Path
@@ -165,6 +164,7 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
         # Performance settings
         config.whisper_n_threads = n_threads
         config.faster_whisper_compute_type = compute_type
+        config.whisper_cpp_path = get_config_value("whisper_cpp_path", "")
 
         # Vocal separation
         config.faster_whisper_ff_mdx_kim2 = get_config_value("ff_mdx_kim2", False)
@@ -241,7 +241,7 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
         result = await loop.run_in_executor(None, transcribe, temp_audio_path, config, _on_progress, _on_segment)
 
         # Save subtitle file
-        if result:
+        if result and len(result.segments) > 0:
             video_stem = PathLib(req.file_path).stem
             work_dir = PathLib(get_config_value("work_dir", ""))
             if not work_dir.exists():
@@ -252,7 +252,10 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
                 "subtitle_file": str(subtitle_path),
             })
         else:
-            task_manager.complete_task(task_id, {"subtitle_file": None})
+            raise RuntimeError(
+                "Transcription produced no subtitle segments. Check the selected "
+                "ASR engine, whisper.cpp executable path, model file, and audio track."
+            )
     except Exception as e:
         task_manager.fail_task(task_id, str(e))
     finally:

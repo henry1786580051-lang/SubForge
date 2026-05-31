@@ -13,7 +13,7 @@ export function ConfigPanel() {
   const handleStart = async () => {
     if (!videoFile) { setError("请先导入视频文件"); return; }
     setIsProcessing(true); setError(null);
-    if (!subtitleFile) {
+    if (step === "transcribe" || !subtitleFile) {
       await startTask("transcribe", {
         file_path: videoFile,
         model: config.transcribeModel,

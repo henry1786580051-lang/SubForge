@@ -26,6 +26,7 @@ class TranslatorFactory:
         custom_prompt: str = "",
         is_reflect: bool = False,
         update_callback: Optional[Callable] = None,
+        use_cache: bool = True,
     ) -> BaseTranslator:
         """创建翻译器实例"""
         try:
@@ -42,6 +43,7 @@ class TranslatorFactory:
                     custom_prompt=custom_prompt,
                     is_reflect=is_reflect,
                     update_callback=update_callback,
+                    use_cache=use_cache,
                 )
             elif translator_type == TranslatorType.GOOGLE:
                 batch_num = 5
@@ -51,6 +53,7 @@ class TranslatorFactory:
                     target_language=target_language,
                     timeout=20,
                     update_callback=update_callback,
+                    use_cache=use_cache,
                 )
             elif translator_type == TranslatorType.BING:
                 batch_num = 10
@@ -59,6 +62,7 @@ class TranslatorFactory:
                     batch_num=batch_num,
                     target_language=target_language,
                     update_callback=update_callback,
+                    use_cache=use_cache,
                 )
             elif translator_type == TranslatorType.DEEPLX:
                 batch_num = 5
@@ -68,6 +72,7 @@ class TranslatorFactory:
                     target_language=target_language,
                     timeout=20,
                     update_callback=update_callback,
+                    use_cache=use_cache,
                 )
         except Exception as e:
             logger.error(f"Failed to create translator: {str(e)}")

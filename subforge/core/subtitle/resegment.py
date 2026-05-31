@@ -1,9 +1,8 @@
 """字幕重断句模块
 
-翻译后的字幕可能包含过长的段落，需要重新断句以符合字幕显示要求。
-每条字幕只有一行中文 + 一行英文，如果太长就拆分成多条字幕。
-
-使用共同拆分段数的顺序对齐方法，避免中英文行数不一致时出现重复或错位。
+翻译前的单语字幕可以按长度重新断句。翻译后的双语字幕不能把原文和译文
+分别切分再按位置配对，因为不同语言的语序和信息密度不同，会造成双语行
+语义错位。
 """
 
 import math
@@ -33,11 +32,10 @@ def resegment_subtitles(
     max_chars_en: int = DEFAULT_MAX_CHARS_EN,
     max_chars_cjk: int = DEFAULT_MAX_CHARS_CJK,
 ) -> ASRData:
-    """对翻译后的字幕进行重断句
+    """对字幕进行重断句
 
-    每条字幕只有一行中文 + 一行英文。
-    如果文本超过字符限制，就拆分成多条字幕。
-    中英文先计算共同拆分段数，再按顺序对齐。
+    只拆分单语字幕。对于已经带有 translated_text 的双语字幕，保持原段落
+    不变，避免把原文和译文独立切分后错位。
 
     Args:
         asr_data: 包含翻译文本的ASR数据
@@ -54,6 +52,10 @@ def resegment_subtitles(
         text2 = seg.translated_text.strip() if seg.translated_text else ""
 
         if not text1 and not text2:
+            continue
+
+        if text1 and text2:
+            new_segments.append(seg)
             continue
 
         # 检测语言

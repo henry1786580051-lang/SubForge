@@ -541,6 +541,7 @@ class TranscribeConfig:
     output_format: Optional[TranscribeOutputFormatEnum] = None
     # Whisper Cpp 配置
     whisper_model: Optional[WhisperModelEnum] = None
+    whisper_cpp_path: Optional[str] = None
     # Whisper API 配置
     whisper_api_key: Optional[str] = None
     whisper_api_base: Optional[str] = None

@@ -11,6 +11,13 @@ import {
   type TaskInfo,
 } from "@/lib/api";
 
+function getWebSocketBase(): string {
+  if (API_BASE) return API_BASE.replace(/^http/, "ws");
+  if (typeof window === "undefined") return "";
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}`;
+}
+
 export function useTaskMonitor() {
   const {
     currentTaskId,
@@ -29,8 +36,9 @@ export function useTaskMonitor() {
   const aliveRef = useRef(true);
   const handleTaskUpdateRef = useRef<(task: TaskInfo) => void>(() => {});
 
-  // Track last loaded partial file to avoid redundant loads
+  // Track last loaded partial file path + segment count to detect content changes
   const lastPartialRef = useRef<string | null>(null);
+  const lastPartialCountRef = useRef<number>(0);
 
   function handleTaskUpdate(task: TaskInfo) {
     // Guard against stale task updates (e.g., after cancel)
@@ -44,13 +52,17 @@ export function useTaskMonitor() {
     );
 
     // Load partial subtitle results during processing (real-time preview)
-    if (task.status === "running" && task.subtitle_file && task.subtitle_file !== lastPartialRef.current) {
-      lastPartialRef.current = task.subtitle_file;
+    // Same file is updated in-place, so reload when segment count changes
+    if (task.status === "running" && task.subtitle_file) {
       subtitlesApi
         .load(task.subtitle_file)
         .then((subFile) => {
-          setSubtitles(subFile.segments);
-          if (!store.subtitleFile) setStep("subtitle");
+          if (subFile.count !== lastPartialCountRef.current) {
+            lastPartialCountRef.current = subFile.count;
+            lastPartialRef.current = task.subtitle_file ?? null;
+            setSubtitles(subFile.segments);
+            if (!store.subtitleFile) setStep("subtitle");
+          }
         })
         .catch(() => {});
     }
@@ -105,7 +117,7 @@ export function useTaskMonitor() {
       wsRef.current = null;
     }
     try {
-      const ws = new WebSocket(`${API_BASE.replace("http", "ws")}/ws/tasks`);
+      const ws = new WebSocket(`${getWebSocketBase()}/ws/tasks`);
       ws.onopen = () => {};
       ws.onmessage = (event) => {
         try {
@@ -172,6 +184,7 @@ export function useTaskMonitor() {
       setError(null);
       setTaskState(0, "Starting...", "running");
       lastPartialRef.current = null;
+      lastPartialCountRef.current = 0;
 
       try {
         let result: { task_id: string };

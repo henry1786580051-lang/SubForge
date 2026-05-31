@@ -127,6 +127,7 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
                 model=llm_model,
                 custom_prompt=custom_prompt,
                 update_callback=_on_optimize_progress,
+                use_cache=False,
             )
             asr_data = await loop.run_in_executor(None, optimizer.optimize_subtitle, asr_data)
             _save_partial(asr_data, "Optimization complete")
@@ -174,15 +175,18 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
                 custom_prompt=custom_prompt,
                 is_reflect=req.need_reflect,
                 update_callback=_on_translate_progress,
+                use_cache=False,
             )
             asr_data = await loop.run_in_executor(None, translator.translate_subtitle, asr_data)
             task_manager.update_progress(task_id, 90, "Translation complete")
 
-            # Resegment (split long translated subtitles)
-            task_manager.update_progress(task_id, 92, "Resegmenting subtitles...")
+            # Do not split bilingual subtitles after translation. Source and
+            # target languages have different word order and density; splitting
+            # them independently causes semantic misalignment.
+            task_manager.update_progress(task_id, 92, "Finalizing bilingual subtitles...")
             from subforge.core.subtitle.resegment import resegment_subtitles
             asr_data = resegment_subtitles(asr_data)
-            task_manager.update_progress(task_id, 95, "Resegmentation complete")
+            task_manager.update_progress(task_id, 95, "Bilingual subtitles finalized")
 
         # Save result
         task_manager.update_progress(task_id, 95, "Saving result...")

@@ -40,6 +40,7 @@ class SubtitleOptimizer:
         model: str,
         custom_prompt: str,
         update_callback: Optional[Callable] = None,
+        use_cache: bool = True,
     ):
         """初始化优化器
 
@@ -56,6 +57,7 @@ class SubtitleOptimizer:
         self.model = model
         self.custom_prompt = custom_prompt
         self.update_callback = update_callback
+        self.use_cache = use_cache
 
         self.is_running = True
         self.executor: Optional[ThreadPoolExecutor] = None
@@ -223,6 +225,7 @@ class SubtitleOptimizer:
                 messages=messages,
                 model=self.model,
                 temperature=0.2,
+                use_cache=self.use_cache,
             )
 
             result_text = response.choices[0].message.content

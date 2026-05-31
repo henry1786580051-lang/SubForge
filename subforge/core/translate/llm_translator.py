@@ -29,12 +29,14 @@ class LLMTranslator(BaseTranslator):
         custom_prompt: str,
         is_reflect: bool,
         update_callback: Optional[Callable],
+        use_cache: bool = True,
     ):
         super().__init__(
             thread_num=thread_num,
             batch_num=batch_num,
             target_language=target_language,
             update_callback=update_callback,
+            use_cache=use_cache,
         )
 
         self.model = model
@@ -109,7 +111,7 @@ class LLMTranslator(BaseTranslator):
         last_response_dict = None
         # llm 反馈循环
         for step in range(self.MAX_STEPS):
-            response = call_llm(messages=messages, model=self.model)
+            response = call_llm(messages=messages, model=self.model, use_cache=self.use_cache)
             content = response.choices[0].message.content
             if not content:
                 logger.warning(f"LLM returned empty content, step {step + 1}/{self.MAX_STEPS}")
@@ -242,6 +244,7 @@ class LLMTranslator(BaseTranslator):
                     ],
                     model=self.model,
                     temperature=0.7,
+                    use_cache=self.use_cache,
                 )
                 translated_text = response.choices[0].message.content.strip()
                 data.translated_text = translated_text

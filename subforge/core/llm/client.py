@@ -132,6 +132,7 @@ def call_llm(
     model: str,
     temperature: float = 1,
     client: Optional[OpenAI] = None,
+    use_cache: bool = True,
     **kwargs: Any,
 ) -> Any:
     """Call LLM API with optional caching.
@@ -141,10 +142,13 @@ def call_llm(
             global singleton and its environment-variable dependency — avoids
             race conditions when multiple tasks use different credentials.
             Also bypasses cache (client object is not serializable).
+        use_cache: Whether to use the disk LLM cache for global-client calls.
     """
     if client is not None:
         # Explicit client: skip cache, call directly
         response = _call_llm_api(messages, model, temperature, client=client, **kwargs)
+    elif not use_cache:
+        response = _call_llm_api(messages, model, temperature, **kwargs)
     else:
         # Global singleton path: use cache
         response = _call_llm_cached(messages, model, temperature, **kwargs)

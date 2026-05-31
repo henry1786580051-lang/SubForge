@@ -1,5 +1,4 @@
 import re
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
@@ -21,6 +20,90 @@ def _export_segments(segments: list[dict], fmt: str) -> tuple[str, str]:
         raise HTTPException(status_code=400, detail=f"Unsupported format: {fmt}")
     converter, media_type = _FORMAT_MAP[fmt]
     return converter(segments), media_type
+
+
+def _timestamp_to_ms(value: object) -> int:
+    """Parse SRT/VTT/ASS-like timestamps into milliseconds."""
+    if isinstance(value, (int, float)):
+        return max(0, int(value))
+
+    text = str(value or "00:00:00.000").strip().replace(",", ".")
+    if not text:
+        return 0
+
+    parts = text.split(":")
+    try:
+        if len(parts) == 3:
+            hours = int(parts[0])
+            minutes = int(parts[1])
+            seconds = float(parts[2])
+        elif len(parts) == 2:
+            hours = 0
+            minutes = int(parts[0])
+            seconds = float(parts[1])
+        else:
+            hours = 0
+            minutes = 0
+            seconds = float(parts[0])
+    except ValueError:
+        return 0
+
+    return max(0, int(round((hours * 3600 + minutes * 60 + seconds) * 1000)))
+
+
+def _ms_to_timestamp(ms: int) -> str:
+    ms = max(0, int(ms))
+    seconds, milliseconds = divmod(ms, 1000)
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
+
+
+def _normalize_segment_timing(segments: list[dict], min_duration_ms: int = 1) -> list[dict]:
+    """Return copied segments with sorted, non-overlapping timestamps."""
+    normalized = []
+    for order, seg in enumerate(segments):
+        item = dict(seg)
+        start_ms = _timestamp_to_ms(item.get("start"))
+        end_ms = _timestamp_to_ms(item.get("end"))
+        if end_ms < start_ms:
+            end_ms = start_ms
+        item["_order"] = order
+        item["_start_ms"] = start_ms
+        item["_end_ms"] = end_ms
+        normalized.append(item)
+
+    normalized.sort(key=lambda s: (s["_start_ms"], s["_end_ms"], s["_order"]))
+    min_duration_ms = max(0, min_duration_ms)
+
+    for i in range(1, len(normalized)):
+        prev = normalized[i - 1]
+        curr = normalized[i]
+        if prev["_end_ms"] <= curr["_start_ms"]:
+            continue
+
+        prev_min_end = prev["_start_ms"] + min_duration_ms
+        curr_max_start = curr["_end_ms"] - min_duration_ms
+        if prev_min_end <= curr_max_start:
+            split = (prev["_end_ms"] + curr["_start_ms"]) // 2
+            split = max(prev_min_end, min(split, curr_max_start))
+        else:
+            split = max(prev["_start_ms"], min(curr["_start_ms"], curr["_end_ms"]))
+
+        prev["_end_ms"] = min(prev["_end_ms"], split)
+        curr["_start_ms"] = max(curr["_start_ms"], split)
+        if curr["_end_ms"] < curr["_start_ms"]:
+            curr["_end_ms"] = curr["_start_ms"]
+
+    result = []
+    for item in normalized:
+        item["start"] = _ms_to_timestamp(item["_start_ms"])
+        item["end"] = _ms_to_timestamp(item["_end_ms"])
+        item.pop("_order", None)
+        item.pop("_start_ms", None)
+        item.pop("_end_ms", None)
+        result.append(item)
+    return result
 
 
 @router.get("/load")
@@ -49,6 +132,7 @@ async def load_subtitle(path: str = Query(..., description="Subtitle file path")
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported format: {suffix}")
 
+    segments = _normalize_segment_timing(segments)
     return {
         "file_path": str(file_path),
         "format": suffix.lstrip("."),
@@ -91,7 +175,7 @@ async def export_subtitle(
         segments = [{"id": i + 1,
                       "start": _ms_to_srt(seg.start_time) if isinstance(seg.start_time, int) else str(seg.start_time),
                       "end": _ms_to_srt(seg.end_time) if isinstance(seg.end_time, int) else str(seg.end_time),
-                      "text": seg.text, "translated": getattr(seg, "translated", "")}
+                      "text": seg.text, "translated": getattr(seg, "translated_text", "")}
                      for i, seg in enumerate(asr_data.segments)]
     except ImportError:
         try:
@@ -108,6 +192,7 @@ async def export_subtitle(
         else:
             raise HTTPException(status_code=400, detail=f"Cannot read {src_suffix}")
 
+    segments = _normalize_segment_timing(segments)
     # Apply language mode to segments
     segments = _apply_language_mode(segments, mode)
 
@@ -162,6 +247,7 @@ class ExportRequest(BaseModel):
 async def export_subtitle_post(req: ExportRequest):
     """Export subtitles from POST data (for pywebview/DMG where GET download doesn't work)."""
     segments = [s.model_dump() for s in req.segments]
+    segments = _normalize_segment_timing(segments)
     segments = _apply_language_mode(segments, req.mode)
     output, media_type = _export_segments(segments, req.format)
     return Response(
@@ -187,7 +273,7 @@ async def save_subtitle(req: SaveRequest):
         raise HTTPException(status_code=404, detail="Original file not found")
 
     suffix = file_path.suffix.lower()
-    segments = req.segments
+    segments = _normalize_segment_timing(req.segments)
 
     if suffix == ".srt":
         content = segments_to_srt(segments)

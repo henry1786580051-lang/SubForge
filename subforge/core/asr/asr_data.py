@@ -231,6 +231,7 @@ class ASRData:
             ass_style: ASS style string (optional, uses default if None)
             layout: Subtitle layout mode
         """
+        self.fix_boundary_overlaps()
         save_path = handle_long_path(save_path)
         Path(save_path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -279,6 +280,7 @@ class ASRData:
         save_path=None,
     ) -> str:
         """Convert to SRT subtitle format"""
+        self.fix_boundary_overlaps()
         srt_lines = []
         for n, seg in enumerate(self.segments, 1):
             original = seg.text
@@ -316,6 +318,7 @@ class ASRData:
 
     def to_json(self) -> dict:
         """Convert to JSON format"""
+        self.fix_boundary_overlaps()
         result_json = {}
         for i, segment in enumerate(self.segments, 1):
             result_json[str(i)] = {
@@ -346,6 +349,7 @@ class ASRData:
         Returns:
             ASS format subtitle content
         """
+        self.fix_boundary_overlaps()
         if not style_str:
             style_str = (
                 "[V4+ Styles]\n"
@@ -563,44 +567,311 @@ class ASRData:
 
         logger.info(f"Audio energy: avg={avg_rms:.0f}, threshold={silence_threshold:.0f}")
 
-        # Pass 2: Detect micro-pauses between segments and insert gaps
-        new_segments = []
-        for i, seg in enumerate(self.segments):
-            new_segments.append(seg)
+        # Pass 2: Restore natural pauses when an ASR engine emits a continuous
+        # timeline. Whisper.cpp commonly returns adjacent segments with
+        # end_time == next.start_time even when the audio contains silence.
+        min_pause_ms = 250
+        search_radius_ms = 1200
+        min_segment_duration_ms = 200
 
-            if i < len(self.segments) - 1:
-                next_seg = self.segments[i + 1]
-                boundary_ms = seg.end_time
+        def _find_silent_run_near_boundary(
+            boundary_ms: int,
+            search_start: int,
+            search_end: int,
+        ) -> tuple[int, int] | None:
+            best: tuple[int, int] | None = None
+            best_score: float | None = None
+            run_start: int | None = None
+            run_end: int | None = None
 
-                # Check energy in a 200ms window around the boundary
-                check_start = max(0, boundary_ms - 100)
-                check_end = min(len(audio), boundary_ms + 100)
+            for e in energies:
+                t = e["time_ms"]
+                if t < search_start:
+                    continue
+                if t >= search_end:
+                    break
 
-                # Count silent windows in this region
-                silent_windows = 0
-                total_windows = 0
-                for e in energies:
-                    if check_start <= e['time_ms'] < check_end:
-                        total_windows += 1
-                        if e['rms'] < silence_threshold:
-                            silent_windows += 1
+                if e["rms"] < silence_threshold:
+                    if run_start is None:
+                        run_start = t
+                    run_end = min(t + window_ms, search_end)
+                    continue
 
-                # If more than 60% of windows are silent, this is a natural pause
-                if total_windows > 0 and (silent_windows / total_windows) > 0.6:
-                    # Keep the natural gap (don't let optimize_timing fill it)
-                    pass
-                elif seg.end_time == next_seg.start_time:
-                    # No gap exists - check if we should create one
-                    # Look at energy drop between end of current and start of next
-                    end_energy = audio[max(0, seg.end_time - 50):seg.end_time].rms if seg.end_time > 50 else 0
-                    start_energy = audio[next_seg.start_time:min(len(audio), next_seg.start_time + 50)].rms if next_seg.start_time < len(audio) - 50 else 0
+                if run_start is not None and run_end is not None:
+                    if run_end - run_start >= min_pause_ms:
+                        center = (run_start + run_end) / 2
+                        score = abs(center - boundary_ms)
+                        if best_score is None or score < best_score:
+                            best = (run_start, run_end)
+                            best_score = score
+                    run_start = None
+                    run_end = None
 
-                    # If both ends have low energy, insert a small gap
-                    if end_energy < silence_threshold and start_energy < silence_threshold:
-                        seg.end_time = boundary_ms
-                        next_seg.start_time = boundary_ms
+            if run_start is not None and run_end is not None:
+                if run_end - run_start >= min_pause_ms:
+                    center = (run_start + run_end) / 2
+                    score = abs(center - boundary_ms)
+                    if best_score is None or score < best_score:
+                        best = (run_start, run_end)
 
-        # Pass 3: Remove segments that are entirely in silent regions
+            return best
+
+        for i, seg in enumerate(self.segments[:-1]):
+            next_seg = self.segments[i + 1]
+            gap_ms = next_seg.start_time - seg.end_time
+
+            # Preserve real gaps and let the overlap normalizer handle overlaps.
+            if gap_ms > 50 or gap_ms < 0:
+                continue
+
+            boundary_ms = seg.end_time
+            search_start = max(seg.start_time, boundary_ms - search_radius_ms)
+            search_end = min(next_seg.end_time, boundary_ms + search_radius_ms)
+            if search_end - search_start < min_pause_ms:
+                continue
+
+            silent_run = _find_silent_run_near_boundary(
+                boundary_ms,
+                search_start,
+                search_end,
+            )
+            if not silent_run:
+                continue
+
+            pause_start, pause_end = silent_run
+            if pause_start - seg.start_time < min_segment_duration_ms:
+                continue
+            if next_seg.end_time - pause_end < min_segment_duration_ms:
+                continue
+
+            if pause_end > pause_start:
+                logger.debug(
+                    "Restored pause %.2fs-%.2fs between segments %s and %s",
+                    pause_start / 1000,
+                    pause_end / 1000,
+                    i + 1,
+                    i + 2,
+                )
+                seg.end_time = pause_start
+                next_seg.start_time = pause_end
+
+        # Pass 3: Trim/split long segments that cover clear internal silence.
+        # This catches a different failure mode from overlaps: a single short
+        # subtitle line can be stretched over many seconds of silence or music.
+        def _word_count(text: str) -> int:
+            return len(re.findall(_WORD_SPLIT_PATTERN, text))
+
+        def _ends_with_sentence_punctuation(text: str) -> bool:
+            return bool(re.search(r"[.!?。！？]\s*$", text.strip()))
+
+        def _silent_runs(start_ms: int, end_ms: int, min_run_ms: int) -> list[tuple[int, int]]:
+            runs = []
+            run_start = None
+            run_end = None
+            for e in energies:
+                t = e["time_ms"]
+                if t < start_ms:
+                    continue
+                if t >= end_ms:
+                    break
+                if e["rms"] < silence_threshold:
+                    if run_start is None:
+                        run_start = t
+                    run_end = min(t + window_ms, end_ms)
+                elif run_start is not None and run_end is not None:
+                    if run_end - run_start >= min_run_ms:
+                        runs.append((run_start, run_end))
+                    run_start = None
+                    run_end = None
+            if run_start is not None and run_end is not None:
+                if run_end - run_start >= min_run_ms:
+                    runs.append((run_start, run_end))
+            return runs
+
+        def _active_clusters(start_ms: int, end_ms: int) -> list[tuple[int, int]]:
+            clusters = []
+            cluster_start = None
+            cluster_end = None
+            last_active = None
+            max_merge_gap_ms = 700
+            for e in energies:
+                t = e["time_ms"]
+                if t < start_ms:
+                    continue
+                if t >= end_ms:
+                    break
+                if e["rms"] >= silence_threshold:
+                    if cluster_start is None:
+                        cluster_start = t
+                    elif last_active is not None and t - last_active > max_merge_gap_ms:
+                        clusters.append((cluster_start, cluster_end or last_active + window_ms))
+                        cluster_start = t
+                    cluster_end = min(t + window_ms, end_ms)
+                    last_active = t
+            if cluster_start is not None and cluster_end is not None:
+                clusters.append((cluster_start, cluster_end))
+            return clusters
+
+        def _split_text_at_pause(text: str, ratio: float) -> tuple[str, str] | None:
+            words = text.strip().split()
+            if len(words) < 2:
+                return None
+            split_at = max(1, min(len(words) - 1, round(len(words) * ratio)))
+
+            # Prefer a punctuation boundary near the duration-derived split.
+            best = None
+            for idx in range(max(1, split_at - 3), min(len(words), split_at + 4)):
+                if re.search(r"[,.;:!?，。！？；：]$", words[idx - 1]):
+                    best = idx
+                    break
+            if best is not None:
+                split_at = best
+
+            left = " ".join(words[:split_at]).strip()
+            right = " ".join(words[split_at:]).strip()
+            if not left or not right:
+                return None
+            return left, right
+
+        adjusted_segments = []
+        for seg in self.segments:
+            duration_ms = seg.end_time - seg.start_time
+            words = _word_count(seg.text)
+            if duration_ms <= 0 or words == 0:
+                continue
+
+            max_reasonable_duration_ms = max(3500, min(8000, words * 500 + 800))
+
+            # Very short text over a long span is usually a hallucinated line
+            # during music/road noise, not speech.
+            if words <= 4 and duration_ms > max(8000, words * 2500):
+                logger.debug(
+                    "Removed overlong short segment as hallucination: %.2fs-%.2fs %r",
+                    seg.start_time / 1000,
+                    seg.end_time / 1000,
+                    seg.text,
+                )
+                continue
+
+            if duration_ms > max_reasonable_duration_ms:
+                clusters = _active_clusters(seg.start_time, seg.end_time)
+                if clusters:
+                    cluster_start, cluster_end = clusters[0]
+                    padded_start = max(seg.start_time, cluster_start - 150)
+                    padded_end = min(seg.end_time, cluster_end + 150)
+                    padded_duration = padded_end - padded_start
+                    enough_text_capacity = (
+                        words <= 8
+                        or padded_duration >= min(max_reasonable_duration_ms * 0.6, words * 300 + 500)
+                    )
+                    if padded_duration >= 500 and enough_text_capacity:
+                        logger.debug(
+                            "Trimmed overlong segment %.2fs-%.2fs to %.2fs-%.2fs",
+                            seg.start_time / 1000,
+                            seg.end_time / 1000,
+                            padded_start / 1000,
+                            padded_end / 1000,
+                        )
+                        seg.start_time = padded_start
+                        seg.end_time = padded_end
+                        duration_ms = seg.end_time - seg.start_time
+
+            split_done = False
+            if words >= 6 and duration_ms >= 2500:
+                for pause_start, pause_end in _silent_runs(seg.start_time, seg.end_time, 600):
+                    left_duration = pause_start - seg.start_time
+                    right_duration = seg.end_time - pause_end
+                    if left_duration < 500 or right_duration < 500:
+                        continue
+                    split_text = _split_text_at_pause(seg.text, left_duration / duration_ms)
+                    if not split_text:
+                        continue
+                    left_text, right_text = split_text
+                    adjusted_segments.append(
+                        ASRDataSeg(
+                            left_text,
+                            seg.start_time,
+                            pause_start,
+                            translated_text=seg.translated_text,
+                            speaker_id=seg.speaker_id,
+                        )
+                    )
+                    adjusted_segments.append(
+                        ASRDataSeg(
+                            right_text,
+                            pause_end,
+                            seg.end_time,
+                            translated_text="",
+                            speaker_id=seg.speaker_id,
+                        )
+                    )
+                    split_done = True
+                    logger.debug(
+                        "Split segment at silence %.2fs-%.2fs: %r | %r",
+                        pause_start / 1000,
+                        pause_end / 1000,
+                        left_text,
+                        right_text,
+                    )
+                    break
+            if not split_done:
+                duration_ms = seg.end_time - seg.start_time
+                if duration_ms > max_reasonable_duration_ms:
+                    capped_end = seg.start_time + max_reasonable_duration_ms
+                    logger.debug(
+                        "Capped overlong segment %.2fs-%.2fs to %.2fs-%.2fs",
+                        seg.start_time / 1000,
+                        seg.end_time / 1000,
+                        seg.start_time / 1000,
+                        capped_end / 1000,
+                    )
+                    seg.end_time = capped_end
+                adjusted_segments.append(seg)
+
+        for seg in adjusted_segments:
+            words = _word_count(seg.text)
+            if words == 0:
+                continue
+            max_duration_ms = max(3500, min(8000, words * 500 + 800))
+            duration_ms = seg.end_time - seg.start_time
+            if duration_ms > max_duration_ms:
+                capped_end = seg.start_time + max_duration_ms
+                logger.debug(
+                    "Capped adjusted segment %.2fs-%.2fs to %.2fs-%.2fs",
+                    seg.start_time / 1000,
+                    seg.end_time / 1000,
+                    seg.start_time / 1000,
+                    capped_end / 1000,
+                )
+                seg.end_time = capped_end
+
+            # Road noise can keep RMS high even after speech has ended, so pure
+            # energy gating misses some subtitle tails. For complete sentences,
+            # apply a conservative speech-rate cap to trim only the trailing end.
+            duration_ms = seg.end_time - seg.start_time
+            if (
+                words >= 6
+                and duration_ms >= 3500
+                and _ends_with_sentence_punctuation(seg.text)
+            ):
+                sentence_tail_cap_ms = max(3000, min(7000, words * 320 + 600))
+                if duration_ms > sentence_tail_cap_ms:
+                    min_duration_ms = max(2500, words * 250)
+                    trim_ms = min(duration_ms - sentence_tail_cap_ms, 800)
+                    capped_end = max(seg.start_time + min_duration_ms, seg.end_time - trim_ms)
+                    if capped_end < seg.end_time:
+                        logger.debug(
+                            "Trimmed sentence-final tail %.2fs-%.2fs to %.2fs-%.2fs",
+                            seg.start_time / 1000,
+                            seg.end_time / 1000,
+                            seg.start_time / 1000,
+                            capped_end / 1000,
+                        )
+                        seg.end_time = capped_end
+
+        self.segments = adjusted_segments
+
+        # Pass 4: Remove segments that are entirely in silent regions
         original_count = len(self.segments)
         filtered = []
         for seg in self.segments:
@@ -681,6 +952,47 @@ class ASRData:
                 ) // 2 + time_gap // 4
                 current_seg.end_time = mid_time
                 next_seg.start_time = mid_time
+
+        return self
+
+    def fix_boundary_overlaps(self, min_duration_ms: int = 1) -> "ASRData":
+        """Fix remaining timestamp overlaps after VAD boundary clipping.
+
+        Splits ordinary overlaps at a midpoint and clamps extreme overlaps so
+        the final timeline is monotonically non-overlapping.
+
+        Returns:
+            Self for method chaining
+        """
+        if not self.segments:
+            return self
+
+        min_duration_ms = max(0, min_duration_ms)
+        self.segments.sort(key=lambda s: (s.start_time, s.end_time))
+
+        for seg in self.segments:
+            if seg.end_time < seg.start_time:
+                seg.end_time = seg.start_time
+
+        for i in range(1, len(self.segments)):
+            prev = self.segments[i - 1]
+            curr = self.segments[i]
+            if prev.end_time <= curr.start_time:
+                continue
+
+            prev_min_end = prev.start_time + min_duration_ms
+            curr_max_start = curr.end_time - min_duration_ms
+
+            if prev_min_end <= curr_max_start:
+                split = (prev.end_time + curr.start_time) // 2
+                split = max(prev_min_end, min(split, curr_max_start))
+            else:
+                split = max(prev.start_time, min(curr.start_time, curr.end_time))
+
+            prev.end_time = min(prev.end_time, split)
+            curr.start_time = max(curr.start_time, split)
+            if curr.end_time < curr.start_time:
+                curr.end_time = curr.start_time
 
         return self
 

@@ -8,7 +8,7 @@ from typing import Callable, List, Optional
 from subforge.core.asr.asr_data import ASRData, ASRDataSeg
 from subforge.core.entities import SubtitleProcessData
 from subforge.core.translate.types import TargetLanguage
-from subforge.core.utils.cache import generate_cache_key, get_translate_cache
+from subforge.core.utils.cache import generate_cache_key, get_translate_cache, is_cache_enabled
 from subforge.core.utils.logger import setup_logger
 
 logger = setup_logger("subtitle_translator")
@@ -23,12 +23,14 @@ class BaseTranslator(ABC):
         batch_num: int,
         target_language: TargetLanguage,
         update_callback: Optional[Callable],
+        use_cache: bool = True,
     ):
         self.thread_num = thread_num
         self.batch_num = batch_num
         self.target_language = target_language
         self.is_running = True
         self.update_callback = update_callback
+        self.use_cache = use_cache
         self.executor = None
         self._cache = get_translate_cache()
 
@@ -125,21 +127,23 @@ class BaseTranslator(ABC):
         """安全的翻译块"""
         try:
             cache_key = self._get_cache_key(chunk)
-            try:
-                cached_result = self._cache.get(cache_key, default=None)
-            except Exception:
-                # Graceful degradation: corrupted cache (e.g. old pickle from app rename)
-                cached_result = None
-                self._cache.delete(cache_key)
-            if cached_result is not None:
-                return cached_result
+            if self.use_cache and is_cache_enabled():
+                try:
+                    cached_result = self._cache.get(cache_key, default=None)
+                except Exception:
+                    # Graceful degradation: corrupted cache (e.g. old pickle from app rename)
+                    cached_result = None
+                    self._cache.delete(cache_key)
+                if cached_result is not None:
+                    return cached_result
 
             result = self._translate_chunk(chunk)
 
             if self.update_callback:
                 self.update_callback(result)
 
-            self._cache.set(cache_key, result, expire=86400 * 7)
+            if self.use_cache and is_cache_enabled():
+                self._cache.set(cache_key, result, expire=86400 * 7)
             return result
 
         except Exception as e:

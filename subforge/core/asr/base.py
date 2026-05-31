@@ -33,6 +33,7 @@ class BaseASR:
     RATE_LIMIT_MAX_CALLS = 100
     RATE_LIMIT_MAX_DURATION = 360 * 60
     RATE_LIMIT_TIME_WINDOW = 12 * 3600
+    CACHE_SCHEMA_VERSION = "asr-v2"
 
     def __init__(
         self,
@@ -96,7 +97,7 @@ class BaseASR:
         Returns:
             ASRData: Recognition results with segments
         """
-        cache_key = f"{self.__class__.__name__}:{self._get_key()}"
+        cache_key = f"{self.CACHE_SCHEMA_VERSION}:{self.__class__.__name__}:{self._get_key()}"
 
         # Try cache first
         if self.use_cache and is_cache_enabled():
@@ -111,8 +112,11 @@ class BaseASR:
         # Run ASR
         resp_data = self._run(callback, **kwargs)
 
-        # Cache result
-        self._cache.set(cache_key, resp_data, expire=86400 * 2)
+        # Cache result only when this ASR instance explicitly opted in.
+        # Desktop transcription should not silently reuse stale results after
+        # algorithm or model changes.
+        if self.use_cache and is_cache_enabled():
+            self._cache.set(cache_key, resp_data, expire=86400 * 2)
 
         segments = self._make_segments(resp_data)
         return ASRData(segments)

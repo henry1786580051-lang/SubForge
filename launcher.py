@@ -5,8 +5,12 @@ Starts FastAPI backend in background and opens a native window.
 """
 import base64
 import os
+import socket
 import sys
 import threading
+import time
+import urllib.error
+import urllib.request
 
 # Fix path for PyInstaller frozen mode
 if getattr(sys, 'frozen', False):
@@ -14,18 +18,50 @@ if getattr(sys, 'frozen', False):
     sys.path.insert(0, sys._MEIPASS)
     sys.path.insert(0, os.path.join(sys._MEIPASS, 'backend'))
 
-PORT = 8000
-URL = f"http://127.0.0.1:{PORT}"
+HOST = "127.0.0.1"
+PREFERRED_PORT = 8000
 
 
-def start_server():
+def find_available_port(preferred_port: int = PREFERRED_PORT) -> int:
+    """Prefer the stable dev port, then fall back to an OS-assigned port."""
+    for port in (preferred_port, 0):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind((HOST, port))
+            except OSError:
+                continue
+            return int(sock.getsockname()[1])
+    raise RuntimeError("No available localhost port found")
+
+
+def start_server(port: int, server_errors: list[str]):
     import uvicorn
-    uvicorn.run(
-        "app.main:app",
-        host="127.0.0.1",
-        port=PORT,
-        log_level="warning",
-    )
+
+    try:
+        uvicorn.run(
+            "app.main:app",
+            host=HOST,
+            port=port,
+            log_level="warning",
+        )
+    except Exception as exc:
+        server_errors.append(str(exc))
+
+
+def wait_for_server(url: str, server_errors: list[str], timeout_seconds: float = 15.0) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    health_url = f"{url}/api/health"
+    while time.monotonic() < deadline:
+        if server_errors:
+            return False
+        try:
+            with urllib.request.urlopen(health_url, timeout=0.5) as response:
+                if response.status == 200:
+                    return True
+        except (OSError, urllib.error.URLError):
+            time.sleep(0.1)
+    return False
 
 
 class Api:
@@ -33,8 +69,9 @@ class Api:
 
     def save_file(self, base64_data: str, default_filename: str):
         """Save a base64-encoded file using native save dialog."""
-        import webview
         import traceback
+
+        import webview
 
         try:
             if not webview.windows:
@@ -62,8 +99,15 @@ class Api:
 
 def main():
     # Start FastAPI in background thread
-    server_thread = threading.Thread(target=start_server, daemon=True)
+    port = find_available_port()
+    url = f"http://{HOST}:{port}"
+    server_errors: list[str] = []
+    server_thread = threading.Thread(target=start_server, args=(port, server_errors), daemon=True)
     server_thread.start()
+
+    if not wait_for_server(url, server_errors):
+        detail = server_errors[-1] if server_errors else f"Timed out waiting for backend at {url}"
+        raise RuntimeError(f"SubForge backend failed to start: {detail}")
 
     # Open native window with JS API
     import webview
@@ -78,7 +122,7 @@ def main():
 
     webview.create_window(
         "SubForge",
-        url=URL,
+        url=url,
         width=1400,
         height=900,
         min_size=(900, 600),

@@ -437,6 +437,14 @@ export function SettingsPanel() {
           {/* Whisper model download */}
           {((settings.transcribe_model as string) === "whisper_cpp" || (settings.transcribe_model as string) === "faster_whisper") && (
             <>
+            {(settings.transcribe_model as string) === "whisper_cpp" && (
+              <SettingsField label="Whisper.cpp 程序路径" description="填写 whisper-cli 可执行文件路径；模型文件和程序文件必须同时存在">
+                <input type="text" value={(settings.whisper_cpp_path as string) || ""}
+                  onChange={(e) => setSettings((prev) => ({ ...prev, whisper_cpp_path: e.target.value }))}
+                  onBlur={(e) => handleSave("whisper_cpp_path", e.target.value)}
+                  placeholder="/opt/homebrew/bin/whisper-cli" className="input-field" />
+              </SettingsField>
+            )}
             <SettingsField label="模型存储目录" description="留空则使用默认目录（~/SubForge/models）">
               <input type="text" value={(settings.whisper_model_dir as string) || ""}
                 onChange={(e) => setSettings((prev) => ({ ...prev, whisper_model_dir: e.target.value }))}

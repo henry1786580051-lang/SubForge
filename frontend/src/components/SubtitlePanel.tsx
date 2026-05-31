@@ -61,11 +61,15 @@ export function SubtitlePanel() {
 
   const [exportFormat, setExportFormat] = useState<"srt" | "vtt" | "ass" | "txt" | "json">("srt");
   const [exportMode, setExportMode] = useState<"original" | "translated" | "bilingual">("bilingual");
+  const getExportFilename = useCallback((format: string) => {
+    const source = subtitleFile?.split(/[\\/]/).pop() || "subtitles.srt";
+    return source.replace(/\.[^.]+$/, `.${format}`);
+  }, [subtitleFile]);
   const handleExport = useCallback(async (format?: string, mode?: string) => {
     if (!subtitleFile) return;
     const f = format || exportFormat;
     const m = mode || exportMode;
-    const defaultName = subtitleFile.replace(/\.[^.]+$/, `.${f}`);
+    const defaultName = getExportFilename(f);
     try {
       // pywebview: use POST endpoint + native save dialog
       if (typeof window !== "undefined" && "pywebview" in window) {
@@ -115,7 +119,7 @@ export function SubtitlePanel() {
     } catch (err) {
       useAppStore.getState().setError(err instanceof Error ? err.message : "Export failed");
     }
-  }, [subtitleFile, subtitles, exportFormat, exportMode]);
+  }, [subtitleFile, subtitles, exportFormat, exportMode, getExportFilename]);
   const handleSave = useCallback(async () => { if (!subtitleFile || subtitles.length === 0) return; try { await subtitlesApi.save(subtitleFile, subtitles); } catch (err) { useAppStore.getState().setError(err instanceof Error ? err.message : "Save failed"); } }, [subtitleFile, subtitles]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent, id: number) => { e.preventDefault(); e.stopPropagation(); if (!selectedIds.has(id)) toggleSelect(id); setContextMenu({ x: e.clientX, y: e.clientY, id }); }, [selectedIds, toggleSelect]);
@@ -159,12 +163,12 @@ export function SubtitlePanel() {
             保存
           </button>
           <div className="relative">
-            <button disabled={!subtitleFile} onClick={() => setShowExportMenu(!showExportMenu)}
+            <button disabled={!subtitleFile} onClick={(e) => { e.stopPropagation(); setShowExportMenu(!showExportMenu); }}
               className="px-2.5 py-1.5 text-[12px] rounded-md bg-accent-dim text-accent hover:bg-accent/15 transition-all font-medium disabled:opacity-30 disabled:cursor-not-allowed btn-press">
               导出
             </button>
             {showExportMenu && (
-              <div className="absolute right-0 top-full mt-1 bg-surface border border-border rounded-xl z-50 p-3 w-56 space-y-3 shadow-md">
+              <div onClick={(e) => e.stopPropagation()} className="absolute right-0 top-full mt-1 bg-surface border border-border rounded-xl z-50 p-3 w-56 space-y-3 shadow-md">
                 {/* Format */}
                 <div>
                   <label className="text-[11px] text-text-muted uppercase tracking-wider font-medium block mb-1.5">格式</label>

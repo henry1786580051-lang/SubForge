@@ -11,7 +11,13 @@ router = APIRouter()
 _settings_lock = threading.Lock()
 
 # Path to subforge settings.json
+try:
+    from subforge.config import SETTINGS_PATH
+except Exception:
+    SETTINGS_PATH = None
+
 _SETTINGS_CANDIDATES = [
+    SETTINGS_PATH,
     Path.home() / "SubForge" / "settings.json",
     Path.home() / "Desktop" / "Project" / "SubForge" / "AppData" / "settings.json",
 ]
@@ -19,7 +25,7 @@ _SETTINGS_CANDIDATES = [
 
 def _find_settings_path() -> Path | None:
     for p in _SETTINGS_CANDIDATES:
-        if p.exists():
+        if p and p.exists():
             return p
     return None
 
@@ -62,6 +68,8 @@ def _write_settings(data: dict):
         if not path:
             # Create in the first candidate location
             path = _SETTINGS_CANDIDATES[0]
+            if path is None:
+                path = Path.home() / "SubForge" / "settings.json"
             path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -93,6 +101,7 @@ _DEFAULTS = {
     "batch_size": 10,
     "custom_prompt": "",
     "whisper_model_dir": "",
+    "whisper_cpp_path": "",
     "whisper_base_url": "",
     "whisper_api_key": "",
     "whisper_api_model": "whisper-1",

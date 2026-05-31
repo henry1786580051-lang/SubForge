@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Union
 
-from ...config import MODEL_PATH
+from ...config import BIN_PATH, BUNDLED_BIN_PATH, MODEL_PATH
 from ..utils.logger import setup_logger
 from ..utils.subprocess_helper import StreamReader
 from .asr_data import ASRData, ASRDataSeg
@@ -283,18 +283,37 @@ class WhisperCppASR(BaseASR):
             return 600
 
 
+def _whisper_executable_search_dirs() -> list[Path]:
+    return [
+        Path(BIN_PATH),
+        Path(BUNDLED_BIN_PATH),
+        Path(MODEL_PATH),
+        Path.home() / "SubForge" / "bin",
+        Path.home() / ".local" / "bin",
+        Path("/opt/homebrew/bin"),
+        Path("/usr/local/bin"),
+    ]
+
+
 def detect_whisper_executable() -> str:
-    """Detect available whisper-cpp executable name."""
-    # Try new version first (whisper-cli)
-    if shutil.which("whisper-cli"):
-        return "whisper-cli"
+    """Detect available whisper.cpp executable path."""
+    executable_names = ("whisper-cli", "whisper-cpp", "main")
 
-    # Fall back to old version (whisper-cpp)
-    if shutil.which("whisper-cpp"):
-        return "whisper-cpp"
+    for name in executable_names:
+        if found := shutil.which(name):
+            return found
 
-    # Neither found
-    raise RuntimeError("Neither 'whisper-cli' nor 'whisper-cpp' found in PATH. ")
+    for directory in _whisper_executable_search_dirs():
+        for name in executable_names:
+            candidate = directory / name
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
+
+    raise RuntimeError(
+        "whisper.cpp executable not found. Install or build whisper.cpp and set "
+        "the executable path to 'whisper-cli' in Settings. The GGML model file "
+        "alone is not enough to run local transcription."
+    )
 
 
 if __name__ == "__main__":

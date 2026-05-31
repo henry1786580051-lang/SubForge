@@ -317,6 +317,209 @@ class TestOptimizeTimingEdgeCases:
         assert asr_data.segments[0].end_time == original_end
 
 
+class TestFixBoundaryOverlaps:
+    """测试字幕时间轴重叠修复"""
+
+    def test_splits_adjacent_overlap_at_midpoint(self):
+        segments = [
+            ASRDataSeg("First", 0, 2000),
+            ASRDataSeg("Second", 1500, 3000),
+        ]
+        asr_data = ASRData(segments)
+
+        asr_data.fix_boundary_overlaps()
+
+        assert asr_data.segments[0].end_time == 1750
+        assert asr_data.segments[1].start_time == 1750
+        assert asr_data.segments[0].end_time <= asr_data.segments[1].start_time
+
+    def test_handles_contained_segment_without_leaving_overlap(self):
+        segments = [
+            ASRDataSeg("Long segment", 0, 10000),
+            ASRDataSeg("Contained", 100, 200),
+            ASRDataSeg("After", 300, 1000),
+        ]
+        asr_data = ASRData(segments)
+
+        asr_data.fix_boundary_overlaps()
+
+        for current, next_seg in zip(asr_data.segments, asr_data.segments[1:]):
+            assert current.end_time <= next_seg.start_time
+            assert current.start_time <= current.end_time
+            assert next_seg.start_time <= next_seg.end_time
+
+    def test_to_srt_normalizes_overlaps_before_output(self):
+        segments = [
+            ASRDataSeg("First", 0, 2000),
+            ASRDataSeg("Second", 1500, 3000),
+        ]
+        asr_data = ASRData(segments)
+
+        srt = asr_data.to_srt()
+
+        assert "00:00:01,750 --> 00:00:01,750" not in srt
+        assert "00:00:00,000 --> 00:00:01,750" in srt
+        assert "00:00:01,750 --> 00:00:03,000" in srt
+
+    def test_save_normalizes_json_timestamps(self, tmp_path):
+        segments = [
+            ASRDataSeg("First", 0, 2000),
+            ASRDataSeg("Second", 1500, 3000),
+        ]
+        asr_data = ASRData(segments)
+        output_path = tmp_path / "result.json"
+
+        asr_data.save(str(output_path))
+        loaded = ASRData.from_subtitle_file(str(output_path))
+
+        assert loaded.segments[0].end_time <= loaded.segments[1].start_time
+
+
+class TestAudioEnergyPauseRestore:
+    """测试从音频静音恢复字幕间隔"""
+
+    @staticmethod
+    def _tone(duration_ms=1000):
+        from pydub.generators import Sine
+
+        return Sine(440).to_audio_segment(duration=duration_ms).apply_gain(-3)
+
+    def test_filter_hallucinations_restores_zero_gap_pause_from_audio(self, tmp_path):
+        from pydub import AudioSegment
+
+        tone = self._tone()
+        silence = AudioSegment.silent(duration=800)
+        audio = tone + silence + tone
+        audio_path = tmp_path / "pause.wav"
+        audio.export(audio_path, format="wav")
+
+        asr_data = ASRData(
+            [
+                ASRDataSeg("Before pause", 0, 1400),
+                ASRDataSeg("After pause", 1400, 2800),
+            ]
+        )
+
+        asr_data.filter_hallucinations(str(audio_path))
+
+        gap = asr_data.segments[1].start_time - asr_data.segments[0].end_time
+        assert gap >= 250
+        assert 900 <= asr_data.segments[0].end_time <= 1100
+        assert 1700 <= asr_data.segments[1].start_time <= 1900
+
+    def test_filter_hallucinations_splits_segment_on_internal_silence(self, tmp_path):
+        from pydub import AudioSegment
+
+        audio = self._tone() + AudioSegment.silent(duration=800) + self._tone()
+        audio_path = tmp_path / "internal_pause.wav"
+        audio.export(audio_path, format="wav")
+
+        asr_data = ASRData(
+            [
+                ASRDataSeg(
+                    "This phrase should split across the internal pause",
+                    0,
+                    2800,
+                )
+            ]
+        )
+
+        asr_data.filter_hallucinations(str(audio_path))
+
+        assert len(asr_data.segments) == 2
+        assert asr_data.segments[0].end_time <= 1100
+        assert asr_data.segments[1].start_time >= 1700
+        assert asr_data.segments[1].start_time - asr_data.segments[0].end_time >= 600
+        assert asr_data.segments[0].text
+        assert asr_data.segments[1].text
+
+    def test_filter_hallucinations_removes_overlong_short_segment(self, tmp_path):
+        audio = self._tone(duration_ms=12000)
+        audio_path = tmp_path / "active_noise.wav"
+        audio.export(audio_path, format="wav")
+
+        asr_data = ASRData([ASRDataSeg("Still very clear.", 0, 12000)])
+
+        asr_data.filter_hallucinations(str(audio_path))
+
+        assert asr_data.segments == []
+
+    def test_filter_hallucinations_trims_overlong_segment_to_active_cluster(self, tmp_path):
+        from pydub import AudioSegment
+
+        audio = self._tone() + AudioSegment.silent(duration=6000)
+        audio_path = tmp_path / "trailing_silence.wav"
+        audio.export(audio_path, format="wav")
+
+        asr_data = ASRData([ASRDataSeg("First driving impressions today now", 0, 7000)])
+
+        asr_data.filter_hallucinations(str(audio_path))
+
+        assert len(asr_data.segments) == 1
+        assert asr_data.segments[0].end_time <= 1200
+
+    def test_filter_hallucinations_caps_overlong_segment_in_active_noise(self, tmp_path):
+        audio = self._tone(duration_ms=12000)
+        audio_path = tmp_path / "active_long.wav"
+        audio.export(audio_path, format="wav")
+
+        asr_data = ASRData(
+            [
+                ASRDataSeg(
+                    "Volume controls here to the left and we are going left now",
+                    0,
+                    12000,
+                )
+            ]
+        )
+
+        asr_data.filter_hallucinations(str(audio_path))
+
+        assert len(asr_data.segments) == 1
+        assert asr_data.segments[0].end_time <= 7500
+
+    def test_filter_hallucinations_trims_sentence_tail_in_active_noise(self, tmp_path):
+        audio = self._tone(duration_ms=6000)
+        audio_path = tmp_path / "active_sentence_tail.wav"
+        audio.export(audio_path, format="wav")
+
+        asr_data = ASRData(
+            [
+                ASRDataSeg(
+                    "have to look up into a head-up display to see what I'm pressing.",
+                    0,
+                    5300,
+                )
+            ]
+        )
+
+        asr_data.filter_hallucinations(str(audio_path))
+
+        assert len(asr_data.segments) == 1
+        assert asr_data.segments[0].end_time < 5300
+        assert asr_data.segments[0].end_time >= 3000
+
+    def test_filter_hallucinations_does_not_trim_non_terminal_active_noise(self, tmp_path):
+        audio = self._tone(duration_ms=6000)
+        audio_path = tmp_path / "active_non_terminal.wav"
+        audio.export(audio_path, format="wav")
+
+        asr_data = ASRData(
+            [
+                ASRDataSeg(
+                    "to place on the road it is still narrow enough to fit through",
+                    0,
+                    5300,
+                )
+            ]
+        )
+
+        asr_data.filter_hallucinations(str(audio_path))
+
+        assert len(asr_data.segments) == 1
+        assert asr_data.segments[0].end_time == 5300
+
+
 class TestRemovePunctuationEdgeCases:
     """测试移除标点边缘情况"""
 

@@ -20,12 +20,14 @@ class BingTranslator(BaseTranslator):
         batch_num: int,
         target_language: TargetLanguage,
         update_callback: Optional[Callable],
+        use_cache: bool = True,
     ):
         super().__init__(
             thread_num=thread_num,
             batch_num=batch_num,
             target_language=target_language,
             update_callback=update_callback,
+            use_cache=use_cache,
         )
         self.timeout = 20
         self.session = requests.Session()

@@ -1,7 +1,7 @@
-import sys
 import os
-from pathlib import Path
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,13 +11,23 @@ from fastapi.staticfiles import StaticFiles
 _project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_project_root))
 
-from app.api import tasks, transcribe, subtitle, config, websocket, files, subtitles, llm_logs  # noqa: E402
+from app.api import (  # noqa: E402
+    config,
+    files,
+    llm_logs,
+    subtitle,
+    subtitles,
+    tasks,
+    transcribe,
+    websocket,
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: create necessary directories and set event loop
     import asyncio
+
     from app.api.websocket import set_event_loop
     set_event_loop(asyncio.get_running_loop())
     from subforge.config import APPDATA_PATH
@@ -55,9 +65,19 @@ app.include_router(websocket.router, prefix="/ws", tags=["websocket"])
 @app.get("/api/health")
 async def health_check():
     import shutil
+
+    import subforge
+
     ffmpeg_ok = shutil.which("ffmpeg") is not None
     ffprobe_ok = shutil.which("ffprobe") is not None
-    return {"status": "ok", "ffmpeg": ffmpeg_ok, "ffprobe": ffprobe_ok}
+    return {
+        "status": "ok",
+        "ffmpeg": ffmpeg_ok,
+        "ffprobe": ffprobe_ok,
+        "pid": os.getpid(),
+        "subforge_module": str(Path(subforge.__file__).resolve()),
+        "timeline_overlap_fix": True,
+    }
 
 
 def _find_static_dir() -> Path | None:
