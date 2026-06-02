@@ -560,6 +560,7 @@ class TranscribeConfig:
     faster_whisper_compute_type: str = "default"
     whisper_n_threads: int = 4
     faster_whisper_prompt: Optional[str] = None
+    enable_audio_enhancement: bool = True
 
     def _mask_key(self, key: Optional[str]) -> str:
         """Mask sensitive key for display"""
@@ -575,6 +576,7 @@ class TranscribeConfig:
         )
         lines.append(f"Language: {self.transcribe_language or 'Auto'}")
         lines.append(f"Word Timestamp: {self.need_word_time_stamp}")
+        lines.append(f"Audio Enhancement: {self.enable_audio_enhancement}")
         lines.append(
             f"Output Format: {self.output_format.value if self.output_format else 'None'}"
         )

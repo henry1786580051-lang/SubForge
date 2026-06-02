@@ -113,6 +113,37 @@ def build_pyinstaller() -> None:
     ], env=env)
 
 
+def patch_packaged_torch() -> None:
+    """Patch PyInstaller-collected torch for macOS frozen import semantics.
+
+    Some torch wheels successfully execute ``from torch._C import *`` inside a
+    frozen app but do not leave the ``_C`` module binding in torch globals. The
+    upstream torch module then crashes when it calls ``dir(_C)``. Importing the
+    extension module explicitly at that point preserves normal Python behavior.
+    """
+    candidates = [
+        DIST_DIR / "SubForge" / "_internal" / "torch" / "__init__.py",
+        DIST_DIR / "SubForge.app" / "Contents" / "Resources" / "torch" / "__init__.py",
+        DIST_DIR / "SubForge.app" / "Contents" / "Frameworks" / "torch" / "__init__.py",
+    ]
+    needle = "for name in dir(_C):\n"
+    replacement = (
+        "import torch._C as _C\n"
+        "\n"
+        "for name in dir(_C):\n"
+    )
+    for path in candidates:
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        if replacement in text:
+            continue
+        if needle not in text:
+            continue
+        path.write_text(text.replace(needle, replacement, 1), encoding="utf-8")
+        print(f"Patched packaged torch import: {path.relative_to(ROOT)}")
+
+
 def _platform_tag() -> str:
     system = platform.system().lower()
     machine = platform.machine().lower().replace("amd64", "x64").replace("x86_64", "x64")
@@ -176,6 +207,7 @@ def main() -> int:
     ensure_version_file(version)
     prepare_ffmpeg()
     build_pyinstaller()
+    patch_packaged_torch()
     verify_bundle()
     if not args.no_archive:
         archive(version)

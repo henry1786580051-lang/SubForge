@@ -15,6 +15,7 @@ logger = setup_logger("transcript_thread")
 class TranscriptThread(QThread):
     finished = pyqtSignal(TranscribeTask)
     progress = pyqtSignal(int, str)
+    update_all = pyqtSignal(dict)
     error = pyqtSignal(str)
 
     def __init__(self, task: TranscribeTask):
@@ -112,7 +113,9 @@ class TranscriptThread(QThread):
                 temp_audio_path,
                 self.task.transcribe_config,
                 callback=self.progress_callback,
+                on_segment=self.segment_callback,
             )
+            self.update_all.emit(asr_data.to_json())
 
             # 保存字幕文件（根据配置的输出格式）
             output_path = Path(self.task.output_path)
@@ -147,3 +150,6 @@ class TranscriptThread(QThread):
     def progress_callback(self, value, message):
         progress = min(20 + (value * 0.8), 100)
         self.progress.emit(int(progress), message)
+
+    def segment_callback(self, asr_data):
+        self.update_all.emit(asr_data.to_json())

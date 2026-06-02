@@ -165,6 +165,7 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
         config.whisper_n_threads = n_threads
         config.faster_whisper_compute_type = compute_type
         config.whisper_cpp_path = get_config_value("whisper_cpp_path", "")
+        config.enable_audio_enhancement = get_config_value("enable_audio_enhancement", True)
 
         # Vocal separation
         config.faster_whisper_ff_mdx_kim2 = get_config_value("ff_mdx_kim2", False)

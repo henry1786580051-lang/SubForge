@@ -76,6 +76,7 @@ DEFAULTS: Dict[str, Any] = {
     "transcribe": {
         "asr": "whisper-api",
         "language": "auto",
+        "audio_enhancement": True,
         "faster_whisper": {
             "model": "large-v3",
             "device": "auto",

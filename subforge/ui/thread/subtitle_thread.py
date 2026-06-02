@@ -4,7 +4,7 @@ from typing import List
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
-from subforge.core.asr.asr_data import ASRData
+from subforge.core.asr.asr_data import ASRData, ASRDataSeg
 from subforge.core.entities import (
     SubtitleConfig,
     SubtitleLayoutEnum,
@@ -79,6 +79,24 @@ class SubtitleThread(QThread):
     def set_custom_prompt_text(self, text: str):
         self.custom_prompt_text = text
 
+    def _refine_sentence_timing_from_source(self, asr_data: ASRData) -> ASRData:
+        """Tighten sentence-level subtitles against the source media after splitting."""
+        if asr_data.is_word_timestamp() or not self.task.video_path:
+            return asr_data
+
+        source_path = Path(self.task.video_path)
+        if not source_path.exists():
+            return asr_data
+
+        try:
+            asr_data.fix_boundary_overlaps()
+            asr_data.filter_hallucinations(audio_path=str(source_path))
+            asr_data.fix_boundary_overlaps()
+        except Exception as e:
+            logger.warning("字幕时间轴二次修正失败，保留当前断句结果: %s", e, exc_info=True)
+
+        return asr_data
+
     def _setup_llm_config(self) -> SubtitleConfig:
         """验证 LLM 配置并设置环境变量，返回 SubtitleConfig"""
         config = self.task.subtitle_config
@@ -141,8 +159,10 @@ class SubtitleThread(QThread):
                     model=subtitle_config.llm_model,
                     max_word_count_cjk=subtitle_config.max_word_count_cjk,
                     max_word_count_english=subtitle_config.max_word_count_english,
+                    update_callback=self.split_callback,
                 )
                 asr_data = splitter.split_subtitle(asr_data)
+                asr_data = self._refine_sentence_timing_from_source(asr_data)
                 self.update_all.emit(asr_data.to_json())
 
             # 3. 优化字幕
@@ -276,6 +296,9 @@ class SubtitleThread(QThread):
             for data in result
         }
         self.update.emit(result_dict)
+
+    def split_callback(self, segments: List[ASRDataSeg]):
+        self.update_all.emit(ASRData(segments).to_json())
 
     def stop(self):
         """停止所有处理"""

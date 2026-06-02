@@ -1,7 +1,8 @@
 import atexit
 import difflib
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Union
+from typing import Callable, List, Optional, Union
 
 from subforge.core.asr.asr_data import ASRData, ASRDataSeg
 from subforge.core.split.split_by_llm import split_by_llm
@@ -54,6 +55,74 @@ MATCH_MAX_UNMATCHED = 5  # 允许的最大未匹配句子数
 MATCH_LARGE_SHIFT = 100  # 未匹配时的大偏移量
 
 
+_NO_SPACE_BEFORE = set(",.;:!?)]}，。！？；：、）】》")
+_NO_SPACE_AFTER = set("([{（【《")
+_DANGLING_TAIL_WORDS = {
+    "a",
+    "an",
+    "and",
+    "as",
+    "at",
+    "but",
+    "by",
+    "for",
+    "from",
+    "in",
+    "into",
+    "of",
+    "on",
+    "or",
+    "over",
+    "that",
+    "the",
+    "these",
+    "this",
+    "those",
+    "to",
+    "under",
+    "with",
+}
+
+
+def _join_texts(texts: List[str]) -> str:
+    """Join token/word texts without losing spaces after punctuation."""
+    result = ""
+    for raw_text in texts:
+        text = raw_text.strip()
+        if not text:
+            continue
+
+        if not result:
+            result = text
+            continue
+
+        if (
+            text[0] in _NO_SPACE_BEFORE
+            or result[-1] in _NO_SPACE_AFTER
+            or is_mainly_cjk(result[-1])
+            or is_mainly_cjk(text[0])
+        ):
+            result += text
+        else:
+            result += f" {text}"
+
+    result = re.sub(r"\s+([,.;:!?，。！？；：、])", r"\1", result)
+    result = re.sub(r"([,;:!?])(?=\S)", r"\1 ", result)
+    return result.strip()
+
+
+def _join_segment_text(segments: List[ASRDataSeg]) -> str:
+    return _join_texts([seg.text for seg in segments])
+
+
+def _is_dangling_tail(text: str) -> bool:
+    stripped = text.strip()
+    if len(stripped) == 1 and stripped.isupper():
+        return False
+    words = re.findall(r"[A-Za-z0-9']+", text.lower())
+    return bool(words and words[-1] in _DANGLING_TAIL_WORDS)
+
+
 def preprocess_segments(
     segments: List[ASRDataSeg], need_lower: bool = True
 ) -> List[ASRDataSeg]:
@@ -94,6 +163,7 @@ class SubtitleSplitter:
         model,
         max_word_count_cjk: int = MAX_WORD_COUNT_CJK,
         max_word_count_english: int = MAX_WORD_COUNT_ENGLISH,
+        update_callback: Optional[Callable[[List[ASRDataSeg]], None]] = None,
     ):
         """初始化分割器
 
@@ -107,6 +177,7 @@ class SubtitleSplitter:
         self.model = model
         self.max_word_count_cjk = max_word_count_cjk
         self.max_word_count_english = max_word_count_english
+        self.update_callback = update_callback
         self.is_running = True
         self._init_thread_pool()
 
@@ -145,7 +216,7 @@ class SubtitleSplitter:
 
             # 2. 预处理
             asr_data.segments = preprocess_segments(asr_data.segments, need_lower=False)
-            txt = asr_data.to_txt().replace("\n", "")
+            txt = _join_segment_text(asr_data.segments)
 
             # 3. 确定Segments数并分割
             total_word_count = count_words(txt)
@@ -159,6 +230,7 @@ class SubtitleSplitter:
 
             # 5. 合并并优化
             final_segments = self._merge_processed_segments(processed_segments)
+            self.merge_short_segment(final_segments)
 
             return ASRData(final_segments)
 
@@ -261,6 +333,8 @@ class SubtitleSplitter:
             try:
                 result = future.result()
                 processed_segments.append(result)
+                if self.update_callback:
+                    self.update_callback(self._merge_processed_segments(processed_segments))
             except Exception as e:
                 logger.error(f"Segment processing failed:{str(e)}")
 
@@ -285,7 +359,7 @@ class SubtitleSplitter:
         Returns:
             处理后的Segments列表
         """
-        txt = "".join([seg.text for seg in segments])
+        txt = _join_segment_text(segments)
         logger.debug(f"Calling API for segmentation,text length: {count_words(txt)}")
 
         sentences = split_by_llm(
@@ -324,10 +398,10 @@ class SubtitleSplitter:
         for group in segment_groups:
             max_word_count = (
                 self.max_word_count_cjk
-                if is_mainly_cjk("".join(seg.text for seg in group))
+                if is_mainly_cjk(_join_segment_text(group))
                 else self.max_word_count_english
             )
-            if count_words("".join(seg.text for seg in group)) > max_word_count:
+            if count_words(_join_segment_text(group)) > max_word_count:
                 split_groups = self._split_by_common_words(group)
                 common_result_groups.extend(split_groups)
             else:
@@ -383,6 +457,9 @@ class SubtitleSplitter:
 
             # 超过最大间隔则分组
             if time_gap > max_gap:
+                if _is_dangling_tail(current_group[-1].text) and time_gap <= max(max_gap * 3, 1600):
+                    current_group.append(segments[i])
+                    continue
                 result.append(current_group)
                 current_group = []
                 recent_gaps = []
@@ -538,7 +615,7 @@ class SubtitleSplitter:
             if not current_segments:
                 continue
 
-            merged_text = "".join(seg.text for seg in current_segments)
+            merged_text = _join_segment_text(current_segments)
             max_word_count = (
                 self.max_word_count_cjk
                 if is_mainly_cjk(merged_text)
@@ -578,6 +655,9 @@ class SubtitleSplitter:
                 )
                 if split_index == 0 or split_index == n - 1:
                     split_index = n // 2
+
+            while split_index < n - 2 and _is_dangling_tail(current_segments[split_index].text):
+                split_index += 1
 
             # 分割并加入处理队列
             first_segs = current_segments[: split_index + 1]
@@ -709,7 +789,7 @@ class SubtitleSplitter:
         for sentence in sentences:
             logger.debug("==========")
             logger.debug(f"Processing sentence: {sentence}")
-            logger.debug("Next sentences: :" + "".join(asr_texts[asr_index : asr_index + 10]))
+            logger.debug("Next sentences: :" + _join_texts(asr_texts[asr_index : asr_index + 10]))
 
             sentence_proc = preprocess_text(sentence)
             word_count = count_words(sentence_proc)
@@ -729,7 +809,7 @@ class SubtitleSplitter:
             for window_size in window_sizes:
                 max_start = min(asr_index + max_shift + 1, asr_len - window_size + 1)
                 for start in range(asr_index, max_start):
-                    substr = "".join(asr_texts[start : start + window_size])
+                    substr = _join_texts(asr_texts[start : start + window_size])
                     substr_proc = preprocess_text(substr)
                     ratio = difflib.SequenceMatcher(
                         None, sentence_proc, substr_proc
@@ -761,7 +841,7 @@ class SubtitleSplitter:
                 seg_groups = self._group_by_time_gaps(segs_to_merge, max_gap=MAX_GAP)
 
                 for group in seg_groups:
-                    merged_text = "".join(seg.text for seg in group)
+                    merged_text = _join_segment_text(group)
                     merged_start_time = group[0].start_time
                     merged_end_time = group[-1].end_time
                     merged_seg = ASRDataSeg(

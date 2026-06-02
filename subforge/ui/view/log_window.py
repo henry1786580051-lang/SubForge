@@ -4,6 +4,7 @@ from PyQt5.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import FluentStyleSheet, PushButton, TextEdit, isDarkTheme
 
 from subforge.config import LOG_PATH, RESOURCE_PATH
+from subforge.core.utils.logger import get_active_log_file
 from subforge.core.utils.platform_utils import reveal_in_explorer
 
 
@@ -51,7 +52,7 @@ class LogWindow(QWidget):
         self.timer.start(500)  # 每2秒更新一次
 
         # 获取日志文件路径并打开文件
-        self.log_path = LOG_PATH / "app.log"
+        self.log_path = get_active_log_file(LOG_PATH / "app.log")
         try:
             self.log_file = open(self.log_path, "r", encoding="utf-8")
             self.load_last_lines(20480)

@@ -4,7 +4,7 @@ import datetime
 import os
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from PyQt5.QtCore import QStandardPaths, Qt, pyqtSignal
 from PyQt5.QtGui import QFont, QPixmap
@@ -29,6 +29,7 @@ from qfluentwidgets import (
     ProgressRing,
     PushButton,
     RoundMenu,
+    TextEdit,
     TransparentDropDownPushButton,
     setFont,
 )
@@ -299,6 +300,10 @@ class VideoInfoCard(CardWidget):
         self.transcript_thread.finished.connect(self.on_transcript_finished)
         self.transcript_thread.progress.connect(self.on_transcript_progress)
         self.transcript_thread.error.connect(self.on_transcript_error)
+        if self.transcription_interface:
+            self.transcript_thread.update_all.connect(  # type: ignore[attr-defined]
+                self.transcription_interface.update_transcript_preview  # type: ignore[attr-defined]
+            )
         self.transcript_thread.start()
 
     def on_transcript_progress(self, value, message):
@@ -374,6 +379,11 @@ class TranscriptionInterface(QWidget):
         # 添加转录设置卡片
         self.transcription_setting_card = TranscriptionSettingCard(self)
         self.main_layout.addWidget(self.transcription_setting_card)
+
+        self.transcript_preview = TextEdit(self)
+        self.transcript_preview.setReadOnly(True)
+        self.transcript_preview.setMinimumHeight(220)
+        self.main_layout.addWidget(self.transcript_preview)
 
     def _setup_command_bar(self):
         """设置命令栏"""
@@ -473,6 +483,20 @@ class TranscriptionInterface(QWidget):
                 position=InfoBarPosition.BOTTOM,
                 parent=self.parent(),
             )
+
+    def update_transcript_preview(self, data: Dict[str, Any]) -> None:
+        lines = []
+        for key in sorted(
+            data.keys(),
+            key=lambda item: (0, int(item)) if str(item).isdigit() else (1, str(item)),
+        ):
+            segment = data[key]
+            text = segment.get("original_subtitle", "") if isinstance(segment, dict) else ""
+            if text:
+                lines.append(text)
+        self.transcript_preview.setPlainText("\n".join(lines))
+        scrollbar = self.transcript_preview.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
 
     def _on_file_select(self):
         """文件选择处理"""

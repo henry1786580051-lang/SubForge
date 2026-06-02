@@ -140,7 +140,7 @@ def validate_faster_whisper() -> bool:
 def validate_whisper_cpp() -> bool:
     """Check that WhisperCpp executable is available."""
     # Check common names for whisper.cpp binary
-    names = ["whisper-cpp", "whisper", "whisper-cpp-main"]
+    names = ["whisper-cli", "whisper-cpp", "whisper", "whisper-cpp-main", "main"]
     if not any(shutil.which(n) for n in names):
         # Also check project's bin directory
         try:

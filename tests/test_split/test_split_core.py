@@ -3,11 +3,12 @@
 全面测试 SubtitleSplitter 类的核心方法和边缘情况
 """
 
-from subforge.core.asr.asr_data import ASRDataSeg
+from subforge.core.asr.asr_data import ASRData, ASRDataSeg
 from subforge.core.split.split import (
     MAX_WORD_COUNT_CJK,
     MAX_WORD_COUNT_ENGLISH,
     SubtitleSplitter,
+    _join_texts,
     preprocess_segments,
 )
 
@@ -88,6 +89,11 @@ class TestPreprocessSegments:
         assert result[0].text == "don't "
         assert result[1].text == "it's "
 
+    def test_join_texts_preserves_spacing_after_punctuation(self):
+        text = _join_texts(["Hey", "everyone,", "welcome", "back", "3.5L", "VTEC,sedan"])
+
+        assert text == "Hey everyone, welcome back 3.5L VTEC, sedan"
+
 
 class TestSubtitleSplitterInit:
     """测试 SubtitleSplitter 初始化"""
@@ -120,6 +126,32 @@ class TestSubtitleSplitterInit:
         splitter = SubtitleSplitter(thread_num=3, model="gpt-4o-mini")
         assert splitter.executor is not None
         assert splitter.executor._max_workers == 3
+
+    def test_update_callback_receives_processed_chunks(self, monkeypatch):
+        """测试分块处理完成后发出实时更新"""
+        updates = []
+        splitter = SubtitleSplitter(
+            thread_num=1,
+            model="gpt-4o-mini",
+            update_callback=lambda segments: updates.append(list(segments)),
+        )
+
+        monkeypatch.setattr(
+            splitter,
+            "_process_single_segment",
+            lambda asr_data: list(asr_data.segments),
+        )
+
+        splitter._process_segments(
+            [
+                ASRData([ASRDataSeg("First", 0, 1000)]),
+                ASRData([ASRDataSeg("Second", 1200, 2000)]),
+            ]
+        )
+
+        assert updates
+        assert updates[-1][0].text == "First"
+        assert updates[-1][-1].text == "Second"
 
 
 class TestDetermineNumSegments:
@@ -183,6 +215,21 @@ class TestGroupByTimeGaps:
         assert len(groups) == 2
         assert len(groups[0]) == 1
         assert len(groups[1]) == 2
+
+    def test_does_not_split_after_dangling_english_tail(self):
+        """英文介词后的短暂停顿不应切断名词短语"""
+        segments = [
+            ASRDataSeg(text="welcome", start_time=0, end_time=400),
+            ASRDataSeg(text="back", start_time=400, end_time=800),
+            ASRDataSeg(text="to", start_time=800, end_time=950),
+            ASRDataSeg(text="Topher", start_time=1900, end_time=2400),
+            ASRDataSeg(text="Drives", start_time=2400, end_time=3000),
+        ]
+
+        splitter = SubtitleSplitter(thread_num=1, model="gpt-4o-mini")
+        groups = splitter._group_by_time_gaps(segments, max_gap=500)
+
+        assert len(groups) == 1
 
     def test_multiple_gaps(self):
         """测试多个间隔"""
@@ -343,6 +390,35 @@ class TestSplitLongSegment:
         splitter = SubtitleSplitter(thread_num=1, model="gpt-4o-mini")
         result = splitter._split_long_segment(segments)
         assert len(result) == 1
+
+    def test_split_long_segment_avoids_dangling_english_tail(self):
+        segments = [
+            ASRDataSeg(text="here", start_time=0, end_time=300),
+            ASRDataSeg(text="in", start_time=300, end_time=500),
+            ASRDataSeg(text="Torrance,", start_time=500, end_time=900),
+            ASRDataSeg(text="California,", start_time=900, end_time=1300),
+            ASRDataSeg(text="we're", start_time=1300, end_time=1600),
+            ASRDataSeg(text="driving", start_time=1600, end_time=1900),
+            ASRDataSeg(text="this", start_time=1900, end_time=2100),
+            ASRDataSeg(text="2008", start_time=2800, end_time=3100),
+            ASRDataSeg(text="Acura", start_time=3100, end_time=3400),
+            ASRDataSeg(text="TL", start_time=3400, end_time=3600),
+            ASRDataSeg(text="Type", start_time=3600, end_time=3900),
+            ASRDataSeg(text="S,", start_time=3900, end_time=4100),
+            ASRDataSeg(text="the", start_time=4100, end_time=4300),
+            ASRDataSeg(text="hot", start_time=4300, end_time=4500),
+            ASRDataSeg(text="version.", start_time=4500, end_time=4900),
+        ]
+
+        splitter = SubtitleSplitter(
+            thread_num=1,
+            model="gpt-4o-mini",
+            max_word_count_english=12,
+        )
+        result = splitter._split_long_segment(segments)
+
+        assert not result[0].text.endswith("this")
+        assert "this 2008" in result[0].text
 
     def test_equal_time_gaps(self):
         """测试相等时间间隔（中间分割）"""

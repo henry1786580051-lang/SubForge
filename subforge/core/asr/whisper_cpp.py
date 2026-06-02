@@ -1,4 +1,5 @@
 import os
+import json
 import re
 import shutil
 import subprocess
@@ -18,6 +19,131 @@ from .status import ASRStatus
 logger = setup_logger("whisper_asr")
 
 
+_TERMINAL_PUNCTUATION = ".!?"
+_SOFT_PUNCTUATION = ",;:"
+_PUNCTUATION = set(_TERMINAL_PUNCTUATION + _SOFT_PUNCTUATION + "。，！？；：")
+
+
+def _is_special_token(text: str) -> bool:
+    stripped = text.strip()
+    return not stripped or (stripped.startswith("[_") and stripped.endswith("]"))
+
+
+def _tokens_to_word_segments(transcription: list[dict]) -> list[ASRDataSeg]:
+    """Convert whisper.cpp JSON-full tokens to word-like timed segments."""
+    words: list[ASRDataSeg] = []
+    current_text = ""
+    current_start: int | None = None
+    current_end: int | None = None
+
+    def flush() -> None:
+        nonlocal current_text, current_start, current_end
+        text = current_text.strip()
+        if text and current_start is not None and current_end is not None:
+            words.append(ASRDataSeg(text, current_start, max(current_start, current_end)))
+        current_text = ""
+        current_start = None
+        current_end = None
+
+    for item in transcription:
+        for token in item.get("tokens", []):
+            token_text = token.get("text", "")
+            if _is_special_token(token_text):
+                continue
+
+            offsets = token.get("offsets") or {}
+            start = offsets.get("from")
+            end = offsets.get("to")
+            if not isinstance(start, int) or not isinstance(end, int):
+                continue
+            if end < start:
+                continue
+
+            stripped = token_text.strip()
+            if not stripped:
+                continue
+
+            starts_new_word = bool(token_text[:1].isspace())
+            is_punctuation = stripped in _PUNCTUATION or all(ch in _PUNCTUATION for ch in stripped)
+
+            if current_text and starts_new_word and not is_punctuation:
+                flush()
+
+            if current_start is None:
+                current_start = start
+            current_text += stripped if is_punctuation else token_text
+            current_end = end
+
+    flush()
+    return words
+
+
+def _segments_from_words(
+    words: list[ASRDataSeg],
+    *,
+    max_words: int = 16,
+    max_duration_ms: int = 6500,
+) -> list[ASRDataSeg]:
+    """Group timed words into readable sentence-like subtitle segments."""
+    if not words:
+        return []
+
+    segments: list[ASRDataSeg] = []
+    current: list[ASRDataSeg] = []
+
+    def text_of(items: list[ASRDataSeg]) -> str:
+        text = ""
+        for item in items:
+            value = item.text.strip()
+            if not value:
+                continue
+            if not text:
+                text = value
+            elif value in _PUNCTUATION or all(ch in _PUNCTUATION for ch in value):
+                text += value
+            else:
+                text += f" {value}"
+        return re.sub(r"\s+([,.;:!?])", r"\1", text).strip()
+
+    def flush() -> None:
+        if not current:
+            return
+        text = text_of(current)
+        if text:
+            segments.append(ASRDataSeg(text, current[0].start_time, current[-1].end_time))
+        current.clear()
+
+    for word in words:
+        current.append(word)
+        text = text_of(current)
+        duration = current[-1].end_time - current[0].start_time
+        word_count = len(current)
+        ended_sentence = bool(re.search(r"[.!?。！？]\s*$", text))
+        ended_soft = bool(re.search(r"[,;:，；：]\s*$", text))
+
+        if ended_sentence and (word_count >= 3 or duration >= 1200):
+            flush()
+        elif word_count >= max_words and (ended_soft or duration >= 3000):
+            flush()
+        elif duration >= max_duration_ms and word_count >= 8:
+            flush()
+
+    flush()
+    return segments
+
+
+def _segments_from_whisper_json(resp_data: str, need_word_time_stamp: bool) -> list[ASRDataSeg]:
+    data = json.loads(resp_data)
+    transcription = data.get("transcription")
+    if not isinstance(transcription, list):
+        return []
+
+    words = _tokens_to_word_segments(transcription)
+    if need_word_time_stamp:
+        return words
+    return _segments_from_words(words)
+
+
 class WhisperCppASR(BaseASR):
     """Whisper.cpp local ASR implementation.
 
@@ -34,6 +160,7 @@ class WhisperCppASR(BaseASR):
         need_word_time_stamp: bool = False,
         n_threads: int = 4,
         use_vad: bool = True,
+        segment_callback: Optional[Callable[[ASRData], None]] = None,
     ):
         super().__init__(audio_input, use_cache)
 
@@ -66,6 +193,8 @@ class WhisperCppASR(BaseASR):
         self.language = language
         self.n_threads = n_threads
         self.use_vad = use_vad
+        self.segment_callback = segment_callback
+        self._live_segments: list[ASRDataSeg] = []
 
         # Find VAD model in same directory as whisper model
         self.vad_model_path = None
@@ -76,7 +205,54 @@ class WhisperCppASR(BaseASR):
 
         self.process = None
 
+    @staticmethod
+    def _parse_cli_segment_line(line: str) -> Optional[ASRDataSeg]:
+        match = re.match(
+            r"^\s*\[(\d{2}:\d{2}:\d{2}[,.]\d{3})\s+-->\s+(\d{2}:\d{2}:\d{2}[,.]\d{3})\]\s*(.*)$",
+            line,
+        )
+        if not match:
+            return None
+
+        def to_ms(value: str) -> int:
+            hh, mm, rest = value.replace(",", ".").split(":")
+            ss, ms = rest.split(".")
+            return (
+                int(hh) * 3600 * 1000
+                + int(mm) * 60 * 1000
+                + int(ss) * 1000
+                + int(ms)
+            )
+
+        text = match.group(3).strip()
+        if not text:
+            return None
+        return ASRDataSeg(text, to_ms(match.group(1)), to_ms(match.group(2)))
+
+    def _emit_live_segment(self, line: str) -> None:
+        if not self.segment_callback:
+            return
+        segment = self._parse_cli_segment_line(line)
+        if not segment:
+            return
+        self._live_segments.append(segment)
+        try:
+            self.segment_callback(ASRData(list(self._live_segments)))
+        except Exception as e:
+            logger.debug("whisper.cpp live segment callback failed: %s", e, exc_info=True)
+
     def _make_segments(self, resp_data: str) -> List[ASRDataSeg]:
+        if resp_data.lstrip().startswith("{"):
+            try:
+                json_segments = _segments_from_whisper_json(
+                    resp_data,
+                    need_word_time_stamp=self.need_word_time_stamp,
+                )
+                if json_segments:
+                    return json_segments
+            except Exception as e:
+                logger.warning("Failed to parse whisper.cpp JSON output, falling back to SRT: %s", e)
+
         asr_data = ASRData.from_srt(resp_data)
         # 过滤掉纯音乐标记
         filtered_segments = []
@@ -105,6 +281,8 @@ class WhisperCppASR(BaseASR):
             "-l",
             self.language or "auto",
             "--output-srt",
+            "--output-json",
+            "--output-json-full",
         ]
 
         if not is_const_me_version:
@@ -123,14 +301,9 @@ class WhisperCppASR(BaseASR):
                 ["--prompt", "你好，我们需要使用简体中文，以下是普通话的句子。"]
             )
 
-        # Enable VAD for silence detection
-        if self.use_vad and self.vad_model_path:
-            whisper_params.extend([
-                "--vad",
-                "--vad-model", self.vad_model_path,
-                "--vad-min-silence-duration-ms", "1000",
-                "--vad-threshold", "0.7",
-            ])
+        # Intentionally do not pass whisper.cpp internal VAD flags. Its
+        # compacted-audio time mapping can drop or shift quiet intros; full
+        # audio JSON token timestamps are more reliable for SubForge.
 
         return whisper_params
 
@@ -204,6 +377,7 @@ class WhisperCppASR(BaseASR):
 
                         if stream_name == "stdout":
                             logger.debug(f"[stdout] {line.strip()}")
+                            self._emit_live_segment(line)
 
                             # Parse progress
                             if " --> " in line and "[" in line:
@@ -238,9 +412,15 @@ class WhisperCppASR(BaseASR):
                 logger.debug("Whisper.cpp ASR completed")
 
                 # Read result file
+                json_path = output_path.with_suffix(".json")
+                if json_path.exists():
+                    return json_path.read_text(encoding="utf-8")
+
                 srt_path = output_path
                 if not srt_path.exists():
                     time.sleep(5)
+                    if json_path.exists():
+                        return json_path.read_text(encoding="utf-8")
                     if not srt_path.exists():
                         raise RuntimeError(f"Output file not generated: {srt_path}")
 
@@ -258,7 +438,8 @@ class WhisperCppASR(BaseASR):
                 raise RuntimeError(f"SRT generation failed: {str(e)}")
 
     def _get_key(self):
-        return f"{self.crc32_hex}-{self.need_word_time_stamp}-{self.model_path}-{self.language}-vad{self.use_vad}"
+        effective_vad = False
+        return f"{self.crc32_hex}-{self.need_word_time_stamp}-{self.model_path}-{self.language}-vad{effective_vad}"
 
     def get_audio_duration(self, filepath: str) -> int:
         """Get audio file duration in seconds using ffmpeg."""

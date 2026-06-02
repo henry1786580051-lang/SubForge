@@ -375,6 +375,239 @@ class TestFixBoundaryOverlaps:
         assert loaded.segments[0].end_time <= loaded.segments[1].start_time
 
 
+class TestDeduplicateAdjacentText:
+    """测试 VAD/ASR 边界处的相邻重复文本清理"""
+
+    def test_removes_short_prefix_fragment_contained_in_next_segment(self):
+        asr_data = ASRData(
+            [
+                ASRDataSeg("Hey everyone, welcome back to", 5200, 6480),
+                ASRDataSeg(
+                    "Hey everyone, welcome back to Topher Drives where today",
+                    6800,
+                    11380,
+                ),
+            ]
+        )
+
+        asr_data.deduplicate_adjacent_text()
+
+        assert len(asr_data.segments) == 1
+        assert asr_data.segments[0].text == (
+            "Hey everyone, welcome back to Topher Drives where today"
+        )
+        assert asr_data.segments[0].start_time == 6800
+
+    def test_removes_exact_adjacent_duplicate(self):
+        asr_data = ASRData(
+            [
+                ASRDataSeg("Stability something.", 702300, 703550),
+                ASRDataSeg("Stability something.", 703878, 704428),
+                ASRDataSeg("Next thought.", 705000, 706000),
+            ]
+        )
+
+        asr_data.deduplicate_adjacent_text()
+
+        assert [seg.text for seg in asr_data.segments] == [
+            "Stability something.",
+            "Next thought.",
+        ]
+
+    def test_trims_duplicate_prefix_from_following_segment(self):
+        asr_data = ASRData(
+            [
+                ASRDataSeg("the steering is honestly it's not as quick", 590100, 594200),
+                ASRDataSeg(
+                    "it's not as quick as some newer cars",
+                    594650,
+                    598000,
+                ),
+            ]
+        )
+
+        asr_data.deduplicate_adjacent_text()
+
+        assert len(asr_data.segments) == 2
+        assert asr_data.segments[1].text == "as some newer cars"
+        assert asr_data.segments[1].start_time > 594650
+
+    def test_removes_compact_duplicate_with_spacing_difference(self):
+        asr_data = ASRData(
+            [
+                ASRDataSeg("And up front we have a moon roof as well.", 346450, 348110),
+                ASRDataSeg("And up front we have a moonroof as well.", 348214, 349450),
+            ]
+        )
+
+        asr_data.deduplicate_adjacent_text()
+
+        assert len(asr_data.segments) == 1
+        assert asr_data.segments[0].text == "And up front we have a moonroof as well."
+
+    def test_keeps_distant_repeated_phrase(self):
+        asr_data = ASRData(
+            [
+                ASRDataSeg("How about that?", 0, 1000),
+                ASRDataSeg("How about that?", 5000, 6000),
+            ]
+        )
+
+        asr_data.deduplicate_adjacent_text()
+
+        assert len(asr_data.segments) == 2
+
+
+class TestMergeSentenceFragments:
+    """测试 whisper.cpp 句子中途切分的保守合并"""
+
+    def test_merges_short_sentence_tail_fragment(self):
+        asr_data = ASRData(
+            [
+                ASRDataSeg(
+                    "the hot version of the third-generation TL, and this is a car that I've always wanted",
+                    18600,
+                    23690,
+                ),
+                ASRDataSeg("to drive.", 23690, 25400),
+                ASRDataSeg(
+                    "It's always been interesting to me because I was always a Lexus guy.",
+                    25890,
+                    28110,
+                ),
+            ]
+        )
+
+        asr_data.merge_sentence_fragments()
+
+        assert [seg.text for seg in asr_data.segments] == [
+            "the hot version of the third-generation TL, and this is a car that I've always wanted to drive.",
+            "It's always been interesting to me because I was always a Lexus guy.",
+        ]
+        assert asr_data.segments[0].start_time == 18600
+        assert asr_data.segments[0].end_time == 25400
+        assert asr_data.segments[1].start_time == 25890
+
+    def test_merges_short_predicate_fragment(self):
+        asr_data = ASRData(
+            [
+                ASRDataSeg(
+                    "one of these when I was shopping around, but I kind of wish I would have because this thing",
+                    41250,
+                    44250,
+                ),
+                ASRDataSeg("seems pretty compelling.", 44650, 45400),
+            ]
+        )
+
+        asr_data.merge_sentence_fragments()
+
+        assert len(asr_data.segments) == 1
+        assert asr_data.segments[0].text.endswith("this thing seems pretty compelling.")
+        assert asr_data.segments[0].end_time == 45400
+
+    def test_does_not_merge_after_terminal_punctuation(self):
+        asr_data = ASRData(
+            [
+                ASRDataSeg("This is complete.", 0, 1200),
+                ASRDataSeg("The next sentence starts here.", 1400, 2600),
+            ]
+        )
+
+        asr_data.merge_sentence_fragments()
+
+        assert len(asr_data.segments) == 2
+
+    def test_does_not_merge_across_long_pause(self):
+        asr_data = ASRData(
+            [
+                ASRDataSeg("This phrase is still", 0, 1200),
+                ASRDataSeg("going after a pause.", 2500, 3900),
+            ]
+        )
+
+        asr_data.merge_sentence_fragments()
+
+        assert len(asr_data.segments) == 2
+
+    def test_does_not_merge_when_combined_caption_is_too_long(self):
+        asr_data = ASRData(
+            [
+                ASRDataSeg(
+                    "When I was in college, I drove a 2003 Lexus IS300 with a five-speed manual, and I still",
+                    28110,
+                    34050,
+                ),
+                ASRDataSeg(
+                    "have that car, and the Acura TL's prime competitor is the Lexus IS, and I never really considered",
+                    34410,
+                    40850,
+                ),
+            ]
+        )
+
+        asr_data.merge_sentence_fragments()
+
+        assert len(asr_data.segments) == 2
+
+
+class TestSpeechVadTimingRefinement:
+    """测试使用语音 VAD 修剪字幕尾部无语音覆盖"""
+
+    def test_trims_tail_when_vad_and_text_rate_agree(self):
+        asr_data = ASRData(
+            [
+                ASRDataSeg("Let's pop the hood and show you this J35A8.", 213400, 219400),
+            ]
+        )
+
+        asr_data.refine_timing_with_speech_segments([(213420, 216560)])
+
+        assert asr_data.segments[0].end_time < 218000
+        assert asr_data.segments[0].end_time >= 216500
+
+    def test_trims_leading_silence_when_vad_has_clear_speech_start(self):
+        asr_data = ASRData(
+            [
+                ASRDataSeg("Hey everyone, welcome back to Topher Drives.", 0, 9240),
+            ]
+        )
+
+        asr_data.refine_timing_with_speech_segments([(7450, 9233)])
+
+        assert asr_data.segments[0].start_time >= 7000
+        assert asr_data.segments[0].end_time == 9240
+
+    def test_trims_short_fragment_tail(self):
+        asr_data = ASRData([ASRDataSeg("to pop the trunk.", 179060, 182450)])
+
+        asr_data.refine_timing_with_speech_segments([(179100, 180350)])
+
+        assert asr_data.segments[0].end_time <= 180700
+
+    def test_does_not_trim_when_speech_reaches_segment_end(self):
+        asr_data = ASRData(
+            [
+                ASRDataSeg(
+                    "This line is long enough and speech reaches the end",
+                    1000,
+                    5000,
+                ),
+            ]
+        )
+
+        asr_data.refine_timing_with_speech_segments([(1000, 4700)])
+
+        assert asr_data.segments[0].end_time == 5000
+
+    def test_does_not_trim_without_vad_overlap(self):
+        asr_data = ASRData([ASRDataSeg("Possible missed speech", 1000, 5000)])
+
+        asr_data.refine_timing_with_speech_segments([])
+
+        assert asr_data.segments[0].end_time == 5000
+
+
 class TestAudioEnergyPauseRestore:
     """测试从音频静音恢复字幕间隔"""
 
@@ -383,6 +616,32 @@ class TestAudioEnergyPauseRestore:
         from pydub.generators import Sine
 
         return Sine(440).to_audio_segment(duration=duration_ms).apply_gain(-3)
+
+    def test_filter_hallucinations_keeps_word_level_intro_tokens(self, tmp_path):
+        from pydub import AudioSegment
+
+        audio_path = tmp_path / "quiet_intro.wav"
+        AudioSegment.silent(duration=3000).export(audio_path, format="wav")
+
+        asr_data = ASRData(
+            [
+                ASRDataSeg("Hey", 10, 580),
+                ASRDataSeg("everyone,", 780, 3210),
+                ASRDataSeg("welcome", 3210, 4940),
+                ASRDataSeg("back", 5370, 5930),
+                ASRDataSeg("to", 5930, 6080),
+            ]
+        )
+
+        asr_data.filter_hallucinations(str(audio_path))
+
+        assert [seg.text for seg in asr_data.segments] == [
+            "Hey",
+            "everyone,",
+            "welcome",
+            "back",
+            "to",
+        ]
 
     def test_filter_hallucinations_restores_zero_gap_pause_from_audio(self, tmp_path):
         from pydub import AudioSegment

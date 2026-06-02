@@ -35,7 +35,7 @@ def split_by_llm(
         )
     except Exception as e:
         logger.error(f"Sentence splitting failed: {e}")
-        return [text]
+        raise
 
 
 def _split_with_agent_loop(

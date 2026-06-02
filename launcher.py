@@ -14,7 +14,6 @@ import urllib.request
 
 # Fix path for PyInstaller frozen mode
 if getattr(sys, 'frozen', False):
-    os.chdir(sys._MEIPASS)
     sys.path.insert(0, sys._MEIPASS)
     sys.path.insert(0, os.path.join(sys._MEIPASS, 'backend'))
 
@@ -133,4 +132,20 @@ def main():
 
 
 if __name__ == "__main__":
+    if os.environ.get("SUBFORGE_CHECK_DENOISE") == "1":
+        import traceback
+
+        from subforge.core.asr.audio_enhancer import is_available
+
+        available = is_available()
+        print(f"DeepFilterNet3 available: {available}")
+        if not available:
+            try:
+                import soundfile  # noqa: F401
+                import torch  # noqa: F401
+                from df.enhance import enhance as _enhance  # noqa: F401
+                from df.enhance import init_df as _init_df  # noqa: F401
+            except Exception:
+                traceback.print_exc()
+        raise SystemExit(0 if available else 1)
     main()

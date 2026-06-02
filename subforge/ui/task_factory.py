@@ -93,6 +93,7 @@ class TaskFactory:
             faster_whisper_ff_mdx_kim2=cfg.faster_whisper_ff_mdx_kim2.value,
             faster_whisper_one_word=cfg.faster_whisper_one_word.value,
             faster_whisper_prompt=cfg.faster_whisper_prompt.value,
+            enable_audio_enhancement=True,
         )
 
         task = TranscribeTask(

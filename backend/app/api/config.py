@@ -109,6 +109,7 @@ _DEFAULTS = {
     "whisper_n_threads": 4,
     "whisper_compute_type": "default",
     "ff_mdx_kim2": False,
+    "enable_audio_enhancement": True,
     "whisper_model_size": "base",
 }
 

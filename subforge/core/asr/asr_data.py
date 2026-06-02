@@ -515,11 +515,423 @@ class ASRData:
 
         logger.info(f"filter_hallucinations called with audio_path={audio_path}, segments={len(self.segments)}")
 
+        if self.is_word_timestamp():
+            logger.info("Skipping hallucination energy filter for word-level timestamps")
+            return self
+
         if audio_path:
             self._filter_by_audio_energy(audio_path)
         else:
             logger.info("No audio_path provided, using text heuristics")
             self._filter_by_text_heuristics()
+
+        return self
+
+    def deduplicate_adjacent_text(self, max_gap_ms: int = 1500) -> "ASRData":
+        """Remove duplicate text emitted around adjacent ASR/VAD boundaries.
+
+        VAD-segmented transcription gives Whisper overlap context around each
+        speech segment. Some engines still timestamp that context inside the
+        clipped VAD window, producing adjacent duplicate fragments such as a
+        short prefix followed by the complete sentence. This pass only compares
+        close neighboring subtitles and leaves in-segment repetitions intact.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        def _token_spans(text: str) -> list[tuple[str, int, int]]:
+            return [
+                (m.group().lower(), m.start(), m.end())
+                for m in re.finditer(_WORD_SPLIT_PATTERN, text)
+            ]
+
+        def _meaningful(tokens: list[str]) -> bool:
+            return len(tokens) >= 3 or (len(tokens) >= 2 and sum(len(t) for t in tokens) >= 6)
+
+        def _find_subsequence(haystack: list[str], needle: list[str]) -> int:
+            if not needle or len(needle) > len(haystack):
+                return -1
+            last_start = len(haystack) - len(needle)
+            for start in range(last_start + 1):
+                if haystack[start:start + len(needle)] == needle:
+                    return start
+            return -1
+
+        def _compact(tokens: list[str]) -> str:
+            return "".join(tokens)
+
+        def _longest_suffix_prefix(left: list[str], right: list[str]) -> int:
+            max_len = min(len(left), len(right))
+            for length in range(max_len, 0, -1):
+                overlap = left[-length:]
+                if overlap == right[:length] and _meaningful(overlap):
+                    return length
+            return 0
+
+        def _trim_leading_tokens(seg: ASRDataSeg, count: int) -> bool:
+            spans = _token_spans(seg.text)
+            if count <= 0:
+                return True
+            if count >= len(spans):
+                return False
+
+            old_start = seg.start_time
+            old_duration = max(0, seg.end_time - seg.start_time)
+            ratio = count / len(spans)
+            shift_ms = min(int(old_duration * ratio), max(0, old_duration - 200))
+            cut_at = spans[count][1]
+
+            seg.text = seg.text[cut_at:].lstrip(" \t\r\n,.;:!?，。！？；：-–—")
+            if seg.translated_text:
+                seg.translated_text = ""
+            seg.start_time = min(seg.end_time, seg.start_time + shift_ms)
+
+            logger.debug(
+                "Trimmed duplicate ASR boundary prefix: %.2fs -> %.2fs, %s tokens",
+                old_start / 1000,
+                seg.start_time / 1000,
+                count,
+            )
+            return bool(seg.text.strip())
+
+        self.segments.sort(key=lambda s: (s.start_time, s.end_time))
+
+        i = 0
+        removed = 0
+        trimmed = 0
+        while i < len(self.segments) - 1:
+            current = self.segments[i]
+            next_seg = self.segments[i + 1]
+            gap_ms = next_seg.start_time - current.end_time
+            if gap_ms < 0 or gap_ms > max_gap_ms:
+                i += 1
+                continue
+
+            current_tokens = [t for t, _, _ in _token_spans(current.text)]
+            next_tokens = [t for t, _, _ in _token_spans(next_seg.text)]
+            if not current_tokens or not next_tokens:
+                i += 1
+                continue
+
+            # Same subtitle emitted twice at a chunk boundary.
+            if current_tokens == next_tokens and _meaningful(current_tokens):
+                logger.debug("Removed duplicate adjacent ASR segment: %r", next_seg.text)
+                del self.segments[i + 1]
+                removed += 1
+                continue
+
+            current_in_next = _find_subsequence(next_tokens, current_tokens)
+            if current_in_next >= 0 and _meaningful(current_tokens):
+                logger.debug(
+                    "Removed contained ASR boundary fragment: %r inside %r",
+                    current.text,
+                    next_seg.text,
+                )
+                del self.segments[i]
+                removed += 1
+                i = max(0, i - 1)
+                continue
+
+            next_in_current = _find_subsequence(current_tokens, next_tokens)
+            if next_in_current >= 0 and _meaningful(next_tokens):
+                logger.debug(
+                    "Removed repeated ASR boundary fragment: %r already in %r",
+                    next_seg.text,
+                    current.text,
+                )
+                del self.segments[i + 1]
+                removed += 1
+                continue
+
+            current_compact = _compact(current_tokens)
+            next_compact = _compact(next_tokens)
+            if (
+                len(current_compact) >= 10
+                and current_compact in next_compact
+                and _meaningful(current_tokens)
+            ):
+                logger.debug(
+                    "Removed compact-contained ASR boundary fragment: %r inside %r",
+                    current.text,
+                    next_seg.text,
+                )
+                del self.segments[i]
+                removed += 1
+                i = max(0, i - 1)
+                continue
+
+            if (
+                len(next_compact) >= 10
+                and next_compact in current_compact
+                and _meaningful(next_tokens)
+            ):
+                logger.debug(
+                    "Removed compact-repeated ASR boundary fragment: %r already in %r",
+                    next_seg.text,
+                    current.text,
+                )
+                del self.segments[i + 1]
+                removed += 1
+                continue
+
+            overlap_len = _longest_suffix_prefix(current_tokens, next_tokens)
+            if overlap_len:
+                if overlap_len >= len(next_tokens):
+                    logger.debug("Removed duplicate ASR boundary suffix: %r", next_seg.text)
+                    del self.segments[i + 1]
+                    removed += 1
+                    continue
+
+                if _trim_leading_tokens(next_seg, overlap_len):
+                    trimmed += 1
+                    i += 1
+                else:
+                    del self.segments[i + 1]
+                    removed += 1
+                continue
+
+            i += 1
+
+        if removed or trimmed:
+            logger.info(
+                "Deduplicated adjacent ASR text: removed=%s, trimmed=%s",
+                removed,
+                trimmed,
+            )
+
+        return self
+
+    def merge_sentence_fragments(
+        self,
+        max_gap_ms: int = 500,
+        max_merged_duration_ms: int = 8000,
+        max_merged_words: int = 22,
+    ) -> "ASRData":
+        """Merge short neighboring subtitles that split a sentence mid-phrase.
+
+        whisper.cpp can emit subtitle boundaries based on decoder chunks rather
+        than sentence boundaries, producing lines such as "I've always wanted"
+        followed immediately by "to drive." This pass is deliberately
+        conservative: it only merges close neighbors when the first line has no
+        terminal punctuation and the combined subtitle remains readable.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        if len(self.segments) < 2:
+            return self
+
+        continuation_starts = {
+            "a", "an", "and", "as", "at", "because", "but", "by", "for",
+            "from", "have", "in", "into", "is", "it", "its", "of", "on",
+            "or", "seems", "than", "that", "the", "this", "to", "was",
+            "were", "which", "with",
+        }
+        dangling_ends = {
+            "a", "an", "and", "as", "at", "because", "but", "by", "for",
+            "from", "i", "if", "in", "into", "is", "it", "of", "on", "or",
+            "that", "the", "this", "to", "was", "were", "which", "with",
+        }
+
+        def _tokens(text: str) -> list[str]:
+            return [m.group().lower() for m in re.finditer(_WORD_SPLIT_PATTERN, text)]
+
+        def _ends_sentence(text: str) -> bool:
+            return bool(re.search(r"[.!?。！？]\s*$", text.strip()))
+
+        def _starts_lowercase(text: str) -> bool:
+            stripped = text.lstrip()
+            return bool(stripped) and stripped[0].islower()
+
+        def _join_text(left: str, right: str) -> str:
+            left = left.rstrip()
+            right = right.lstrip()
+            if not left:
+                return right
+            if not right:
+                return left
+            return f"{left} {right}"
+
+        def _translated_text(left: ASRDataSeg, right: ASRDataSeg) -> str:
+            if left.translated_text and right.translated_text:
+                return _join_text(left.translated_text, right.translated_text)
+            return ""
+
+        def _should_merge(left: ASRDataSeg, right: ASRDataSeg) -> bool:
+            gap_ms = right.start_time - left.end_time
+            if gap_ms < 0 or gap_ms > max_gap_ms:
+                return False
+            if _ends_sentence(left.text):
+                return False
+
+            left_tokens = _tokens(left.text)
+            right_tokens = _tokens(right.text)
+            if not left_tokens or not right_tokens:
+                return False
+
+            combined_words = len(left_tokens) + len(right_tokens)
+            combined_duration = right.end_time - left.start_time
+            if combined_words > max_merged_words:
+                return False
+            if combined_duration > max_merged_duration_ms:
+                return False
+
+            left_last = left_tokens[-1]
+            right_first = right_tokens[0]
+            right_short = len(right_tokens) <= 5
+
+            return (
+                _starts_lowercase(right.text)
+                or right_first in continuation_starts
+                or left_last in dangling_ends
+                or right_short
+            )
+
+        self.segments.sort(key=lambda s: (s.start_time, s.end_time))
+        merged: list[ASRDataSeg] = []
+        merge_count = 0
+
+        for seg in self.segments:
+            if merged and _should_merge(merged[-1], seg):
+                prev = merged[-1]
+                merged[-1] = ASRDataSeg(
+                    _join_text(prev.text, seg.text),
+                    prev.start_time,
+                    seg.end_time,
+                    translated_text=_translated_text(prev, seg),
+                    speaker_id=prev.speaker_id,
+                )
+                merge_count += 1
+            else:
+                merged.append(seg)
+
+        if merge_count:
+            logger.info("Merged sentence-fragment subtitles: %s", merge_count)
+            self.segments = merged
+
+        return self
+
+    def refine_timing_with_speech_segments(
+        self,
+        speech_segments: list[tuple[int, int]],
+        min_leading_silence_ms: int = 1200,
+        min_tail_silence_ms: int = 1000,
+        speech_pad_ms: int = 250,
+    ) -> "ASRData":
+        """Trim subtitle edges that extend well past detected speech.
+
+        This is intentionally conservative: VAD can miss quiet speech in car
+        videos, so it only trims an edge when a detected speech overlap gives a
+        strong replacement boundary and the subtitle has a large silent overrun.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        if not self.segments or not speech_segments:
+            return self
+
+        def _word_count(text: str) -> int:
+            return len(re.findall(_WORD_SPLIT_PATTERN, text))
+
+        def _merge_speech_segments(segments: list[tuple[int, int]]) -> list[tuple[int, int]]:
+            merged: list[tuple[int, int]] = []
+            for start, end in sorted(segments):
+                if end <= start:
+                    continue
+                if merged and start - merged[-1][1] <= 300:
+                    merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+                else:
+                    merged.append((start, end))
+            return merged
+
+        def _min_readable_duration_ms(words: int) -> int:
+            if words <= 0:
+                return 0
+            if words <= 5:
+                return max(900, min(2600, words * 260 + 450))
+            return max(2200, min(6000, words * 300 + 600))
+
+        def _max_spoken_duration_ms(words: int) -> int:
+            if words <= 0:
+                return 0
+            if words <= 4:
+                return max(1400, words * 420 + 450)
+            return max(2600, min(6500, words * 360 + 750))
+
+        speech = _merge_speech_segments(speech_segments)
+        trimmed = 0
+
+        for seg in self.segments:
+            duration_ms = seg.end_time - seg.start_time
+            words = _word_count(seg.text)
+            if duration_ms < 1500 or words == 0:
+                continue
+
+            overlaps = []
+            for speech_start, speech_end in speech:
+                if speech_end < seg.start_time:
+                    continue
+                if speech_start > seg.end_time:
+                    break
+                overlap_start = max(seg.start_time, speech_start)
+                overlap_end = min(seg.end_time, speech_end)
+                if overlap_end > overlap_start:
+                    overlaps.append((overlap_start, overlap_end))
+
+            if not overlaps:
+                continue
+
+            first_speech_start = min(start for start, _ in overlaps)
+            leading_silence_ms = first_speech_start - seg.start_time
+            if leading_silence_ms >= min_leading_silence_ms:
+                candidate_start = max(seg.start_time, first_speech_start - speech_pad_ms)
+                remaining_duration = seg.end_time - candidate_start
+                min_spoken_ms = max(500, min(2200, words * 160 + 250))
+                if remaining_duration >= min_spoken_ms and candidate_start <= seg.end_time - 500:
+                    logger.debug(
+                        "Trimmed VAD-confirmed subtitle lead %.2fs-%.2fs to %.2fs-%.2fs: %r",
+                        seg.start_time / 1000,
+                        seg.end_time / 1000,
+                        candidate_start / 1000,
+                        seg.end_time / 1000,
+                        seg.text,
+                    )
+                    seg.start_time = candidate_start
+                    duration_ms = seg.end_time - seg.start_time
+                    trimmed += 1
+
+            last_speech_end = max(end for _, end in overlaps)
+            tail_silence_ms = seg.end_time - last_speech_end
+            if tail_silence_ms < min_tail_silence_ms:
+                continue
+
+            max_spoken_ms = _max_spoken_duration_ms(words)
+            short_tail_overrun = words <= 5 and tail_silence_ms >= 1200
+            long_tail_overrun = (
+                tail_silence_ms >= 1800
+                and duration_ms > _min_readable_duration_ms(words) + 800
+            )
+            if duration_ms <= max_spoken_ms + 400 and not short_tail_overrun and not long_tail_overrun:
+                continue
+
+            min_end = seg.start_time + _min_readable_duration_ms(words)
+            candidate_end = max(min_end, last_speech_end + speech_pad_ms)
+            if candidate_end >= seg.end_time - 250:
+                continue
+
+            logger.debug(
+                "Trimmed VAD-confirmed subtitle tail %.2fs-%.2fs to %.2fs-%.2fs: %r",
+                seg.start_time / 1000,
+                seg.end_time / 1000,
+                seg.start_time / 1000,
+                candidate_end / 1000,
+                seg.text,
+            )
+            seg.end_time = candidate_end
+            trimmed += 1
+
+        if trimmed:
+            logger.info("Trimmed subtitle edges with speech VAD: %s", trimmed)
 
         return self
 
@@ -566,6 +978,24 @@ class ASRData:
         silence_threshold = max(avg_rms * 0.3, 100)
 
         logger.info(f"Audio energy: avg={avg_rms:.0f}, threshold={silence_threshold:.0f}")
+
+        speech_segments_for_refinement: list[tuple[int, int]] = []
+        should_run_speech_vad = len(audio) >= 30_000 and len(self.segments) >= 8
+        if should_run_speech_vad:
+            try:
+                from subforge.core.asr.silero_vad import detect_speech_segments
+                from subforge.core.asr.silero_vad import is_available as vad_available
+
+                if vad_available():
+                    speech_segments_for_refinement = detect_speech_segments(
+                        audio_path,
+                        threshold=0.5,
+                        min_speech_ms=200,
+                        min_silence_ms=350,
+                        speech_pad_ms=120,
+                    )
+            except Exception as e:
+                logger.debug("Speech VAD timing refinement skipped: %s", e, exc_info=True)
 
         # Pass 2: Restore natural pauses when an ASR engine emits a continuous
         # timeline. Whisper.cpp commonly returns adjacent segments with
@@ -639,6 +1069,14 @@ class ASRData:
                 continue
 
             pause_start, pause_end = silent_run
+            if speech_segments_for_refinement:
+                overlaps_speech = any(
+                    min(pause_end, speech_end) - max(pause_start, speech_start) >= min_pause_ms // 2
+                    for speech_start, speech_end in speech_segments_for_refinement
+                )
+                if overlaps_speech:
+                    continue
+
             if pause_start - seg.start_time < min_segment_duration_ms:
                 continue
             if next_seg.end_time - pause_end < min_segment_duration_ms:
@@ -654,6 +1092,9 @@ class ASRData:
                 )
                 seg.end_time = pause_start
                 next_seg.start_time = pause_end
+
+        if speech_segments_for_refinement:
+            self.refine_timing_with_speech_segments(speech_segments_for_refinement)
 
         # Pass 3: Trim/split long segments that cover clear internal silence.
         # This catches a different failure mode from overlaps: a single short
@@ -870,6 +1311,9 @@ class ASRData:
                         seg.end_time = capped_end
 
         self.segments = adjusted_segments
+
+        if speech_segments_for_refinement:
+            self.refine_timing_with_speech_segments(speech_segments_for_refinement)
 
         # Pass 4: Remove segments that are entirely in silent regions
         original_count = len(self.segments)

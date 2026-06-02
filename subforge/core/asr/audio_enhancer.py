@@ -11,12 +11,77 @@ logger = logging.getLogger(__name__)
 # Lazy-loaded model
 _df_model = None
 _df_state = None
+_df_device = None
 
 
-def _load_model():
+def _device_name(device) -> str:
+    return getattr(device, "type", str(device))
+
+
+def _select_device():
+    """Choose the fastest available DeepFilterNet device.
+
+    DeepFilterNet uses PyTorch. On Apple Silicon this means MPS/Metal, not the
+    whisper.cpp Metal backend. Keep this isolated so unavailable or incomplete
+    MPS support can fall back to CPU without disabling transcription.
+    """
+    import os
+
+    import torch
+
+    requested = os.environ.get("SUBFORGE_DENOISE_DEVICE", "auto").strip().lower()
+    if requested in {"cpu", "mps"}:
+        if requested == "mps" and not _mps_available(torch):
+            logger.warning("Requested DeepFilterNet3 MPS device is unavailable, using CPU")
+            return torch.device("cpu")
+        return torch.device(requested)
+
+    if _mps_available(torch):
+        return torch.device("mps")
+
+    return torch.device("cpu")
+
+
+def _mps_available(torch_module) -> bool:
+    try:
+        return (
+            hasattr(torch_module.backends, "mps")
+            and torch_module.backends.mps.is_built()
+            and torch_module.backends.mps.is_available()
+        )
+    except Exception:
+        return False
+
+
+def _configure_df_device(device) -> None:
+    """Tell DeepFilterNet's internal get_device() helper which device to use."""
+    try:
+        from df.config import config as df_config
+
+        df_config.set("DEVICE", _device_name(device), str, section="train")
+    except Exception as e:
+        logger.debug("Could not set DeepFilterNet3 device config: %s", e)
+
+
+def _move_model_to_device(device) -> None:
+    global _df_model, _df_device
+    if _df_model is None:
+        return
+    _configure_df_device(device)
+    _df_model = _df_model.to(device)
+    _df_device = device
+    logger.info("DeepFilterNet3 running on %s", _device_name(device))
+
+
+def _load_model(device=None):
     """Lazy-load DeepFilterNet model."""
-    global _df_model, _df_state
+    global _df_model, _df_state, _df_device
+    if device is None:
+        device = _select_device()
+
     if _df_model is not None:
+        if _df_device is None or _device_name(_df_device) != _device_name(device):
+            _move_model_to_device(device)
         return
 
     try:
@@ -25,7 +90,20 @@ def _load_model():
 
         from df.enhance import init_df
         logger.info("Loading DeepFilterNet3 model...")
-        _df_model, _df_state, _ = init_df()
+        _df_model, _df_state, _ = init_df(log_file=None)
+        try:
+            _move_model_to_device(device)
+        except Exception as e:
+            if _device_name(device) != "mps":
+                raise
+            logger.warning(
+                "DeepFilterNet3 MPS model setup failed (%s), using CPU",
+                e,
+            )
+            logger.debug("DeepFilterNet3 MPS model setup traceback", exc_info=True)
+            import torch
+
+            _move_model_to_device(torch.device("cpu"))
         logger.info("DeepFilterNet3 model loaded")
     except ImportError:
         logger.warning("DeepFilterNet not installed (pip install deepfilternet)")
@@ -53,7 +131,8 @@ def enhance_audio(input_path: str, output_path: str = None) -> str:
     if not input_path or not Path(input_path).is_file():
         raise FileNotFoundError(f"Input audio not found: {input_path}")
 
-    _load_model()
+    device = _select_device()
+    _load_model(device)
 
     if output_path is None:
         fd, output_path = tempfile.mkstemp(suffix="_enhanced.wav")
@@ -80,9 +159,23 @@ def enhance_audio(input_path: str, output_path: str = None) -> str:
 
         for i in range(0, len(audio), chunk_size):
             chunk = audio[i:i + chunk_size]
+            # DeepFilterNet's feature extraction calls audio.numpy(), so the
+            # raw time-domain input must stay on CPU. Its internal feature
+            # tensors and model execution use df.enhance.get_device(), which
+            # we configure to MPS when available.
             chunk_tensor = torch.from_numpy(chunk).float().unsqueeze(0)
-            enhanced = enhance(_df_model, _df_state, chunk_tensor)
-            enhanced_chunks.append(enhanced.squeeze(0).numpy())
+            try:
+                enhanced = enhance(_df_model, _df_state, chunk_tensor)
+            except Exception:
+                if _device_name(_df_device) != "mps":
+                    raise
+                logger.warning(
+                    "DeepFilterNet3 MPS enhancement failed, retrying on CPU",
+                )
+                logger.debug("DeepFilterNet3 MPS enhancement traceback", exc_info=True)
+                _move_model_to_device(torch.device("cpu"))
+                enhanced = enhance(_df_model, _df_state, chunk_tensor)
+            enhanced_chunks.append(enhanced.squeeze(0).cpu().numpy())
             logger.debug(f"Enhanced {i/sr:.0f}s - {min((i+chunk_size)/sr, len(audio)/sr):.0f}s")
 
         enhanced_audio = np.concatenate(enhanced_chunks)
@@ -108,5 +201,12 @@ def enhance_audio(input_path: str, output_path: str = None) -> str:
 
 def is_available() -> bool:
     """Check if DeepFilterNet is available."""
-    import importlib.util
-    return importlib.util.find_spec("df") is not None
+    try:
+        import soundfile as _soundfile  # noqa: F401
+        import torch as _torch  # noqa: F401
+        from df.enhance import enhance as _enhance  # noqa: F401
+        from df.enhance import init_df as _init_df  # noqa: F401
+    except Exception as e:
+        logger.info("DeepFilterNet3 unavailable: %s", e)
+        return False
+    return True

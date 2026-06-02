@@ -8,6 +8,8 @@ import functools
 import hashlib
 import json
 from dataclasses import asdict, is_dataclass
+from pathlib import Path
+import sqlite3
 from typing import Any
 
 from diskcache import Cache
@@ -35,12 +37,23 @@ def is_cache_enabled() -> bool:
     return _cache_enabled
 
 
+def _open_cache(name: str, **kwargs: Any) -> Cache:
+    cache_dir = Path(CACHE_PATH) / name
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        return Cache(str(cache_dir), **kwargs)
+    except sqlite3.OperationalError:
+        fallback_dir = Path("/private/tmp") / "SubForge" / "cache" / name
+        fallback_dir.mkdir(parents=True, exist_ok=True)
+        return Cache(str(fallback_dir), **kwargs)
+
+
 # Predefined cache instances for common use cases
-_llm_cache = Cache(str(CACHE_PATH / "llm_translation"))
-_asr_cache = Cache(str(CACHE_PATH / "asr_results"), tag_index=True)
-_tts_cache = Cache(str(CACHE_PATH / "tts_audio"))
-_translate_cache = Cache(str(CACHE_PATH / "translate_results"))
-_version_state_cache = Cache(str(CACHE_PATH / "version_state"))
+_llm_cache = _open_cache("llm_translation")
+_asr_cache = _open_cache("asr_results", tag_index=True)
+_tts_cache = _open_cache("tts_audio")
+_translate_cache = _open_cache("translate_results")
+_version_state_cache = _open_cache("version_state")
 
 
 def get_llm_cache() -> Cache:

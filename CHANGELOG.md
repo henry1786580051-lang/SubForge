@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.0.2 - 2026-06-02
+
+### Fixed
+
+- Fixed Whisper.cpp word-level transcription dropping or misplacing quiet intro speech.
+- Fixed smart split output covering silent/no-speech regions by running a second source-audio timing refinement after sentence reconstruction.
+- Fixed subtitle timing refinement so VAD can trim both leading silence and trailing silence instead of only subtitle tails.
+- Fixed RMS pause restoration cutting through Silero VAD-confirmed continuous speech in noisy driving footage.
+- Fixed repeated Whisper.cpp text fragments around chunk/VAD boundaries.
+- Fixed English smart-split spacing around punctuation, including cases like `everyone, welcome` and `Torrance, California`.
+- Fixed dangling English fragments such as sentence parts split after `to`, `this`, or similar connector words.
+- Fixed packaged macOS builds so DeepFilterNet3 denoising is available in the app bundle.
+
+### Changed
+
+- Disabled Whisper.cpp internal VAD for full-audio word timestamp runs to avoid missing quiet opening speech.
+- Added live transcription and smart-split UI updates while processing.
+- Improved macOS packaging for bundled torch, torchaudio, static ffmpeg/ffprobe, and denoise resources.
+- Added regression tests for word-level timestamp preservation, repeated ASR text cleanup, VAD timing edge trimming, smart-split punctuation spacing, dangling-tail split avoidance, and post-split timing refinement.
+
 ## v1.0.1 - 2026-06-01
 
 ### Fixed

@@ -4,6 +4,44 @@ from pathlib import Path
 
 from ...config import LOG_LEVEL, LOG_PATH
 
+FALLBACK_LOG_PATH = Path("/private/tmp") / "SubForge" / "logs"
+_active_log_file: Path | None = None
+
+
+def get_active_log_file(default: Path | None = None) -> Path:
+    return _active_log_file or default or (LOG_PATH / "app.log")
+
+
+def _build_file_handler(
+    log_file: str,
+    level: int,
+    formatter: logging.Formatter,
+) -> logging.Handler:
+    path = Path(log_file)
+    candidates = [path]
+    if path.parent != FALLBACK_LOG_PATH:
+        candidates.append(FALLBACK_LOG_PATH / path.name)
+
+    last_error: OSError | None = None
+    for candidate in candidates:
+        try:
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            handler = logging.handlers.RotatingFileHandler(
+                candidate,
+                maxBytes=10 * 1024 * 1024,
+                backupCount=5,
+                encoding="utf-8",
+            )
+            handler.setLevel(level)
+            handler.setFormatter(formatter)
+            global _active_log_file
+            _active_log_file = candidate
+            return handler
+        except OSError as exc:
+            last_error = exc
+
+    raise last_error or OSError(f"Unable to create log file handler: {log_file}")
+
 
 def setup_logger(
     name: str,
@@ -49,13 +87,11 @@ def setup_logger(
 
         # 文件处理器
         if log_file:
-            Path(log_file).parent.mkdir(parents=True, exist_ok=True)
-            file_handler = logging.handlers.RotatingFileHandler(
-                log_file, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
-            )
-            file_handler.setLevel(level)
-            file_handler.setFormatter(level_formatter)
-            logger.addHandler(file_handler)
+            try:
+                logger.addHandler(_build_file_handler(log_file, level, level_formatter))
+            except OSError as exc:
+                if console_output:
+                    logger.warning("Failed to initialize file logging: %s", exc)
 
     # 设置特定库的日志级别为ERROR以减少日志噪音
     error_loggers = [

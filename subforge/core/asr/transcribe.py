@@ -35,20 +35,27 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None, on_segm
     if config.transcribe_model is None:
         raise ValueError("Transcription model not set")
 
-    # Enhance audio with DeepFilterNet (speech denoising)
+    # Enhance audio with DeepFilterNet3 when the optional denoise stack is
+    # installed. This is especially useful before VAD on noisy in-car footage.
     enhanced_path = None
-    try:
-        from subforge.core.asr.audio_enhancer import enhance_audio, is_available
-        if is_available():
-            logger.info("Enhancing audio with DeepFilterNet3...")
-            enhanced_path = enhance_audio(audio_path)
-            audio_for_asr = enhanced_path
-            logger.info(f"Using enhanced audio: {enhanced_path}")
-        else:
-            logger.info("DeepFilterNet not available, using original audio")
+    audio_for_asr = audio_path
+    if config.enable_audio_enhancement:
+        try:
+            from subforge.core.asr.audio_enhancer import enhance_audio, is_available
+
+            if is_available():
+                callback(6, "Enhancing audio with DeepFilterNet3...")
+                logger.info("Enhancing audio with DeepFilterNet3...")
+                enhanced_path = enhance_audio(audio_path)
+                audio_for_asr = enhanced_path
+                logger.info("Using enhanced audio: %s", enhanced_path)
+            else:
+                logger.info("DeepFilterNet3 not available, using original audio")
+        except Exception as e:
+            logger.warning("Audio enhancement failed, using original: %s", e, exc_info=True)
             audio_for_asr = audio_path
-    except Exception as e:
-        logger.warning(f"Audio enhancement failed, using original: {e}", exc_info=True)
+    else:
+        logger.info("Audio enhancement disabled, using original audio")
         audio_for_asr = audio_path
 
     try:
@@ -57,7 +64,7 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None, on_segm
         try:
             from subforge.core.asr.silero_vad import detect_speech_segments
             from subforge.core.asr.silero_vad import is_available as vad_available
-            if vad_available():
+            if _should_use_outer_vad(config) and vad_available():
                 speech_segments = detect_speech_segments(audio_for_asr)
                 if speech_segments and len(speech_segments) > 1:
                     asr_data = _transcribe_segments(audio_for_asr, speech_segments, config, callback, on_segment=on_segment)
@@ -67,7 +74,7 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None, on_segm
         # Fallback: transcribe full audio
         if asr_data is None:
             callback(10, "Preparing transcription...")
-            asr = _create_asr_instance(audio_for_asr, config)
+            asr = _create_asr_instance(audio_for_asr, config, on_segment=on_segment)
             callback(30, "Sending audio to ASR engine...")
             asr_data = asr.run(callback=callback)
             callback(90, "Processing results...")
@@ -77,6 +84,16 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None, on_segm
 
         # Filter hallucinated segments using audio energy analysis
         asr_data.filter_hallucinations(audio_path=audio_for_asr)
+
+        # Remove duplicate text emitted around VAD/chunk boundaries before the
+        # final timing pass, so exports do not keep short repeated fragments.
+        asr_data.deduplicate_adjacent_text()
+
+        # whisper.cpp sometimes cuts a spoken sentence into adjacent subtitle
+        # fragments. Merge conservative mid-phrase splits before timing export,
+        # but never collapse word-level timelines used by smart splitting.
+        if not asr_data.is_word_timestamp():
+            asr_data.merge_sentence_fragments()
 
         # Optimize subtitle timing if not using word timestamps
         if not config.need_word_time_stamp:
@@ -93,6 +110,18 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None, on_segm
                 Path(enhanced_path).unlink(missing_ok=True)
             except Exception:
                 pass
+
+
+def _should_use_outer_vad(config: TranscribeConfig) -> bool:
+    """Return whether SubForge should split audio before invoking ASR.
+
+    whisper.cpp already has its own VAD and can process long audio with Metal
+    after loading the model once. Running SubForge's outer VAD around
+    whisper.cpp is expensive because it starts a new whisper-cli process for
+    every speech segment, repeatedly loading large models and creating
+    duplicate boundary text from overlap context.
+    """
+    return config.transcribe_model != TranscribeModelEnum.WHISPER_CPP
 
 
 def _transcribe_segments(
@@ -171,7 +200,17 @@ def _transcribe_segments(
 
 # --- ASR factory: shared kwargs builders ---
 
-def _build_whisper_cpp_kwargs(config: TranscribeConfig, use_vad: bool = True, use_cache: bool = False) -> dict:
+def _build_whisper_cpp_kwargs(
+    config: TranscribeConfig,
+    use_vad: bool = True,
+    use_cache: bool = False,
+    segment_callback=None,
+) -> dict:
+    # whisper.cpp VAD trims audio before decoding and then maps the compacted
+    # audio back to the original timeline. In quiet intros this can either drop
+    # speech or shift the first sentence several seconds late. Decode the full
+    # audio and let JSON token timestamps plus post-processing preserve gaps.
+    effective_use_vad = False
     return {
         "use_cache": use_cache,
         "need_word_time_stamp": config.need_word_time_stamp,
@@ -179,7 +218,8 @@ def _build_whisper_cpp_kwargs(config: TranscribeConfig, use_vad: bool = True, us
         "whisper_cpp_path": config.whisper_cpp_path or None,
         "whisper_model": config.whisper_model.value if config.whisper_model else None,
         "n_threads": getattr(config, "whisper_n_threads", 4),
-        "use_vad": use_vad,
+        "use_vad": effective_use_vad,
+        "segment_callback": segment_callback,
     }
 
 
@@ -249,14 +289,18 @@ def _create_single_asr(audio_path: str, config: TranscribeConfig):
         raise ValueError(f"Invalid transcription model: {model_type}")
 
 
-def _create_asr_instance(audio_path: str, config: TranscribeConfig) -> ChunkedASR:
+def _create_asr_instance(audio_path: str, config: TranscribeConfig, on_segment=None) -> ChunkedASR:
     """Create appropriate ASR instance based on configuration."""
     model_type = config.transcribe_model
 
     if model_type == TranscribeModelEnum.WHISPER_CPP:
         return ChunkedASR(asr_class=WhisperCppASR, audio_path=audio_path,
-                          asr_kwargs=_build_whisper_cpp_kwargs(config, use_cache=False),
-                          chunk_concurrency=1, chunk_length=60 * 20)
+                          asr_kwargs=_build_whisper_cpp_kwargs(
+                              config,
+                              use_cache=False,
+                              segment_callback=on_segment,
+                          ),
+                          chunk_concurrency=1, chunk_length=60 * 60)
 
     elif model_type == TranscribeModelEnum.WHISPER_API:
         return ChunkedASR(asr_class=WhisperAPI, audio_path=audio_path,

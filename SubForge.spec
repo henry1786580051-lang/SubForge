@@ -5,6 +5,15 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 block_cipher = None
 ROOT = os.path.dirname(os.path.abspath(SPEC))
 
+optional_hiddenimports = []
+optional_datas = []
+for optional_pkg in ('df', 'deepfilterlib'):
+    try:
+        optional_hiddenimports += collect_submodules(optional_pkg)
+        optional_datas += collect_data_files(optional_pkg, include_py_files=False)
+    except Exception:
+        pass
+
 # Collect frontend static export
 frontend_datas = []
 frontend_out = os.path.join(ROOT, 'frontend', 'out')
@@ -55,7 +64,7 @@ a = Analysis(
     [os.path.join(ROOT, 'launcher.py')],
     pathex=[ROOT, os.path.join(ROOT, 'backend')],
     binaries=[],
-    datas=frontend_datas + backend_datas + vc_datas + backend_src + resource_datas + runtime_datas,
+    datas=frontend_datas + backend_datas + vc_datas + backend_src + resource_datas + runtime_datas + optional_datas,
     hiddenimports=[
         'torch',
         'torch.hub',
@@ -107,24 +116,24 @@ a = Analysis(
         'scipy',
         'scipy.io',
         'scipy.io.wavfile',
-    ],
+    ] + optional_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        'torchvision', 'torchaudio',
+        'torchvision',
         'transformers', 'tokenizers',
         'modelscope',
         'tensorflow', 'keras',
         'PyQt5', 'PyQt-Fluent-Widgets', 'qfluentwidgets',
         'matplotlib', 'scipy',
         'IPython', 'jupyter',
-        'test', 'tests', 'unittest',
+        'test', 'tests',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
-    noarchive=False,
+    noarchive=True,
 )
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)

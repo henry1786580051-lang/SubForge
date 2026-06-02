@@ -3,6 +3,7 @@ import importlib
 from subforge.core.entities import TranscribeConfig, TranscribeModelEnum, WhisperModelEnum
 
 transcribe_module = importlib.import_module("subforge.core.asr.transcribe")
+whisper_cpp_module = importlib.import_module("subforge.core.asr.whisper_cpp")
 
 
 class DummyChunkedASR:
@@ -29,12 +30,46 @@ def test_create_asr_instance_whisper_cpp_does_not_require_removed_jianying_enum(
     config = _whisper_cpp_config()
     config.whisper_cpp_path = "/tmp/whisper-cli"
 
-    asr = transcribe_module._create_asr_instance("audio.wav", config)
+    def on_segment(_asr_data):
+        pass
+
+    asr = transcribe_module._create_asr_instance("audio.wav", config, on_segment=on_segment)
 
     assert asr.kwargs["asr_class"] is transcribe_module.WhisperCppASR
     assert asr.kwargs["asr_kwargs"]["whisper_model"] == "large-v2"
     assert asr.kwargs["asr_kwargs"]["whisper_cpp_path"] == "/tmp/whisper-cli"
     assert asr.kwargs["asr_kwargs"]["use_cache"] is False
+    assert asr.kwargs["asr_kwargs"]["use_vad"] is False
+    assert asr.kwargs["asr_kwargs"]["segment_callback"] is on_segment
+    assert asr.kwargs["chunk_concurrency"] == 1
+    assert asr.kwargs["chunk_length"] == 60 * 60
+
+
+def test_whisper_cpp_keeps_full_audio_when_word_timestamps_enabled():
+    config = _whisper_cpp_config()
+    config.need_word_time_stamp = True
+
+    kwargs = transcribe_module._build_whisper_cpp_kwargs(config, use_vad=True)
+
+    assert kwargs["need_word_time_stamp"] is True
+    assert kwargs["use_vad"] is False
+
+
+def test_whisper_cpp_disables_internal_vad_for_sentence_level_runs():
+    config = _whisper_cpp_config()
+    config.need_word_time_stamp = False
+
+    kwargs = transcribe_module._build_whisper_cpp_kwargs(config, use_vad=True)
+
+    assert kwargs["need_word_time_stamp"] is False
+    assert kwargs["use_vad"] is False
+
+
+def test_whisper_cpp_skips_outer_vad_to_avoid_reloading_model_per_segment():
+    assert transcribe_module._should_use_outer_vad(_whisper_cpp_config()) is False
+
+    config = TranscribeConfig(transcribe_model=TranscribeModelEnum.FASTER_WHISPER)
+    assert transcribe_module._should_use_outer_vad(config) is True
 
 
 def test_create_single_asr_whisper_cpp_does_not_require_removed_jianying_enum(monkeypatch):
@@ -86,3 +121,131 @@ def test_detect_whisper_executable_error_explains_binary_requirement(monkeypatch
         assert "model file alone is not enough" in str(exc)
     else:
         raise AssertionError("Expected RuntimeError")
+
+
+def test_cli_validator_accepts_whisper_cli_binary(monkeypatch):
+    validators = importlib.import_module("subforge.cli.validators")
+
+    monkeypatch.setattr(
+        validators.shutil,
+        "which",
+        lambda name: "/opt/homebrew/bin/whisper-cli" if name == "whisper-cli" else None,
+    )
+
+    assert validators.validate_whisper_cpp() is True
+
+
+def test_whisper_cpp_json_tokens_are_grouped_by_sentence_timestamps():
+    data = {
+        "transcription": [
+            {
+                "tokens": [
+                    {"text": "[_BEG_]", "offsets": {"from": 0, "to": 0}},
+                    {"text": " this", "offsets": {"from": 0, "to": 490}},
+                    {"text": " is", "offsets": {"from": 500, "to": 700}},
+                    {"text": " a", "offsets": {"from": 710, "to": 820}},
+                    {"text": " car", "offsets": {"from": 830, "to": 1200}},
+                    {"text": " that", "offsets": {"from": 1210, "to": 1500}},
+                    {"text": " I", "offsets": {"from": 1510, "to": 1700}},
+                    {"text": "'ve", "offsets": {"from": 1700, "to": 1800}},
+                    {"text": " always", "offsets": {"from": 1810, "to": 2200}},
+                    {"text": " wanted", "offsets": {"from": 2210, "to": 2700}},
+                    {"text": " to", "offsets": {"from": 2710, "to": 2900}},
+                    {"text": " drive", "offsets": {"from": 2910, "to": 3400}},
+                    {"text": ".", "offsets": {"from": 3400, "to": 3450}},
+                    {"text": " It", "offsets": {"from": 3900, "to": 4100}},
+                    {"text": "'s", "offsets": {"from": 4100, "to": 4200}},
+                    {"text": " always", "offsets": {"from": 4210, "to": 4600}},
+                    {"text": " been", "offsets": {"from": 4610, "to": 4900}},
+                    {"text": " interesting", "offsets": {"from": 4910, "to": 5600}},
+                    {"text": ".", "offsets": {"from": 5600, "to": 5650}},
+                    {"text": "[_TT_282]", "offsets": {"from": 5650, "to": 5650}},
+                ]
+            }
+        ]
+    }
+
+    import json
+
+    segments = whisper_cpp_module._segments_from_whisper_json(
+        json.dumps(data),
+        need_word_time_stamp=False,
+    )
+
+    assert [seg.text for seg in segments] == [
+        "this is a car that I've always wanted to drive.",
+        "It's always been interesting.",
+    ]
+    assert segments[0].start_time == 0
+    assert segments[0].end_time == 3450
+    assert segments[1].start_time == 3900
+
+
+def test_whisper_cpp_json_tokens_can_return_word_timestamps():
+    data = {
+        "transcription": [
+            {
+                "tokens": [
+                    {"text": " Ac", "offsets": {"from": 1000, "to": 1200}},
+                    {"text": "ura", "offsets": {"from": 1200, "to": 1350}},
+                    {"text": " TL", "offsets": {"from": 1400, "to": 1600}},
+                    {"text": ".", "offsets": {"from": 1600, "to": 1650}},
+                ]
+            }
+        ]
+    }
+
+    import json
+
+    segments = whisper_cpp_module._segments_from_whisper_json(
+        json.dumps(data),
+        need_word_time_stamp=True,
+    )
+
+    assert [(seg.text, seg.start_time, seg.end_time) for seg in segments] == [
+        ("Acura", 1000, 1350),
+        ("TL.", 1400, 1650),
+    ]
+
+
+def test_whisper_cpp_cli_segment_line_parses_for_live_preview():
+    segment = whisper_cpp_module.WhisperCppASR._parse_cli_segment_line(
+        "[00:00:07.250 --> 00:00:09.040]   and this is a car that I've always wanted to drive."
+    )
+
+    assert segment is not None
+    assert segment.start_time == 7250
+    assert segment.end_time == 9040
+    assert segment.text == "and this is a car that I've always wanted to drive."
+
+
+def test_whisper_cpp_command_disables_vad_for_word_timestamps(tmp_path):
+    asr = whisper_cpp_module.WhisperCppASR.__new__(whisper_cpp_module.WhisperCppASR)
+    asr.whisper_cpp_path = tmp_path / "whisper-cli"
+    asr.model_path = tmp_path / "ggml-large-v2.bin"
+    asr.language = "en"
+    asr.n_threads = 4
+    asr.use_vad = True
+    asr.need_word_time_stamp = True
+    asr.vad_model_path = str(tmp_path / "silero-vad.bin")
+
+    cmd = asr._build_command(tmp_path / "audio.wav", tmp_path / "out.srt", False)
+
+    assert "--vad" not in cmd
+
+
+def test_whisper_cpp_command_disables_vad_for_sentence_timestamps(tmp_path):
+    asr = whisper_cpp_module.WhisperCppASR.__new__(whisper_cpp_module.WhisperCppASR)
+    asr.whisper_cpp_path = tmp_path / "whisper-cli"
+    asr.model_path = tmp_path / "ggml-large-v2.bin"
+    asr.language = "en"
+    asr.n_threads = 4
+    asr.use_vad = True
+    asr.need_word_time_stamp = False
+    asr.vad_model_path = str(tmp_path / "silero-vad.bin")
+
+    cmd = asr._build_command(tmp_path / "audio.wav", tmp_path / "out.srt", False)
+
+    assert "--vad" not in cmd
+    assert "--vad-threshold" not in cmd
+    assert "--vad-min-silence-duration-ms" not in cmd

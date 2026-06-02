@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from PyQt5.QtCore import QEventLoop, QTimer
 
+from subforge.core.asr.asr_data import ASRData, ASRDataSeg
 from subforge.core.entities import (
     SubtitleConfig,
     SubtitleTask,
@@ -81,6 +82,7 @@ def run_thread_with_timeout(thread, timeout_ms=60000):
     thread.error.connect(on_error)
     thread.progress.connect(on_progress)
     thread.update.connect(on_update)
+    thread.update_all.connect(on_update)
 
     loop = QEventLoop()
     thread.finished.connect(loop.quit)
@@ -129,6 +131,32 @@ def base_config():
 
 class TestSubtitleThreadSplit:
     """Test subtitle splitting functionality."""
+
+    def test_refines_sentence_timing_from_source_after_split(
+        self, tmp_path, base_config, monkeypatch
+    ):
+        video_path = tmp_path / "source.mp4"
+        video_path.write_bytes(b"placeholder")
+        task = SubtitleTask(
+            subtitle_path=str(tmp_path / "input.srt"),
+            video_path=str(video_path),
+            subtitle_config=base_config,
+        )
+        thread = SubtitleThread(task)
+        asr_data = ASRData([ASRDataSeg("Hey everyone, welcome back.", 0, 9240)])
+        calls = []
+
+        def fake_filter(self, audio_path):
+            calls.append(audio_path)
+            self.segments[0].start_time = 7200
+            return self
+
+        monkeypatch.setattr(ASRData, "filter_hallucinations", fake_filter)
+
+        result = thread._refine_sentence_timing_from_source(asr_data)
+
+        assert calls == [str(video_path)]
+        assert result.segments[0].start_time == 7200
 
     def test_split_sentence(
         self, subtitle_file, output_dir, base_config, mock_llm_client
