@@ -7,9 +7,9 @@ Can be used by translation, ASR, and other modules that need caching.
 import functools
 import hashlib
 import json
+import sqlite3
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
-import sqlite3
 from typing import Any
 
 from diskcache import Cache
