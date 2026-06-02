@@ -10,6 +10,10 @@
   <img src="furnace_app_icon_v2.svg" alt="SubForge Logo" width="120" />
 </p>
 
+<p align="center">
+  <img src="docs/screenshot.png" alt="SubForge Screenshot" width="800" />
+</p>
+
 SubForge 是一个 AI 驱动的视频字幕工具，覆盖转录、断句、优化、翻译、字幕样式与视频合成等流程。它既可以作为桌面/网页工具使用，也可以通过 CLI 和 Python 模块集成到自己的工作流中。
 
 ## 能做什么
