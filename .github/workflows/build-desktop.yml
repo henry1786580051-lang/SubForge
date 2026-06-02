@@ -37,8 +37,10 @@ jobs:
         include:
           - name: Windows x64
             os: windows-latest
+            uv-extra: "--extra denoise"
           - name: macOS Intel
             os: macos-15-intel
+            uv-extra: ""
 
     steps:
       - uses: actions/checkout@v6
@@ -54,10 +56,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --frozen --extra denoise
+        run: uv sync --frozen ${{ matrix.uv-extra }}
 
       - name: Build desktop bundle
-        run: uv run --extra denoise --with pyinstaller --with static-ffmpeg --with pywebview python scripts/build_desktop.py --clean
+        run: uv run ${{ matrix.uv-extra }} --with pyinstaller --with static-ffmpeg --with pywebview python scripts/build_desktop.py --clean
 
       - name: Smoke test packaged app
         run: uv run python scripts/smoke_desktop.py dist/SubForge
