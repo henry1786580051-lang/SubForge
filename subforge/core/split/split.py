@@ -2,7 +2,7 @@ import atexit
 import difflib
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Callable, List, Optional, Union
+from typing import Any, Callable, List, Optional, Union
 
 from subforge.core.asr.asr_data import ASRData, ASRDataSeg
 from subforge.core.split.split_by_llm import split_by_llm
@@ -164,6 +164,7 @@ class SubtitleSplitter:
         max_word_count_cjk: int = MAX_WORD_COUNT_CJK,
         max_word_count_english: int = MAX_WORD_COUNT_ENGLISH,
         update_callback: Optional[Callable[[List[ASRDataSeg]], None]] = None,
+        llm_client: Any = None,
     ):
         """初始化分割器
 
@@ -178,6 +179,7 @@ class SubtitleSplitter:
         self.max_word_count_cjk = max_word_count_cjk
         self.max_word_count_english = max_word_count_english
         self.update_callback = update_callback
+        self.llm_client = llm_client
         self.is_running = True
         self._init_thread_pool()
 
@@ -237,6 +239,8 @@ class SubtitleSplitter:
         except Exception as e:
             logger.error(f"Split failed:{str(e)}")
             raise RuntimeError(f"Split failed:{str(e)}")
+        finally:
+            self.stop()
 
     def _determine_num_segments(
         self, word_count: int, threshold: int = SEGMENT_WORD_THRESHOLD
@@ -320,11 +324,13 @@ class SubtitleSplitter:
     def _process_segments(self, asr_data_list: List[ASRData]) -> List[List[ASRDataSeg]]:
         """并发处理AllSegments"""
         futures = []
+        future_inputs = {}
         for asr_data in asr_data_list:
             if not self.executor:
                 raise ValueError("Thread pool not initialized")
             future = self.executor.submit(self._process_single_segment, asr_data)
             futures.append(future)
+            future_inputs[future] = asr_data
 
         processed_segments = []
         for future in as_completed(futures):
@@ -337,6 +343,9 @@ class SubtitleSplitter:
                     self.update_callback(self._merge_processed_segments(processed_segments))
             except Exception as e:
                 logger.error(f"Segment processing failed:{str(e)}")
+                original = future_inputs.get(future)
+                if original is not None:
+                    processed_segments.append(original.segments)
 
         return processed_segments
 
@@ -367,6 +376,7 @@ class SubtitleSplitter:
             model=self.model,
             max_word_count_cjk=self.max_word_count_cjk,
             max_word_count_english=self.max_word_count_english,
+            llm_client=self.llm_client,
         )
 
         return self._merge_segments_based_on_sentences(segments, sentences)
@@ -452,15 +462,21 @@ class SubtitleSplitter:
                         and len(current_group) > MIN_GROUP_SIZE
                     ):
                         result.append(current_group)
-                        current_group = []
+                        current_group = [segments[i]]
                         recent_gaps = []
+                        continue
 
             # 超过最大间隔则分组
             if time_gap > max_gap:
-                if _is_dangling_tail(current_group[-1].text) and time_gap <= max(max_gap * 3, 1600):
+                if (
+                    current_group
+                    and _is_dangling_tail(current_group[-1].text)
+                    and time_gap <= max(max_gap * 3, 1600)
+                ):
                     current_group.append(segments[i])
                     continue
-                result.append(current_group)
+                if current_group:
+                    result.append(current_group)
                 current_group = []
                 recent_gaps = []
 

@@ -507,7 +507,7 @@ class SettingInterface(ScrollArea):
         self.needReflectTranslateCard = SwitchSettingCard(
             FIF.EDIT,
             self.tr("需要反思翻译"),
-            self.tr("启用反思翻译可以提高翻译质量，但耗费更多时间和token"),
+            self.tr("启用反思翻译可以提高翻译质量，但会增加 API 调用和 token 消耗"),
             cfg.need_reflect_translate,
             self.translate_serviceGroup,
         )
@@ -527,7 +527,7 @@ class SettingInterface(ScrollArea):
             cfg.batch_size,
             FIF.ALIGNMENT,
             self.tr("批处理大小"),
-            self.tr("每批处理字幕的数量，建议为 10 的倍数"),
+            self.tr("每批翻译的当前字幕数量；系统会自动附带前后文，过大可能降低一致性"),
             parent=self.translate_serviceGroup,
         )
 

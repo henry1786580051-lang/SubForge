@@ -8,6 +8,7 @@ from subforge.core.asr.faster_whisper import FasterWhisperASR
 from subforge.core.asr.jianying import JianYingASR
 from subforge.core.asr.whisper_api import WhisperAPI
 from subforge.core.asr.whisper_cpp import WhisperCppASR
+from subforge.core.asr.whisperx_asr import WhisperXASR
 from subforge.core.entities import TranscribeConfig, TranscribeModelEnum
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,8 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None, on_segm
             asr_data = asr.run(callback=callback)
             callback(90, "Processing results...")
 
+        asr_data.cap_abnormal_word_durations()
+
         # Fix boundary overlaps before text/energy post-processing sees the data.
         asr_data.fix_boundary_overlaps()
 
@@ -121,7 +124,10 @@ def _should_use_outer_vad(config: TranscribeConfig) -> bool:
     every speech segment, repeatedly loading large models and creating
     duplicate boundary text from overlap context.
     """
-    return config.transcribe_model != TranscribeModelEnum.WHISPER_CPP
+    return config.transcribe_model not in {
+        TranscribeModelEnum.WHISPER_CPP,
+        TranscribeModelEnum.WHISPERX,
+    }
 
 
 def _transcribe_segments(
@@ -260,6 +266,28 @@ def _build_faster_whisper_kwargs(config: TranscribeConfig, use_cache: bool = Tru
     }
 
 
+def _build_whisperx_kwargs(config: TranscribeConfig, use_cache: bool = True) -> dict:
+    model = (
+        config.whisperx_model
+        or (
+            config.faster_whisper_model.value
+            if config.faster_whisper_model
+            else ""
+        )
+    )
+    return {
+        "use_cache": use_cache,
+        "need_word_time_stamp": config.need_word_time_stamp,
+        "language": config.transcribe_language,
+        "whisper_model": model,
+        "model_dir": config.faster_whisper_model_dir or "",
+        "device": config.faster_whisper_device,
+        "compute_type": getattr(config, "faster_whisper_compute_type", "default"),
+        "align_model": getattr(config, "whisperx_align_model", ""),
+        "batch_size": getattr(config, "whisperx_batch_size", 4),
+    }
+
+
 def _build_simple_kwargs(config: TranscribeConfig, use_cache: bool = True) -> dict:
     return {
         "use_cache": use_cache,
@@ -275,6 +303,8 @@ def _create_single_asr(audio_path: str, config: TranscribeConfig):
 
     if model_type == TranscribeModelEnum.WHISPER_CPP:
         return WhisperCppASR(audio_path, **_build_whisper_cpp_kwargs(config, use_vad=False, use_cache=False))
+    elif model_type == TranscribeModelEnum.WHISPERX:
+        return WhisperXASR(audio_path, **_build_whisperx_kwargs(config, use_cache=False))
     elif model_type == TranscribeModelEnum.WHISPER_API:
         return WhisperAPI(audio_path, **_build_whisper_api_kwargs(config, use_cache=False))
     elif model_type == TranscribeModelEnum.FASTER_WHISPER:
@@ -300,6 +330,11 @@ def _create_asr_instance(audio_path: str, config: TranscribeConfig, on_segment=N
                               use_cache=False,
                               segment_callback=on_segment,
                           ),
+                          chunk_concurrency=1, chunk_length=60 * 60)
+
+    elif model_type == TranscribeModelEnum.WHISPERX:
+        return ChunkedASR(asr_class=WhisperXASR, audio_path=audio_path,
+                          asr_kwargs=_build_whisperx_kwargs(config, use_cache=False),
                           chunk_concurrency=1, chunk_length=60 * 60)
 
     elif model_type == TranscribeModelEnum.WHISPER_API:

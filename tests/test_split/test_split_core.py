@@ -273,6 +273,55 @@ class TestGroupByTimeGaps:
         # 应该检测到异常间隔并分组
         assert len(groups) >= 1
 
+    def test_check_large_gap_keeps_current_segment_after_split(self):
+        """异常大间隔分组后不能留下空 current_group 或丢掉当前词元。"""
+        segments = [
+            ASRDataSeg(text=f"word{i}", start_time=i * 100, end_time=(i + 1) * 100)
+            for i in range(8)
+        ]
+        segments.extend(
+            [
+                ASRDataSeg(text="after", start_time=8000, end_time=8100),
+                ASRDataSeg(text="gap", start_time=8120, end_time=8200),
+            ]
+        )
+        splitter = SubtitleSplitter(thread_num=1, model="gpt-4o-mini")
+
+        groups = splitter._group_by_time_gaps(
+            segments,
+            max_gap=500,
+            check_large_gaps=True,
+        )
+
+        assert all(groups)
+        assert [seg.text for group in groups for seg in group] == [
+            seg.text for seg in segments
+        ]
+
+
+class TestProcessSegments:
+    """测试并发断句失败时不丢字幕块"""
+
+    def test_failed_future_falls_back_to_original_segments(self, monkeypatch):
+        first = ASRData([ASRDataSeg("first", 0, 100)])
+        second = ASRData([ASRDataSeg("second", 200, 300)])
+        splitter = SubtitleSplitter(thread_num=1, model="gpt-4o-mini")
+
+        def fake_process(asr_data):
+            if asr_data.segments[0].text == "first":
+                raise RuntimeError("boom")
+            return asr_data.segments
+
+        monkeypatch.setattr(splitter, "_process_single_segment", fake_process)
+
+        try:
+            result = splitter._process_segments([first, second])
+        finally:
+            splitter.stop()
+
+        merged = splitter._merge_processed_segments(result)
+        assert [seg.text for seg in merged] == ["first", "second"]
+
 
 class TestSplitByCommonWords:
     """测试 _split_by_common_words 方法"""

@@ -1,21 +1,21 @@
 @import "tailwindcss";
 
 :root {
-  --background: #FAF9F6;
-  --foreground: #1A1A1A;
-  --accent: #D4956A;
-  --accent-dim: rgba(212, 149, 106, 0.1);
-  --accent-hover: #C4854E;
+  --background: #F5F7FA;
+  --foreground: #111827;
+  --accent: #2563EB;
+  --accent-dim: rgba(37, 99, 235, 0.09);
+  --accent-hover: #1D4ED8;
   --surface: #FFFFFF;
-  --surface-hover: #F5F3F0;
+  --surface-hover: #F0F4F8;
   --surface-raised: #FFFFFF;
-  --border: rgba(0, 0, 0, 0.08);
-  --border-active: rgba(212, 149, 106, 0.4);
-  --text-primary: #1A1A1A;
-  --text-secondary: #5C5C5C;
-  --text-muted: #9A9A9A;
-  --shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
-  --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --border: rgba(15, 23, 42, 0.09);
+  --border-active: rgba(37, 99, 235, 0.38);
+  --text-primary: #111827;
+  --text-secondary: #475569;
+  --text-muted: #94A3B8;
+  --shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --shadow-lg: 0 18px 44px rgba(15, 23, 42, 0.08);
 }
 
 @theme inline {
@@ -34,8 +34,8 @@
   --color-text-muted: var(--text-muted);
   --shadow-sm: var(--shadow);
   --shadow-md: var(--shadow-lg);
-  --font-sans: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: var(--font-geist-mono), "SF Mono", "Fira Code", monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "SF Mono", "Fira Code", "Menlo", "Consolas", monospace;
 }
 
 body {
@@ -69,25 +69,25 @@ body {
 
 /* Drop zone pulse */
 @keyframes pulse-border {
-  0%, 100% { border-color: rgba(212, 149, 106, 0.3); }
-  50% { border-color: rgba(212, 149, 106, 0.6); }
+  0%, 100% { border-color: rgba(37, 99, 235, 0.3); }
+  50% { border-color: rgba(37, 99, 235, 0.6); }
 }
 
 .drop-zone-active {
   animation: pulse-border 1.5s ease-in-out infinite;
-  background: rgba(212, 149, 106, 0.04);
+  background: rgba(37, 99, 235, 0.04);
 }
 
 /* Drop zone subtle gradient */
 .drop-zone-idle {
-  background: linear-gradient(135deg, rgba(250, 249, 246, 0.5) 0%, rgba(245, 243, 240, 0.8) 100%);
+  background: linear-gradient(135deg, rgba(248, 250, 252, 0.6) 0%, rgba(239, 246, 255, 0.7) 100%);
 }
 
 /* Progress bar glow */
 @keyframes progress-glow {
-  0% { box-shadow: 0 0 4px rgba(212, 149, 106, 0.2); }
-  50% { box-shadow: 0 0 10px rgba(212, 149, 106, 0.35); }
-  100% { box-shadow: 0 0 4px rgba(212, 149, 106, 0.2); }
+  0% { box-shadow: 0 0 4px rgba(37, 99, 235, 0.2); }
+  50% { box-shadow: 0 0 10px rgba(37, 99, 235, 0.35); }
+  100% { box-shadow: 0 0 4px rgba(37, 99, 235, 0.2); }
 }
 
 .progress-glow {
@@ -129,7 +129,7 @@ select {
 }
 
 .subtitle-row.selected {
-  background: rgba(212, 149, 106, 0.06);
+  background: rgba(37, 99, 235, 0.06);
   border-left: 2px solid var(--accent);
 }
 
@@ -152,8 +152,8 @@ select {
 
 .inline-edit:focus {
   background: rgba(0, 0, 0, 0.02);
-  border-color: rgba(212, 149, 106, 0.35);
-  box-shadow: 0 0 0 3px rgba(212, 149, 106, 0.06);
+  border-color: rgba(37, 99, 235, 0.35);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
 }
 
 /* Shared input field */
@@ -171,7 +171,7 @@ select {
 
 .input-field:focus {
   border-color: var(--border-active);
-  box-shadow: 0 0 0 3px rgba(212, 149, 106, 0.08);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
 }
 
 /* Toast slide-in */
@@ -210,6 +210,6 @@ select {
 /* Smooth focus ring for inputs */
 .input-field:focus {
   border-color: var(--border-active);
-  box-shadow: 0 0 0 3px rgba(212, 149, 106, 0.08);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }

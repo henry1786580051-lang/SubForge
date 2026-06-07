@@ -1,6 +1,6 @@
 import difflib
 import re
-from typing import List, Tuple
+from typing import Any, List, Tuple
 
 from ..llm import call_llm
 from ..prompts import get_prompt
@@ -17,6 +17,7 @@ def split_by_llm(
     model: str = "gpt-4o-mini",
     max_word_count_cjk: int = 18,
     max_word_count_english: int = 12,
+    llm_client: Any = None,
 ) -> List[str]:
     """使用LLM进行文本断句（固定使用句子Segments）
 
@@ -31,7 +32,7 @@ def split_by_llm(
     """
     try:
         return _split_with_agent_loop(
-            text, model, max_word_count_cjk, max_word_count_english
+            text, model, max_word_count_cjk, max_word_count_english, llm_client
         )
     except Exception as e:
         logger.error(f"Sentence splitting failed: {e}")
@@ -43,6 +44,7 @@ def _split_with_agent_loop(
     model: str,
     max_word_count_cjk: int,
     max_word_count_english: int,
+    llm_client: Any = None,
 ) -> List[str]:
     """使用agent loop 建立反馈循环进行文本断句，自动验证和修正"""
     prompt_path = "split/sentence"
@@ -61,25 +63,17 @@ def _split_with_agent_loop(
         {"role": "user", "content": user_prompt},
     ]
 
-    last_result = None
-
     for step in range(MAX_STEPS):
         response = call_llm(
             messages=messages,
             model=model,
             temperature=0.1,
+            client=llm_client,
         )
 
-        result_text = response.choices[0].message.content
+        result_text = response.choices[0].message.content or ""
 
-        # 解析结果
-        result_text_cleaned = re.sub(r"\n+", "", result_text)
-        split_result = [
-            segment.strip()
-            for segment in result_text_cleaned.split("<br>")
-            if segment.strip()
-        ]
-        last_result = split_result
+        split_result = _parse_split_response(result_text)
 
         # 验证结果
         is_valid, error_message = _validate_split_result(
@@ -100,11 +94,48 @@ def _split_with_agent_loop(
         messages.append(
             {
                 "role": "user",
-                "content": f"Error: {error_message}\nFix the errors above and output the COMPLETE corrected text with <br> tags (include ALL segments, not just the fixed ones), no explanation.",
+                "content": (
+                    f"Error: {error_message}\n"
+                    "Output ONLY the original text with <br> tags inserted. "
+                    "No explanation, no comments, no labels, no markdown. "
+                    "The output must contain exactly the original words in the original order."
+                ),
             }
         )
 
-    return last_result if last_result else [text]
+    raise RuntimeError(
+        "LLM split result failed validation after retries; falling back to rule-based split"
+    )
+
+
+def _parse_split_response(result_text: str) -> List[str]:
+    """Parse LLM split output and remove common wrapper noise.
+
+    Some OpenAI-compatible models prepend explanations during the feedback loop
+    ("I fixed the long segments..."). Returning that text poisons downstream
+    word-timestamp matching. This parser only performs light wrapper cleanup;
+    semantic/content validation still decides whether the result is acceptable.
+    """
+    cleaned = result_text.strip()
+    cleaned = re.sub(r"^```(?:\w+)?\s*", "", cleaned)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
+
+    output_match = re.search(
+        r"<output>\s*(.*?)\s*</output>", cleaned, flags=re.IGNORECASE | re.DOTALL
+    )
+    if output_match:
+        cleaned = output_match.group(1).strip()
+
+    cleaned = re.sub(
+        r"^\s*(?:output|result|answer|corrected(?: output)?|分句结果|输出)\s*[:：]\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\s*\n+\s*", " ", cleaned)
+    cleaned = re.sub(r"\s*<br\s*/?>\s*", "<br>", cleaned, flags=re.IGNORECASE)
+
+    return [segment.strip() for segment in cleaned.split("<br>") if segment.strip()]
 
 
 def _validate_split_result(

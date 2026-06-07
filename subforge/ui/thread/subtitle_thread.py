@@ -22,6 +22,7 @@ from subforge.core.llm.context import (
 from subforge.core.optimize.optimize import SubtitleOptimizer
 from subforge.core.split.split import SubtitleSplitter
 from subforge.core.subtitle.resegment import resegment_subtitles
+from subforge.core.translate.context import TranslationContext, build_translation_context
 from subforge.core.translate.factory import TranslatorFactory
 from subforge.core.translate.types import TranslatorType
 from subforge.core.utils.logger import setup_logger
@@ -40,6 +41,7 @@ def create_translator_from_config(
     config: SubtitleConfig,
     custom_prompt: str = "",
     callback=None,
+    translation_context: TranslationContext | None = None,
 ):
     """根据 SubtitleConfig 创建翻译器"""
     translator_service = config.translator_service
@@ -58,6 +60,7 @@ def create_translator_from_config(
         custom_prompt=custom_prompt,
         is_reflect=config.need_reflect,
         update_callback=callback,
+        translation_context=translation_context,
     )
 
 
@@ -191,15 +194,25 @@ class SubtitleThread(QThread):
             # 4. 翻译字幕
             if subtitle_config.need_translate:
                 update_stage("translate")
-                self.progress.emit(0, self.tr("翻译字幕..."))
+                self.progress.emit(0, self.tr("生成翻译上下文..."))
                 logger.info("正在翻译字幕...")
                 self.finished_subtitle_length = 0
 
                 if not subtitle_config.target_language:
                     raise Exception(self.tr("目标语言未配置"))
 
+                translation_context = TranslationContext(custom_prompt=custom_prompt)
+                if subtitle_config.translator_service == TranslatorServiceEnum.OPENAI:
+                    translation_context = build_translation_context(
+                        asr_data,
+                        model=subtitle_config.llm_model or "",
+                        target_language=subtitle_config.target_language,
+                        custom_prompt=custom_prompt,
+                    )
+                self.progress.emit(5, self.tr("翻译字幕..."))
+
                 translator = create_translator_from_config(
-                    subtitle_config, custom_prompt, self.callback
+                    subtitle_config, custom_prompt, self.callback, translation_context
                 )
 
                 asr_data = translator.translate_subtitle(asr_data)
@@ -231,6 +244,8 @@ class SubtitleThread(QThread):
                             layout=layout,
                         )
                         logger.info(f"翻译字幕保存到：{save_path}")
+
+            asr_data.extend_sentence_tails_conservatively()
 
             # 5. 保存字幕
             asr_data.save(

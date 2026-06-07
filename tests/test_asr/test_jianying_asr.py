@@ -1,5 +1,6 @@
 """JianYingASR integration tests."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,10 @@ from subforge.core.asr.asr_data import ASRData
 
 @pytest.mark.integration
 @pytest.mark.slow
+@pytest.mark.skipif(
+    os.getenv("SUBFORGE_RUN_JIANYING_TESTS") != "1",
+    reason="JianYing public API integration tests require SUBFORGE_RUN_JIANYING_TESTS=1",
+)
 class TestJianYingASR:
     """Test suite for JianYingASR using public JianYing (CapCut) API.
 

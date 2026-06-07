@@ -1,8 +1,8 @@
 """字幕重断句模块
 
-翻译前的单语字幕可以按长度重新断句。翻译后的双语字幕不能把原文和译文
-分别切分再按位置配对，因为不同语言的语序和信息密度不同，会造成双语行
-语义错位。
+翻译前的单语字幕可以按长度重新断句。翻译后的双语字幕如果过长，也需要
+拆分以避免覆盖无语音区；拆分时原文和译文必须共享同一个段数，不能独立
+拆分后再贪心配对，否则不同语言的语序和信息密度会造成双语行语义错位。
 """
 
 import math
@@ -11,12 +11,15 @@ from typing import List, Tuple
 
 from subforge.core.asr.asr_data import ASRData, ASRDataSeg
 from subforge.core.utils.logger import setup_logger
+from subforge.core.utils.text_utils import count_words
 
 logger = setup_logger("subtitle_resegment")
 
 # 默认字符限制
 DEFAULT_MAX_CHARS_EN = 50  # 英文每行最大字符数（含空格）
 DEFAULT_MAX_CHARS_CJK = 18  # CJK每行最大字符数
+BILINGUAL_MAX_DURATION_MS = 7000
+BILINGUAL_MAX_WORDS_EN = 18
 
 
 def _is_mainly_cjk(text: str) -> bool:
@@ -31,11 +34,12 @@ def resegment_subtitles(
     asr_data: ASRData,
     max_chars_en: int = DEFAULT_MAX_CHARS_EN,
     max_chars_cjk: int = DEFAULT_MAX_CHARS_CJK,
+    max_duration_ms: int = BILINGUAL_MAX_DURATION_MS,
 ) -> ASRData:
     """对字幕进行重断句
 
-    只拆分单语字幕。对于已经带有 translated_text 的双语字幕，保持原段落
-    不变，避免把原文和译文独立切分后错位。
+    单语字幕按自身语言拆分。双语字幕只在任一语言超长时拆分，并让原文和
+    译文共享同一个拆分段数，保证每条拆分后的双语字幕仍然按顺序一一对应。
 
     Args:
         asr_data: 包含翻译文本的ASR数据
@@ -54,21 +58,35 @@ def resegment_subtitles(
         if not text1 and not text2:
             continue
 
-        if text1 and text2:
-            new_segments.append(seg)
-            continue
-
-        # 检测语言
-        if _is_mainly_cjk(text1):
+        # 检测语言。双语字幕可能是“译文在 text、原文在 translated_text”
+        # 或反过来，按实际内容决定字段映射。
+        if text1 and text2 and _is_mainly_cjk(text1) and not _is_mainly_cjk(text2):
+            zh_text, en_text = text1, text2
+            zh_field, en_field = 'text', 'translated_text'
+        elif text1 and text2 and _is_mainly_cjk(text2) and not _is_mainly_cjk(text1):
+            en_text, zh_text = text1, text2
+            en_field, zh_field = 'text', 'translated_text'
+        elif _is_mainly_cjk(text1):
             zh_text, en_text = text1, text2
             zh_field, en_field = 'text', 'translated_text'
         else:
             en_text, zh_text = text1, text2
             en_field, zh_field = 'text', 'translated_text'
 
-        # 判断是否需要拆分
-        en_needs_split = len(en_text) > max_chars_en if en_text else False
-        zh_needs_split = len(zh_text) > max_chars_cjk if zh_text else False
+        # 判断是否需要拆分。双语字幕不能只因为译文略超 CJK 字符限制就拆，
+        # 否则车型名/规格等混合文本很容易被按字符切开，造成中英文错配。
+        if text1 and text2:
+            en_needs_split, zh_needs_split = _bilingual_needs_split(
+                seg,
+                en_text,
+                zh_text,
+                max_chars_en=max_chars_en,
+                max_chars_cjk=max_chars_cjk,
+                max_duration_ms=max_duration_ms,
+            )
+        else:
+            en_needs_split = len(en_text) > max_chars_en if en_text else False
+            zh_needs_split = len(zh_text) > max_chars_cjk if zh_text else False
 
         if not en_needs_split and not zh_needs_split:
             new_segments.append(seg)
@@ -81,6 +99,32 @@ def resegment_subtitles(
 
     logger.info(f"Resegmented: {len(asr_data.segments)} -> {len(new_segments)} segments")
     return ASRData(new_segments)
+
+
+def _bilingual_needs_split(
+    seg: ASRDataSeg,
+    en_text: str,
+    zh_text: str,
+    max_chars_en: int,
+    max_chars_cjk: int,
+    max_duration_ms: int,
+) -> tuple[bool, bool]:
+    duration = seg.end_time - seg.start_time
+    en_words = count_words(en_text) if en_text else 0
+
+    duration_needs_split = duration > max_duration_ms
+    en_needs_split = en_words > BILINGUAL_MAX_WORDS_EN or len(en_text) > int(max_chars_en * 1.8)
+
+    # Treat translated-line length as a secondary signal only. CJK automotive
+    # subtitles often contain long Latin model names (e.g. "Lexus IS 350 F Sport")
+    # that should stay with the original source phrase.
+    zh_needs_split = (
+        duration_needs_split
+        and bool(zh_text)
+        and len(zh_text) > max_chars_cjk
+    )
+
+    return en_needs_split or duration_needs_split, zh_needs_split
 
 
 def _split_segment_by_position(

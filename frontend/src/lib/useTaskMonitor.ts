@@ -35,34 +35,36 @@ export function useTaskMonitor() {
   const wsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const aliveRef = useRef(true);
   const handleTaskUpdateRef = useRef<(task: TaskInfo) => void>(() => {});
+  const connectWsRef = useRef<() => void>(() => {});
 
-  // Track last loaded partial file path + segment count to detect content changes
-  const lastPartialRef = useRef<string | null>(null);
-  const lastPartialCountRef = useRef<number>(0);
+  // Track task update signature. Partial SRT files are updated in-place, and
+  // optimization/translation often changes text without changing segment count.
+  const lastPartialKeyRef = useRef<string | null>(null);
 
   function handleTaskUpdate(task: TaskInfo) {
     // Guard against stale task updates (e.g., after cancel)
     const store = useAppStore.getState();
     if (task.id !== store.currentTaskId) return;
 
+    const uiStatus = task.status === "cancelled" ? "idle" : task.status;
     setTaskState(
       task.progress,
       task.message,
-      task.status as "idle" | "running" | "completed" | "failed"
+      uiStatus as "idle" | "running" | "completed" | "failed"
     );
 
     // Load partial subtitle results during processing (real-time preview)
-    // Same file is updated in-place, so reload when segment count changes
+    // Same file is updated in-place, so reload when task progress/message changes.
     if (task.status === "running" && task.subtitle_file) {
+      const partialKey = `${task.subtitle_file}:${task.progress}:${task.message}`;
+      if (partialKey === lastPartialKeyRef.current) return;
+      lastPartialKeyRef.current = partialKey;
       subtitlesApi
         .load(task.subtitle_file)
         .then((subFile) => {
-          if (subFile.count !== lastPartialCountRef.current) {
-            lastPartialCountRef.current = subFile.count;
-            lastPartialRef.current = task.subtitle_file ?? null;
-            setSubtitles(subFile.segments);
-            if (!store.subtitleFile) setStep("subtitle");
-          }
+          if (task.id !== useAppStore.getState().currentTaskId) return;
+          setSubtitles(subFile.segments);
+          if (!useAppStore.getState().subtitleFile) setStep("subtitle");
         })
         .catch(() => {});
     }
@@ -102,6 +104,12 @@ export function useTaskMonitor() {
       setIsProcessing(false);
       setError(task.error || "Task failed");
     }
+
+    if (task.status === "cancelled") {
+      if (pollRef.current) clearInterval(pollRef.current);
+      setIsProcessing(false);
+      setCurrentTaskId(null);
+    }
   }
 
   // Keep ref in sync with latest handleTaskUpdate
@@ -136,7 +144,7 @@ export function useTaskMonitor() {
       ws.onerror = () => {};
       ws.onclose = () => {
         if (aliveRef.current) {
-          wsTimeoutRef.current = setTimeout(connectWs, 3000);
+          wsTimeoutRef.current = setTimeout(() => connectWsRef.current(), 3000);
         }
       };
       wsRef.current = ws;
@@ -147,6 +155,7 @@ export function useTaskMonitor() {
 
   useEffect(() => {
     aliveRef.current = true;
+    connectWsRef.current = connectWs;
     connectWs();
     return () => {
       aliveRef.current = false;
@@ -183,8 +192,7 @@ export function useTaskMonitor() {
     ) => {
       setError(null);
       setTaskState(0, "Starting...", "running");
-      lastPartialRef.current = null;
-      lastPartialCountRef.current = 0;
+      lastPartialKeyRef.current = null;
 
       try {
         let result: { task_id: string };

@@ -10,7 +10,6 @@ Output:
 
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -18,30 +17,26 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent
 APP_NAME = "SubForge"
 DMG_OUTPUT = Path.home() / "Desktop" / f"{APP_NAME}.dmg"
-SPEC_FILE = PROJECT_ROOT / "SubForge.spec"
 
 
-def run_pyinstaller():
-    """Run PyInstaller with the spec file."""
-    print("Running PyInstaller ...")
+def build_app_bundle() -> Path:
+    """Build and verify the macOS app using the desktop packaging pipeline."""
+    sys.path.insert(0, str(PROJECT_ROOT))
+    from scripts import build_desktop
 
-    for d in ["build", "dist"]:
-        p = PROJECT_ROOT / d
-        if p.exists():
-            shutil.rmtree(p)
-
-    subprocess.run([
-        sys.executable, "-m", "PyInstaller",
-        str(SPEC_FILE),
-        "--noconfirm",
-        "--clean",
-        "--log-level", "WARN",
-    ], check=True, cwd=str(PROJECT_ROOT))
-
+    version = build_desktop._version()
+    build_desktop.clean()
+    build_desktop.ensure_version_file(version)
+    build_desktop.build_frontend()
+    build_desktop.prepare_ffmpeg()
+    build_desktop.build_pyinstaller()
+    build_desktop.patch_packaged_torch()
+    build_desktop.dedupe_packaged_torch_libs()
+    build_desktop.patch_packaged_mlx_metallib()
+    build_desktop.verify_bundle()
     app_path = PROJECT_ROOT / "dist" / f"{APP_NAME}.app"
     if not app_path.exists():
-        print(f"ERROR: {app_path} not found after build")
-        sys.exit(1)
+        raise RuntimeError(f"{app_path} not found after desktop build")
 
     print(f"  -> {app_path}")
     return app_path
@@ -61,6 +56,10 @@ def create_dmg(app_path: Path):
         staging.mkdir()
         shutil.copytree(app_path, staging / f"{APP_NAME}.app")
         os.symlink("/Applications", staging / "Applications")
+        app_size_mb = sum(
+            path.stat().st_size for path in (staging / f"{APP_NAME}.app").rglob("*") if path.is_file()
+        ) // (1024 * 1024)
+        dmg_size_mb = max(1024, int(app_size_mb * 1.35) + 256)
 
         settings = {
             "files": [str(staging / f"{APP_NAME}.app")],
@@ -72,6 +71,7 @@ def create_dmg(app_path: Path):
             "window_rect": ((200, 120), (660, 400)),
             "background": "builtin-arrow",
             "icon_size": 96,
+            "size": f"{dmg_size_mb}M",
             "format": "UDZO",
         }
 
@@ -88,13 +88,7 @@ def create_dmg(app_path: Path):
 def main():
     print(f"=== Building {APP_NAME} DMG ===\n")
 
-    try:
-        import PyInstaller  # noqa: F401
-    except ImportError:
-        print("ERROR: PyInstaller not found. Install with: pip install pyinstaller")
-        sys.exit(1)
-
-    app_path = run_pyinstaller()
+    app_path = build_app_bundle()
     create_dmg(app_path)
     print(f"\nDone! DMG is at: {DMG_OUTPUT}")
 

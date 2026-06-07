@@ -1,6 +1,11 @@
 import importlib
 
-from subforge.core.entities import TranscribeConfig, TranscribeModelEnum, WhisperModelEnum
+from subforge.core.entities import (
+    FasterWhisperModelEnum,
+    TranscribeConfig,
+    TranscribeModelEnum,
+    WhisperModelEnum,
+)
 
 transcribe_module = importlib.import_module("subforge.core.asr.transcribe")
 whisper_cpp_module = importlib.import_module("subforge.core.asr.whisper_cpp")
@@ -12,6 +17,12 @@ class DummyChunkedASR:
 
 
 class DummyWhisperCppASR:
+    def __init__(self, audio_path, **kwargs):
+        self.audio_path = audio_path
+        self.kwargs = kwargs
+
+
+class DummyWhisperXASR:
     def __init__(self, audio_path, **kwargs):
         self.audio_path = audio_path
         self.kwargs = kwargs
@@ -68,8 +79,64 @@ def test_whisper_cpp_disables_internal_vad_for_sentence_level_runs():
 def test_whisper_cpp_skips_outer_vad_to_avoid_reloading_model_per_segment():
     assert transcribe_module._should_use_outer_vad(_whisper_cpp_config()) is False
 
+    whisperx_config = TranscribeConfig(transcribe_model=TranscribeModelEnum.WHISPERX)
+    assert transcribe_module._should_use_outer_vad(whisperx_config) is False
+
     config = TranscribeConfig(transcribe_model=TranscribeModelEnum.FASTER_WHISPER)
     assert transcribe_module._should_use_outer_vad(config) is True
+
+
+def test_create_asr_instance_whisperx_uses_forced_alignment_backend(monkeypatch):
+    monkeypatch.setattr(transcribe_module, "ChunkedASR", DummyChunkedASR)
+    config = TranscribeConfig(
+        transcribe_model=TranscribeModelEnum.WHISPERX,
+        transcribe_language="en",
+        faster_whisper_model=FasterWhisperModelEnum.LARGE_V2,
+        faster_whisper_model_dir="/tmp/models",
+        faster_whisper_device="auto",
+        faster_whisper_compute_type="default",
+        whisperx_align_model="WAV2VEC2_ASR_LARGE_LV60K_960H",
+        whisperx_batch_size=2,
+    )
+
+    asr = transcribe_module._create_asr_instance("audio.wav", config)
+
+    assert asr.kwargs["asr_class"] is transcribe_module.WhisperXASR
+    assert asr.kwargs["asr_kwargs"]["whisper_model"] == "large-v2"
+    assert asr.kwargs["asr_kwargs"]["model_dir"] == "/tmp/models"
+    assert asr.kwargs["asr_kwargs"]["align_model"] == "WAV2VEC2_ASR_LARGE_LV60K_960H"
+    assert asr.kwargs["asr_kwargs"]["batch_size"] == 2
+    assert asr.kwargs["asr_kwargs"]["use_cache"] is False
+    assert asr.kwargs["chunk_length"] == 60 * 60
+
+
+def test_create_single_asr_whisperx_does_not_require_whisper_cpp(monkeypatch):
+    monkeypatch.setattr(transcribe_module, "WhisperXASR", DummyWhisperXASR)
+    config = TranscribeConfig(
+        transcribe_model=TranscribeModelEnum.WHISPERX,
+        transcribe_language="en",
+        faster_whisper_model=FasterWhisperModelEnum.LARGE_V2,
+    )
+
+    asr = transcribe_module._create_single_asr("audio.wav", config)
+
+    assert asr.audio_path == "audio.wav"
+    assert asr.kwargs["whisper_model"] == "large-v2"
+    assert asr.kwargs["use_cache"] is False
+
+
+def test_create_single_asr_whisperx_prefers_explicit_mlx_model_path(monkeypatch):
+    monkeypatch.setattr(transcribe_module, "WhisperXASR", DummyWhisperXASR)
+    config = TranscribeConfig(
+        transcribe_model=TranscribeModelEnum.WHISPERX,
+        transcribe_language="en",
+        faster_whisper_model=FasterWhisperModelEnum.LARGE_V2,
+        whisperx_model="/Users/guwenhan/Desktop/YouTube/model/whisper-large-v3-fp16",
+    )
+
+    asr = transcribe_module._create_single_asr("audio.wav", config)
+
+    assert asr.kwargs["whisper_model"] == "/Users/guwenhan/Desktop/YouTube/model/whisper-large-v3-fp16"
 
 
 def test_create_single_asr_whisper_cpp_does_not_require_removed_jianying_enum(monkeypatch):
@@ -205,6 +272,37 @@ def test_whisper_cpp_json_tokens_can_return_word_timestamps():
     assert [(seg.text, seg.start_time, seg.end_time) for seg in segments] == [
         ("Acura", 1000, 1350),
         ("TL.", 1400, 1650),
+    ]
+
+
+def test_whisper_cpp_caps_unreasonable_word_token_duration():
+    data = {
+        "transcription": [
+            {
+                "tokens": [
+                    {"text": " Yeah", "offsets": {"from": 90, "to": 7400}},
+                    {"text": ".", "offsets": {"from": 7400, "to": 7420}},
+                    {"text": " That", "offsets": {"from": 7420, "to": 7570}},
+                    {"text": " is", "offsets": {"from": 7670, "to": 7780}},
+                    {"text": " zesty", "offsets": {"from": 7810, "to": 8190}},
+                    {"text": ".", "offsets": {"from": 8190, "to": 8200}},
+                ]
+            }
+        ]
+    }
+
+    import json
+
+    segments = whisper_cpp_module._segments_from_whisper_json(
+        json.dumps(data),
+        need_word_time_stamp=True,
+    )
+
+    assert [(seg.text, seg.start_time, seg.end_time) for seg in segments] == [
+        ("Yeah.", 6520, 7420),
+        ("That", 7420, 7570),
+        ("is", 7670, 7780),
+        ("zesty.", 7810, 8200),
     ]
 
 

@@ -692,6 +692,26 @@ class TestAudioEnergyPauseRestore:
         assert asr_data.segments[0].text
         assert asr_data.segments[1].text
 
+    def test_filter_hallucinations_splits_multiple_active_clusters_before_trimming(self, tmp_path):
+        from pydub import AudioSegment
+
+        audio = (
+            self._tone(duration_ms=3500)
+            + AudioSegment.silent(duration=3500)
+            + self._tone(duration_ms=1200)
+        )
+        audio_path = tmp_path / "two_active_clusters.wav"
+        audio.export(audio_path, format="wav")
+
+        asr_data = ASRData([ASRDataSeg("Yeah. That is zesty.", 0, 8200)])
+
+        asr_data.filter_hallucinations(str(audio_path))
+
+        assert len(asr_data.segments) == 2
+        assert asr_data.segments[0].text == "Yeah."
+        assert "That is zesty" in asr_data.segments[1].text
+        assert asr_data.segments[1].start_time >= 6500
+
     def test_filter_hallucinations_removes_overlong_short_segment(self, tmp_path):
         audio = self._tone(duration_ms=12000)
         audio_path = tmp_path / "active_noise.wav"
@@ -946,6 +966,56 @@ Valid
         # 低于98%不应识别为翻译格式
         assert not asr_data.segments[0].translated_text
 
+    def test_parse_target_above_bilingual_with_latin_tokens(self):
+        """测试中文在上且含英文车型词时仍可拆分双语"""
+        srt = """1
+00:00:00,000 --> 00:00:02,000
+你肯定还认得出这辆1986年的梅赛德斯-奔驰420 SEL
+you should also recognize this 1986 Mercedes-Benz 420 SEL
+"""
+        asr_data = ASRData.from_srt(srt)
+        assert len(asr_data.segments) == 1
+        assert asr_data.segments[0].text == "you should also recognize this 1986 Mercedes-Benz 420 SEL"
+        assert asr_data.segments[0].translated_text == "你肯定还认得出这辆1986年的梅赛德斯-奔驰420 SEL"
+
+    def test_parse_source_above_bilingual(self):
+        """测试英文在上、中文在下的常规双语布局"""
+        srt = """1
+00:00:00,000 --> 00:00:02,000
+It's time to sell my dirt cheap W126.
+是时候卖掉我这辆便宜的 W126 了。
+"""
+        asr_data = ASRData.from_srt(srt)
+        assert len(asr_data.segments) == 1
+        assert asr_data.segments[0].text == "It's time to sell my dirt cheap W126."
+        assert asr_data.segments[0].translated_text == "是时候卖掉我这辆便宜的 W126 了。"
+
+    def test_parse_multiline_bilingual_groups(self):
+        """测试多行原文和多行译文可以按语言组拆分"""
+        srt = """1
+00:00:00,000 --> 00:00:04,000
+这是一辆非常特别的车
+也是我一直想聊的车
+This is a very special car
+and one I have wanted to talk about.
+"""
+        asr_data = ASRData.from_srt(srt)
+        assert len(asr_data.segments) == 1
+        assert asr_data.segments[0].text == "This is a very special car\nand one I have wanted to talk about."
+        assert asr_data.segments[0].translated_text == "这是一辆非常特别的车\n也是我一直想聊的车"
+
+    def test_parse_multiline_single_language_stays_single(self):
+        """测试纯英文多行字幕不会被误拆成双语"""
+        srt = """1
+00:00:00,000 --> 00:00:03,000
+This is a very special car
+and one I have wanted to talk about.
+"""
+        asr_data = ASRData.from_srt(srt)
+        assert len(asr_data.segments) == 1
+        assert asr_data.segments[0].text == "This is a very special car\nand one I have wanted to talk about."
+        assert asr_data.segments[0].translated_text == ""
+
     def test_parse_json_non_numeric_keys(self):
         """测试JSON非数字键"""
         json_data = {
@@ -1011,3 +1081,82 @@ class TestHandleLongPath:
         twice = handle_long_path(once)
         assert twice == once
         assert "\\\\?\\\\" not in twice
+
+
+class TestConservativeTimingRepair:
+    def test_caps_abnormal_word_duration_without_moving_following_words(self):
+        data = ASRData([
+            ASRDataSeg("over", 618_520, 618_700),
+            ASRDataSeg("200,000", 618_700, 628_690),
+            ASRDataSeg("I'll", 628_690, 628_830),
+        ])
+
+        data.cap_abnormal_word_durations()
+
+        assert data.segments[0].start_time == 618_520
+        assert data.segments[0].end_time == 618_700
+        assert data.segments[1].start_time == 618_700
+        assert data.segments[1].end_time == 620_100
+        assert data.segments[2].start_time == 628_690
+
+    def test_extends_short_sentence_tail_into_large_gap_only(self):
+        data = ASRData([
+            ASRDataSeg(
+                "and 229 pound feet of torque.",
+                289_845,
+                290_569,
+                translated_text="能输出229磅英尺的扭矩",
+            ),
+            ASRDataSeg("Attached to this,", 293_120, 293_903, translated_text="与之匹配的"),
+        ])
+
+        data.extend_sentence_tails_conservatively()
+
+        assert data.segments[0].end_time > 290_569
+        assert data.segments[0].end_time <= 293_030
+        assert data.segments[1].start_time == 293_120
+
+    def test_extends_number_heavy_sentence_that_is_still_short(self):
+        data = ASRData([
+            ASRDataSeg(
+                "Odometer showing 186,764 miles but that is also",
+                607_689,
+                611_289,
+                translated_text="里程表显示186,764英里 不过这也是",
+            ),
+            ASRDataSeg("not accurate.", 612_540, 613_042, translated_text="不准确"),
+        ])
+
+        data.extend_sentence_tails_conservatively()
+
+        assert data.segments[0].end_time > 611_289
+        assert data.segments[0].end_time <= 612_450
+        assert data.segments[1].start_time == 612_540
+
+    def test_does_not_extend_when_gap_is_small_or_segment_is_long_enough(self):
+        data = ASRData([
+            ASRDataSeg("This sentence is already readable enough.", 0, 3_800, translated_text="这句已经足够长"),
+            ASRDataSeg("Next.", 4_200, 4_800, translated_text="下一句"),
+            ASRDataSeg("Short.", 5_000, 5_700, translated_text="短句"),
+            ASRDataSeg("Close next.", 6_000, 6_800, translated_text="下一句很近"),
+        ])
+
+        data.extend_sentence_tails_conservatively()
+
+        assert data.segments[0].end_time == 3_800
+        assert data.segments[2].end_time == 5_700
+
+    def test_does_not_extend_complete_number_sentence_that_is_long_enough(self):
+        data = ASRData([
+            ASRDataSeg(
+                "If I had to guess I would say probably over 200,000.",
+                616_313,
+                620_100,
+                translated_text="如果非要猜，可能超过200,000",
+            ),
+            ASRDataSeg("I'll tell you what though.", 628_694, 631_197, translated_text="不过我跟你说"),
+        ])
+
+        data.extend_sentence_tails_conservatively()
+
+        assert data.segments[0].end_time == 620_100

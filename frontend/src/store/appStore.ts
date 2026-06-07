@@ -54,10 +54,15 @@ interface AppState {
     sourceLanguage: string;
     targetLanguage: string;
     translator: string;
+    llmModel: string;
     needOptimize: boolean;
     needTranslate: boolean;
     needReflect: boolean;
     customPrompt: string;
+    whisperModelSize: string;
+    whisperxAlignModel: string;
+    whisperxBatchSize: number;
+    enableAudioEnhancement: boolean;
   };
   setConfig: (config: Partial<AppState["config"]>) => void;
 
@@ -92,7 +97,7 @@ interface AppState {
   setSeekToTime: (t: number | null) => void;
 }
 
-export const useAppStore = create<AppState>((set, get) => ({
+export const useAppStore = create<AppState>((set) => ({
   step: "import",
   setStep: (step) => set({ step }),
 
@@ -140,14 +145,19 @@ export const useAppStore = create<AppState>((set, get) => ({
   setIsProcessing: (v) => set({ isProcessing: v }),
 
   config: {
-    transcribeModel: "whisper_cpp",
+    transcribeModel: "whisperx",
     sourceLanguage: "auto",
-    targetLanguage: "english",
+    targetLanguage: "chinese",
     translator: "bing",
+    llmModel: "gpt-4o-mini",
     needOptimize: true,
     needTranslate: true,
     needReflect: false,
     customPrompt: "",
+    whisperModelSize: "/Users/guwenhan/Desktop/YouTube/model/whisper-large-v3-fp16",
+    whisperxAlignModel: "WAV2VEC2_ASR_LARGE_LV60K_960H",
+    whisperxBatchSize: 8,
+    enableAudioEnhancement: true,
   },
   setConfig: (partial) =>
     set((state) => ({ config: { ...state.config, ...partial } })),

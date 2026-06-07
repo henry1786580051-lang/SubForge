@@ -57,6 +57,7 @@ class BaseTranslator(ABC):
 
             # 多线程翻译
             translated_list = self._parallel_translate(chunks)
+            self._validate_translated_list(translate_data_list, translated_list)
 
             # 设置Subtitle segment的翻译文本
             new_segments = self._set_segments_translated_text(
@@ -67,6 +68,8 @@ class BaseTranslator(ABC):
         except Exception as e:
             logger.error(f"Translation failed: {str(e)}")
             raise RuntimeError(f"Translation failed: {str(e)}")
+        finally:
+            self.stop()
 
     def _split_chunks(
         self, translate_data_list: List[SubtitleProcessData]
@@ -104,15 +107,46 @@ class BaseTranslator(ABC):
         # Raise if all or most translations failed
         if failed_count > 0 and total_segments > 0:
             fail_rate = failed_count / total_segments
-            if fail_rate >= 0.5:
-                raise RuntimeError(
-                    f"Translation failed: {failed_count}/{total_segments} segments failed "
-                    f"({fail_rate:.0%}). Check your API key and network connection."
-                )
-            elif failed_count > 0:
-                logger.warning(f"Translation partially failed: {failed_count}/{total_segments} segments")
+            raise RuntimeError(
+                f"Translation failed: {failed_count}/{total_segments} segments failed "
+                f"({fail_rate:.0%}). Check your API key, model limits, and network connection."
+            )
 
         return translated_list
+
+    @staticmethod
+    def _validate_translated_list(
+        source_list: List[SubtitleProcessData],
+        translated_list: List[SubtitleProcessData],
+    ) -> None:
+        """Reject incomplete translation results before writing subtitles."""
+        translated_by_index = {}
+        duplicates: list[str] = []
+        for item in translated_list:
+            if item.index in translated_by_index:
+                duplicates.append(str(item.index))
+            translated_by_index[item.index] = item
+
+        missing: list[str] = []
+        empty: list[str] = []
+        for source in source_list:
+            translated = translated_by_index.get(source.index)
+            if translated is None:
+                missing.append(str(source.index))
+            elif not translated.translated_text.strip():
+                empty.append(str(source.index))
+
+        if not missing and not empty and not duplicates:
+            return
+
+        parts = []
+        if missing:
+            parts.append(f"missing indices: {missing[:20]}")
+        if empty:
+            parts.append(f"empty translations: {empty[:20]}")
+        if duplicates:
+            parts.append(f"duplicate indices: {duplicates[:20]}")
+        raise RuntimeError("Translation incomplete; refusing to save mixed source/target subtitles (" + "; ".join(parts) + ")")
 
     def _get_cache_key(self, chunk: List[SubtitleProcessData]) -> str:
         """生成缓存键"""

@@ -31,3 +31,8 @@ ${custom_prompt}
   ...
 }
 </output_format>
+
+<input_note>
+The user message may include previous_context, current_subtitles, and next_context.
+Translate ONLY entries inside current_subtitles. previous_context and next_context are for context only; never include their keys in the output.
+</input_note>

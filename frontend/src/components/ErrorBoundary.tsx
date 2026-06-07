@@ -15,7 +15,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="flex items-center justify-center h-screen bg-background">
+        <div className="flex h-dvh items-center justify-center bg-background">
           <div className="text-center p-8 max-w-md">
             <h2 className="text-lg font-semibold text-text-primary mb-2">应用发生错误</h2>
             <p className="text-sm text-text-muted mb-4">{this.state.error?.message}</p>

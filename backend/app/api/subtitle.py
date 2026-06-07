@@ -1,5 +1,4 @@
 import asyncio
-import os
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -13,14 +12,19 @@ router = APIRouter()
 _background_tasks: set[asyncio.Task] = set()
 
 
+def _raise_if_cancelled(task_id: str) -> None:
+    if task_manager.is_cancelled(task_id):
+        raise asyncio.CancelledError()
+
+
 class SubtitleRequest(BaseModel):
     subtitle_file: str
-    target_language: str = "english"
+    target_language: str = "chinese"
     translator: str = "bing"
     need_optimize: bool = True
     need_translate: bool = True
     need_reflect: bool = False
-    llm_model: str = "mimo-v2.5-pro"
+    llm_model: str = ""
     custom_prompt: str = ""
 
 
@@ -32,12 +36,14 @@ async def start_subtitle_processing(req: SubtitleRequest):
         raise HTTPException(status_code=403, detail="Access denied")
     if not file_path.exists():
         raise HTTPException(status_code=400, detail="Subtitle file not found")
+    req = req.model_copy(update={"subtitle_file": str(file_path)})
 
     task = task_manager.create_task("subtitle")
     task_obj = asyncio.create_task(_run_subtitle(task.id, req))
     task_manager.register_running_task(task.id, task_obj)
     _background_tasks.add(task_obj)
     task_obj.add_done_callback(_background_tasks.discard)
+    task_obj.add_done_callback(lambda _task: task_manager.unregister_running_task(task.id))
     return {"task_id": task.id, "status": "started"}
 
 
@@ -53,32 +59,28 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
 
         custom_prompt = req.custom_prompt or get_config_value("custom_prompt", "")
 
-        # Use config's llm_model if not specified in request
-        llm_model = req.llm_model or get_config_value("llm_model", "mimo-v2.5-pro")
+        # Use current config's model unless explicitly overridden by request.
+        llm_model = (req.llm_model or "").strip() or get_config_value("llm_model", "gpt-4o-mini")
 
-        # Set env vars for global LLM singleton (used by splitter/optimizer/translator)
+        # Build an explicit LLM client for this task. This avoids global
+        # OPENAI_* environment mutation and prevents concurrent subtitle tasks
+        # from using each other's credentials or base URLs.
         api_key = get_config_value("llm_api_key", "")
         base_url = get_config_value("llm_base_url", "")
-        if api_key:
-            os.environ["OPENAI_API_KEY"] = api_key
-        if base_url:
-            os.environ["OPENAI_BASE_URL"] = base_url
-
-        # Reset global LLM client to pick up new env vars
-        try:
-            import subforge.core.llm.client as llm_client_module
-            with llm_client_module._client_lock:
-                llm_client_module._global_client = None
-        except Exception:
-            pass
+        llm_client = None
+        if api_key and base_url:
+            from subforge.core.llm import create_client
+            llm_client = create_client(base_url=base_url, api_key=api_key)
 
         from subforge.core.asr.asr_data import ASRData
         from subforge.core.optimize.optimize import SubtitleOptimizer
         from subforge.core.split.split import SubtitleSplitter
+        from subforge.core.translate.context import TranslationContext, build_translation_context
         from subforge.core.translate.factory import TranslatorFactory
         from subforge.core.translate.types import TargetLanguage
 
         task_manager.update_progress(task_id, 5, "Loading subtitle file...")
+        _raise_if_cancelled(task_id)
 
         # Partial SRT file for real-time preview
         partial_srt = tempfile.NamedTemporaryFile(suffix="_partial.srt", delete=False)
@@ -88,7 +90,7 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
         def _save_partial(data, msg=""):
             """Save current ASRData to partial SRT and notify frontend."""
             try:
-                from subforge.core.asr.asr_data import SubtitleLayoutEnum
+                from subforge.core.entities import SubtitleLayoutEnum
                 data.save(partial_srt_path, layout=SubtitleLayoutEnum.TRANSLATE_ON_TOP)
                 task = task_manager.get_task(task_id)
                 if task:
@@ -99,14 +101,16 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
         # Load subtitle into ASRData
         asr_data = ASRData.from_subtitle_file(req.subtitle_file)
         task_manager.update_progress(task_id, 10, f"Loaded {len(asr_data.segments)} segments")
+        _raise_if_cancelled(task_id)
 
         # Split long segments
         task_manager.update_progress(task_id, 15, "Splitting subtitle segments...")
         loop = asyncio.get_event_loop()
         thread_num = get_config_value("thread_num", 3)
         batch_size = get_config_value("batch_size", 10)
-        splitter = SubtitleSplitter(thread_num=thread_num, model=req.llm_model)
+        splitter = SubtitleSplitter(thread_num=thread_num, model=llm_model, llm_client=llm_client)
         asr_data = await loop.run_in_executor(None, splitter.split_subtitle, asr_data)
+        _raise_if_cancelled(task_id)
         _save_partial(asr_data, f"Split into {len(asr_data.segments)} segments")
         task_manager.update_progress(task_id, 25, f"Split into {len(asr_data.segments)} segments")
 
@@ -116,7 +120,14 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
 
             optimize_count = [0]
             def _on_optimize_progress(result):
-                optimize_count[0] += len(result)
+                for item in result:
+                    idx = int(item.index) - 1
+                    if 0 <= idx < len(asr_data.segments) and item.optimized_text:
+                        asr_data.segments[idx].text = item.optimized_text
+                optimize_count[0] = min(
+                    len(asr_data.segments),
+                    optimize_count[0] + len(result),
+                )
                 pct = 30 + int(30 * optimize_count[0] / len(asr_data.segments)) if len(asr_data.segments) > 0 else 30
                 task_manager.update_progress(task_id, min(pct, 60), f"Optimized {optimize_count[0]}/{len(asr_data.segments)}...")
                 _save_partial(asr_data)
@@ -128,8 +139,10 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
                 custom_prompt=custom_prompt,
                 update_callback=_on_optimize_progress,
                 use_cache=False,
+                llm_client=llm_client,
             )
             asr_data = await loop.run_in_executor(None, optimizer.optimize_subtitle, asr_data)
+            _raise_if_cancelled(task_id)
             _save_partial(asr_data, "Optimization complete")
             task_manager.update_progress(task_id, 60, "Optimization complete")
 
@@ -159,15 +172,39 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
 
             translate_count = [0]
             def _on_translate_progress(result):
-                translate_count[0] += len(result)
+                for item in result:
+                    idx = int(item.index) - 1
+                    if 0 <= idx < len(asr_data.segments) and item.translated_text:
+                        asr_data.segments[idx].translated_text = item.translated_text
+                translate_count[0] = min(
+                    len(asr_data.segments),
+                    translate_count[0] + len(result),
+                )
                 pct = 65 + int(25 * translate_count[0] / len(asr_data.segments)) if len(asr_data.segments) > 0 else 65
                 task_manager.update_progress(task_id, min(pct, 90), f"Translated {translate_count[0]}/{len(asr_data.segments)}...")
                 _save_partial(asr_data)
 
             from subforge.core.translate.types import TranslatorType
             type_map = {"llm": TranslatorType.OPENAI, "bing": TranslatorType.BING, "google": TranslatorType.GOOGLE, "deeplx": TranslatorType.DEEPLX}
+            translator_type = type_map.get(req.translator, TranslatorType.OPENAI)
+            translation_context = TranslationContext(custom_prompt=custom_prompt)
+            if translator_type == TranslatorType.OPENAI:
+                task_manager.update_progress(task_id, 63, "Generating translation context...")
+                translation_context = await loop.run_in_executor(
+                    None,
+                    lambda: build_translation_context(
+                        asr_data,
+                        model=llm_model,
+                        target_language=target_lang,
+                        custom_prompt=custom_prompt,
+                        use_cache=False,
+                        llm_client=llm_client,
+                    ),
+                )
+                _raise_if_cancelled(task_id)
+                task_manager.update_progress(task_id, 65, "Translating subtitles...")
             translator = TranslatorFactory.create_translator(
-                translator_type=type_map.get(req.translator, TranslatorType.OPENAI),
+                translator_type=translator_type,
                 thread_num=thread_num,
                 batch_num=batch_size,
                 target_language=target_lang,
@@ -176,8 +213,11 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
                 is_reflect=req.need_reflect,
                 update_callback=_on_translate_progress,
                 use_cache=False,
+                translation_context=translation_context,
+                llm_client=llm_client,
             )
             asr_data = await loop.run_in_executor(None, translator.translate_subtitle, asr_data)
+            _raise_if_cancelled(task_id)
             task_manager.update_progress(task_id, 90, "Translation complete")
 
             # Do not split bilingual subtitles after translation. Source and
@@ -186,6 +226,7 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
             task_manager.update_progress(task_id, 92, "Finalizing bilingual subtitles...")
             from subforge.core.subtitle.resegment import resegment_subtitles
             asr_data = resegment_subtitles(asr_data)
+            _raise_if_cancelled(task_id)
             task_manager.update_progress(task_id, 95, "Bilingual subtitles finalized")
 
         # Save result
@@ -194,13 +235,16 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
             Path(req.subtitle_file).stem + "_processed"
         ).with_suffix(".srt")
 
-        from subforge.core.asr.asr_data import SubtitleLayoutEnum
+        from subforge.core.entities import SubtitleLayoutEnum
         layout = SubtitleLayoutEnum.TRANSLATE_ON_TOP  # Chinese on top, English on bottom
+        _raise_if_cancelled(task_id)
         await loop.run_in_executor(None, lambda: asr_data.save(str(output_path), layout=layout))
 
         task_manager.update_progress(task_id, 100, "Done")
         task_manager.complete_task(task_id, {"subtitle_file": str(output_path)})
 
+    except asyncio.CancelledError:
+        raise
     except Exception as e:
         task_manager.fail_task(task_id, str(e))
     finally:

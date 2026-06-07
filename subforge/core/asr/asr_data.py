@@ -31,6 +31,15 @@ _WORD_SPLIT_PATTERN = (
 )
 
 
+def reasonable_word_duration_ms(text: str) -> int:
+    letters = len(re.sub(r"[^A-Za-z0-9\u00c0-\u017f]", "", text))
+    if letters <= 2:
+        return 650
+    if letters <= 4:
+        return 900
+    return max(900, min(1800, letters * 180 + 500))
+
+
 def handle_long_path(path: str) -> str:
     r"""Handle Windows long path limitation by adding \\?\ prefix.
 
@@ -858,6 +867,10 @@ class ASRData:
                 return max(1400, words * 420 + 450)
             return max(2600, min(6500, words * 360 + 750))
 
+        def _has_internal_sentence_boundary(text: str) -> bool:
+            stripped = text.strip()
+            return bool(re.search(r"[.!?。！？]\s+\S", stripped))
+
         speech = _merge_speech_segments(speech_segments)
         trimmed = 0
 
@@ -903,6 +916,8 @@ class ASRData:
             last_speech_end = max(end for _, end in overlaps)
             tail_silence_ms = seg.end_time - last_speech_end
             if tail_silence_ms < min_tail_silence_ms:
+                continue
+            if words <= 6 and _has_internal_sentence_boundary(seg.text):
                 continue
 
             max_spoken_ms = _max_spoken_duration_ms(words)
@@ -1093,9 +1108,6 @@ class ASRData:
                 seg.end_time = pause_start
                 next_seg.start_time = pause_end
 
-        if speech_segments_for_refinement:
-            self.refine_timing_with_speech_segments(speech_segments_for_refinement)
-
         # Pass 3: Trim/split long segments that cover clear internal silence.
         # This catches a different failure mode from overlaps: a single short
         # subtitle line can be stretched over many seconds of silence or music.
@@ -1104,6 +1116,9 @@ class ASRData:
 
         def _ends_with_sentence_punctuation(text: str) -> bool:
             return bool(re.search(r"[.!?。！？]\s*$", text.strip()))
+
+        def _has_internal_sentence_boundary(text: str) -> bool:
+            return bool(re.search(r"[.!?。！？]\s+\S", text.strip()))
 
         def _silent_runs(start_ms: int, end_ms: int, min_run_ms: int) -> list[tuple[int, int]]:
             runs = []
@@ -1196,7 +1211,7 @@ class ASRData:
 
             if duration_ms > max_reasonable_duration_ms:
                 clusters = _active_clusters(seg.start_time, seg.end_time)
-                if clusters:
+                if len(clusters) == 1:
                     cluster_start, cluster_end = clusters[0]
                     padded_start = max(seg.start_time, cluster_start - 150)
                     padded_end = min(seg.end_time, cluster_end + 150)
@@ -1218,7 +1233,7 @@ class ASRData:
                         duration_ms = seg.end_time - seg.start_time
 
             split_done = False
-            if words >= 6 and duration_ms >= 2500:
+            if words >= 2 and duration_ms >= 2500:
                 for pause_start, pause_end in _silent_runs(seg.start_time, seg.end_time, 600):
                     left_duration = pause_start - seg.start_time
                     right_duration = seg.end_time - pause_end
@@ -1257,7 +1272,8 @@ class ASRData:
                     break
             if not split_done:
                 duration_ms = seg.end_time - seg.start_time
-                if duration_ms > max_reasonable_duration_ms:
+                short_multi_sentence = words <= 6 and _has_internal_sentence_boundary(seg.text)
+                if duration_ms > max_reasonable_duration_ms and not short_multi_sentence:
                     capped_end = seg.start_time + max_reasonable_duration_ms
                     logger.debug(
                         "Capped overlong segment %.2fs-%.2fs to %.2fs-%.2fs",
@@ -1275,7 +1291,8 @@ class ASRData:
                 continue
             max_duration_ms = max(3500, min(8000, words * 500 + 800))
             duration_ms = seg.end_time - seg.start_time
-            if duration_ms > max_duration_ms:
+            short_multi_sentence = words <= 6 and _has_internal_sentence_boundary(seg.text)
+            if duration_ms > max_duration_ms and not short_multi_sentence:
                 capped_end = seg.start_time + max_duration_ms
                 logger.debug(
                     "Capped adjusted segment %.2fs-%.2fs to %.2fs-%.2fs",
@@ -1368,6 +1385,159 @@ class ASRData:
                 filtered.append(seg)
 
         self.segments = filtered
+
+    def cap_abnormal_word_durations(
+        self,
+        default_max_ms: int = 900,
+        numeric_max_ms: int = 1400,
+        min_trim_ms: int = 250,
+    ) -> "ASRData":
+        """Cap obviously overlong word-level timestamps.
+
+        WhisperX alignment can occasionally assign a whole silent region to one
+        token (for example a number). This pass only applies to word-level data
+        and only moves an abnormal token end earlier; it never deletes text or
+        shifts following tokens.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        if not self.segments or not self.is_word_timestamp():
+            return self
+
+        def _max_duration(text: str) -> int:
+            stripped = text.strip().strip(".,;:!?()[]{}，。！？；：")
+            if re.search(r"\d", stripped):
+                return numeric_max_ms
+            return min(default_max_ms, reasonable_word_duration_ms(stripped))
+
+        capped = 0
+        for seg in self.segments:
+            duration = seg.end_time - seg.start_time
+            if duration <= 0:
+                continue
+            max_duration = _max_duration(seg.text)
+            if duration <= max_duration + min_trim_ms:
+                continue
+            candidate_end = seg.start_time + max_duration
+            if candidate_end < seg.end_time - min_trim_ms:
+                logger.debug(
+                    "Capped abnormal word duration %.2fs -> %.2fs: %r",
+                    duration / 1000,
+                    (candidate_end - seg.start_time) / 1000,
+                    seg.text,
+                )
+                seg.end_time = max(seg.start_time + 20, candidate_end)
+                capped += 1
+
+        if capped:
+            logger.info("Capped abnormal word durations: %s", capped)
+        return self
+
+    def extend_sentence_tails_conservatively(
+        self,
+        min_gap_ms: int = 600,
+        safety_gap_ms: int = 90,
+        min_extension_ms: int = 250,
+    ) -> "ASRData":
+        """Extend short final subtitle tails into a following gap.
+
+        This is a display/timing correction for sentence-level subtitles built
+        from word timestamps. It deliberately avoids global padding: subtitles
+        are only extended when they are shorter than a conservative readable
+        target and a real gap exists before the next segment.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        if len(self.segments) < 2 or self.is_word_timestamp():
+            return self
+
+        def _word_count(text: str) -> int:
+            return len(re.findall(_WORD_SPLIT_PATTERN, text))
+
+        def _cjk_count(text: str) -> int:
+            return len(re.findall(r"[\u4e00-\u9fff]", text))
+
+        def _has_timing_anchor(text: str) -> bool:
+            return bool(
+                re.search(r"\d", text)
+                or re.search(r"\b[A-Z]\d+[A-Za-z0-9.-]*\b", text)
+                or re.search(r"\b(?:RPM|U\.?S\.?)\b", text, flags=re.IGNORECASE)
+            )
+
+        def _target_duration(seg: ASRDataSeg) -> int:
+            words = _word_count(seg.text)
+            cjk = _cjk_count(seg.translated_text)
+            if words <= 3:
+                word_target = 1700
+            elif words <= 6:
+                word_target = 2400
+            elif words <= 10:
+                word_target = 3600
+            else:
+                word_target = min(5000, words * 310 + 700)
+            if _has_timing_anchor(seg.text) and words >= 7:
+                word_target = max(word_target, min(5200, words * 390 + 1_000))
+            cjk_target = min(4600, cjk * 125 + 900) if cjk else 0
+            return max(word_target, cjk_target)
+
+        def _extension_cap(duration_ms: int) -> int:
+            if duration_ms < 1200:
+                return 2600
+            if duration_ms < 2500:
+                return 2400
+            if duration_ms < 3500:
+                return 1500
+            if duration_ms < 4500:
+                return 900
+            return 0
+
+        self.segments.sort(key=lambda s: (s.start_time, s.end_time))
+        extended = 0
+
+        for i, seg in enumerate(self.segments[:-1]):
+            next_seg = self.segments[i + 1]
+            gap_ms = next_seg.start_time - seg.end_time
+            if gap_ms < min_gap_ms:
+                continue
+
+            duration_ms = seg.end_time - seg.start_time
+            if gap_ms < 900 or duration_ms >= 4500:
+                continue
+            if not _has_timing_anchor(seg.text):
+                continue
+            if duration_ms >= 3500 and re.search(r"[.!?。！？]\s*$", seg.text.strip()):
+                continue
+
+            cap_ms = _extension_cap(duration_ms)
+            if cap_ms <= 0:
+                continue
+
+            target_ms = _target_duration(seg)
+            needed_ms = target_ms - duration_ms
+            if needed_ms < min_extension_ms:
+                continue
+
+            extension_ms = min(needed_ms, cap_ms, gap_ms - safety_gap_ms)
+            if extension_ms < min_extension_ms:
+                continue
+
+            old_end = seg.end_time
+            seg.end_time += int(extension_ms)
+            extended += 1
+            logger.debug(
+                "Extended subtitle tail %.2fs -> %.2fs (+%.2fs): %r",
+                old_end / 1000,
+                seg.end_time / 1000,
+                extension_ms / 1000,
+                seg.text,
+            )
+
+        if extended:
+            logger.info("Extended conservative subtitle tails: %s", extended)
+        self.fix_boundary_overlaps()
+        return self
 
     def optimize_timing(self, threshold_ms: int = 100) -> "ASRData":
         """Optimize subtitle display timing by adjusting adjacent segment boundaries.
@@ -1500,8 +1670,9 @@ class ASRData:
     def from_srt(srt_str: str) -> "ASRData":
         """Create ASRData from SRT format string.
 
-        Uses language detection to distinguish between bilingual subtitles
-        (original + translation) and multiline single-language subtitles.
+        Detect bilingual subtitles block-by-block. This supports both
+        source-above and target-above layouts and preserves multiline source or
+        target text when the two language groups are clearly separable.
 
         Args:
             srt_str: SRT format subtitle string
@@ -1516,20 +1687,92 @@ class ASRData:
         speaker_pattern = re.compile(r"^\[(说话人\d+|Speaker \d+)\]\s*")
         blocks = re.split(r"\n\s*\n", srt_str.strip())
 
-        # Detect bilingual mode: all 4-line + 70% different languages
-        def is_different_lang(block: str) -> bool:
-            lines = block.splitlines()
-            if len(lines) != 4:
-                return False
+        def _line_family(text: str) -> str:
+            """Classify a subtitle text line without being fooled by model names.
+
+            A Chinese translation often contains Latin tokens such as W126,
+            AMG, Mercedes-Benz, or email addresses. Presence of meaningful CJK
+            text therefore wins over embedded Latin identifiers.
+            """
+            stripped = text.strip()
+            if not stripped:
+                return "empty"
+            cjk_count = len(re.findall(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]", stripped))
+            latin_count = len(re.findall(r"[A-Za-z]", stripped))
+            if cjk_count >= 2:
+                return "cjk"
+            if latin_count >= 2 and cjk_count == 0:
+                return "latin"
+            if cjk_count:
+                return "cjk"
+            return "other"
+
+        def _group_family(lines: list[str]) -> str:
+            joined = " ".join(line.strip() for line in lines if line.strip())
+            family = _line_family(joined)
+            if family in {"cjk", "latin"}:
+                return family
+            families = [_line_family(line) for line in lines if line.strip()]
+            cjk = families.count("cjk")
+            latin = families.count("latin")
+            if cjk > latin and cjk > 0:
+                return "cjk"
+            if latin > cjk and latin > 0:
+                return "latin"
+            return "other"
+
+        def _fallback_different_language(left: str, right: str) -> bool:
             try:
-                return detect(lines[2]) != detect(lines[3])
+                return detect(left) != detect(right)
             except LangDetectException:
                 return False
 
-        all_four_lines = all(len(b.splitlines()) == 4 for b in blocks)
-        is_bilingual = (
-            all_four_lines and sum(map(is_different_lang, blocks[:50])) / min(len(blocks), 50) >= 0.7
-        )
+        def _split_bilingual_lines(text_lines: list[str]) -> tuple[str, str] | None:
+            non_empty = [line for line in text_lines if line.strip()]
+            if len(non_empty) < 2:
+                return None
+
+            best: tuple[int, int, str, str] | None = None
+            for split_index in range(1, len(non_empty)):
+                left = non_empty[:split_index]
+                right = non_empty[split_index:]
+                left_family = _group_family(left)
+                right_family = _group_family(right)
+
+                score = 0
+                if {left_family, right_family} == {"cjk", "latin"}:
+                    score = 100
+                elif left_family != right_family and left_family != "other" and right_family != "other":
+                    score = 60
+                elif (
+                    left_family != right_family
+                    and len(left) == 1
+                    and len(right) == 1
+                    and _fallback_different_language(left[0], right[0])
+                ):
+                    score = 40
+
+                if score <= 0:
+                    continue
+                # Prefer balanced split points when multiple options look valid.
+                balance_penalty = abs(len(left) - len(right))
+                candidate = (score - balance_penalty, split_index, left_family, right_family)
+                if best is None or candidate > best:
+                    best = candidate
+
+            if best is None:
+                return None
+
+            _, split_index, left_family, right_family = best
+            left_text = "\n".join(non_empty[:split_index]).strip()
+            right_text = "\n".join(non_empty[split_index:]).strip()
+
+            if {left_family, right_family} == {"cjk", "latin"}:
+                if left_family == "latin":
+                    return left_text, right_text
+                return right_text, left_text
+
+            return left_text, right_text
 
         # Process all blocks based on detected mode
         for block in blocks:
@@ -1569,9 +1812,18 @@ class ASRData:
                     speaker_id = speaker_match.group(1)
                     text_lines[0] = text_lines[0][speaker_match.end():]
 
-            if is_bilingual and len(text_lines) >= 2:
-                # First line = original, second line = translation
-                segments.append(ASRDataSeg(text_lines[0], start_time, end_time, text_lines[1], speaker_id=speaker_id))
+            bilingual = _split_bilingual_lines(text_lines)
+            if bilingual:
+                original, translated = bilingual
+                segments.append(
+                    ASRDataSeg(
+                        original,
+                        start_time,
+                        end_time,
+                        translated,
+                        speaker_id=speaker_id,
+                    )
+                )
             elif len(text_lines) == 1:
                 segments.append(ASRDataSeg(text_lines[0], start_time, end_time, speaker_id=speaker_id))
             else:

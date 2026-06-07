@@ -13,13 +13,13 @@ export function Sidebar() {
 
   return (
     <aside
-      className={`h-screen flex flex-col border-r border-border bg-surface transition-all duration-300 relative ${
+      className={`h-dvh flex flex-col border-r border-border bg-surface transition-all duration-300 relative ${
         sidebarCollapsed ? "w-16" : "w-56"
       }`}
     >
       {/* Logo */}
       <div className="flex items-center gap-3 p-4 border-b border-border">
-        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-accent-dim to-[rgba(212,149,106,0.15)] flex items-center justify-center shrink-0">
+        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-accent-dim to-[rgba(37,99,235,0.14)] flex items-center justify-center shrink-0">
           <svg className="w-4.5 h-4.5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
           </svg>

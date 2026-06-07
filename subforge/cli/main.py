@@ -112,9 +112,10 @@ def _build_transcribe_parser(subparsers) -> None:
     asr = p.add_argument_group("ASR options")
     asr.add_argument(
         "--asr",
-        choices=["whisper-api", "whisper-cpp", "faster-whisper"],
+        choices=["whisper-api", "whisper-cpp", "faster-whisper", "whisperx"],
         help="ASR engine (default: whisper-api). "
              "whisper-api: cloud API (OpenAI, MiMo Omni, etc.). "
+             "whisperx: local Apple Silicon MLX + forced alignment. "
              "whisper-cpp: local GPU-accelerated. "
              "faster-whisper: local CTranslate2.",
     )

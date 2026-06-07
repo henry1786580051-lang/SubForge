@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 _df_model = None
 _df_state = None
 _df_device = None
+_df_mps_failed = False
 
 
 def _device_name(device) -> str:
@@ -35,6 +36,9 @@ def _select_device():
             logger.warning("Requested DeepFilterNet3 MPS device is unavailable, using CPU")
             return torch.device("cpu")
         return torch.device(requested)
+
+    if _df_mps_failed:
+        return torch.device("cpu")
 
     if _mps_available(torch):
         return torch.device("mps")
@@ -75,7 +79,7 @@ def _move_model_to_device(device) -> None:
 
 def _load_model(device=None):
     """Lazy-load DeepFilterNet model."""
-    global _df_model, _df_state, _df_device
+    global _df_model, _df_state, _df_device, _df_mps_failed
     if device is None:
         device = _select_device()
 
@@ -103,6 +107,7 @@ def _load_model(device=None):
             logger.debug("DeepFilterNet3 MPS model setup traceback", exc_info=True)
             import torch
 
+            _df_mps_failed = True
             _move_model_to_device(torch.device("cpu"))
         logger.info("DeepFilterNet3 model loaded")
     except ImportError:
@@ -127,6 +132,7 @@ def enhance_audio(input_path: str, output_path: str = None) -> str:
     import soundfile as sf
     import torch
     from df.enhance import enhance
+    global _df_mps_failed
 
     if not input_path or not Path(input_path).is_file():
         raise FileNotFoundError(f"Input audio not found: {input_path}")
@@ -173,6 +179,7 @@ def enhance_audio(input_path: str, output_path: str = None) -> str:
                     "DeepFilterNet3 MPS enhancement failed, retrying on CPU",
                 )
                 logger.debug("DeepFilterNet3 MPS enhancement traceback", exc_info=True)
+                _df_mps_failed = True
                 _move_model_to_device(torch.device("cpu"))
                 enhanced = enhance(_df_model, _df_state, chunk_tensor)
             enhanced_chunks.append(enhanced.squeeze(0).cpu().numpy())

@@ -22,5 +22,6 @@ async def get_task(task_id: str):
 
 @router.post("/{task_id}/cancel")
 async def cancel_task(task_id: str):
-    task_manager.cancel_task(task_id)
+    if not task_manager.cancel_task(task_id):
+        raise HTTPException(status_code=404, detail="Task not found")
     return {"status": "cancelled"}

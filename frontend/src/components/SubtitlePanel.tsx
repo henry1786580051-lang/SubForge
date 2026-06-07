@@ -4,7 +4,13 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { useAppStore } from "@/store/appStore";
 import { subtitleApi, subtitlesApi, filesApi, configApi } from "@/lib/api";
 
-export function SubtitlePanel() {
+export function SubtitlePanel({
+  showPrompt = true,
+  showTranslateActions = true,
+}: {
+  showPrompt?: boolean;
+  showTranslateActions?: boolean;
+} = {}) {
   const { subtitles, setSubtitles, updateSubtitle, selectedIds, toggleSelect, selectAll, deselectAll, subtitleFile, config, setSeekToTime } = useAppStore();
   const [editingCell, setEditingCell] = useState<{ id: number; field: "text" | "translated" } | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -44,23 +50,58 @@ export function SubtitlePanel() {
   const translateAll = useCallback(async () => {
     if (!subtitleFile) return;
     setIsTranslating(true);
+    const store = useAppStore.getState();
+    store.setError(null);
+    store.setIsProcessing(true);
+    store.setTaskState(0, "Starting translation...", "running");
     try {
-      const result = await subtitleApi.start({ subtitle_file: subtitleFile, target_language: config.targetLanguage, translator: config.translator, need_optimize: false, need_translate: true });
-      useAppStore.getState().setCurrentTaskId(result.task_id);
-    } catch (err) { useAppStore.getState().setError(err instanceof Error ? err.message : "Translation failed"); } finally { setIsTranslating(false); }
+      const result = await subtitleApi.start({
+        subtitle_file: subtitleFile,
+        target_language: config.targetLanguage,
+        translator: config.translator,
+        llm_model: config.llmModel,
+        need_optimize: false,
+        need_translate: true,
+        need_reflect: config.needReflect,
+        custom_prompt: config.customPrompt,
+      });
+      store.setCurrentTaskId(result.task_id);
+    } catch (err) {
+      store.setError(err instanceof Error ? err.message : "Translation failed");
+      store.setTaskState(0, "", "idle");
+      store.setIsProcessing(false);
+    } finally { setIsTranslating(false); }
   }, [subtitleFile, config]);
 
   const retranslateAll = useCallback(async () => {
     if (!subtitleFile) return;
     setIsTranslating(true);
+    const store = useAppStore.getState();
+    store.setError(null);
+    store.setIsProcessing(true);
+    store.setTaskState(0, "Starting translation...", "running");
     try {
-      const result = await subtitleApi.start({ subtitle_file: subtitleFile, target_language: config.targetLanguage, translator: config.translator, need_optimize: config.needOptimize, need_translate: true });
-      useAppStore.getState().setCurrentTaskId(result.task_id);
-    } catch (err) { useAppStore.getState().setError(err instanceof Error ? err.message : "Translation failed"); } finally { setIsTranslating(false); }
+      const result = await subtitleApi.start({
+        subtitle_file: subtitleFile,
+        target_language: config.targetLanguage,
+        translator: config.translator,
+        llm_model: config.llmModel,
+        need_optimize: config.needOptimize,
+        need_translate: true,
+        need_reflect: config.needReflect,
+        custom_prompt: config.customPrompt,
+      });
+      store.setCurrentTaskId(result.task_id);
+    } catch (err) {
+      store.setError(err instanceof Error ? err.message : "Translation failed");
+      store.setTaskState(0, "", "idle");
+      store.setIsProcessing(false);
+    } finally { setIsTranslating(false); }
   }, [subtitleFile, config]);
 
   const [exportFormat, setExportFormat] = useState<"srt" | "vtt" | "ass" | "txt" | "json">("srt");
   const [exportMode, setExportMode] = useState<"original" | "translated" | "bilingual">("bilingual");
+  const [showExportMenu, setShowExportMenu] = useState(false);
   const getExportFilename = useCallback((format: string) => {
     const source = subtitleFile?.split(/[\\/]/).pop() || "subtitles.srt";
     return source.replace(/\.[^.]+$/, `.${format}`);
@@ -139,7 +180,6 @@ export function SubtitlePanel() {
   }, [editingCell, deleteSelected, mergeSelected, translateAll, selectAll]);
 
   const allSelected = subtitles.length > 0 && selectedIds.size === subtitles.length;
-  const [showExportMenu, setShowExportMenu] = useState(false);
 
   return (
     <div className="flex flex-col h-full bg-surface relative">
@@ -227,17 +267,21 @@ export function SubtitlePanel() {
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
           </button>
           <div className="w-px h-3.5 bg-border mx-1" />
-          <button onClick={translateAll} disabled={!subtitleFile || isTranslating} className="px-2 py-1 text-[12px] rounded text-text-muted hover:text-accent hover:bg-accent-dim transition-all disabled:opacity-30 btn-press" title="翻译全部 (Ctrl+T)">
-            {isTranslating ? "翻译中..." : "翻译全部"}
-          </button>
-          <button onClick={retranslateAll} disabled={isTranslating} className="px-2 py-1 text-[12px] rounded text-text-muted hover:text-accent hover:bg-accent-dim transition-all disabled:opacity-30 btn-press">
-            重新翻译全部
-          </button>
+          {showTranslateActions && (
+            <>
+              <button onClick={translateAll} disabled={!subtitleFile || isTranslating} className="px-2 py-1 text-[12px] rounded text-text-muted hover:text-accent hover:bg-accent-dim transition-all disabled:opacity-30 btn-press" title="翻译全部 (Ctrl+T)">
+                {isTranslating ? "翻译中..." : "翻译全部"}
+              </button>
+              <button onClick={retranslateAll} disabled={isTranslating} className="px-2 py-1 text-[12px] rounded text-text-muted hover:text-accent hover:bg-accent-dim transition-all disabled:opacity-30 btn-press">
+                重新翻译全部
+              </button>
+            </>
+          )}
         </div>
       )}
 
       {/* Custom prompt */}
-      {config.needOptimize && (
+      {showPrompt && config.needOptimize && (
         <div className="border-b border-border">
           <button onClick={() => setPromptExpanded(!promptExpanded)} className="w-full flex items-center gap-2 px-4 py-2 text-[12px] text-text-muted hover:text-text-secondary hover:bg-[rgba(0,0,0,0.02)] transition-all">
             <svg className={`w-3 h-3 transition-transform ${promptExpanded ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
@@ -290,7 +334,7 @@ export function SubtitlePanel() {
       <div className="flex-1 overflow-auto">
         {subtitles.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center px-8">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-accent-dim to-[rgba(212,149,106,0.04)] flex items-center justify-center mb-4 border border-accent/10">
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-accent-dim to-[rgba(37,99,235,0.04)] flex items-center justify-center mb-4 border border-accent/10">
               <svg className="w-7 h-7 text-accent/50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
             </div>
             <p className="text-[13px] text-text-secondary mb-1 font-medium">暂无字幕数据</p>

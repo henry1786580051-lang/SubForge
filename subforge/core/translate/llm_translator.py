@@ -1,6 +1,7 @@
 """LLM 翻译器（使用 OpenAI）"""
 
 import json
+import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import json_repair
@@ -9,6 +10,7 @@ import openai
 from subforge.core.llm import call_llm
 from subforge.core.prompts import get_prompt
 from subforge.core.translate.base import BaseTranslator, SubtitleProcessData, logger
+from subforge.core.translate.context import TranslationContext
 from subforge.core.translate.types import TargetLanguage
 from subforge.core.utils.cache import generate_cache_key
 
@@ -17,8 +19,8 @@ class LLMTranslator(BaseTranslator):
     """LLM 翻译器（OpenAI兼容API）"""
 
     MAX_STEPS = 3
-    # Max ratio of untranslated entries before we reject the LLM response
-    UNTRANSLATED_THRESHOLD = 0.15
+    CONTEXT_BEFORE = 3
+    CONTEXT_AFTER = 2
 
     def __init__(
         self,
@@ -30,6 +32,8 @@ class LLMTranslator(BaseTranslator):
         is_reflect: bool,
         update_callback: Optional[Callable],
         use_cache: bool = True,
+        translation_context: Optional[TranslationContext] = None,
+        llm_client: Any = None,
     ):
         super().__init__(
             thread_num=thread_num,
@@ -42,6 +46,18 @@ class LLMTranslator(BaseTranslator):
         self.model = model
         self.custom_prompt = custom_prompt
         self.is_reflect = is_reflect
+        self.translation_context = translation_context or TranslationContext(custom_prompt=custom_prompt)
+        self._all_source_by_index: Dict[int, str] = {}
+        self.llm_client = llm_client
+
+    def translate_subtitle(self, subtitle_data):
+        self._all_source_by_index = {
+            i: seg.text for i, seg in enumerate(subtitle_data.segments, 1)
+        }
+        try:
+            return super().translate_subtitle(subtitle_data)
+        finally:
+            self._all_source_by_index = {}
 
     def _translate_chunk(
         self, subtitle_chunk: List[SubtitleProcessData]
@@ -82,10 +98,16 @@ class LLMTranslator(BaseTranslator):
                 processed_result = {k: f"{v}" for k, v in result_dict.items()}
 
             # 将结果填充回SubtitleProcessData
+            missing_keys = []
             for data in subtitle_chunk:
-                data.translated_text = processed_result.get(
-                    str(data.index), data.original_text
-                )
+                key = str(data.index)
+                translated_text = processed_result.get(key)
+                if not translated_text:
+                    missing_keys.append(key)
+                    continue
+                data.translated_text = translated_text
+            if missing_keys:
+                raise RuntimeError(f"LLM response missing translations for keys: {missing_keys}")
             return subtitle_chunk
         except openai.RateLimitError as e:
             logger.error(f"OpenAI Rate Limit Error: {str(e)}")
@@ -104,14 +126,41 @@ class LLMTranslator(BaseTranslator):
         self, system_prompt: str, subtitle_dict: Dict[str, str]
     ) -> Dict[str, str]:
         """Agent loop翻译字幕块"""
+        context_text = self.translation_context.render()
+        if context_text:
+            system_prompt = (
+                f"{system_prompt}\n\n"
+                "<global_context>\n"
+                f"{context_text}\n"
+                "</global_context>\n\n"
+                "Use the global context and terminology consistently. "
+                "Translate ONLY the current_subtitles keys. "
+                "previous_context and next_context are context only; do not output them."
+            )
+
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": json.dumps(subtitle_dict, ensure_ascii=False)},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "previous_context": self._neighbor_context(subtitle_dict, before=True),
+                        "current_subtitles": subtitle_dict,
+                        "next_context": self._neighbor_context(subtitle_dict, before=False),
+                    },
+                    ensure_ascii=False,
+                ),
+            },
         ]
         last_response_dict = None
         # llm 反馈循环
         for step in range(self.MAX_STEPS):
-            response = call_llm(messages=messages, model=self.model, use_cache=self.use_cache)
+            response = call_llm(
+                messages=messages,
+                model=self.model,
+                use_cache=self.use_cache,
+                client=self.llm_client,
+            )
             content = response.choices[0].message.content
             if not content:
                 logger.warning(f"LLM returned empty content, step {step + 1}/{self.MAX_STEPS}")
@@ -133,9 +182,14 @@ class LLMTranslator(BaseTranslator):
                 messages.append(
                     {
                         "role": "user",
-                        "content": f"Error: {error_message}\n\nFix the errors above and output ONLY a valid JSON dictionary with ALL {len(subtitle_dict)} keys",
-                    }
-                )
+                    "content": (
+                        f"Error: {error_message}\n\n"
+                        f"Fix the errors above and output ONLY a valid JSON dictionary "
+                        f"with ALL {len(subtitle_dict)} current_subtitles keys. "
+                        "Do not include context keys."
+                    ),
+                }
+            )
 
         if last_response_dict is None:
             raise RuntimeError("LLM translation failed after all retry attempts")
@@ -145,6 +199,24 @@ class LLMTranslator(BaseTranslator):
             logger.warning(f"LLM translation failed validation after {self.MAX_STEPS} retries: {error_msg}")
             raise RuntimeError(f"LLM translation failed validation: {error_msg}")
         return last_response_dict
+
+    def _neighbor_context(self, subtitle_dict: Dict[str, str], before: bool) -> List[Dict[str, str]]:
+        if not self._all_source_by_index:
+            return []
+        numeric_keys = sorted(int(k) for k in subtitle_dict if str(k).isdigit())
+        if not numeric_keys:
+            return []
+        if before:
+            start = max(1, numeric_keys[0] - self.CONTEXT_BEFORE)
+            indices = range(start, numeric_keys[0])
+        else:
+            end = numeric_keys[-1] + self.CONTEXT_AFTER
+            indices = range(numeric_keys[-1] + 1, end + 1)
+        return [
+            {"index": str(index), "source": self._all_source_by_index[index]}
+            for index in indices
+            if index in self._all_source_by_index
+        ]
 
     def _validate_llm_response(
         self, response_dict: Any, subtitle_dict: Dict[str, str]
@@ -162,32 +234,6 @@ class LLMTranslator(BaseTranslator):
 
         expected_keys = set(subtitle_dict.keys())
         actual_keys = set(response_dict.keys())
-
-        # Helper: extract translated text from a response value
-        def _extract_text(val):
-            if isinstance(val, dict):
-                return val.get("native_translation", val.get("initial_translation", ""))
-            return str(val)
-
-        # Check if translated text is actually in the target language
-        _cjk_langs = {"简体中文", "繁體中文", "日本語", "한국어"}
-        _is_cjk_target = self.target_language.value in _cjk_langs
-        if _is_cjk_target:
-            untranslated = []
-            for key in actual_keys:
-                if key not in expected_keys:
-                    continue
-                text = _extract_text(response_dict[key])
-                if text and not re.search(r'[一-鿿぀-ヿ가-힯]', text):
-                    original = subtitle_dict.get(key, "")
-                    if text.strip() == original.strip() or not re.search(r'[一-鿿぀-ヿ가-힯]', text):
-                        untranslated.append(key)
-            if len(untranslated) > len(expected_keys) * self.UNTRANSLATED_THRESHOLD:
-                return (
-                    False,
-                    f"Translation to {self.target_language.value} failed: {len(untranslated)}/{len(expected_keys)} entries are still in the source language. "
-                    f"You MUST translate ALL entries to {self.target_language.value}. Output Chinese characters, not English.",
-                )
 
         def sort_keys(keys):
             return sorted(keys, key=lambda x: int(x) if x.isdigit() else x)
@@ -209,6 +255,38 @@ class LLMTranslator(BaseTranslator):
 
             return (False, "; ".join(error_parts))
 
+        # Helper: extract translated text from a response value
+        def _extract_text(val):
+            if isinstance(val, dict):
+                return val.get("native_translation", val.get("initial_translation", ""))
+            return str(val)
+
+        # Check if translated text is actually in the target language
+        _cjk_langs = {"简体中文", "繁體中文", "日本語", "한국어"}
+        _is_cjk_target = self.target_language.value in _cjk_langs
+        if _is_cjk_target:
+            untranslated = []
+            for key in sort_keys(actual_keys):
+                if key not in expected_keys:
+                    continue
+                text = _extract_text(response_dict[key])
+                original = subtitle_dict.get(key, "")
+                if self._looks_untranslated_for_cjk(text, original):
+                    untranslated.append(key)
+            if untranslated:
+                return (
+                    False,
+                    f"Translation to {self.target_language.value} failed: {len(untranslated)}/{len(expected_keys)} entries are still in the source language. "
+                    f"You MUST translate ALL entries to {self.target_language.value}. Output target-language characters, not English. "
+                    f"Untranslated keys: {untranslated[:20]}",
+                )
+
+        preserved_ok, preserved_error = self._validate_preserved_tokens(
+            response_dict, subtitle_dict, _extract_text
+        )
+        if not preserved_ok:
+            return False, preserved_error
+
         # 如果是反思模式，检查嵌套结构
         if self.is_reflect:
             for key, value in response_dict.items():
@@ -227,13 +305,178 @@ class LLMTranslator(BaseTranslator):
 
         return True, ""
 
+    @staticmethod
+    def _looks_untranslated_for_cjk(text: str, original: str) -> bool:
+        text = str(text or "").strip()
+        original = str(original or "").strip()
+        if not text:
+            return True
+        if re.search(r"[一-鿿぀-ヿ가-힯]", text):
+            return False
+        if not re.search(r"[A-Za-z]", original):
+            return False
+        return not LLMTranslator._is_cjk_no_script_exempt(original, text)
+
+    @staticmethod
+    def _is_cjk_no_script_exempt(original: str, translated: str) -> bool:
+        """Allow brand/model-only captions such as BMW M2 CS to remain Latin."""
+        if re.search(r"[一-鿿぀-ヿ가-힯]", translated):
+            return True
+        source_tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9.+#&/-]*", original)
+        if not source_tokens:
+            return True
+        if len(source_tokens) > 3:
+            return False
+
+        stopwords = {
+            "a", "an", "and", "are", "as", "at", "but", "for", "from", "in",
+            "is", "it", "its", "it's", "of", "on", "or", "so", "that", "the",
+            "this", "to", "today", "tomorrow", "was", "well", "with", "you",
+        }
+
+        def is_name_like(token: str) -> bool:
+            stripped = token.strip(".,;:!?()[]{}")
+            if not stripped:
+                return False
+            lower = stripped.lower()
+            if lower in stopwords:
+                return False
+            if re.search(r"\d", stripped):
+                return True
+            if re.fullmatch(r"[A-Z]{2,}", stripped):
+                return True
+            if stripped != lower and stripped[0].isupper():
+                return True
+            return False
+
+        return all(is_name_like(token) for token in source_tokens)
+
+    def _validate_preserved_tokens(self, response_dict: Dict[str, Any], subtitle_dict: Dict[str, str], extract_text) -> Tuple[bool, str]:
+        """Catch likely dropped model names, years, specs, and alphanumeric terms."""
+        missing: list[str] = []
+
+        def important_tokens(text: str) -> set[str]:
+            tokens = set()
+            collapsed_large_numbers = re.sub(r"(?<=\d),(?=\d{3}\b)", "", text)
+            pattern = (
+                r"\b[A-Za-z]+\d+[A-Za-z0-9.-]*\b"
+                r"|\b\d+[A-Za-z]+[A-Za-z0-9.-]*\b"
+                r"|\b(?:19|20)\d{2}\b"
+                r"|\b\d{2,3}\b"
+                r"|\b[A-Z]{2,}\b"
+            )
+            for match in re.finditer(pattern, collapsed_large_numbers):
+                token = match.group().strip(".,;:!?()[]{}")
+                if len(token) >= 2:
+                    tokens.add(token)
+            return tokens
+
+        def normalized_text(text: str) -> str:
+            return re.sub(r"[\s,，.。-]+", "", text).lower()
+
+        def _is_decade_token(token: str) -> bool:
+            return bool(re.fullmatch(r"(?:\d{2}|\d{4})s", token, flags=re.IGNORECASE))
+
+        def _is_ordinal_token(token: str) -> bool:
+            return bool(re.fullmatch(r"\d+(?:st|nd|rd|th)", token, flags=re.IGNORECASE))
+
+        def _ordinal_preserved(token: str, translated_norm: str) -> bool:
+            if not _is_ordinal_token(token):
+                return False
+            number = re.match(r"\d+", token)
+            if not number:
+                return False
+            digits = number.group()
+            candidates = {digits, f"第{digits}"}
+            return any(normalized_text(candidate) in translated_norm for candidate in candidates)
+
+        def _decade_preserved(token: str, translated: str, translated_norm: str) -> bool:
+            if not _is_decade_token(token):
+                return False
+            digits = token[:-1]
+            if normalized_text(token) in translated_norm:
+                return True
+            if len(digits) == 4:
+                century = digits[:2]
+                decade = digits[2:]
+                candidates = {
+                    f"{digits}年代",
+                    f"{century}世纪{decade}年代",
+                    f"{decade}年代",
+                    f"{int(decade)}年代",
+                }
+            else:
+                candidates = {
+                    f"{digits}年代",
+                    f"{int(digits)}年代",
+                }
+            chinese_decades = {
+                "00": "零零年代",
+                "10": "一十年代",
+                "20": "二十年代",
+                "30": "三十年代",
+                "40": "四十年代",
+                "50": "五十年代",
+                "60": "六十年代",
+                "70": "七十年代",
+                "80": "八十年代",
+                "90": "九十年代",
+            }
+            decade_key = digits[-2:]
+            if decade_key in chinese_decades:
+                candidates.add(chinese_decades[decade_key])
+            return any(normalized_text(candidate) in translated_norm for candidate in candidates)
+
+        def _inflected_alnum_preserved(token: str, translated_norm: str) -> bool:
+            if not re.search(r"\d", token):
+                return False
+            if not re.fullmatch(r"[A-Za-z0-9.-]+s", token):
+                return False
+            singular = token[:-1]
+            return len(singular) >= 2 and normalized_text(singular) in translated_norm
+
+        for key, original in subtitle_dict.items():
+            translated = extract_text(response_dict.get(key, ""))
+            translated_norm = normalized_text(translated)
+            for token in important_tokens(original):
+                token_norm = normalized_text(token)
+                if _decade_preserved(token, translated, translated_norm):
+                    continue
+                if _ordinal_preserved(token, translated_norm):
+                    continue
+                if _inflected_alnum_preserved(token, translated_norm):
+                    continue
+                if token_norm and token_norm not in translated_norm:
+                    missing.append(f"{key}:{token}")
+
+        if missing:
+            return (
+                False,
+                "Likely dropped important source tokens. Preserve model names, years, specs, "
+                f"and alphanumeric terms unless explicitly translated. Missing: {missing[:20]}",
+            )
+        return True, ""
+
     def _translate_chunk_single(
         self, subtitle_chunk: List[SubtitleProcessData]
     ) -> List[SubtitleProcessData]:
         """单条翻译模式"""
         single_prompt = get_prompt(
-            "translate/single", target_language=self.target_language
+            "translate/single", target_language=self.target_language.value
         )
+
+        def _looks_untranslated(text: str, original: str) -> bool:
+            if self.target_language.value not in {"简体中文", "繁體中文", "日本語", "한국어"}:
+                return False
+            import re
+
+            if not text.strip():
+                return True
+            if text.strip() == original.strip():
+                return True
+            return not re.search(r"[一-鿿぀-ヿ가-힯]", text)
+
+        failures: list[str] = []
 
         for data in subtitle_chunk:
             try:
@@ -245,12 +488,22 @@ class LLMTranslator(BaseTranslator):
                     model=self.model,
                     temperature=0.7,
                     use_cache=self.use_cache,
+                    client=self.llm_client,
                 )
                 translated_text = response.choices[0].message.content.strip()
+                if _looks_untranslated(translated_text, data.original_text):
+                    raise RuntimeError(
+                        f"Single item translation did not produce {self.target_language.value}: {translated_text!r}"
+                    )
                 data.translated_text = translated_text
             except Exception as e:
                 logger.error(f"Single item translation failed {data.index}: {str(e)}")
-                data.translated_text = data.original_text
+                failures.append(str(data.index))
+
+        if failures:
+            raise RuntimeError(
+                f"Single item translation failed for {len(failures)}/{len(subtitle_chunk)} entries: {failures}"
+            )
 
         return subtitle_chunk
 
@@ -260,4 +513,12 @@ class LLMTranslator(BaseTranslator):
         chunk_key = generate_cache_key(chunk)
         lang = self.target_language.value
         model = self.model
-        return f"{class_name}:{chunk_key}:{lang}:{model}"
+        prompt_key = generate_cache_key(
+            {
+                "custom_prompt": self.custom_prompt,
+                "reflect": self.is_reflect,
+                "context": self.translation_context.fingerprint(),
+                "prompt_version": "context-v1",
+            }
+        )
+        return f"{class_name}:{chunk_key}:{lang}:{model}:{prompt_key}"

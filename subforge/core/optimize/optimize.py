@@ -7,7 +7,7 @@ import atexit
 import difflib
 import re
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import json_repair
 
@@ -41,6 +41,7 @@ class SubtitleOptimizer:
         custom_prompt: str,
         update_callback: Optional[Callable] = None,
         use_cache: bool = True,
+        llm_client: Any = None,
     ):
         """初始化优化器
 
@@ -58,6 +59,7 @@ class SubtitleOptimizer:
         self.custom_prompt = custom_prompt
         self.update_callback = update_callback
         self.use_cache = use_cache
+        self.llm_client = llm_client
 
         self.is_running = True
         self.executor: Optional[ThreadPoolExecutor] = None
@@ -103,6 +105,8 @@ class SubtitleOptimizer:
         except Exception as e:
             logger.error(f"Optimization failed: {str(e)}")
             raise RuntimeError(f"Optimization failed: {str(e)}")
+        finally:
+            self.stop()
 
     def _split_chunks(self, subtitle_dict: Dict[str, str]) -> List[Dict[str, str]]:
         """将字幕字典分割成批次
@@ -226,6 +230,7 @@ class SubtitleOptimizer:
                 model=self.model,
                 temperature=0.2,
                 use_cache=self.use_cache,
+                client=self.llm_client,
             )
 
             result_text = response.choices[0].message.content
@@ -359,6 +364,17 @@ class SubtitleOptimizer:
         Returns:
             对齐后的字幕字典
         """
+        if not all(isinstance(value, str) and value.strip() for value in optimized.values()):
+            logger.warning("Optimized subtitle contains empty or non-string values, returning original")
+            return dict(original)
+
+        direct_repaired = {
+            key: optimized[key] if key in optimized and optimized[key].strip() else text
+            for key, text in original.items()
+        }
+        if any(key in optimized for key in original):
+            return direct_repaired
+
         try:
             aligner = SubtitleAligner()
             original_list = list(original.values())
@@ -369,18 +385,20 @@ class SubtitleOptimizer:
             )
 
             if len(aligned_source) != len(aligned_target):
-                logger.warning("Alignment length mismatch，returning original")
-                return optimized
+                logger.warning("Alignment length mismatch, returning original")
+                return dict(original)
 
-            # 重建字典，保持原有索引
-            start_id = next(iter(original.keys()))
-            return {
-                str(int(start_id) + i): text for i, text in enumerate(aligned_target)
-            }
+            repaired: Dict[str, str] = {}
+            original_keys = list(original.keys())
+            for key, text in zip(original_keys, aligned_target):
+                repaired[key] = text if isinstance(text, str) and text.strip() else original[key]
+            for key in original_keys[len(repaired):]:
+                repaired[key] = original[key]
+            return repaired
 
         except Exception as e:
-            logger.error(f"Alignment failed: {str(e)}，returning original")
-            return optimized
+            logger.error(f"Alignment failed: {str(e)}, returning original")
+            return dict(original)
 
     @staticmethod
     def _create_segments(
@@ -401,6 +419,8 @@ class SubtitleOptimizer:
                 text=optimized_dict.get(str(i), seg.text),
                 start_time=seg.start_time,
                 end_time=seg.end_time,
+                translated_text=seg.translated_text,
+                speaker_id=seg.speaker_id,
             )
             for i, seg in enumerate(original_segments, 1)
         ]

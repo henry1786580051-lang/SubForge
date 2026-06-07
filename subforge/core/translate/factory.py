@@ -1,9 +1,10 @@
 """翻译器工厂"""
 
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from subforge.core.translate.base import BaseTranslator
 from subforge.core.translate.bing_translator import BingTranslator
+from subforge.core.translate.context import TranslationContext
 from subforge.core.translate.deeplx_translator import DeepLXTranslator
 from subforge.core.translate.google_translator import GoogleTranslator
 from subforge.core.translate.llm_translator import LLMTranslator
@@ -27,6 +28,8 @@ class TranslatorFactory:
         is_reflect: bool = False,
         update_callback: Optional[Callable] = None,
         use_cache: bool = True,
+        translation_context: Optional[TranslationContext] = None,
+        llm_client: Any = None,
     ) -> BaseTranslator:
         """创建翻译器实例"""
         try:
@@ -44,6 +47,8 @@ class TranslatorFactory:
                     is_reflect=is_reflect,
                     update_callback=update_callback,
                     use_cache=use_cache,
+                    translation_context=translation_context,
+                    llm_client=llm_client,
                 )
             elif translator_type == TranslatorType.GOOGLE:
                 batch_num = 5

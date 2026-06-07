@@ -12,7 +12,7 @@ from typing import Any, Callable, List, Optional, Union
 from ...config import BIN_PATH, BUNDLED_BIN_PATH, MODEL_PATH
 from ..utils.logger import setup_logger
 from ..utils.subprocess_helper import StreamReader
-from .asr_data import ASRData, ASRDataSeg
+from .asr_data import ASRData, ASRDataSeg, reasonable_word_duration_ms
 from .base import BaseASR
 from .status import ASRStatus
 
@@ -75,6 +75,22 @@ def _tokens_to_word_segments(transcription: list[dict]) -> list[ASRDataSeg]:
             current_end = end
 
     flush()
+    return _cap_unreasonable_word_durations(words)
+
+
+def _cap_unreasonable_word_durations(words: list[ASRDataSeg]) -> list[ASRDataSeg]:
+    """Cap implausibly long whisper.cpp token spans for word-level output.
+
+    whisper.cpp JSON-full can assign a short token the duration of a whole
+    decoder span, especially near silence or music. Keep the token end, which is
+    normally closest to the next token boundary, and move only the start forward.
+    """
+    for word in words:
+        duration = word.end_time - word.start_time
+        max_duration = reasonable_word_duration_ms(word.text)
+        if duration <= max_duration * 1.5:
+            continue
+        word.start_time = max(0, word.end_time - max_duration)
     return words
 
 

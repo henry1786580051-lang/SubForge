@@ -7,9 +7,68 @@ ROOT = os.path.dirname(os.path.abspath(SPEC))
 
 optional_hiddenimports = []
 optional_datas = []
-for optional_pkg in ('df', 'deepfilterlib'):
+for optional_pkg in (
+    'mlx',
+    'mlx_whisper',
+    'faster_whisper',
+    'ctranslate2',
+):
     try:
         optional_hiddenimports += collect_submodules(optional_pkg)
+        optional_datas += collect_data_files(optional_pkg, include_py_files=False)
+    except Exception:
+        pass
+
+# DeepFilterNet is used only for local enhancement inference. Avoid collecting
+# training, evaluation, and visualization modules, which pull unnecessary
+# dependencies into the desktop bundle.
+optional_hiddenimports += [
+    'libdf',
+    'df',
+    'df.enhance',
+    'df.checkpoint',
+    'df.config',
+    'df.deepfilternet',
+    'df.deepfilternet2',
+    'df.deepfilternet3',
+    'df.deepfilternetmf',
+    'df.io',
+    'df.logger',
+    'df.model',
+    'df.modules',
+    'df.multiframe',
+    'df.sepm',
+    'df.utils',
+    'df.version',
+]
+for optional_pkg in ('df', 'libdf'):
+    try:
+        optional_datas += collect_data_files(optional_pkg, include_py_files=False)
+    except Exception:
+        pass
+
+# Keep WhisperX/Transformers collection narrow. SubForge uses MLX Whisper for
+# transcription and WhisperX only for forced alignment; diarization and the full
+# Transformers model zoo are not needed and make the macOS bundle much larger.
+optional_hiddenimports += [
+    'whisperx',
+    'whisperx.alignment',
+    'whisperx.audio',
+    'whisperx.types',
+    'whisperx.utils',
+    'transformers',
+    'transformers.models.wav2vec2',
+    'transformers.models.wav2vec2.modeling_wav2vec2',
+    'transformers.models.wav2vec2.processing_wav2vec2',
+        'transformers.models.wav2vec2.tokenization_wav2vec2',
+        'numba',
+        'llvmlite',
+        'tokenizers',
+        'tiktoken_ext',
+        'tiktoken_ext.openai_public',
+]
+for optional_pkg in ('whisperx', 'transformers', 'tokenizers', 'tiktoken'):
+    try:
         optional_datas += collect_data_files(optional_pkg, include_py_files=False)
     except Exception:
         pass
@@ -100,6 +159,7 @@ a = Analysis(
         'subforge.core.asr.silero_vad',
         'subforge.core.asr.whisper_api',
         'subforge.core.asr.whisper_cpp',
+        'subforge.core.asr.whisperx_asr',
         'subforge.core.asr.faster_whisper',
         'subforge.core.asr.chunked_asr',
         'subforge.core.asr.transcribe',
@@ -122,13 +182,18 @@ a = Analysis(
     runtime_hooks=[],
     excludes=[
         'torchvision',
-        'transformers', 'tokenizers',
         'modelscope',
         'tensorflow', 'keras',
         'PyQt5', 'PyQt-Fluent-Widgets', 'qfluentwidgets',
-        'matplotlib', 'scipy',
+        'matplotlib',
         'IPython', 'jupyter',
         'test', 'tests',
+        'whisperx.diarize',
+        'pyannote', 'pyannote.audio', 'pyannote.core', 'pyannote.database',
+        'pyannote.metrics', 'pyannote.pipeline',
+        'lightning', 'pytorch_lightning',
+        'sklearn', 'scikit_learn',
+        'optuna',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

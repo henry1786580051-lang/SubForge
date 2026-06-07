@@ -6,6 +6,7 @@ from .status import ASRStatus
 from .transcribe import transcribe
 from .whisper_api import WhisperAPI
 from .whisper_cpp import WhisperCppASR
+from .whisperx_asr import WhisperXASR
 
 __all__ = [
     "BcutASR",
@@ -14,6 +15,7 @@ __all__ = [
     "JianYingASR",
     "WhisperAPI",
     "WhisperCppASR",
+    "WhisperXASR",
     "transcribe",
     "ASRStatus",
 ]

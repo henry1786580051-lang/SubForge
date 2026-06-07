@@ -7,6 +7,7 @@ export const API_BASE =
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: { "Content-Type": "application/json" },
+    cache: "no-store",
     ...options,
   });
   if (!res.ok) {
@@ -78,7 +79,7 @@ export const transcribeApi = {
       method: "POST",
       body: JSON.stringify(data),
     }),
-  listModels: () => request<{ id: string; size: string; downloaded: boolean; path: string }[]>("/api/transcribe/models"),
+  listModels: () => request<AsrModelInfo[]>("/api/transcribe/models"),
   hardware: () => request<{ platform: string; arch: string; chip: string; device: string; n_threads: number; compute_type: string; gpu: string }>("/api/transcribe/hardware"),
   downloadModel: (model_id: string) =>
     request<{ task_id?: string; status: string; path?: string }>("/api/transcribe/download-model", {
@@ -93,6 +94,7 @@ export const subtitleApi = {
     subtitle_file: string;
     target_language?: string;
     translator?: string;
+    llm_model?: string;
     need_optimize?: boolean;
     need_translate?: boolean;
     need_reflect?: boolean;
@@ -178,6 +180,17 @@ export interface SubtitleFile {
   format: string;
   segments: SubtitleSegment[];
   count: number;
+}
+
+export interface AsrModelInfo {
+  id: string;
+  name: string;
+  category: "whisper_cpp" | "whisperx" | string;
+  type: "ggml" | "mlx" | "alignment" | string;
+  size: string;
+  downloaded: boolean;
+  path: string;
+  align_model?: string;
 }
 
 export interface LlmLogEntry {

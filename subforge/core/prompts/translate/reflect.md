@@ -40,6 +40,11 @@ Based on your reflection, produce the definitive ${target_language} translation.
 }
 </output_format>
 
+<input_note>
+The user message may include previous_context, current_subtitles, and next_context.
+Translate and output ONLY entries inside current_subtitles. previous_context and next_context are for context only; never include their keys in the output.
+</input_note>
+
 <examples>
 <example>
 <scenario>Car review video — casual presenter style (English → Chinese)</scenario>

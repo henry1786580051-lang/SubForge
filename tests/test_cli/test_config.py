@@ -132,8 +132,10 @@ class TestConfigRoundtrip:
 
 
 class TestBuildConfig:
-    def test_defaults_only(self):
-        config = build_config(config_path=None)
+    def test_defaults_only(self, monkeypatch, tmp_path):
+        for env_name in ("OPENAI_MODEL", "VIDEOCAPTIONER_LLM_MODEL"):
+            monkeypatch.delenv(env_name, raising=False)
+        config = build_config(config_path=tmp_path / "missing-config.toml")
         assert config["llm"]["model"] == DEFAULTS["llm"]["model"]
 
     def test_cli_overrides(self):

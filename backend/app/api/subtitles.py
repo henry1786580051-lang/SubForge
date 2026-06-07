@@ -106,6 +106,17 @@ def _normalize_segment_timing(segments: list[dict], min_duration_ms: int = 1) ->
     return result
 
 
+def _segment_display_text(seg: dict) -> str:
+    """Return bilingual display text using the app default: target above source."""
+    text = str(seg.get("text", "") or "")
+    translated = str(seg.get("translated", "") or "")
+    if not translated:
+        return text
+    if not text:
+        return translated
+    return f"{translated}\n{text}"
+
+
 @router.get("/load")
 async def load_subtitle(path: str = Query(..., description="Subtitle file path")):
     """Load and parse a subtitle file (SRT/ASS/VTT)."""
@@ -299,11 +310,7 @@ def segments_to_srt(segments: list[dict]) -> str:
     for i, seg in enumerate(segments, 1):
         start = seg.get("start", "00:00:00.000").replace(".", ",")
         end = seg.get("end", "00:00:00.000").replace(".", ",")
-        text = seg.get("text", "")
-        translated = seg.get("translated", "")
-        display = text
-        if translated:
-            display = f"{text}\n{translated}"
+        display = _segment_display_text(seg)
         lines.append(f"{i}\n{start} --> {end}\n{display}")
     return "\n\n".join(lines) + "\n"
 
@@ -314,11 +321,7 @@ def segments_to_vtt(segments: list[dict]) -> str:
     for i, seg in enumerate(segments, 1):
         start = seg.get("start", "00:00:00.000")
         end = seg.get("end", "00:00:00.000")
-        text = seg.get("text", "")
-        translated = seg.get("translated", "")
-        display = text
-        if translated:
-            display = f"{text}\n{translated}"
+        display = _segment_display_text(seg)
         lines.append(f"{i}\n{start} --> {end}\n{display}")
     return "\n\n".join(lines) + "\n"
 
@@ -342,11 +345,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     for seg in segments:
         start = _time_to_ass(seg.get("start", "00:00:00.000"))
         end = _time_to_ass(seg.get("end", "00:00:00.000"))
-        text = seg.get("text", "")
-        translated = seg.get("translated", "")
-        display = text.replace("\n", "\\N")
-        if translated:
-            display = f"{display}\\N{translated}".replace("\n", "\\N")
+        display = _segment_display_text(seg).replace("\n", "\\N")
         lines.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{display}")
     return "\n".join(lines) + "\n"
 
@@ -365,12 +364,7 @@ def segments_to_txt(segments: list[dict]) -> str:
     """Convert segments to plain text."""
     lines = []
     for seg in segments:
-        text = seg.get("text", "")
-        translated = seg.get("translated", "")
-        if translated:
-            lines.append(f"{text}\n{translated}")
-        else:
-            lines.append(text)
+        lines.append(_segment_display_text(seg))
     return "\n".join(lines) + "\n"
 
 
@@ -390,36 +384,19 @@ def segments_to_json(segments: list[dict]) -> str:
 
 def parse_srt(content: str) -> list[dict]:
     """Parse SRT format into segments."""
-    content = content.replace("\r\n", "\n").replace("\r", "\n")
-    segments = []
-    blocks = content.strip().split("\n\n")
+    from subforge.core.asr.asr_data import ASRData
 
-    for block in blocks:
-        lines = block.strip().split("\n")
-        if len(lines) < 3:
-            continue
-
-        try:
-            idx = int(lines[0].strip())
-        except ValueError:
-            continue
-
-        time_line = lines[1].strip()
-        if " --> " not in time_line:
-            continue
-
-        start, end = time_line.split(" --> ")
-        text = "\n".join(lines[2:]).strip()
-
-        segments.append({
+    asr_data = ASRData.from_srt(content)
+    return [
+        {
             "id": idx,
-            "start": start.strip().replace(",", "."),
-            "end": end.strip().replace(",", "."),
-            "text": text,
-            "translated": "",
-        })
-
-    return segments
+            "start": _ms_to_timestamp(seg.start_time),
+            "end": _ms_to_timestamp(seg.end_time),
+            "text": seg.text,
+            "translated": seg.translated_text,
+        }
+        for idx, seg in enumerate(asr_data.segments, 1)
+    ]
 
 
 def parse_vtt(content: str) -> list[dict]:

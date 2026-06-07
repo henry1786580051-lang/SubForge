@@ -12,14 +12,12 @@ export function VideoPanel() {
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [duration, setDuration] = useState(0);
-  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    if (!videoFile || !videoFile.startsWith("/")) { setThumbnailUrl(null); return; }
+    if (!videoFile || !videoFile.startsWith("/")) return;
     filesApi.info(videoFile).then(setFileInfo).catch(() => {});
-    setThumbnailUrl(filesApi.thumbnailUrl(videoFile));
   }, [videoFile, setFileInfo]);
 
   // Seek video when subtitle double-clicked
@@ -58,7 +56,7 @@ export function VideoPanel() {
       video.pause();
       setIsPlaying(false);
     }
-  }, []);
+  }, [setIsPlaying]);
 
   const seek = useCallback((seconds: number) => {
     const video = videoRef.current;
@@ -74,6 +72,10 @@ export function VideoPanel() {
   }, [duration]);
 
   const hasVideo = videoFile && videoFile.startsWith("/") && fileInfo?.video;
+  const thumbnailUrl = useMemo(
+    () => (videoFile && videoFile.startsWith("/") ? filesApi.thumbnailUrl(videoFile) : null),
+    [videoFile]
+  );
 
   // Pre-parse subtitle times for performance
   const parsedSubtitles = useMemo(() =>
@@ -154,6 +156,7 @@ export function VideoPanel() {
               </div>
             )}
             {thumbnailUrl && !isPlaying && (
+              // eslint-disable-next-line @next/next/no-img-element
               <img src={thumbnailUrl} className="absolute inset-0 w-full h-full object-contain opacity-30" alt="" />
             )}
             {!isPlaying && (

@@ -222,11 +222,26 @@ def run(args: Namespace, config: dict) -> int:
                 return EXIT.USAGE_ERROR
 
             from subforge.core.translate.factory import TranslatorFactory
+            from subforge.core.translate.context import TranslationContext, build_translation_context
             from subforge.core.translate.types import TranslatorType
 
             type_map = {"llm": TranslatorType.OPENAI, "bing": TranslatorType.BING, "google": TranslatorType.GOOGLE}
+            translator_type = type_map.get(translator_service, TranslatorType.OPENAI)
+            translation_context = TranslationContext(custom_prompt=custom_prompt)
+            if translator_type == TranslatorType.OPENAI:
+                if progress:
+                    progress.update(63, "Generating translation context...")
+                translation_context = build_translation_context(
+                    asr_data,
+                    model=llm_model,
+                    target_language=target_language,
+                    custom_prompt=custom_prompt,
+                )
+                if progress:
+                    progress.update(65, f"Translating to {target_lang_code}...")
+
             translator = TranslatorFactory.create_translator(
-                translator_type=type_map.get(translator_service, TranslatorType.OPENAI),
+                translator_type=translator_type,
                 thread_num=thread_num,
                 batch_num=batch_size,
                 target_language=target_language,
@@ -234,6 +249,7 @@ def run(args: Namespace, config: dict) -> int:
                 custom_prompt=custom_prompt,
                 is_reflect=need_reflect,
                 update_callback=callback,
+                translation_context=translation_context,
             )
             asr_data = translator.translate_subtitle(asr_data)
             asr_data.remove_punctuation()
@@ -249,6 +265,8 @@ def run(args: Namespace, config: dict) -> int:
                 max_chars_en=max_chars_en,
                 max_chars_cjk=max_chars_cjk,
             )
+
+        asr_data.extend_sentence_tails_conservatively()
 
         # 4. Save
         from subforge.cli.validators import resolve_layout

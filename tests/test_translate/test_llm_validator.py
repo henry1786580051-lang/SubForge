@@ -2,13 +2,15 @@
 
 import pytest
 
+from subforge.core.entities import SubtitleProcessData
+from subforge.core.translate.context import TranslationContext
 from subforge.core.translate.llm_translator import LLMTranslator
 from subforge.core.translate.types import TargetLanguage
 
 
-def _make_translator(is_reflect=False, threshold=0.15):
+def _make_translator(is_reflect=False):
     """Create a translator instance for testing."""
-    t = LLMTranslator(
+    return LLMTranslator(
         thread_num=1,
         batch_num=1,
         target_language=TargetLanguage.SIMPLIFIED_CHINESE,
@@ -17,8 +19,6 @@ def _make_translator(is_reflect=False, threshold=0.15):
         is_reflect=is_reflect,
         update_callback=None,
     )
-    t.UNTRANSLATED_THRESHOLD = threshold
-    return t
 
 
 class TestValidateLLmResponse:
@@ -79,35 +79,39 @@ class TestValidateLLmResponse:
 
     def test_cjk_target_rejects_all_english(self):
         """100% English output for CJK target should fail."""
-        t = _make_translator(threshold=0.15)
+        t = _make_translator()
         resp = {"0": "hello", "1": "world", "2": "foo", "3": "bar"}
         inp = {"0": "a", "1": "b", "2": "c", "3": "d"}
         ok, msg = t._validate_llm_response(resp, inp)
         assert ok is False
         assert "still in the source language" in msg
 
-    def test_cjk_target_accepts_mostly_chinese(self):
-        """Mostly Chinese with one English entry under threshold should pass."""
-        t = _make_translator(threshold=0.15)
-        # 7 entries, 1 untranslated = 14.3% < 15% threshold
+    def test_cjk_target_rejects_any_full_english_entry(self):
+        """A CJK batch cannot contain a fully untranslated sentence."""
+        t = _make_translator()
         resp = {"0": "你好", "1": "世界", "2": "美好的", "3": "天气", "4": "今天", "5": "不错", "6": "OK"}
-        inp = {str(i): f"text_{i}" for i in range(7)}
+        inp = {str(i): f"This is sentence {i}" for i in range(7)}
+        ok, msg = t._validate_llm_response(resp, inp)
+        assert ok is False
+        assert "Untranslated keys" in msg
+
+    def test_cjk_target_allows_brand_model_only_latin_text(self):
+        """Short model-name captions may legitimately remain in Latin script."""
+        t = _make_translator()
+        resp = {"0": "BMW M2 CS", "1": "你好"}
+        inp = {"0": "BMW M2 CS", "1": "hello"}
         ok, msg = t._validate_llm_response(resp, inp)
         assert ok is True
+        assert msg == ""
 
-    def test_cjk_threshold_boundary(self):
-        """Exactly at threshold should pass, over threshold should fail."""
-        t = _make_translator(threshold=0.25)
-        # 4 entries, 1 untranslated = 25% — at threshold, should pass
+    def test_cjk_target_rejects_threshold_boundary_english(self):
+        """The old percentage threshold must not allow untranslated full lines."""
+        t = _make_translator()
         resp = {"0": "你好", "1": "世界", "2": "好的", "3": "hello"}
         inp = {"0": "a", "1": "b", "2": "c", "3": "d"}
-        ok, _ = t._validate_llm_response(resp, inp)
-        assert ok is True
-
-        # 4 entries, 2 untranslated = 50% — over threshold, should fail
-        resp2 = {"0": "你好", "1": "world", "2": "好的", "3": "hello"}
-        ok2, _ = t._validate_llm_response(resp2, inp)
-        assert ok2 is False
+        ok, msg = t._validate_llm_response(resp, inp)
+        assert ok is False
+        assert "Untranslated keys" in msg
 
     def test_reflect_mode_valid(self):
         t = _make_translator(is_reflect=True)
@@ -166,3 +170,73 @@ class TestValidateLLmResponse:
         ok, _ = t._validate_llm_response(resp, inp)
         # Should pass because keys match and CJK content is present
         assert ok is True
+
+    def test_single_fallback_rejects_untranslated_cjk_result(self, monkeypatch):
+        t = _make_translator()
+
+        class _Message:
+            content = "hello"
+
+        class _Choice:
+            message = _Message()
+
+        class _Response:
+            choices = [_Choice()]
+
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm",
+            lambda **kwargs: _Response(),
+        )
+
+        with pytest.raises(RuntimeError, match="Single item translation failed"):
+            t._translate_chunk_single([SubtitleProcessData(index=1, original_text="hello")])
+
+    def test_rejects_dropped_alphanumeric_model_tokens(self):
+        t = _make_translator()
+        resp = {"0": "今天来试试新款雷克萨斯。"}
+        inp = {"0": "Today we drive the 2026 Lexus IS 350 F Sport."}
+
+        ok, msg = t._validate_llm_response(resp, inp)
+
+        assert ok is False
+        assert "2026" in msg
+        assert "350" in msg
+
+    def test_cache_key_includes_prompt_reflect_and_context(self):
+        base = _make_translator()
+        prompt = _make_translator()
+        prompt.custom_prompt = "keep Lexus terms"
+        reflect = _make_translator(is_reflect=True)
+        context = _make_translator()
+        context.translation_context = TranslationContext(summary="car review")
+        chunk = [SubtitleProcessData(index=1, original_text="hello")]
+
+        keys = {
+            base._get_cache_key(chunk),
+            prompt._get_cache_key(chunk),
+            reflect._get_cache_key(chunk),
+            context._get_cache_key(chunk),
+        }
+
+        assert len(keys) == 4
+
+    def test_neighbor_context_uses_adjacent_source_only(self):
+        t = _make_translator()
+        t._all_source_by_index = {
+            1: "before one",
+            2: "before two",
+            3: "current",
+            4: "after one",
+            5: "after two",
+            6: "after three",
+        }
+        current = {"3": "current"}
+
+        assert t._neighbor_context(current, before=True) == [
+            {"index": "1", "source": "before one"},
+            {"index": "2", "source": "before two"},
+        ]
+        assert t._neighbor_context(current, before=False) == [
+            {"index": "4", "source": "after one"},
+            {"index": "5", "source": "after two"},
+        ]

@@ -2,12 +2,11 @@
 
 import { useEffect } from "react";
 import { Sidebar } from "@/components/Sidebar";
-import { VideoPanel } from "@/components/VideoPanel";
-import { SubtitlePanel } from "@/components/SubtitlePanel";
-import { ConfigPanel } from "@/components/ConfigPanel";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { LlmLogsPanel } from "@/components/LlmLogsPanel";
 import { ToastContainer } from "@/components/Toast";
+import { WorkflowWorkspace } from "@/components/WorkflowWorkspace";
+import { useTaskMonitor } from "@/lib/useTaskMonitor";
 import { useAppStore, WorkflowStep } from "@/store/appStore";
 import { healthApi, configApi } from "@/lib/api";
 
@@ -20,6 +19,7 @@ const WORKFLOW_STEPS: { id: WorkflowStep; label: string }[] = [
 export default function Home() {
   const { step, setStep, activeView, backendOnline, setBackendOnline, taskStatus, taskMessage } =
     useAppStore();
+  const taskControls = useTaskMonitor();
 
   const currentIdx = WORKFLOW_STEPS.findIndex((s) => s.id === step);
 
@@ -42,26 +42,31 @@ export default function Home() {
   useEffect(() => {
     configApi.get().then((data: Record<string, unknown>) => {
       useAppStore.getState().setConfig({
-        transcribeModel: (data.transcribe_model as string) || "whisper_cpp",
+        transcribeModel: (data.transcribe_model as string) || "whisperx",
         sourceLanguage: (data.source_language as string) || "auto",
-        targetLanguage: (data.target_language as string) || "english",
+        targetLanguage: (data.target_language as string) || "chinese",
         translator: (data.translator as string) || "bing",
+        llmModel: (data.llm_model as string) || "gpt-4o-mini",
         needOptimize: (data.need_optimize as boolean) ?? true,
         needTranslate: (data.need_translate as boolean) ?? true,
         needReflect: (data.need_reflect as boolean) ?? false,
         customPrompt: (data.custom_prompt as string) || "",
+        whisperModelSize: (data.whisper_model_size as string) || "/Users/guwenhan/Desktop/YouTube/model/whisper-large-v3-fp16",
+        whisperxAlignModel: (data.whisperx_align_model as string) || "WAV2VEC2_ASR_LARGE_LV60K_960H",
+        whisperxBatchSize: Number(data.whisperx_batch_size || 8),
+        enableAudioEnhancement: (data.enable_audio_enhancement as boolean) ?? true,
       });
     }).catch(() => {});
   }, []);
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-dvh overflow-hidden">
       <Sidebar />
       <ToastContainer />
 
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <header className="flex items-center justify-between px-5 py-2.5 border-b border-border bg-surface shadow-sm">
+        <header className="flex items-center justify-between px-5 py-3 border-b border-border bg-surface/95 shadow-sm">
           <div className="flex items-center">
             {WORKFLOW_STEPS.map((s, idx) => (
               <div key={s.id} className="flex items-center">
@@ -149,17 +154,7 @@ export default function Home() {
             <LlmLogsPanel />
           </div>
         ) : (
-          <>
-            <div className="flex-1 flex overflow-hidden">
-              <div className="w-1/2 border-r border-border overflow-hidden">
-                <VideoPanel />
-              </div>
-              <div className="w-1/2 overflow-hidden">
-                <SubtitlePanel />
-              </div>
-            </div>
-            <ConfigPanel />
-          </>
+          <WorkflowWorkspace {...taskControls} />
         )}
       </div>
     </div>

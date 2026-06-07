@@ -78,6 +78,7 @@ def run(args: Namespace, config: dict) -> int:
 
     asr_map = {
         "faster-whisper": TranscribeModelEnum.FASTER_WHISPER,
+        "whisperx": TranscribeModelEnum.WHISPERX,
         "whisper-api": TranscribeModelEnum.WHISPER_API,
         "whisper-cpp": TranscribeModelEnum.WHISPER_CPP,
     }
@@ -109,6 +110,12 @@ def run(args: Namespace, config: dict) -> int:
         faster_whisper_ff_mdx_kim2=get(config, "transcribe.faster_whisper.voice_extraction", False),
         faster_whisper_one_word=True,
         faster_whisper_prompt=get(config, "transcribe.faster_whisper.prompt", ""),
+        whisperx_align_model=get(
+            config,
+            "transcribe.whisperx.align_model",
+            "WAV2VEC2_ASR_LARGE_LV60K_960H",
+        ),
+        whisperx_batch_size=get(config, "transcribe.whisperx.batch_size", 4),
         # WhisperCpp options
         whisper_model=wcpp_model_enum,
         # Whisper API options

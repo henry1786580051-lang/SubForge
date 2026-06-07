@@ -4,6 +4,7 @@
 Starts FastAPI backend in background and opens a native window.
 """
 import base64
+import multiprocessing
 import os
 import socket
 import sys
@@ -119,7 +120,7 @@ def main():
             "window.dispatchEvent(new Event('pywebviewready'));"
         )
 
-    webview.create_window(
+    window = webview.create_window(
         "SubForge",
         url=url,
         width=1400,
@@ -128,10 +129,24 @@ def main():
         text_select=True,
         js_api=api,
     )
+
+    def force_exit():
+        # PyInstaller desktop builds can keep non-UI worker threads alive after
+        # the native window closes. Exit the app process once the UI is gone.
+        os._exit(0)
+
+    try:
+        window.events.closed += force_exit
+    except Exception:
+        pass
+
     webview.start(debug=False, func=on_loaded)
+    force_exit()
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
+
     if os.environ.get("SUBFORGE_CHECK_DENOISE") == "1":
         import traceback
 
@@ -148,4 +163,42 @@ if __name__ == "__main__":
             except Exception:
                 traceback.print_exc()
         raise SystemExit(0 if available else 1)
+    if os.environ.get("SUBFORGE_CHECK_ASR") == "1":
+        import traceback
+
+        try:
+            import llvmlite  # noqa: F401
+            import mlx_whisper  # noqa: F401
+            import numba  # noqa: F401
+
+            from subforge.core.asr.whisperx_asr import install_whisperx_runtime_stubs
+
+            install_whisperx_runtime_stubs()
+            from whisperx.alignment import align as _align  # noqa: F401
+            from whisperx.alignment import load_align_model as _load_align_model  # noqa: F401
+            from whisperx.audio import load_audio as _load_audio  # noqa: F401
+
+            from subforge.config import MODEL_PATH
+            from subforge.core.asr.whisperx_asr import (
+                DEFAULT_EN_ALIGN_MODEL,
+                default_mlx_model,
+            )
+
+            align_file = MODEL_PATH / "wav2vec2_fairseq_large_lv60k_asr_ls960.pth"
+            print("MLX Whisper import: ok")
+            print("WhisperX alignment import: ok")
+            print(f"Default MLX model: {default_mlx_model()}")
+            print(f"Default align model: {DEFAULT_EN_ALIGN_MODEL}")
+            print(f"Align model file: {align_file} ({'found' if align_file.exists() else 'missing'})")
+            raise SystemExit(0)
+        except RuntimeError as exc:
+            if "No Metal device available" in str(exc):
+                print("MLX Whisper package import reached Metal initialization.")
+                print("Metal device is not available in this execution environment.")
+                raise SystemExit(0)
+            traceback.print_exc()
+            raise SystemExit(1)
+        except Exception:
+            traceback.print_exc()
+            raise SystemExit(1)
     main()

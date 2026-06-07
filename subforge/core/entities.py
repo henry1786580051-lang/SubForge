@@ -117,6 +117,7 @@ class TranscribeModelEnum(Enum):
     """转录模型"""
 
     WHISPER_API = "Whisper [API] ✨"
+    WHISPERX = "WhisperX"
     FASTER_WHISPER = "FasterWhisper ✨"
     WHISPER_CPP = "WhisperCpp"
 
@@ -481,6 +482,10 @@ ASR_LANGUAGE_CAPABILITIES: dict[TranscribeModelEnum, ASRLanguageCapability] = {
         supported_languages=_get_all_languages_except_auto(),
         supports_auto=False,
     ),
+    TranscribeModelEnum.WHISPERX: ASRLanguageCapability(
+        supported_languages=_get_all_languages_except_auto(),
+        supports_auto=True,
+    ),
     TranscribeModelEnum.WHISPER_CPP: ASRLanguageCapability(
         supported_languages=_get_all_languages_except_auto(),
         supports_auto=True,
@@ -560,6 +565,9 @@ class TranscribeConfig:
     faster_whisper_compute_type: str = "default"
     whisper_n_threads: int = 4
     faster_whisper_prompt: Optional[str] = None
+    whisperx_model: Optional[str] = None
+    whisperx_align_model: str = "WAV2VEC2_ASR_LARGE_LV60K_960H"
+    whisperx_batch_size: int = 4
     enable_audio_enhancement: bool = True
 
     def _mask_key(self, key: Optional[str]) -> str:
@@ -600,6 +608,15 @@ class TranscribeConfig:
                 )
                 lines.append(f"VAD Threshold: {self.faster_whisper_vad_threshold}")
             lines.append(f"One Word Per Segment: {self.faster_whisper_one_word}")
+
+        elif self.transcribe_model == TranscribeModelEnum.WHISPERX:
+            lines.append(
+                f"Model: {self.whisperx_model or (self.faster_whisper_model.value if self.faster_whisper_model else 'auto')}"
+            )
+            lines.append(f"Device: {self.faster_whisper_device}")
+            lines.append(f"Compute Type: {self.faster_whisper_compute_type}")
+            lines.append(f"Align Model: {self.whisperx_align_model or 'auto'}")
+            lines.append(f"Batch Size: {self.whisperx_batch_size}")
 
         elif self.transcribe_model == TranscribeModelEnum.WHISPER_CPP:
             lines.append(

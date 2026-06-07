@@ -9,7 +9,23 @@ Requires environment variables:
 
 import pytest
 
+from subforge.core.split import split_by_llm as split_module
 from subforge.core.split.split_by_llm import count_words, split_by_llm
+
+
+class _FakeMessage:
+    def __init__(self, content):
+        self.content = content
+
+
+class _FakeChoice:
+    def __init__(self, content):
+        self.message = _FakeMessage(content)
+
+
+class _FakeResponse:
+    def __init__(self, content):
+        self.choices = [_FakeChoice(content)]
 
 
 @pytest.mark.integration
@@ -155,3 +171,38 @@ class TestSplitByLLM:
             assert (
                 word_count <= max_limit * 1.2
             ), f"分段长度应该符合限制: {word_count} > {max_limit}"
+
+    def test_rejects_explanatory_output_after_retries(self, monkeypatch):
+        """Explanations from the model must not enter subtitle text."""
+
+        def fake_call_llm(*args, **kwargs):
+            return _FakeResponse(
+                "I see one segment is too long. I fixed it below.<br>"
+                "the original words are not preserved"
+            )
+
+        monkeypatch.setattr(split_module, "call_llm", fake_call_llm)
+
+        with pytest.raises(RuntimeError, match="failed validation"):
+            split_by_llm(
+                "the original text should stay exactly the same",
+                model="mimo-v2.5-pro",
+                max_word_count_english=18,
+            )
+
+    def test_parses_output_wrapper(self, monkeypatch):
+        def fake_call_llm(*args, **kwargs):
+            return _FakeResponse(
+                "<output>the original text should stay<br>"
+                "exactly the same</output>"
+            )
+
+        monkeypatch.setattr(split_module, "call_llm", fake_call_llm)
+
+        result = split_by_llm(
+            "the original text should stay exactly the same",
+            model="mimo-v2.5-pro",
+            max_word_count_english=6,
+        )
+
+        assert result == ["the original text should stay", "exactly the same"]

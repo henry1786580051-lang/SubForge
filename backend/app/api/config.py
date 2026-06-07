@@ -76,9 +76,9 @@ def _write_settings(data: dict):
 
 # Default config values
 _DEFAULTS = {
-    "transcribe_model": "whisper_cpp",
+    "transcribe_model": "whisperx",
     "source_language": "auto",
-    "target_language": "english",
+    "target_language": "chinese",
     "translator": "bing",
     "work_dir": "",
     "font_name": "Noto Sans SC",
@@ -108,9 +108,11 @@ _DEFAULTS = {
     "whisper_device": "auto",
     "whisper_n_threads": 4,
     "whisper_compute_type": "default",
+    "whisperx_align_model": "WAV2VEC2_ASR_LARGE_LV60K_960H",
+    "whisperx_batch_size": 8,
     "ff_mdx_kim2": False,
     "enable_audio_enhancement": True,
-    "whisper_model_size": "base",
+    "whisper_model_size": "/Users/guwenhan/Desktop/YouTube/model/whisper-large-v3-fp16",
 }
 
 
@@ -145,7 +147,10 @@ async def test_llm_connection():
     stored = _read_settings()
     config = {**_DEFAULTS, **stored}
 
-    base_url = (config.get("llm_base_url") or "").rstrip("/")
+    from subforge.core.llm.client import normalize_base_url
+
+    raw_base_url = (config.get("llm_base_url") or "").strip()
+    base_url = normalize_base_url(raw_base_url).rstrip("/") if raw_base_url else ""
     api_key = config.get("llm_api_key") or ""
     model = config.get("llm_model") or ""
 
@@ -246,7 +251,10 @@ async def list_llm_models():
     stored = _read_settings()
     config = {**_DEFAULTS, **stored}
 
-    base_url = (config.get("llm_base_url") or "").rstrip("/")
+    from subforge.core.llm.client import normalize_base_url
+
+    raw_base_url = (config.get("llm_base_url") or "").strip()
+    base_url = normalize_base_url(raw_base_url).rstrip("/") if raw_base_url else ""
     api_key = config.get("llm_api_key") or ""
 
     if not base_url:
