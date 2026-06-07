@@ -20,7 +20,7 @@ SubForge 是一个 AI 驱动的视频字幕工具，覆盖转录、断句、优�
 
 | 能力 | 说明 |
 | --- | --- |
-| 语音转文字 | 支持 Whisper.cpp、Whisper API、Faster Whisper 等 ASR 引擎 |
+| 语音转文字 | 默认使用 WhisperX 工作流：MLX Whisper 转录 + forced alignment 词级时间轴 |
 | 智能断句 | 使用 LLM 按语义重排字幕，避免机械切分和超长字幕 |
 | 字幕优化 | 自动修正错别字、补全标点、去除冗余语气词 |
 | 智能翻译 | 支持上下文感知翻译、反思翻译和免费翻译引擎 |
@@ -30,22 +30,23 @@ SubForge 是一个 AI 驱动的视频字幕工具，覆盖转录、断句、优�
 
 ## 核心技术与实测
 
-SubForge 的重点不只是“把语音转成文字”，而是尽量让字幕达到可发布、可阅读、可翻译的状态。转录、翻译和成本控制集中在以下三层：
+SubForge 的重点不只是“把语音转成文字”，而是尽量让字幕达到可发布、可阅读、可翻译的状态。当前主流程围绕 Apple Silicon 本地转录、WhisperX 对齐和上下文翻译组织：
 
 ### 转录优化
 
-转录前会先对音频做预处理，降低噪音、静音和幻觉字幕对 ASR 的影响：
+转录前会先对音频做预处理，再使用 MLX Whisper 完成 Apple Silicon 加速转录，最后通过 WhisperX forced alignment 生成词级时间轴：
 
 ```text
-原始音频 -> DeepFilterNet3 降噪 -> Silero VAD 切割 -> ASR 转录 -> 字幕合并
+原始音频 -> DeepFilterNet3 降噪 -> MLX Whisper 转录 -> WhisperX forced alignment -> 词级时间轴 -> 字幕断句
 ```
 
 | 技术 | 作用 |
 | --- | --- |
 | DeepFilterNet3 | 降低车内、户外、咖啡厅等场景的背景噪音，突出人声 |
-| Silero VAD | 识别有效语音片段，跳过静音区域，减少幻觉字幕 |
+| MLX Whisper | Apple Silicon 专门优化的本地 Whisper 推理，默认使用本地 MLX 模型 |
+| WhisperX forced alignment | 使用对齐模型把转录文本落到词级时间轴，改善句尾拖尾和跨静音区问题 |
 | Content Integrity Score | 用语音时长比例监控内容完整性，避免参数过严导致漏转录 |
-| ASR 多引擎 | 根据场景选择 Whisper.cpp、Whisper API 或 Faster Whisper |
+| Whisper.cpp 兼容通道 | 保留 whisper.cpp 作为备用本地引擎，适合已有 ggml 模型的用户 |
 
 ### 智能翻译
 
@@ -137,9 +138,10 @@ uv run subforge-gui
 
 | 引擎 | 适合场景 |
 | --- | --- |
-| Whisper.cpp | 本地转录，支持 Metal / CUDA 加速 |
+| WhisperX + MLX Whisper | 默认推荐；Apple Silicon 本地加速，配合 forced alignment 生成词级时间轴 |
+| WhisperX Alignment | forced alignment 模型分类管理，用于英语等语言的词级对齐 |
+| Whisper.cpp | 备用本地转录通道，适合已有 ggml 模型的用户 |
 | Whisper API | 云端转录，配置简单 |
-| Faster Whisper | 本地高速转录，适合批量任务 |
 
 ## 示例
 

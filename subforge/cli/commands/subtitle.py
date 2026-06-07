@@ -221,8 +221,11 @@ def run(args: Namespace, config: dict) -> int:
                     progress.finish()  # Clean spinner without duplicate error
                 return EXIT.USAGE_ERROR
 
+            from subforge.core.translate.context import (
+                TranslationContext,
+                build_translation_context,
+            )
             from subforge.core.translate.factory import TranslatorFactory
-            from subforge.core.translate.context import TranslationContext, build_translation_context
             from subforge.core.translate.types import TranslatorType
 
             type_map = {"llm": TranslatorType.OPENAI, "bing": TranslatorType.BING, "google": TranslatorType.GOOGLE}

@@ -225,7 +225,6 @@ class LLMTranslator(BaseTranslator):
 
         Returns: (is_valid, error_feedback)
         """
-        import re
         if not isinstance(response_dict, dict):
             return (
                 False,
