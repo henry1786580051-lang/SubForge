@@ -29,6 +29,17 @@ def _run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, check=True, **kwargs)
 
 
+def _npm_command() -> str:
+    npm = shutil.which("npm.cmd") if platform.system() == "Windows" else shutil.which("npm")
+    if npm:
+        return npm
+    return "npm.cmd" if platform.system() == "Windows" else "npm"
+
+
+def _requires_mlx_metallib() -> bool:
+    return platform.system() == "Darwin" and platform.machine().lower() in {"arm64", "aarch64"}
+
+
 def _version() -> str:
     try:
         import importlib.metadata
@@ -78,7 +89,7 @@ def build_frontend(skip: bool = False) -> None:
         print("Skipping frontend build")
     elif (FRONTEND_DIR / "package.json").exists() and (FRONTEND_DIR / "node_modules").is_dir():
         try:
-            _run(["npm", "run", "build"], cwd=str(FRONTEND_DIR))
+            _run([_npm_command(), "run", "build"], cwd=str(FRONTEND_DIR))
         except subprocess.CalledProcessError as exc:
             if not FRONTEND_OUT_DIR.is_dir():
                 raise
@@ -249,10 +260,11 @@ def _verify_data_root(data_root: Path, label: str) -> None:
         data_root / "resource" / "assets" / "logo.png",
         data_root / "resource" / "fonts" / "NotoSansSC-Regular.ttf",
         data_root / "resource" / "subtitle_style" / "ass-default.json",
-        data_root / "mlx.metallib",
         data_root / "resource" / "bin" / ("ffmpeg.exe" if platform.system() == "Windows" else "ffmpeg"),
         data_root / "resource" / "bin" / ("ffprobe.exe" if platform.system() == "Windows" else "ffprobe"),
     ]
+    if _requires_mlx_metallib():
+        required.append(data_root / "mlx.metallib")
     missing = [str(path.relative_to(ROOT)) for path in required if not path.exists()]
     if missing:
         raise RuntimeError(f"Missing bundled resources in {label}:\n  - " + "\n  - ".join(missing))
