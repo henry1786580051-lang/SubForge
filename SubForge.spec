@@ -10,8 +10,6 @@ optional_datas = []
 for optional_pkg in (
     'mlx',
     'mlx_whisper',
-    'faster_whisper',
-    'ctranslate2',
 ):
     try:
         optional_hiddenimports += collect_submodules(optional_pkg)
@@ -54,7 +52,8 @@ optional_hiddenimports += [
     'whisperx',
     'whisperx.alignment',
     'whisperx.audio',
-    'whisperx.types',
+    'whisperx.schema',
+    'whisperx.log_utils',
     'whisperx.utils',
     'transformers',
     'transformers.models.wav2vec2',
@@ -157,6 +156,8 @@ a = Analysis(
         'app.api.llm_logs',
         'subforge.core.asr',
         'subforge.core.asr.silero_vad',
+        'subforge.core.asr.ten_vad',
+        'subforge.core.asr.speech_vad',
         'subforge.core.asr.whisper_api',
         'subforge.core.asr.whisper_cpp',
         'subforge.core.asr.whisperx_asr',
@@ -189,8 +190,12 @@ a = Analysis(
         'IPython', 'jupyter',
         'test', 'tests',
         'whisperx.diarize',
+        'whisperx.asr', 'whisperx.transcribe', 'whisperx.vads',
+        'whisperx.vads.pyannote', 'whisperx.vads.silero',
         'pyannote', 'pyannote.audio', 'pyannote.core', 'pyannote.database',
+        'pyannoteai', 'pyannoteai_sdk',
         'pyannote.metrics', 'pyannote.pipeline',
+        'torchcodec',
         'lightning', 'pytorch_lightning',
         'sklearn', 'scikit_learn',
         'optuna',

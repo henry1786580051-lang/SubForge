@@ -1084,6 +1084,44 @@ class TestHandleLongPath:
 
 
 class TestConservativeTimingRepair:
+    def test_keeps_reasonable_long_word_duration(self):
+        data = ASRData([
+            ASRDataSeg("extraordinary", 1_000, 2_650),
+            ASRDataSeg("car", 2_800, 3_100),
+        ])
+
+        data.cap_abnormal_word_durations()
+
+        assert data.segments[0].end_time == 2_650
+
+    def test_refines_only_vad_confirmed_word_edges_near_pause(self):
+        data = ASRData([
+            ASRDataSeg("This", 1_100, 1_300),
+            ASRDataSeg("ends", 1_350, 1_700),
+            ASRDataSeg("Next", 2_300, 2_600),
+            ASRDataSeg("line", 2_650, 2_900),
+        ])
+
+        data.refine_word_edges_with_speech_segments([(1_000, 2_000), (2_200, 3_000)])
+
+        assert data.segments[0].start_time == 970
+        assert data.segments[1].end_time == 2_030
+        assert data.segments[2].start_time == 2_170
+        assert data.segments[3].end_time == 3_030
+
+    def test_does_not_move_internal_word_boundary_during_continuous_speech(self):
+        data = ASRData([
+            ASRDataSeg("one", 1_000, 1_250),
+            ASRDataSeg("two", 1_280, 1_500),
+            ASRDataSeg("three", 1_520, 1_800),
+            ASRDataSeg("four", 1_820, 2_100),
+        ])
+
+        data.refine_word_edges_with_speech_segments([(950, 2_150)])
+
+        assert data.segments[1].end_time == 1_500
+        assert data.segments[2].start_time == 1_520
+
     def test_caps_abnormal_word_duration_without_moving_following_words(self):
         data = ASRData([
             ASRDataSeg("over", 618_520, 618_700),
@@ -1132,6 +1170,23 @@ class TestConservativeTimingRepair:
         assert data.segments[0].end_time > 611_289
         assert data.segments[0].end_time <= 612_450
         assert data.segments[1].start_time == 612_540
+
+    def test_extends_plain_short_sentence_tail_into_large_gap(self):
+        data = ASRData([
+            ASRDataSeg(
+                "The way these get off the line is unreal.",
+                970_000,
+                972_100,
+                translated_text="这车起步的方式太离谱了",
+            ),
+            ASRDataSeg("Next sentence.", 973_800, 974_500, translated_text="下一句"),
+        ])
+
+        data.extend_sentence_tails_conservatively()
+
+        assert data.segments[0].end_time > 972_100
+        assert data.segments[0].end_time <= 973_710
+        assert data.segments[1].start_time == 973_800
 
     def test_does_not_extend_when_gap_is_small_or_segment_is_long_enough(self):
         data = ASRData([

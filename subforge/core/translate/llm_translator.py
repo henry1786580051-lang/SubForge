@@ -286,6 +286,12 @@ class LLMTranslator(BaseTranslator):
         if not preserved_ok:
             return False, preserved_error
 
+        placeholder_ok, placeholder_error = self._validate_no_placeholder_translations(
+            response_dict, subtitle_dict, _extract_text
+        )
+        if not placeholder_ok:
+            return False, placeholder_error
+
         # 如果是反思模式，检查嵌套结构
         if self.is_reflect:
             for key, value in response_dict.items():
@@ -302,6 +308,43 @@ class LLMTranslator(BaseTranslator):
                         f"Key '{key}': missing 'native_translation' field. Found keys: {available_keys}. Must include 'native_translation'.",
                     )
 
+        return True, ""
+
+    @staticmethod
+    def _looks_like_placeholder_translation(text: str) -> bool:
+        text = str(text or "").strip()
+        if not text:
+            return True
+        normalized = re.sub(r"\s+", "", text)
+        placeholder_patterns = [
+            r"此句.*(?:合并|省略)",
+            r"(?:合并|并入|接上|延续).*(?:上一句|上句|前一句|前文)",
+            r"(?:上一句|上句|前一句|前文).*(?:合并|包含|已译)",
+            r"(?:最终版本|最终字幕).*(?:合并|省略)",
+            r"(?:内容)?(?:同上|见上|略|省略)",
+            r"merged(?:with|into)?(?:previous|above)",
+            r"sameasabove",
+            r"omitted",
+        ]
+        return any(re.search(pattern, normalized, flags=re.IGNORECASE) for pattern in placeholder_patterns)
+
+    def _validate_no_placeholder_translations(
+        self,
+        response_dict: Dict[str, Any],
+        subtitle_dict: Dict[str, str],
+        extract_text,
+    ) -> Tuple[bool, str]:
+        placeholders: list[str] = []
+        for key in subtitle_dict:
+            translated = extract_text(response_dict.get(key, ""))
+            if self._looks_like_placeholder_translation(translated):
+                placeholders.append(key)
+        if placeholders:
+            return (
+                False,
+                "Placeholder translations are not allowed. Every key must contain a real translation of its own source text. "
+                f"Placeholder keys: {placeholders[:20]}",
+            )
         return True, ""
 
     @staticmethod
@@ -373,6 +416,15 @@ class LLMTranslator(BaseTranslator):
         def normalized_text(text: str) -> str:
             return re.sub(r"[\s,，.。-]+", "", text).lower()
 
+        token_equivalents = {
+            "BMW": {"宝马"},
+            "Mercedes": {"奔驰", "梅赛德斯"},
+            "Mercedes-Benz": {"奔驰", "梅赛德斯奔驰", "梅赛德斯-奔驰"},
+            "Lexus": {"雷克萨斯"},
+            "Honda": {"本田"},
+            "Acura": {"讴歌"},
+        }
+
         def _is_decade_token(token: str) -> bool:
             return bool(re.fullmatch(r"(?:\d{2}|\d{4})s", token, flags=re.IGNORECASE))
 
@@ -434,6 +486,14 @@ class LLMTranslator(BaseTranslator):
             singular = token[:-1]
             return len(singular) >= 2 and normalized_text(singular) in translated_norm
 
+        def _equivalent_token_preserved(token: str, translated_norm: str) -> bool:
+            equivalents = token_equivalents.get(token)
+            if not equivalents:
+                equivalents = token_equivalents.get(token.strip(".,;:!?()[]{}"))
+            if not equivalents:
+                return False
+            return any(normalized_text(equivalent) in translated_norm for equivalent in equivalents)
+
         for key, original in subtitle_dict.items():
             translated = extract_text(response_dict.get(key, ""))
             translated_norm = normalized_text(translated)
@@ -444,6 +504,8 @@ class LLMTranslator(BaseTranslator):
                 if _ordinal_preserved(token, translated_norm):
                     continue
                 if _inflected_alnum_preserved(token, translated_norm):
+                    continue
+                if _equivalent_token_preserved(token, translated_norm):
                     continue
                 if token_norm and token_norm not in translated_norm:
                     missing.append(f"{key}:{token}")
@@ -494,6 +556,10 @@ class LLMTranslator(BaseTranslator):
                     raise RuntimeError(
                         f"Single item translation did not produce {self.target_language.value}: {translated_text!r}"
                     )
+                if self._looks_like_placeholder_translation(translated_text):
+                    raise RuntimeError(
+                        f"Single item translation returned a placeholder instead of a translation: {translated_text!r}"
+                    )
                 data.translated_text = translated_text
             except Exception as e:
                 logger.error(f"Single item translation failed {data.index}: {str(e)}")
@@ -517,7 +583,7 @@ class LLMTranslator(BaseTranslator):
                 "custom_prompt": self.custom_prompt,
                 "reflect": self.is_reflect,
                 "context": self.translation_context.fingerprint(),
-                "prompt_version": "context-v1",
+                "prompt_version": "context-v2-no-placeholders",
             }
         )
         return f"{class_name}:{chunk_key}:{lang}:{model}:{prompt_key}"

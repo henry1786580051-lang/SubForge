@@ -1,12 +1,163 @@
+from types import SimpleNamespace
+
+import pytest
+
 from subforge.core.asr.whisperx_asr import (
     DEFAULT_LOCAL_MLX_MODEL,
     WhisperXASR,
-    _prepare_mlx_model_path,
+    _install_offline_sentence_tokenizer,
     _mlx_model_repo,
     _normalize_align_device,
+    _prepare_mlx_model_path,
+    _prepare_spoken_alignment,
+    _refine_words_with_char_alignments,
+    _restore_display_alignment,
     _segments_for_alignment,
+    _spoken_token,
     default_mlx_model,
 )
+
+
+def test_whisperx_uses_offline_sentence_tokenizer_when_punkt_is_missing():
+    module = SimpleNamespace(
+        nltk_load=lambda _resource: (_ for _ in ()).throw(LookupError("missing"))
+    )
+
+    _install_offline_sentence_tokenizer(module)
+    tokenizer = module.nltk_load("tokenizers/punkt_tab/english.pickle")
+
+    assert list(tokenizer.span_tokenize("First sentence. Second one!")) == [
+        (0, 15),
+        (16, 27),
+    ]
+
+
+def test_whisperx_refines_word_edges_from_matching_character_timestamps():
+    words = [{"word": "Today,", "start": 1.0, "end": 1.3}]
+    chars = [
+        {"char": "T", "start": 1.02, "end": 1.08},
+        {"char": "o", "start": 1.08, "end": 1.14},
+        {"char": "d", "start": 1.14, "end": 1.20},
+        {"char": "a", "start": 1.20, "end": 1.27},
+        {"char": "y", "start": 1.27, "end": 1.36},
+        {"char": ",", "start": 1.36, "end": 1.40},
+    ]
+
+    refined = _refine_words_with_char_alignments(words, chars)
+
+    assert refined[0]["start"] == 1.02
+    assert refined[0]["end"] == 1.40
+    assert words[0]["end"] == 1.3
+
+
+def test_whisperx_keeps_word_timing_when_character_text_does_not_match():
+    words = [{"word": "Lexus", "start": 2.0, "end": 2.5}]
+    chars = [{"char": "B", "start": 2.1, "end": 2.2}]
+
+    assert _refine_words_with_char_alignments(words, chars) == words
+
+
+def test_whisperx_character_mismatch_does_not_block_following_word():
+    words = [
+        {"word": "2026", "start": 2.0, "end": 2.3},
+        {"word": "Lexus", "start": 2.4, "end": 2.8},
+    ]
+    chars = [
+        {"char": "?", "start": 2.0, "end": 2.3},
+        {"char": " ", "start": 2.3, "end": 2.4},
+        {"char": "L", "start": 2.42, "end": 2.48},
+        {"char": "e", "start": 2.48, "end": 2.55},
+        {"char": "x", "start": 2.55, "end": 2.63},
+        {"char": "u", "start": 2.63, "end": 2.72},
+        {"char": "s", "start": 2.72, "end": 2.84},
+    ]
+
+    refined = _refine_words_with_char_alignments(words, chars)
+
+    assert refined[0] == words[0]
+    assert refined[1]["start"] == 2.42
+    assert refined[1]["end"] == 2.84
+
+
+def test_whisperx_normalizes_english_numbers_models_units_and_symbols():
+    assert _spoken_token("2026") == "twenty twenty six"
+    assert _spoken_token("M4") == "M four"
+    assert _spoken_token("543hp") == "five hundred forty three horsepower"
+    assert _spoken_token("$79,995.") == (
+        "seventy nine thousand nine hundred ninety five dollars."
+    )
+    assert _spoken_token("10%") == "ten percent"
+    assert _spoken_token("0-60") == "zero to sixty"
+    assert _spoken_token("AWD") == "A W D"
+    assert _spoken_token("IS") == "IS"
+    assert _spoken_token("is") == "is"
+
+
+def test_whisperx_spoken_alignment_is_english_only():
+    segments = [{"text": "2026 Lexus", "start": 1.0, "end": 2.0}]
+
+    normalized, plans = _prepare_spoken_alignment(segments, "zh")
+
+    assert normalized == segments
+    assert plans is None
+
+
+def test_whisperx_plain_english_uses_original_alignment_path():
+    segments = [{"text": "Today we drive the new Lexus.", "start": 1.0, "end": 3.0}]
+
+    normalized, plans = _prepare_spoken_alignment(segments, "en")
+
+    assert normalized == segments
+    assert plans is None
+
+
+def test_whisperx_restores_display_tokens_from_spoken_alignment():
+    segments = [
+        {
+            "text": "The 2026 M4 makes 543hp.",
+            "start": 1.0,
+            "end": 4.0,
+        }
+    ]
+    normalized, plans = _prepare_spoken_alignment(segments, "en")
+    assert normalized[0]["text"] == (
+        "The twenty twenty six M four makes five hundred forty three horsepower."
+    )
+    assert plans is not None
+    spoken = normalized[0]["text"].split()
+    aligned_words = [
+        {
+            "word": word,
+            "start": 1.0 + index * 0.2,
+            "end": 1.18 + index * 0.2,
+            "score": 0.9,
+        }
+        for index, word in enumerate(spoken)
+    ]
+
+    restored = _restore_display_alignment(
+        {"segments": [{"words": aligned_words}]}, plans
+    )
+
+    assert restored is not None
+    words = restored["segments"][0]["words"]
+    assert [word["word"] for word in words] == ["The", "2026", "M4", "makes", "543hp."]
+    assert words[1]["start"] == 1.2
+    assert words[1]["end"] == 1.78
+    assert words[2]["start"] == 1.8
+    assert words[2]["end"] == pytest.approx(2.18)
+    assert restored["segments"][0]["text"] == segments[0]["text"]
+
+
+def test_whisperx_rejects_incomplete_spoken_mapping():
+    segments = [{"text": "2026 Lexus", "start": 1.0, "end": 2.0}]
+    _, plans = _prepare_spoken_alignment(segments, "en")
+
+    assert plans is not None
+    assert _restore_display_alignment(
+        {"segments": [{"words": [{"word": "twenty", "start": 1.0, "end": 1.2}]}]},
+        plans,
+    ) is None
 
 
 def test_whisperx_maps_standard_model_name_to_mlx_repo():

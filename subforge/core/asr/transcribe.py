@@ -80,6 +80,23 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None, on_segm
             asr_data = asr.run(callback=callback)
             callback(90, "Processing results...")
 
+        if asr_data.is_word_timestamp():
+            try:
+                from subforge.core.asr.speech_vad import detect_speech_segments
+                from subforge.core.asr.speech_vad import is_available as vad_available
+
+                if vad_available():
+                    speech_segments = detect_speech_segments(
+                        audio_for_asr,
+                        threshold=0.5,
+                        min_speech_ms=160,
+                        min_silence_ms=180,
+                        speech_pad_ms=0,
+                    )
+                    asr_data.refine_word_edges_with_speech_segments(speech_segments)
+            except Exception as e:
+                logger.debug("Word-edge VAD refinement skipped: %s", e, exc_info=True)
+
         asr_data.cap_abnormal_word_durations()
 
         # Fix boundary overlaps before text/energy post-processing sees the data.

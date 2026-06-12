@@ -152,6 +152,13 @@ def _split_segment_by_position(
 
     if len(zh_lines) <= 1 and len(en_lines) <= 1:
         return [seg]
+    if _has_orphan_target_parts(zh_lines, en_lines):
+        logger.debug(
+            "Skip bilingual resegment because target split created orphan parts: %r / %r",
+            zh_lines,
+            en_lines,
+        )
+        return [seg]
 
     # 均匀分配时间戳
     duration = seg.end_time - seg.start_time
@@ -174,6 +181,31 @@ def _split_segment_by_position(
         result.append(new_seg)
 
     return result
+
+
+def _has_orphan_target_parts(target_lines: list[str], source_lines: list[str]) -> bool:
+    """Reject splits that strand a translated line as only a Latin/digit token.
+
+    Bilingual resegmentation is a display optimization. It must not turn a real
+    translation into fragments like "160" or "Competition" while the paired
+    source line still contains a normal sentence.
+    """
+    if not any(_is_mainly_cjk(line) for line in target_lines):
+        return False
+
+    for target, source in zip(target_lines, source_lines):
+        target = target.strip()
+        source = source.strip()
+        if not target or _is_mainly_cjk(target):
+            continue
+        if not re.search(r"[A-Za-z0-9]", target):
+            continue
+        source_words = re.findall(r"[A-Za-z0-9][A-Za-z0-9'.,-]*", source)
+        source_has_sentence = len(source_words) >= 3
+        target_is_token_only = bool(re.fullmatch(r"[\W_]*[A-Za-z0-9][A-Za-z0-9 .,+#&/-]*[\W_]*", target))
+        if source_has_sentence and target_is_token_only:
+            return True
+    return False
 
 
 def _determine_part_count(

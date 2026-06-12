@@ -1,8 +1,10 @@
 import json
 import os
+import re
 import sys
 import tempfile
 import types
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Union
 
@@ -182,13 +184,231 @@ def _segments_for_alignment(result: dict) -> list[dict]:
     return segments
 
 
+_SMALL_NUMBERS = (
+    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
+    "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
+    "sixteen", "seventeen", "eighteen", "nineteen",
+)
+_TENS = ("", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
+_UNIT_NAMES = {
+    "hp": "horsepower",
+    "mph": "miles per hour",
+    "kph": "kilometers per hour",
+    "kmh": "kilometers per hour",
+    "kg": "kilograms",
+    "lb": "pounds",
+    "lbs": "pounds",
+    "ft": "feet",
+    "nm": "newton meters",
+    "rpm": "R P M",
+}
+
+
+@dataclass(frozen=True)
+class _AlignmentToken:
+    display_text: str
+    spoken_word_count: int
+
+
+@dataclass(frozen=True)
+class _AlignmentSegmentPlan:
+    text: str
+    start: float
+    end: float
+    tokens: tuple[_AlignmentToken, ...]
+
+
+def _integer_to_english(value: int) -> str:
+    if value < 0:
+        return f"minus {_integer_to_english(-value)}"
+    if value < 20:
+        return _SMALL_NUMBERS[value]
+    if value < 100:
+        tens, remainder = divmod(value, 10)
+        return _TENS[tens] if not remainder else f"{_TENS[tens]} {_SMALL_NUMBERS[remainder]}"
+    if value < 1000:
+        hundreds, remainder = divmod(value, 100)
+        result = f"{_SMALL_NUMBERS[hundreds]} hundred"
+        return result if not remainder else f"{result} {_integer_to_english(remainder)}"
+    for scale, name in ((1_000_000_000, "billion"), (1_000_000, "million"), (1000, "thousand")):
+        if value >= scale:
+            leading, remainder = divmod(value, scale)
+            result = f"{_integer_to_english(leading)} {name}"
+            return result if not remainder else f"{result} {_integer_to_english(remainder)}"
+    return " ".join(_SMALL_NUMBERS[int(digit)] for digit in str(value))
+
+
+def _number_to_english(value: str, *, allow_year: bool = True) -> str | None:
+    compact = value.replace(",", "")
+    if not re.fullmatch(r"\d+(?:\.\d+)?", compact):
+        return None
+    if "." in compact:
+        whole, fraction = compact.split(".", 1)
+        return f"{_integer_to_english(int(whole))} point {' '.join(_SMALL_NUMBERS[int(d)] for d in fraction)}"
+    number = int(compact)
+    if allow_year and len(compact) == 4 and 1900 <= number <= 2099:
+        first, second = divmod(number, 100)
+        if second == 0:
+            return f"{_integer_to_english(first)} hundred"
+        if number < 2000:
+            return f"{_integer_to_english(first)} {_integer_to_english(second)}"
+        if number < 2010:
+            return f"two thousand {_integer_to_english(second)}"
+        return f"twenty {_integer_to_english(second)}"
+    return _integer_to_english(number)
+
+
+def _spoken_token(token: str) -> str:
+    """Return deterministic English speech text for one display token."""
+    leading = re.match(r"^[\(\[\{\"']*", token).group(0)  # type: ignore[union-attr]
+    trailing_match = re.search(r"[\)\]\}\"',.!?;:]*$", token)
+    trailing = trailing_match.group(0) if trailing_match else ""
+    core_end = len(token) - len(trailing) if trailing else len(token)
+    core = token[len(leading):core_end]
+    if not core:
+        return token
+
+    punctuation = next((ch for ch in reversed(trailing) if ch in ".!?"), "")
+
+    def finish(text: str) -> str:
+        return f"{text}{punctuation}" if punctuation else text
+
+    if core == "&":
+        return finish("and")
+    if core == "+":
+        return finish("plus")
+
+    currency = re.fullmatch(r"([\$£€])(\d[\d,]*(?:\.\d+)?)", core)
+    if currency:
+        amount = _number_to_english(currency.group(2), allow_year=False)
+        names = {"$": "dollars", "£": "pounds", "€": "euros"}
+        return finish(f"{amount} {names[currency.group(1)]}")
+
+    percent = re.fullmatch(r"(\d[\d,]*(?:\.\d+)?)%", core)
+    if percent:
+        return finish(f"{_number_to_english(percent.group(1), allow_year=False)} percent")
+
+    number_range = re.fullmatch(r"(\d+(?:\.\d+)?)[-–](\d+(?:\.\d+)?)", core)
+    if number_range:
+        left = _number_to_english(number_range.group(1), allow_year=False)
+        right = _number_to_english(number_range.group(2), allow_year=False)
+        return finish(f"{left} to {right}")
+
+    number_unit = re.fullmatch(r"(\d[\d,]*(?:\.\d+)?)([A-Za-z]+)", core)
+    if number_unit:
+        number = _number_to_english(number_unit.group(1), allow_year=False)
+        unit = number_unit.group(2)
+        spoken_unit = _UNIT_NAMES.get(unit.lower())
+        if spoken_unit:
+            return finish(f"{number} {spoken_unit}")
+        if len(unit) <= 3:
+            return finish(f"{number} {' '.join(unit.upper())}")
+
+    model_name = re.fullmatch(r"([A-Za-z]{1,3})(\d+)", core)
+    if model_name:
+        letters = " ".join(model_name.group(1).upper())
+        number = _number_to_english(model_name.group(2), allow_year=False)
+        return finish(f"{letters} {number}")
+
+    number = _number_to_english(core)
+    if number:
+        return finish(number)
+
+    if core.isupper() and core.isalpha() and 3 <= len(core) <= 6:
+        return finish(" ".join(core))
+    return token
+
+
+def _prepare_spoken_alignment(
+    segments: list[dict], language_code: str
+) -> tuple[list[dict], list[_AlignmentSegmentPlan] | None]:
+    if language_code != "en":
+        return segments, None
+
+    normalized: list[dict] = []
+    plans: list[_AlignmentSegmentPlan] = []
+    changed = False
+    for segment in segments:
+        display_tokens = re.findall(r"\S+", segment["text"])
+        spoken_tokens = [_spoken_token(token) for token in display_tokens]
+        changed |= spoken_tokens != display_tokens
+        plan_tokens = tuple(
+            _AlignmentToken(display, max(1, len(spoken.split())))
+            for display, spoken in zip(display_tokens, spoken_tokens)
+        )
+        normalized.append({**segment, "text": " ".join(spoken_tokens)})
+        plans.append(
+            _AlignmentSegmentPlan(
+                text=segment["text"],
+                start=float(segment["start"]),
+                end=float(segment["end"]),
+                tokens=plan_tokens,
+            )
+        )
+    return (normalized, plans) if changed else (segments, None)
+
+
+def _restore_display_alignment(
+    aligned: dict, plans: list[_AlignmentSegmentPlan]
+) -> dict | None:
+    spoken_words = [
+        word
+        for segment in aligned.get("segments") or []
+        if isinstance(segment, dict)
+        for word in segment.get("words") or []
+        if isinstance(word, dict)
+    ]
+    expected = sum(token.spoken_word_count for plan in plans for token in plan.tokens)
+    if len(spoken_words) != expected:
+        return None
+
+    word_index = 0
+    restored_segments: list[dict] = []
+    restored_words: list[dict] = []
+    for plan in plans:
+        words: list[dict] = []
+        for token in plan.tokens:
+            group = spoken_words[word_index : word_index + token.spoken_word_count]
+            word_index += token.spoken_word_count
+            restored = {"word": token.display_text}
+            starts = [_float_seconds(word.get("start")) for word in group]
+            ends = [_float_seconds(word.get("end")) for word in group]
+            valid_starts = [value for value in starts if value is not None]
+            valid_ends = [value for value in ends if value is not None]
+            if len(valid_starts) == len(group) and len(valid_ends) == len(group):
+                restored["start"] = min(valid_starts)
+                restored["end"] = max(valid_ends)
+            scores = [word.get("score") for word in group if isinstance(word.get("score"), (int, float))]
+            if scores:
+                restored["score"] = round(sum(scores) / len(scores), 3)
+            words.append(restored)
+            restored_words.append(restored)
+
+        timed_starts = [_float_seconds(word.get("start")) for word in words]
+        timed_ends = [_float_seconds(word.get("end")) for word in words]
+        starts = [value for value in timed_starts if value is not None]
+        ends = [value for value in timed_ends if value is not None]
+        restored_segments.append(
+            {
+                "text": plan.text,
+                "start": min(starts) if starts else plan.start,
+                "end": max(ends) if ends else plan.end,
+                "words": words,
+            }
+        )
+
+    result = dict(aligned)
+    result["segments"] = restored_segments
+    result["word_segments"] = restored_words
+    return result
+
+
 def install_whisperx_runtime_stubs() -> None:
     """Avoid importing WhisperX features that SubForge does not execute.
 
-    Python executes whisperx.__init__ before loading whisperx.alignment. That
-    __init__ imports transcribe/diarize, which then pull faster-whisper VAD,
-    pyannote, sklearn, matplotlib and other unused packages. SubForge uses
-    MLX Whisper for transcription and only needs WhisperX audio/alignment.
+    Older WhisperX releases eagerly import transcribe/diarize, while frozen
+    builds can still probe those modules during collection. SubForge uses MLX
+    Whisper for transcription and only needs WhisperX audio/alignment.
     """
 
     def _unsupported(*_args, **_kwargs):
@@ -204,6 +424,43 @@ def install_whisperx_runtime_stubs() -> None:
         diarize.assign_word_speakers = _unsupported
         diarize.DiarizationPipeline = _unsupported
         sys.modules["whisperx.diarize"] = diarize
+
+
+class _OfflineSentenceTokenizer:
+    """Small Punkt fallback used when the packaged app has no NLTK data."""
+
+    def span_tokenize(self, text: str):
+        start = 0
+        for match in re.finditer(r"[.!?。！？]+(?=\s+|$)", text):
+            end = match.end()
+            if end > start:
+                yield start, end
+            start = end
+            while start < len(text) and text[start].isspace():
+                start += 1
+        if start < len(text):
+            yield start, len(text)
+
+
+def _install_offline_sentence_tokenizer(alignment_module: Any) -> None:
+    """Prevent WhisperX 3.8+ from downloading Punkt data at runtime."""
+    if getattr(alignment_module, "_subforge_offline_tokenizer_installed", False):
+        return
+    nltk_load = getattr(alignment_module, "nltk_load", None)
+    if not callable(nltk_load):
+        return
+
+    def _load_or_fallback(resource: str):
+        try:
+            return nltk_load(resource)
+        except LookupError:
+            logger.warning(
+                "NLTK Punkt data is unavailable; using offline sentence boundaries"
+            )
+            return _OfflineSentenceTokenizer()
+
+    alignment_module.nltk_load = _load_or_fallback
+    alignment_module._subforge_offline_tokenizer_installed = True
 
 
 def _float_seconds(value: Any) -> float | None:
@@ -223,6 +480,87 @@ def _word_has_timing(word: dict) -> bool:
 def _word_duration_weight(text: str) -> int:
     alnum = sum(1 for ch in text if ch.isalnum())
     return max(1, alnum)
+
+
+def _refine_words_with_char_alignments(
+    words: list[dict], chars: list[dict] | None
+) -> list[dict]:
+    """Use WhisperX character timings to tighten aligned word boundaries.
+
+    WhisperX already derives words from characters, but older releases can
+    leave a word partially timed when punctuation or an unsupported character
+    is involved. Character data is treated as supporting evidence only: text
+    order and existing timings are preserved when an exact sequential match is
+    unavailable.
+    """
+    if not chars:
+        return words
+
+    timed_chars = [
+        char
+        for char in chars
+        if isinstance(char, dict) and str(char.get("char") or "")
+    ]
+    uses_space_delimiters = any(
+        str(char.get("char") or "").isspace() for char in timed_chars
+    )
+    char_index = 0
+    refined: list[dict] = []
+
+    for original in words:
+        word = dict(original)
+        target = "".join(ch.lower() for ch in _word_text(word) if not ch.isspace())
+        if not target:
+            refined.append(word)
+            continue
+
+        matched: list[dict] = []
+        target_index = 0
+        scan_index = char_index
+        while scan_index < len(timed_chars):
+            value = str(timed_chars[scan_index].get("char") or "")
+            if not value.isspace():
+                break
+            scan_index += 1
+
+        if uses_space_delimiters:
+            while scan_index < len(timed_chars):
+                item = timed_chars[scan_index]
+                value = str(item.get("char") or "")
+                if value.isspace():
+                    break
+                matched.append(item)
+                scan_index += 1
+            candidate = "".join(
+                str(item.get("char") or "").lower() for item in matched
+            )
+            target_index = len(target) if candidate == target else 0
+            char_index = scan_index
+        else:
+            while scan_index < len(timed_chars) and target_index < len(target):
+                item = timed_chars[scan_index]
+                value = str(item.get("char") or "")
+                scan_index += 1
+                if value.lower() != target[target_index]:
+                    matched = []
+                    break
+                matched.append(item)
+                target_index += 1
+
+        if target_index == len(target) and matched:
+            starts = [_float_seconds(item.get("start")) for item in matched]
+            ends = [_float_seconds(item.get("end")) for item in matched]
+            valid_starts = [value for value in starts if value is not None]
+            valid_ends = [value for value in ends if value is not None]
+            if valid_starts:
+                word["start"] = min(valid_starts)
+            if valid_ends:
+                word["end"] = max(valid_ends)
+            char_index = scan_index
+
+        refined.append(word)
+
+    return refined
 
 
 def _append_word_run(
@@ -360,8 +698,7 @@ class WhisperXASR(BaseASR):
         try:
             import mlx_whisper
             install_whisperx_runtime_stubs()
-            from whisperx.alignment import align as whisperx_align
-            from whisperx.alignment import load_align_model
+            import whisperx.alignment as whisperx_alignment
             from whisperx.audio import load_audio
         except ImportError as exc:
             raise RuntimeError(
@@ -382,6 +719,10 @@ class WhisperXASR(BaseASR):
                     "with the bundled MLX Metal resources."
                 ) from exc
             raise
+
+        _install_offline_sentence_tokenizer(whisperx_alignment)
+        whisperx_align = whisperx_alignment.align
+        load_align_model = whisperx_alignment.load_align_model
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
@@ -420,6 +761,9 @@ class WhisperXASR(BaseASR):
                 raise RuntimeError("MLX Whisper did not return alignable transcript segments")
 
             language_code = (result.get("language") or self.language or "en").lower()
+            spoken_align_segments, alignment_plans = _prepare_spoken_alignment(
+                align_segments, language_code
+            )
             callback(65, "Loading forced alignment model...")
             align_model_name = self._resolve_align_model_name(language_code)
             align_kwargs: dict[str, Any] = {
@@ -437,14 +781,40 @@ class WhisperXASR(BaseASR):
                 model_a, metadata = load_align_model(**align_kwargs)
 
             callback(78, "Running forced alignment...")
-            aligned = whisperx_align(
-                align_segments,
-                model_a,
-                metadata,
-                audio,
-                self.align_device,
-                return_char_alignments=False,
-            )
+            alignment_model = model_a
+            alignment_metadata = metadata
+
+            def _align(segments_to_align: list[dict]) -> dict:
+                try:
+                    return whisperx_align(
+                        segments_to_align,
+                        alignment_model,
+                        alignment_metadata,
+                        audio,
+                        self.align_device,
+                        return_char_alignments=True,
+                    )
+                except TypeError:
+                    # Keep compatibility with older externally managed WhisperX
+                    # installations that do not expose character alignments.
+                    return whisperx_align(
+                        segments_to_align,
+                        alignment_model,
+                        alignment_metadata,
+                        audio,
+                        self.align_device,
+                    )
+
+            aligned = _align(spoken_align_segments)
+            if alignment_plans:
+                restored = _restore_display_alignment(aligned, alignment_plans)
+                if restored is None:
+                    logger.warning(
+                        "Spoken alignment mapping was incomplete; retrying original text"
+                    )
+                    aligned = _align(align_segments)
+                else:
+                    aligned = restored
             aligned["language"] = language_code
             aligned["align_model"] = align_model_name or ""
             aligned["asr_backend"] = "mlx-whisper"
@@ -473,6 +843,11 @@ class WhisperXASR(BaseASR):
                 if not isinstance(words, list):
                     continue
                 word_dicts = [word for word in words if isinstance(word, dict)]
+                chars = item.get("chars")
+                word_dicts = _refine_words_with_char_alignments(
+                    word_dicts,
+                    chars if isinstance(chars, list) else None,
+                )
                 segment_start = _float_seconds(item.get("start"))
                 segment_end = _float_seconds(item.get("end"))
                 segments.extend(_words_to_segments(word_dicts, segment_start, segment_end))

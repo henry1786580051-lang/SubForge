@@ -101,3 +101,39 @@ def test_resegment_still_splits_monolingual_long_segment():
 
     assert len(result.segments) > 1
     assert "".join(seg.text.replace(" ", "") for seg in result.segments) == data.segments[0].text.replace(" ", "")
+
+
+def test_resegment_does_not_create_numeric_only_translation_fragment():
+    data = ASRData(
+        [
+            ASRDataSeg(
+                text="But I don't really feel the need to be going 160 up the left lane in this car.",
+                start_time=0,
+                end_time=5000,
+                translated_text="但我觉得没必要在左车道飙到160",
+            )
+        ]
+    )
+
+    result = resegment_subtitles(data, max_chars_en=42, max_chars_cjk=16)
+
+    assert len(result.segments) == 1
+    assert result.segments[0].translated_text == data.segments[0].translated_text
+
+
+def test_resegment_does_not_create_latin_only_translation_fragment():
+    data = ASRData(
+        [
+            ASRDataSeg(
+                text="That green frozen Tampa Bay green individual M3 Competition.",
+                start_time=0,
+                end_time=5000,
+                translated_text="那款冰冻坦帕湾绿个性化M3 Competition",
+            )
+        ]
+    )
+
+    result = resegment_subtitles(data, max_chars_en=42, max_chars_cjk=16)
+
+    assert len(result.segments) == 1
+    assert result.segments[0].translated_text == data.segments[0].translated_text

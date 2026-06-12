@@ -1,5 +1,6 @@
 import importlib
 
+from subforge.core.asr.asr_data import ASRData, ASRDataSeg
 from subforge.core.entities import (
     FasterWhisperModelEnum,
     TranscribeConfig,
@@ -26,6 +27,18 @@ class DummyWhisperXASR:
     def __init__(self, audio_path, **kwargs):
         self.audio_path = audio_path
         self.kwargs = kwargs
+
+
+class DummyWordTimestampASR:
+    def run(self, callback=None):
+        return ASRData(
+            [
+                ASRDataSeg("This", 1_100, 1_300),
+                ASRDataSeg("ends", 1_350, 1_700),
+                ASRDataSeg("Next", 2_300, 2_600),
+                ASRDataSeg("line", 2_650, 2_900),
+            ]
+        )
 
 
 def _whisper_cpp_config() -> TranscribeConfig:
@@ -84,6 +97,67 @@ def test_whisper_cpp_skips_outer_vad_to_avoid_reloading_model_per_segment():
 
     config = TranscribeConfig(transcribe_model=TranscribeModelEnum.FASTER_WHISPER)
     assert transcribe_module._should_use_outer_vad(config) is True
+
+
+def test_transcribe_refines_word_edges_without_changing_text(monkeypatch):
+    silero = importlib.import_module("subforge.core.asr.silero_vad")
+    monkeypatch.setattr(
+        transcribe_module,
+        "_create_asr_instance",
+        lambda *_args, **_kwargs: DummyWordTimestampASR(),
+    )
+    monkeypatch.setattr(silero, "is_available", lambda: True)
+    monkeypatch.setattr(
+        silero,
+        "detect_speech_segments",
+        lambda *_args, **_kwargs: [(1_000, 2_000), (2_200, 3_000)],
+    )
+    config = TranscribeConfig(
+        transcribe_model=TranscribeModelEnum.WHISPERX,
+        need_word_time_stamp=True,
+        enable_audio_enhancement=False,
+    )
+
+    result = transcribe_module.transcribe("audio.wav", config)
+
+    assert [segment.text for segment in result.segments] == [
+        "This",
+        "ends",
+        "Next",
+        "line",
+    ]
+    assert result.segments[1].end_time == 2_030
+    assert result.segments[2].start_time == 2_170
+
+
+def test_transcribe_keeps_word_results_when_vad_refinement_fails(monkeypatch):
+    silero = importlib.import_module("subforge.core.asr.silero_vad")
+    monkeypatch.setattr(
+        transcribe_module,
+        "_create_asr_instance",
+        lambda *_args, **_kwargs: DummyWordTimestampASR(),
+    )
+    monkeypatch.setattr(silero, "is_available", lambda: True)
+
+    def _fail_vad(*_args, **_kwargs):
+        raise RuntimeError("VAD unavailable")
+
+    monkeypatch.setattr(silero, "detect_speech_segments", _fail_vad)
+    config = TranscribeConfig(
+        transcribe_model=TranscribeModelEnum.WHISPERX,
+        need_word_time_stamp=True,
+        enable_audio_enhancement=False,
+    )
+
+    result = transcribe_module.transcribe("audio.wav", config)
+
+    assert [segment.text for segment in result.segments] == [
+        "This",
+        "ends",
+        "Next",
+        "line",
+    ]
+    assert result.segments[1].end_time == 1_700
 
 
 def test_create_asr_instance_whisperx_uses_forced_alignment_backend(monkeypatch):

@@ -234,6 +234,17 @@ def patch_packaged_mlx_metallib() -> None:
         print(f"Linked MLX metallib: {alias.relative_to(ROOT)}")
 
 
+def resign_macos_app() -> None:
+    """Refresh the ad-hoc signature after post-build bundle modifications."""
+    if platform.system() != "Darwin":
+        return
+    app = DIST_DIR / "SubForge.app"
+    if not app.exists():
+        return
+    _run(["codesign", "--force", "--deep", "--sign", "-", str(app)])
+    _run(["codesign", "--verify", "--deep", "--strict", str(app)])
+
+
 def _platform_tag() -> str:
     system = platform.system().lower()
     machine = platform.machine().lower().replace("amd64", "x64").replace("x86_64", "x64")
@@ -337,6 +348,7 @@ def main() -> int:
     patch_packaged_torch()
     dedupe_packaged_torch_libs()
     patch_packaged_mlx_metallib()
+    resign_macos_app()
     verify_bundle()
     if not args.no_archive:
         archive(version)

@@ -23,7 +23,7 @@ MAX_WORD_COUNT_CJK = 25  # CJK文本单行最大字数
 MAX_WORD_COUNT_ENGLISH = 18  # 英文文本单行最大单词数
 
 # Segments阈值
-SEGMENT_WORD_THRESHOLD = 500  # 长文本Segments阈值(字数)
+SEGMENT_WORD_THRESHOLD = 250  # 长文本Segments阈值(字数)
 
 # 时间间隔
 MAX_GAP = 1500  # 允许的最大时间间隔(毫秒)
@@ -323,31 +323,37 @@ class SubtitleSplitter:
 
     def _process_segments(self, asr_data_list: List[ASRData]) -> List[List[ASRDataSeg]]:
         """并发处理AllSegments"""
-        futures = []
         future_inputs = {}
-        for asr_data in asr_data_list:
+        for index, asr_data in enumerate(asr_data_list):
             if not self.executor:
                 raise ValueError("Thread pool not initialized")
             future = self.executor.submit(self._process_single_segment, asr_data)
-            futures.append(future)
-            future_inputs[future] = asr_data
+            future_inputs[future] = (index, asr_data)
 
-        processed_segments = []
-        for future in as_completed(futures):
+        processed_by_index: dict[int, List[ASRDataSeg]] = {}
+        for future in as_completed(future_inputs):
             if not self.is_running:
                 break
+            index, original = future_inputs[future]
             try:
                 result = future.result()
-                processed_segments.append(result)
+                processed_by_index[index] = result
                 if self.update_callback:
-                    self.update_callback(self._merge_processed_segments(processed_segments))
+                    partial = [
+                        processed_by_index[i]
+                        for i in sorted(processed_by_index)
+                    ]
+                    self.update_callback(self._merge_processed_segments(partial))
             except Exception as e:
                 logger.error(f"Segment processing failed:{str(e)}")
-                original = future_inputs.get(future)
                 if original is not None:
-                    processed_segments.append(original.segments)
+                    processed_by_index[index] = original.segments
 
-        return processed_segments
+        return [
+            processed_by_index[i]
+            for i in range(len(asr_data_list))
+            if i in processed_by_index
+        ]
 
     def _process_single_segment(self, asr_data_part: ASRData) -> List[ASRDataSeg]:
         """处理单个Segments(带重试和降级)"""

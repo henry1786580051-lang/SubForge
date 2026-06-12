@@ -113,6 +113,23 @@ class TestValidateLLmResponse:
         assert ok is False
         assert "Untranslated keys" in msg
 
+    def test_rejects_placeholder_merge_translation(self):
+        t = _make_translator()
+        resp = {
+            "0": "这句正常翻译",
+            "1": "(此句内容在最终版本中与上一句合并)",
+        }
+        inp = {
+            "0": "This one is translated.",
+            "1": "of 3 series and 4 series",
+        }
+
+        ok, msg = t._validate_llm_response(resp, inp)
+
+        assert ok is False
+        assert "Placeholder translations" in msg
+        assert "1" in msg
+
     def test_reflect_mode_valid(self):
         t = _make_translator(is_reflect=True)
         resp = {
@@ -201,6 +218,16 @@ class TestValidateLLmResponse:
         assert ok is False
         assert "2026" in msg
         assert "350" in msg
+
+    def test_allows_standard_brand_translation_for_preserved_tokens(self):
+        t = _make_translator()
+        resp = {"0": "宝马给这辆车做了专属调校。"}
+        inp = {"0": "BMW gave this car a unique tune."}
+
+        ok, msg = t._validate_llm_response(resp, inp)
+
+        assert ok is True
+        assert msg == ""
 
     def test_cache_key_includes_prompt_reflect_and_context(self):
         base = _make_translator()

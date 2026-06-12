@@ -998,8 +998,8 @@ class ASRData:
         should_run_speech_vad = len(audio) >= 30_000 and len(self.segments) >= 8
         if should_run_speech_vad:
             try:
-                from subforge.core.asr.silero_vad import detect_speech_segments
-                from subforge.core.asr.silero_vad import is_available as vad_available
+                from subforge.core.asr.speech_vad import detect_speech_segments
+                from subforge.core.asr.speech_vad import is_available as vad_available
 
                 if vad_available():
                     speech_segments_for_refinement = detect_speech_segments(
@@ -1409,7 +1409,7 @@ class ASRData:
             stripped = text.strip().strip(".,;:!?()[]{}，。！？；：")
             if re.search(r"\d", stripped):
                 return numeric_max_ms
-            return min(default_max_ms, reasonable_word_duration_ms(stripped))
+            return max(default_max_ms, reasonable_word_duration_ms(stripped))
 
         capped = 0
         for seg in self.segments:
@@ -1432,6 +1432,80 @@ class ASRData:
 
         if capped:
             logger.info("Capped abnormal word durations: %s", capped)
+        return self
+
+    def refine_word_edges_with_speech_segments(
+        self,
+        speech_segments: list[tuple[int, int]],
+        max_adjustment_ms: int = 700,
+        boundary_pad_ms: int = 30,
+    ) -> "ASRData":
+        """Snap utterance-edge words to nearby VAD speech boundaries.
+
+        This pass never changes text, word order, or internal boundaries. It
+        only repairs the first/last word around a VAD-confirmed pause when the
+        forced-alignment edge is already close to that speech boundary.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        if not self.segments or not self.is_word_timestamp() or not speech_segments:
+            return self
+
+        speech = sorted(
+            (max(0, start), max(0, end))
+            for start, end in speech_segments
+            if end > start
+        )
+        adjusted = 0
+        word_cursor = 0
+
+        for speech_start, speech_end in speech:
+            while (
+                word_cursor < len(self.segments)
+                and self.segments[word_cursor].end_time < speech_start
+            ):
+                word_cursor += 1
+
+            first_index = word_cursor
+            last_index = first_index - 1
+            while (
+                last_index + 1 < len(self.segments)
+                and self.segments[last_index + 1].start_time <= speech_end
+            ):
+                last_index += 1
+
+            if first_index >= len(self.segments) or last_index < first_index:
+                continue
+
+            first = self.segments[first_index]
+            lead_error = first.start_time - speech_start
+            previous_end = self.segments[first_index - 1].end_time if first_index else 0
+            if 80 <= lead_error <= max_adjustment_ms:
+                candidate_start = max(
+                    previous_end + boundary_pad_ms,
+                    speech_start - boundary_pad_ms,
+                )
+                if candidate_start < first.end_time:
+                    first.start_time = candidate_start
+                    adjusted += 1
+
+            last = self.segments[last_index]
+            tail_error = speech_end - last.end_time
+            next_start = (
+                self.segments[last_index + 1].start_time
+                if last_index + 1 < len(self.segments)
+                else speech_end + max_adjustment_ms
+            )
+            if 80 <= tail_error <= max_adjustment_ms and next_start >= speech_end + 80:
+                candidate_end = min(speech_end + boundary_pad_ms, next_start - boundary_pad_ms)
+                if candidate_end > last.end_time:
+                    last.end_time = candidate_end
+                    adjusted += 1
+
+        if adjusted:
+            logger.info("Refined VAD-confirmed word edges: %s", adjusted)
+        self.fix_boundary_overlaps()
         return self
 
     def extend_sentence_tails_conservatively(
@@ -1466,6 +1540,9 @@ class ASRData:
                 or re.search(r"\b(?:RPM|U\.?S\.?)\b", text, flags=re.IGNORECASE)
             )
 
+        def _ends_sentence(text: str) -> bool:
+            return bool(re.search(r"[.!?。！？]\s*$", text.strip()))
+
         def _target_duration(seg: ASRDataSeg) -> int:
             words = _word_count(seg.text)
             cjk = _cjk_count(seg.translated_text)
@@ -1474,23 +1551,24 @@ class ASRData:
             elif words <= 6:
                 word_target = 2400
             elif words <= 10:
-                word_target = 3600
+                word_target = 3700
             else:
-                word_target = min(5000, words * 310 + 700)
+                word_target = min(5300, words * 330 + 700)
             if _has_timing_anchor(seg.text) and words >= 7:
-                word_target = max(word_target, min(5200, words * 390 + 1_000))
+                word_target = max(word_target, min(5800, words * 390 + 1_000))
             cjk_target = min(4600, cjk * 125 + 900) if cjk else 0
             return max(word_target, cjk_target)
 
-        def _extension_cap(duration_ms: int) -> int:
+        def _extension_cap(seg: ASRDataSeg, duration_ms: int) -> int:
+            has_anchor = _has_timing_anchor(seg.text)
             if duration_ms < 1200:
-                return 2600
+                return 2600 if has_anchor else 1200
             if duration_ms < 2500:
-                return 2400
+                return 2400 if has_anchor else 900
             if duration_ms < 3500:
-                return 1500
+                return 1500 if has_anchor else 0
             if duration_ms < 4500:
-                return 900
+                return 900 if has_anchor else 0
             return 0
 
         self.segments.sort(key=lambda s: (s.start_time, s.end_time))
@@ -1505,12 +1583,10 @@ class ASRData:
             duration_ms = seg.end_time - seg.start_time
             if gap_ms < 900 or duration_ms >= 4500:
                 continue
-            if not _has_timing_anchor(seg.text):
-                continue
-            if duration_ms >= 3500 and re.search(r"[.!?。！？]\s*$", seg.text.strip()):
+            if duration_ms >= 3500 and _ends_sentence(seg.text):
                 continue
 
-            cap_ms = _extension_cap(duration_ms)
+            cap_ms = _extension_cap(seg, duration_ms)
             if cap_ms <= 0:
                 continue
 
@@ -1518,6 +1594,16 @@ class ASRData:
             needed_ms = target_ms - duration_ms
             if needed_ms < min_extension_ms:
                 continue
+
+            has_anchor = _has_timing_anchor(seg.text)
+            words = _word_count(seg.text)
+            if not has_anchor and _ends_sentence(seg.text):
+                if duration_ms >= 2500 or words < 7:
+                    continue
+                # Complete, non-technical sentences only receive a small display
+                # tail. This fixes under-covered speech without reintroducing
+                # broad silence coverage.
+                needed_ms = min(needed_ms, 900)
 
             extension_ms = min(needed_ms, cap_ms, gap_ms - safety_gap_ms)
             if extension_ms < min_extension_ms:

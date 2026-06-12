@@ -33,6 +33,7 @@ def build_app_bundle() -> Path:
     build_desktop.patch_packaged_torch()
     build_desktop.dedupe_packaged_torch_libs()
     build_desktop.patch_packaged_mlx_metallib()
+    build_desktop.resign_macos_app()
     build_desktop.verify_bundle()
     app_path = PROJECT_ROOT / "dist" / f"{APP_NAME}.app"
     if not app_path.exists():
@@ -54,7 +55,10 @@ def create_dmg(app_path: Path):
     with tempfile.TemporaryDirectory() as tmp:
         staging = Path(tmp) / "staging"
         staging.mkdir()
-        shutil.copytree(app_path, staging / f"{APP_NAME}.app")
+        # PyInstaller's macOS bundle relies on symlinks between Resources and
+        # Frameworks. Dereferencing them changes the sealed bundle contents and
+        # invalidates the app signature inside the DMG.
+        shutil.copytree(app_path, staging / f"{APP_NAME}.app", symlinks=True)
         os.symlink("/Applications", staging / "Applications")
         app_size_mb = sum(
             path.stat().st_size for path in (staging / f"{APP_NAME}.app").rglob("*") if path.is_file()
