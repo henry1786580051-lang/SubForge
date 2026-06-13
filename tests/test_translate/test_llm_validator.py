@@ -130,6 +130,47 @@ class TestValidateLLmResponse:
         assert "Placeholder translations" in msg
         assert "1" in msg
 
+    @pytest.mark.parametrize(
+        "placeholder",
+        ["（本句已并入前一句）", "此句无需翻译，见上", "内容同上"],
+    )
+    def test_rejects_additional_placeholder_variants(self, placeholder):
+        t = _make_translator()
+        ok, msg = t._validate_llm_response(
+            {"0": placeholder},
+            {"0": "A complete sentence."},
+        )
+        assert ok is False
+        assert "Placeholder" in msg
+
+    def test_final_validation_rejects_untranslated_and_placeholder_items(self):
+        t = _make_translator()
+        source = [SubtitleProcessData(index=1, original_text="This is a complete sentence.")]
+
+        with pytest.raises(RuntimeError, match="placeholder translations"):
+            t._validate_translated_list(
+                source,
+                [
+                    SubtitleProcessData(
+                        index=1,
+                        original_text=source[0].original_text,
+                        translated_text="本句已并入前一句",
+                    )
+                ],
+            )
+
+        with pytest.raises(RuntimeError, match="untranslated indices"):
+            t._validate_translated_list(
+                source,
+                [
+                    SubtitleProcessData(
+                        index=1,
+                        original_text=source[0].original_text,
+                        translated_text="This is a complete sentence.",
+                    )
+                ],
+            )
+
     def test_reflect_mode_valid(self):
         t = _make_translator(is_reflect=True)
         resp = {

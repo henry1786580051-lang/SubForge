@@ -68,3 +68,23 @@ def test_cleanup_removes_oldest_terminal_tasks_by_creation_order(monkeypatch):
     assert manager.get_task("ffff-old") is None
     assert manager.get_task("0000-middle") is not None
     assert manager.get_task("1111-new") is not None
+
+
+def test_task_progress_carries_preview_segments():
+    manager = TaskManager()
+    task = manager.create_task("transcribe")
+    preview = [
+        {
+            "id": 1,
+            "start": "00:00:00,000",
+            "end": "00:00:01,000",
+            "text": "Hi",
+            "translated": "",
+        }
+    ]
+
+    manager.update_progress(task.id, 40, "Transcribing", preview_segments=preview)
+
+    updated = manager.get_task(task.id)
+    assert updated is not None
+    assert updated.preview_segments == preview

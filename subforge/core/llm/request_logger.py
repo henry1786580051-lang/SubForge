@@ -1,10 +1,11 @@
 import contextvars
 import json
 import logging
+import re
 import threading
 import time
-from datetime import datetime
-from typing import Any, Dict
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 
 import httpx
 
@@ -55,7 +56,28 @@ def _write_log(entry: Dict[str, Any]) -> None:
 # ==================== HTTPX Hooks ====================
 
 
-def _on_request(request: httpx.Request) -> None:
+def _infer_stage(request_body: dict) -> str:
+    messages = request_body.get("messages") or []
+    text = " ".join(str(item.get("content", "")) for item in messages if isinstance(item, dict)).lower()
+    if "correct the following subtitles" in text or "keep the original language" in text:
+        return "optimize"
+    if "current_subtitles" in text or "translate" in text or "target language" in text:
+        return "translate"
+    if "summary" in text or "terminology" in text or "global context" in text:
+        return "context"
+    if "split" in text or "sentence" in text:
+        return "split"
+    return "llm"
+
+
+def _batch_label(request_body: dict) -> str:
+    messages = request_body.get("messages") or []
+    text = " ".join(str(item.get("content", "")) for item in messages if isinstance(item, dict))
+    keys = [int(value) for value in re.findall(r'["\'](\d+)["\']\s*:', text)]
+    return f"{min(keys)}-{max(keys)}" if keys else ""
+
+
+def _on_request(request: httpx.Request, log_context: Optional[dict[str, str]] = None) -> None:
     """请求发送前: 暂存请求信息"""
     if "/chat/completions" not in str(request.url):
         return
@@ -72,6 +94,10 @@ def _on_request(request: httpx.Request) -> None:
             "start_time": time.time(),
             "url": str(request.url),
             "request": request_body,
+            "context": dict(log_context or {}),
+            "stage": _infer_stage(request_body),
+            "model": str(request_body.get("model", "")),
+            "batch": _batch_label(request_body),
         }
 
 
@@ -90,11 +116,13 @@ def _on_response(response: httpx.Response) -> None:
 # ==================== 公开 API ====================
 
 
-def create_logging_http_client() -> httpx.Client:
+def create_logging_http_client(
+    log_context: Optional[dict[str, str]] = None,
+) -> httpx.Client:
     """创建带日志记录的 HTTPX 客户端"""
     return httpx.Client(
         event_hooks={
-            "request": [_on_request],
+            "request": [lambda request: _on_request(request, log_context)],
             "response": [_on_response],
         }
     )
@@ -120,17 +148,29 @@ def log_llm_response(response: Any) -> None:
 
     # 获取任务上下文
     ctx = get_task_context()
+    explicit_ctx = pending.get("context", {})
+    usage = response_data.get("usage") if isinstance(response_data, dict) else {}
+    usage = usage if isinstance(usage, dict) else {}
+    completion_details = usage.get("completion_tokens_details") or {}
+    timestamp = datetime.now(timezone.utc).isoformat()
 
     log_entry = {
-        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "task_id": ctx.task_id if ctx else "",
-        "file_name": ctx.file_name if ctx else "",
-        "stage": ctx.stage if ctx else "",
+        "timestamp": timestamp,
+        "time": timestamp,
+        "task_id": explicit_ctx.get("task_id") or (ctx.task_id if ctx else ""),
+        "file_name": explicit_ctx.get("file_name") or (ctx.file_name if ctx else ""),
+        "stage": pending.get("stage") or (ctx.stage if ctx else ""),
+        "model": response_data.get("model") or pending.get("model", ""),
+        "batch": pending.get("batch", ""),
         "url": pending.get("url", ""),
         "status": pending.get("status", 0),
         "duration_ms": pending.get("duration_ms", 0),
         "request": pending.get("request", {}),
         "response": response_data,
+        "tokens": int(usage.get("total_tokens") or 0),
+        "prompt_tokens": int(usage.get("prompt_tokens") or 0),
+        "completion_tokens": int(usage.get("completion_tokens") or 0),
+        "reasoning_tokens": int(completion_details.get("reasoning_tokens") or 0),
     }
 
     _write_log(log_entry)
@@ -148,12 +188,17 @@ def log_llm_error(error: Exception) -> None:
         return
 
     ctx = get_task_context()
+    explicit_ctx = pending.get("context", {})
+    timestamp = datetime.now(timezone.utc).isoformat()
     _write_log(
         {
-            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "task_id": ctx.task_id if ctx else "",
-            "file_name": ctx.file_name if ctx else "",
-            "stage": ctx.stage if ctx else "",
+            "timestamp": timestamp,
+            "time": timestamp,
+            "task_id": explicit_ctx.get("task_id") or (ctx.task_id if ctx else ""),
+            "file_name": explicit_ctx.get("file_name") or (ctx.file_name if ctx else ""),
+            "stage": pending.get("stage") or (ctx.stage if ctx else ""),
+            "model": pending.get("model", ""),
+            "batch": pending.get("batch", ""),
             "url": pending.get("url", ""),
             "status": pending.get("status", 0),
             "duration_ms": pending.get(

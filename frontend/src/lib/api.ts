@@ -123,7 +123,7 @@ export const configApi = {
 // LLM Logs
 export const llmLogsApi = {
   list: (page = 1, search = "") =>
-    request<{ logs: LlmLogEntry[]; total: number; page: number; pages: number }>(
+    request<{ groups: LlmLogGroup[]; total: number; page: number; pages: number }>(
       `/api/llm-logs/?page=${page}&search=${encodeURIComponent(search)}`
     ),
   clear: () => request("/api/llm-logs/", { method: "DELETE" }),
@@ -144,6 +144,7 @@ export interface TaskInfo {
   result?: Record<string, unknown> | null;
   error?: string | null;
   subtitle_file?: string | null;
+  preview_segments?: SubtitleSegment[] | null;
 }
 
 export interface FileInfo {
@@ -204,4 +205,28 @@ export interface LlmLogEntry {
   tokens?: number;
   request?: unknown;
   response?: unknown;
+  status?: number;
+  error?: string;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  reasoning_tokens?: number;
+  batch?: string;
+}
+
+export interface LlmLogGroup {
+  id: string;
+  task_id?: string;
+  file_name?: string;
+  started_at?: string;
+  ended_at?: string;
+  stages: string[];
+  models: string[];
+  request_count: number;
+  error_count: number;
+  duration_ms: number;
+  tokens: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  reasoning_tokens: number;
+  entries: LlmLogEntry[];
 }

@@ -27,6 +27,7 @@ class TaskInfo(BaseModel):
     result: dict[str, Any] | None = None
     error: str | None = None
     subtitle_file: str | None = None  # partial results during processing
+    preview_segments: list[dict[str, Any]] | None = None
 
 
 class TaskManager:
@@ -61,7 +62,12 @@ class TaskManager:
             return bool(task and task.status == TaskStatus.CANCELLED)
 
     def update_progress(
-        self, task_id: str, progress: int, message: str = "", subtitle_file: str | None = None
+        self,
+        task_id: str,
+        progress: int,
+        message: str = "",
+        subtitle_file: str | None = None,
+        preview_segments: list[dict[str, Any]] | None = None,
     ):
         with self._lock:
             task = self._tasks.get(task_id)
@@ -76,6 +82,8 @@ class TaskManager:
             task.status = TaskStatus.RUNNING
             if subtitle_file is not None:
                 task.subtitle_file = subtitle_file
+            if preview_segments is not None:
+                task.preview_segments = preview_segments
         self._notify_listeners(task_id)
 
     def complete_task(self, task_id: str, result: dict[str, Any] | None = None):

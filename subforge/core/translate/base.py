@@ -1,6 +1,7 @@
 """翻译器基类"""
 
 import atexit
+import re
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, List, Optional
@@ -126,8 +127,8 @@ class BaseTranslator(ABC):
 
         return translated_list
 
-    @staticmethod
     def _validate_translated_list(
+        self,
         source_list: List[SubtitleProcessData],
         translated_list: List[SubtitleProcessData],
     ) -> None:
@@ -141,14 +142,31 @@ class BaseTranslator(ABC):
 
         missing: list[str] = []
         empty: list[str] = []
+        placeholders: list[str] = []
+        untranslated: list[str] = []
         for source in source_list:
             translated = translated_by_index.get(source.index)
             if translated is None:
                 missing.append(str(source.index))
             elif not translated.translated_text.strip():
                 empty.append(str(source.index))
+            else:
+                output = translated.translated_text.strip()
+                compact = re.sub(r"\s+", "", output)
+                if re.search(
+                    r"(?:此|本)?句.*(?:合并|并入|省略|略去)|"
+                    r"(?:合并|并入|接上|延续|已译).*(?:上一句|上句|前一句|前文)|"
+                    r"(?:上一句|上句|前一句|前文).*(?:合并|包含|已译|并入)|"
+                    r"(?:同上|见上|无需翻译|不单独翻译)|"
+                    r"merged(?:with|into)?(?:the)?(?:previous|above)|sameasabove|omitted",
+                    compact,
+                    flags=re.IGNORECASE,
+                ):
+                    placeholders.append(str(source.index))
+                if self._is_untranslated_output(output, source.original_text):
+                    untranslated.append(str(source.index))
 
-        if not missing and not empty and not duplicates:
+        if not missing and not empty and not duplicates and not placeholders and not untranslated:
             return
 
         parts = []
@@ -158,11 +176,28 @@ class BaseTranslator(ABC):
             parts.append(f"empty translations: {empty[:20]}")
         if duplicates:
             parts.append(f"duplicate indices: {duplicates[:20]}")
+        if placeholders:
+            parts.append(f"placeholder translations: {placeholders[:20]}")
+        if untranslated:
+            parts.append(f"untranslated indices: {untranslated[:20]}")
         raise RuntimeError(
             "Translation incomplete; refusing to save mixed source/target subtitles ("
             + "; ".join(parts)
             + ")"
         )
+
+    def _is_untranslated_output(self, output: str, source: str) -> bool:
+        if self.target_language.value not in {"简体中文", "繁體中文", "日本語", "한국어"}:
+            return False
+        if re.search(r"[一-鿿぀-ヿ가-힯]", output):
+            return False
+        source_words = re.findall(r"[A-Za-z]+", source)
+        if len(source_words) <= 3 and all(
+            re.search(r"\d", token) or token.isupper() or token[:1].isupper()
+            for token in re.findall(r"[A-Za-z0-9.+#&/-]+", source)
+        ):
+            return False
+        return bool(source_words)
 
     def _get_cache_key(self, chunk: List[SubtitleProcessData]) -> str:
         """生成缓存键"""

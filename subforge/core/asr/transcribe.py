@@ -283,7 +283,11 @@ def _build_faster_whisper_kwargs(config: TranscribeConfig, use_cache: bool = Tru
     }
 
 
-def _build_whisperx_kwargs(config: TranscribeConfig, use_cache: bool = True) -> dict:
+def _build_whisperx_kwargs(
+    config: TranscribeConfig,
+    use_cache: bool = True,
+    segment_callback=None,
+) -> dict:
     model = (
         config.whisperx_model
         or (
@@ -302,6 +306,7 @@ def _build_whisperx_kwargs(config: TranscribeConfig, use_cache: bool = True) -> 
         "compute_type": getattr(config, "faster_whisper_compute_type", "default"),
         "align_model": getattr(config, "whisperx_align_model", ""),
         "batch_size": getattr(config, "whisperx_batch_size", 4),
+        "segment_callback": segment_callback,
     }
 
 
@@ -351,7 +356,11 @@ def _create_asr_instance(audio_path: str, config: TranscribeConfig, on_segment=N
 
     elif model_type == TranscribeModelEnum.WHISPERX:
         return ChunkedASR(asr_class=WhisperXASR, audio_path=audio_path,
-                          asr_kwargs=_build_whisperx_kwargs(config, use_cache=False),
+                          asr_kwargs=_build_whisperx_kwargs(
+                              config,
+                              use_cache=False,
+                              segment_callback=on_segment,
+                          ),
                           chunk_concurrency=1, chunk_length=60 * 60)
 
     elif model_type == TranscribeModelEnum.WHISPER_API:

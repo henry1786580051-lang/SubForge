@@ -10,7 +10,7 @@ from typing import Any, Callable, List, Optional, Union
 
 from ...config import MODEL_PATH
 from ..utils.logger import setup_logger
-from .asr_data import ASRDataSeg
+from .asr_data import ASRData, ASRDataSeg
 from .base import BaseASR
 from .status import ASRStatus
 
@@ -653,6 +653,7 @@ class WhisperXASR(BaseASR):
         compute_type: str = "default",
         align_model: str = "",
         batch_size: int = 4,
+        segment_callback: Optional[Callable[[ASRData], None]] = None,
         use_cache: bool = False,
         need_word_time_stamp: bool = True,
     ):
@@ -665,6 +666,7 @@ class WhisperXASR(BaseASR):
         self.compute_type = _normalize_compute_type(self.align_device, compute_type)
         self.align_model = (align_model or "").strip()
         self.batch_size = max(1, int(batch_size or 4))
+        self.segment_callback = segment_callback
         self.need_word_time_stamp = need_word_time_stamp
 
     def _write_audio_to_temp(self, tmp_dir: Path) -> str:
@@ -752,6 +754,11 @@ class WhisperXASR(BaseASR):
                 transcribe_kwargs.pop("condition_on_previous_text", None)
                 result = mlx_whisper.transcribe(audio_path, **transcribe_kwargs)
 
+            if self.segment_callback:
+                raw_segments = self._make_segments(result)
+                if raw_segments:
+                    self.segment_callback(ASRData(raw_segments))
+
             callback(35, "Loading audio...")
             audio = load_audio(audio_path)
 
@@ -759,7 +766,7 @@ class WhisperXASR(BaseASR):
             if not align_segments:
                 raise RuntimeError("MLX Whisper did not return alignable transcript segments")
 
-            language_code = (result.get("language") or self.language or "en").lower()
+            language_code = str(result.get("language") or self.language or "en").lower()
             spoken_align_segments, alignment_plans = _prepare_spoken_alignment(
                 align_segments, language_code
             )
@@ -818,6 +825,11 @@ class WhisperXASR(BaseASR):
             aligned["align_model"] = align_model_name or ""
             aligned["asr_backend"] = "mlx-whisper"
             aligned["mlx_model"] = self.mlx_model
+
+            if self.segment_callback:
+                aligned_segments = self._make_segments(aligned)
+                if aligned_segments:
+                    self.segment_callback(ASRData(aligned_segments))
 
             try:
                 del model_a

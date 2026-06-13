@@ -2,6 +2,7 @@
 
 import json
 import re
+from dataclasses import replace
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import json_repair
@@ -317,11 +318,11 @@ class LLMTranslator(BaseTranslator):
             return True
         normalized = re.sub(r"\s+", "", text)
         placeholder_patterns = [
-            r"此句.*(?:合并|省略)",
+            r"(?:此|本)?句.*(?:合并|并入|省略|略去)",
             r"(?:合并|并入|接上|延续).*(?:上一句|上句|前一句|前文)",
-            r"(?:上一句|上句|前一句|前文).*(?:合并|包含|已译)",
+            r"(?:上一句|上句|前一句|前文).*(?:合并|包含|已译|并入)",
             r"(?:最终版本|最终字幕).*(?:合并|省略)",
-            r"(?:内容)?(?:同上|见上|略|省略)",
+            r"(?:内容)?(?:同上|见上|略|省略|无需翻译|不单独翻译)",
             r"merged(?:with|into)?(?:previous|above)",
             r"sameasabove",
             r"omitted",
@@ -538,6 +539,7 @@ class LLMTranslator(BaseTranslator):
             return not re.search(r"[一-鿿぀-ヿ가-힯]", text)
 
         failures: list[str] = []
+        translated_items: list[SubtitleProcessData] = []
 
         for data in subtitle_chunk:
             try:
@@ -560,7 +562,7 @@ class LLMTranslator(BaseTranslator):
                     raise RuntimeError(
                         f"Single item translation returned a placeholder instead of a translation: {translated_text!r}"
                     )
-                data.translated_text = translated_text
+                translated_items.append(replace(data, translated_text=translated_text))
             except Exception as e:
                 logger.error(f"Single item translation failed {data.index}: {str(e)}")
                 failures.append(str(data.index))
@@ -569,8 +571,7 @@ class LLMTranslator(BaseTranslator):
             raise RuntimeError(
                 f"Single item translation failed for {len(failures)}/{len(subtitle_chunk)} entries: {failures}"
             )
-
-        return subtitle_chunk
+        return translated_items
 
     def _get_cache_key(self, chunk: List[SubtitleProcessData]) -> str:
         """生成缓存键"""

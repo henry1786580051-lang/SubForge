@@ -18,6 +18,19 @@ router = APIRouter()
 _background_tasks: set[asyncio.Task] = set()
 
 
+def _preview_segments(data) -> list[dict]:
+    return [
+        {
+            "id": index,
+            "start": segment._ms_to_srt_time(segment.start_time),
+            "end": segment._ms_to_srt_time(segment.end_time),
+            "text": segment.text,
+            "translated": segment.translated_text or "",
+        }
+        for index, segment in enumerate(data.segments, 1)
+    ]
+
+
 def _raise_if_cancelled(task_id: str) -> None:
     if task_manager.is_cancelled(task_id):
         raise asyncio.CancelledError()
@@ -315,7 +328,11 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
                 task = task_manager.get_task(task_id)
                 if task:
                     task_manager.update_progress(
-                        task_id, task.progress, subtitle_file=partial_srt_path
+                        task_id,
+                        task.progress,
+                        task.message,
+                        subtitle_file=partial_srt_path,
+                        preview_segments=_preview_segments(partial_data),
                     )
             except Exception as e:
                 logger.warning(f"Failed to save partial segment: {e}")

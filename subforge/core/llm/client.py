@@ -57,12 +57,22 @@ def create_client(base_url: str, api_key: str) -> OpenAI:
     base_url = normalize_base_url(base_url)
     if not base_url or not api_key:
         raise ValueError("base_url and api_key are required")
-    return OpenAI(
+    log_context: dict[str, str] = {}
+    client = OpenAI(
         base_url=base_url,
         api_key=api_key,
         timeout=LLM_TIMEOUT,
-        http_client=create_logging_http_client(),
+        http_client=create_logging_http_client(log_context=log_context),
     )
+    setattr(client, "_subforge_log_context", log_context)
+    return client
+
+
+def set_client_log_context(client: Any, **context: str) -> None:
+    """Attach task metadata without changing the public client constructor."""
+    target = getattr(client, "_subforge_log_context", None)
+    if isinstance(target, dict):
+        target.update({key: value for key, value in context.items() if value})
 
 
 def get_llm_client() -> OpenAI:

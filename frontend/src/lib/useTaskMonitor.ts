@@ -53,8 +53,14 @@ export function useTaskMonitor() {
       uiStatus as "idle" | "running" | "completed" | "failed"
     );
 
-    // Load partial subtitle results during processing (real-time preview)
-    // Same file is updated in-place, so reload when task progress/message changes.
+    // Prefer the WebSocket snapshot. Reading an SRT while a worker is replacing
+    // it can return stale or partially written content in packaged builds.
+    if (task.status === "running" && task.preview_segments) {
+      setSubtitles(task.preview_segments);
+      if (task.preview_segments.length > 0 && !store.subtitleFile) setStep("subtitle");
+    }
+
+    // Compatibility fallback for older backends that only expose a partial file.
     if (task.status === "running" && task.subtitle_file) {
       const partialKey = `${task.subtitle_file}:${task.progress}:${task.message}`;
       if (partialKey === lastPartialKeyRef.current) return;
@@ -63,7 +69,7 @@ export function useTaskMonitor() {
         .load(task.subtitle_file)
         .then((subFile) => {
           if (task.id !== useAppStore.getState().currentTaskId) return;
-          setSubtitles(subFile.segments);
+          if (!task.preview_segments) setSubtitles(subFile.segments);
           if (!useAppStore.getState().subtitleFile) setStep("subtitle");
         })
         .catch(() => {});

@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -10,6 +11,19 @@ from app.security import validate_path
 router = APIRouter()
 
 _background_tasks: set[asyncio.Task] = set()
+
+
+def _preview_segments(data) -> list[dict]:
+    return [
+        {
+            "id": index,
+            "start": segment._ms_to_srt_time(segment.start_time),
+            "end": segment._ms_to_srt_time(segment.end_time),
+            "text": segment.text,
+            "translated": segment.translated_text or "",
+        }
+        for index, segment in enumerate(data.segments, 1)
+    ]
 
 
 def _raise_if_cancelled(task_id: str) -> None:
@@ -70,7 +84,14 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
         llm_client = None
         if api_key and base_url:
             from subforge.core.llm import create_client
+            from subforge.core.llm.client import set_client_log_context
+
             llm_client = create_client(base_url=base_url, api_key=api_key)
+            set_client_log_context(
+                llm_client,
+                task_id=task_id,
+                file_name=Path(req.subtitle_file).name,
+            )
 
         from subforge.core.asr.asr_data import ASRData
         from subforge.core.optimize.optimize import SubtitleOptimizer
@@ -86,15 +107,24 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
         partial_srt = tempfile.NamedTemporaryFile(suffix="_partial.srt", delete=False)
         partial_srt_path = partial_srt.name
         partial_srt.close()
+        preview_lock = threading.RLock()
 
         def _save_partial(data, msg=""):
             """Save current ASRData to partial SRT and notify frontend."""
             try:
-                from subforge.core.entities import SubtitleLayoutEnum
-                data.save(partial_srt_path, layout=SubtitleLayoutEnum.TRANSLATE_ON_TOP)
-                task = task_manager.get_task(task_id)
-                if task:
-                    task_manager.update_progress(task_id, task.progress, msg, subtitle_file=partial_srt_path)
+                with preview_lock:
+                    from subforge.core.entities import SubtitleLayoutEnum
+
+                    data.save(partial_srt_path, layout=SubtitleLayoutEnum.TRANSLATE_ON_TOP)
+                    task = task_manager.get_task(task_id)
+                    if task:
+                        task_manager.update_progress(
+                            task_id,
+                            task.progress,
+                            msg or task.message,
+                            subtitle_file=partial_srt_path,
+                            preview_segments=_preview_segments(data),
+                        )
             except Exception as e:
                 logger.warning(f"Failed to save partial result: {e}")
 
@@ -108,7 +138,16 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
         loop = asyncio.get_event_loop()
         thread_num = get_config_value("thread_num", 3)
         batch_size = get_config_value("batch_size", 10)
-        splitter = SubtitleSplitter(thread_num=thread_num, model=llm_model, llm_client=llm_client)
+        def _on_split_progress(segments):
+            partial = ASRData(list(segments))
+            _save_partial(partial, f"Splitting subtitles... {len(segments)} ready")
+
+        splitter = SubtitleSplitter(
+            thread_num=thread_num,
+            model=llm_model,
+            llm_client=llm_client,
+            update_callback=_on_split_progress,
+        )
         asr_data = await loop.run_in_executor(None, splitter.split_subtitle, asr_data)
         _raise_if_cancelled(task_id)
         _save_partial(asr_data, f"Split into {len(asr_data.segments)} segments")
@@ -120,17 +159,18 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
 
             optimize_count = [0]
             def _on_optimize_progress(result):
-                for item in result:
-                    idx = int(item.index) - 1
-                    if 0 <= idx < len(asr_data.segments) and item.optimized_text:
-                        asr_data.segments[idx].text = item.optimized_text
-                optimize_count[0] = min(
-                    len(asr_data.segments),
-                    optimize_count[0] + len(result),
-                )
-                pct = 30 + int(30 * optimize_count[0] / len(asr_data.segments)) if len(asr_data.segments) > 0 else 30
-                task_manager.update_progress(task_id, min(pct, 60), f"Optimized {optimize_count[0]}/{len(asr_data.segments)}...")
-                _save_partial(asr_data)
+                with preview_lock:
+                    for item in result:
+                        idx = int(item.index) - 1
+                        if 0 <= idx < len(asr_data.segments) and item.optimized_text:
+                            asr_data.segments[idx].text = item.optimized_text
+                    optimize_count[0] = min(
+                        len(asr_data.segments),
+                        optimize_count[0] + len(result),
+                    )
+                    pct = 30 + int(30 * optimize_count[0] / len(asr_data.segments)) if len(asr_data.segments) > 0 else 30
+                    task_manager.update_progress(task_id, min(pct, 60), f"Optimized {optimize_count[0]}/{len(asr_data.segments)}...")
+                    _save_partial(asr_data)
 
             optimizer = SubtitleOptimizer(
                 thread_num=thread_num,
@@ -172,17 +212,18 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
 
             translate_count = [0]
             def _on_translate_progress(result):
-                for item in result:
-                    idx = int(item.index) - 1
-                    if 0 <= idx < len(asr_data.segments) and item.translated_text:
-                        asr_data.segments[idx].translated_text = item.translated_text
-                translate_count[0] = min(
-                    len(asr_data.segments),
-                    translate_count[0] + len(result),
-                )
-                pct = 65 + int(25 * translate_count[0] / len(asr_data.segments)) if len(asr_data.segments) > 0 else 65
-                task_manager.update_progress(task_id, min(pct, 90), f"Translated {translate_count[0]}/{len(asr_data.segments)}...")
-                _save_partial(asr_data)
+                with preview_lock:
+                    for item in result:
+                        idx = int(item.index) - 1
+                        if 0 <= idx < len(asr_data.segments) and item.translated_text:
+                            asr_data.segments[idx].translated_text = item.translated_text
+                    translate_count[0] = min(
+                        len(asr_data.segments),
+                        translate_count[0] + len(result),
+                    )
+                    pct = 65 + int(25 * translate_count[0] / len(asr_data.segments)) if len(asr_data.segments) > 0 else 65
+                    task_manager.update_progress(task_id, min(pct, 90), f"Translated {translate_count[0]}/{len(asr_data.segments)}...")
+                    _save_partial(asr_data)
 
             from subforge.core.translate.types import TranslatorType
             type_map = {"llm": TranslatorType.OPENAI, "bing": TranslatorType.BING, "google": TranslatorType.GOOGLE, "deeplx": TranslatorType.DEEPLX}
