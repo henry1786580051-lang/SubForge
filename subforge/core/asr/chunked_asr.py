@@ -64,16 +64,21 @@ class ChunkedASR:
         chunk_overlap: int = DEFAULT_CHUNK_OVERLAP_SEC,
         chunk_concurrency: int = DEFAULT_CHUNK_CONCURRENCY,
     ):
+        if chunk_length <= 0:
+            raise ValueError("chunk_length must be positive")
+        if chunk_overlap < 0:
+            raise ValueError("chunk_overlap must be non-negative")
+        if chunk_overlap >= chunk_length:
+            raise ValueError("chunk_overlap must be smaller than chunk_length")
+        if chunk_concurrency <= 0:
+            raise ValueError("chunk_concurrency must be positive")
+
         self.asr_class = asr_class
         self.audio_path = audio_path
         self.asr_kwargs = asr_kwargs or {}
         self.chunk_length_ms = chunk_length * MS_PER_SECOND
         self.chunk_overlap_ms = chunk_overlap * MS_PER_SECOND
         self.chunk_concurrency = chunk_concurrency
-
-        # Reading完整音频文件（用于分块）
-        with open(audio_path, "rb") as f:
-            self.file_binary = f.read()
 
     def run(self, callback: Optional[Callable[[int, str], None]] = None) -> ASRData:
         """执行分块转录
@@ -111,21 +116,18 @@ class ChunkedASR:
             List[(chunk_bytes, offset_ms), ...]
             每个元素包含音频块的字节数据和时间偏移（毫秒）
         """
-        # 从字节数据加载音频
-        if self.file_binary is None:
-            raise ValueError("file_binary is None, cannot split audio")
-
         try:
             audio = AudioSegment.from_file(self.audio_path)
         except Exception:
             logger.warning("Failed to load audio by path, falling back to in-memory bytes")
-            audio = AudioSegment.from_file(io.BytesIO(self.file_binary))
+            with open(self.audio_path, "rb") as audio_file:
+                audio = AudioSegment.from_file(io.BytesIO(audio_file.read()))
         total_duration_ms = len(audio)
 
         logger.debug(
-            f"音频总时长: {total_duration_ms/1000:.1f}s, "
-            f"分块长度: {self.chunk_length_ms/1000:.1f}s, "
-            f"重叠: {self.chunk_overlap_ms/1000:.1f}s"
+            f"音频总时长: {total_duration_ms / 1000:.1f}s, "
+            f"分块长度: {self.chunk_length_ms / 1000:.1f}s, "
+            f"重叠: {self.chunk_overlap_ms / 1000:.1f}s"
         )
 
         chunks = []
@@ -142,7 +144,7 @@ class ChunkedASR:
             chunks.append((chunk_bytes, start_ms))
             logger.debug(
                 f"切割 chunk {len(chunks)}: "
-                f"{start_ms/1000:.1f}s - {end_ms/1000:.1f}s ({len(chunk_bytes)} bytes)"
+                f"{start_ms / 1000:.1f}s - {end_ms / 1000:.1f}s ({len(chunk_bytes)} bytes)"
             )
 
             # 下一个块的起始位置（有重叠）
@@ -182,7 +184,7 @@ class ChunkedASR:
         ) -> Tuple[int, ASRData]:
             """转录单个音频块 - 为每个块创建独立的 ASR 实例"""
             nonlocal last_overall
-            logger.debug(f"Transcribing chunk {idx+1}/{total_chunks} (offset={offset_ms}ms)")
+            logger.debug(f"Transcribing chunk {idx + 1}/{total_chunks} (offset={offset_ms}ms)")
 
             def chunk_callback(progress: int, message: str):
                 nonlocal last_overall
@@ -194,7 +196,7 @@ class ChunkedASR:
                     # 只允许进度单调递增
                     if overall > last_overall:
                         last_overall = overall
-                        callback(overall, f"{idx+1}/{total_chunks}: {message}")
+                        callback(overall, f"{idx + 1}/{total_chunks}: {message}")
 
             # 为当前 chunk 创建独立的 ASR 实例
             # 使用 chunk_bytes 作为音频输入
@@ -204,8 +206,7 @@ class ChunkedASR:
             asr_data = chunk_asr.run(chunk_callback)
 
             logger.debug(
-                f"Chunk {idx+1}/{total_chunks} 转录完成，"
-                f"获得 {len(asr_data.segments)}  segments"
+                f"Chunk {idx + 1}/{total_chunks} 转录完成，获得 {len(asr_data.segments)}  segments"
             )
             return idx, asr_data
 

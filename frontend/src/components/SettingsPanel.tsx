@@ -41,8 +41,7 @@ const FASTER_WHISPER_MODELS = [
 ];
 
 const MLX_WHISPER_MODELS = [
-  { id: "/Users/guwenhan/Desktop/YouTube/model/whisper-large-v3-fp16", name: "MLX Large V3 FP16", size: "3.1GB", desc: "Apple Silicon 专用 MLX 模型，WhisperX 默认使用", localOnly: true },
-  ...FASTER_WHISPER_MODELS,
+  ...FASTER_WHISPER_MODELS.map((model) => ({ ...model, localOnly: true })),
 ];
 
 const WHISPERX_ALIGNMENT_MODELS = [

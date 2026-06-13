@@ -189,6 +189,7 @@ export interface AsrModelInfo {
   type: "ggml" | "mlx" | "alignment" | string;
   size: string;
   downloaded: boolean;
+  downloadable?: boolean;
   path: string;
   align_model?: string;
 }

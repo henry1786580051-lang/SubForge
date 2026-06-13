@@ -25,6 +25,11 @@ class BaseTranslator(ABC):
         update_callback: Optional[Callable],
         use_cache: bool = True,
     ):
+        if thread_num <= 0:
+            raise ValueError("thread_num must be positive")
+        if batch_num <= 0:
+            raise ValueError("batch_num must be positive")
+
         self.thread_num = thread_num
         self.batch_num = batch_num
         self.target_language = target_language
@@ -35,15 +40,22 @@ class BaseTranslator(ABC):
         self._cache = get_translate_cache()
 
         self._init_thread_pool()
+        atexit.register(self.stop)
 
     def _init_thread_pool(self):
         """初始化线程池"""
         self.executor = ThreadPoolExecutor(max_workers=self.thread_num)
-        atexit.register(self.stop)
+
+    def _ensure_thread_pool(self) -> None:
+        """Allow a translator instance to be reused after a completed run."""
+        if self.executor is None:
+            self.is_running = True
+            self._init_thread_pool()
 
     def translate_subtitle(self, subtitle_data: ASRData) -> ASRData:
         """翻译字幕文件"""
         try:
+            self._ensure_thread_pool()
             asr_data = subtitle_data
 
             # 将ASRData转换为SubtitleProcessData列表
@@ -60,9 +72,7 @@ class BaseTranslator(ABC):
             self._validate_translated_list(translate_data_list, translated_list)
 
             # 设置Subtitle segment的翻译文本
-            new_segments = self._set_segments_translated_text(
-                asr_data.segments, translated_list
-            )
+            new_segments = self._set_segments_translated_text(asr_data.segments, translated_list)
 
             return ASRData(new_segments)
         except Exception as e:
@@ -88,6 +98,8 @@ class BaseTranslator(ABC):
         translated_list = []
         failed_count = 0
         total_segments = sum(len(c) for c in chunks)
+        if self.executor is None:
+            raise RuntimeError("Translation thread pool is not initialized")
 
         for chunk in chunks:
             future = self.executor.submit(self._safe_translate_chunk, chunk)
@@ -146,7 +158,11 @@ class BaseTranslator(ABC):
             parts.append(f"empty translations: {empty[:20]}")
         if duplicates:
             parts.append(f"duplicate indices: {duplicates[:20]}")
-        raise RuntimeError("Translation incomplete; refusing to save mixed source/target subtitles (" + "; ".join(parts) + ")")
+        raise RuntimeError(
+            "Translation incomplete; refusing to save mixed source/target subtitles ("
+            + "; ".join(parts)
+            + ")"
+        )
 
     def _get_cache_key(self, chunk: List[SubtitleProcessData]) -> str:
         """生成缓存键"""
@@ -155,9 +171,7 @@ class BaseTranslator(ABC):
         lang = self.target_language.value
         return f"{class_name}:{chunk_key}:{lang}"
 
-    def _safe_translate_chunk(
-        self, chunk: List[SubtitleProcessData]
-    ) -> List[SubtitleProcessData]:
+    def _safe_translate_chunk(self, chunk: List[SubtitleProcessData]) -> List[SubtitleProcessData]:
         """安全的翻译块"""
         try:
             cache_key = self._get_cache_key(chunk)
@@ -169,7 +183,12 @@ class BaseTranslator(ABC):
                     cached_result = None
                     self._cache.delete(cache_key)
                 if cached_result is not None:
-                    return cached_result
+                    if isinstance(cached_result, list) and all(
+                        isinstance(item, SubtitleProcessData) for item in cached_result
+                    ):
+                        return cached_result
+                    logger.warning("Discarding invalid translation cache entry: %s", cache_key)
+                    self._cache.delete(cache_key)
 
             result = self._translate_chunk(chunk)
 
@@ -183,6 +202,7 @@ class BaseTranslator(ABC):
         except Exception as e:
             logger.error(f"Translation chunk failed with error: {type(e).__name__}: {str(e)}")
             import traceback
+
             traceback.print_exc()
             raise
 

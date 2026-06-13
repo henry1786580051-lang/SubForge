@@ -49,3 +49,22 @@ def test_cancel_unknown_task_returns_false():
 
     assert manager.cancel_task("missing") is False
     assert manager.is_cancelled("missing") is False
+
+
+def test_cleanup_removes_oldest_terminal_tasks_by_creation_order(monkeypatch):
+    manager = TaskManager()
+    generated_ids = iter(["ffff-old", "0000-middle", "1111-new"])
+    monkeypatch.setattr(
+        "app.core.task_manager.uuid.uuid4",
+        lambda: next(generated_ids),
+    )
+
+    tasks = [manager.create_task("transcribe") for _ in range(3)]
+    for task in tasks:
+        manager.complete_task(task.id)
+
+    manager.cleanup_old_tasks(keep=2)
+
+    assert manager.get_task("ffff-old") is None
+    assert manager.get_task("0000-middle") is not None
+    assert manager.get_task("1111-new") is not None

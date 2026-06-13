@@ -22,7 +22,7 @@ class DummyResponse:
 def test_optimizer_can_bypass_llm_cache(monkeypatch):
     calls = []
 
-    def fake_call_llm(*, messages, model, temperature, use_cache=True):
+    def fake_call_llm(*, messages, model, temperature, use_cache=True, client=None):
         calls.append(use_cache)
         return DummyResponse(json.dumps({"1": "Hello world"}))
 

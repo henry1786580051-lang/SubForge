@@ -1,10 +1,13 @@
 import asyncio
+import logging
 import threading
 import uuid
 from enum import Enum
 from typing import Any, Callable
 
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 class TaskStatus(str, Enum):
@@ -57,7 +60,9 @@ class TaskManager:
             task = self._tasks.get(task_id)
             return bool(task and task.status == TaskStatus.CANCELLED)
 
-    def update_progress(self, task_id: str, progress: int, message: str = "", subtitle_file: str | None = None):
+    def update_progress(
+        self, task_id: str, progress: int, message: str = "", subtitle_file: str | None = None
+    ):
         with self._lock:
             task = self._tasks.get(task_id)
             if not task or task.status in {
@@ -119,14 +124,16 @@ class TaskManager:
     def cleanup_old_tasks(self, keep: int = 50):
         """Remove old completed/failed/cancelled tasks, keeping the most recent ones."""
         with self._lock:
-            terminal = [t for t in self._tasks.values() if t.status in (
-                TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED
-            )]
+            terminal = [
+                t
+                for t in self._tasks.values()
+                if t.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED)
+            ]
             if len(terminal) <= keep:
                 return
-            # Sort by ID (roughly chronological) and remove oldest
-            terminal.sort(key=lambda t: t.id)
-            to_remove = terminal[:len(terminal) - keep]
+            # Dict insertion order is chronological. UUID4 text is random and
+            # must not be used to decide which tasks are oldest.
+            to_remove = terminal[: len(terminal) - keep]
             for t in to_remove:
                 self._tasks.pop(t.id, None)
                 self._running_tasks.pop(t.id, None)
@@ -137,9 +144,7 @@ class TaskManager:
 
     def remove_listener(self, callback: Callable):
         with self._lock:
-            self._listeners = [
-                listener for listener in self._listeners if listener != callback
-            ]
+            self._listeners = [listener for listener in self._listeners if listener != callback]
 
     def _notify_listeners(self, task_id: str):
         with self._lock:
@@ -152,7 +157,7 @@ class TaskManager:
             try:
                 listener(task_id, task_data)
             except Exception:
-                pass
+                logger.exception("Task listener failed for task %s", task_id)
 
 
 # Global singleton

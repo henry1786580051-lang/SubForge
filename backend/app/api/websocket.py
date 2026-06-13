@@ -1,11 +1,13 @@
 import asyncio
 import json
+import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.task_manager import task_manager
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _loop: asyncio.AbstractEventLoop | None = None
 
@@ -47,10 +49,21 @@ manager = ConnectionManager()
 def on_task_update(task_id: str, task_data: dict):
     """Called by TaskManager when a task updates."""
     if _loop and _loop.is_running():
-        asyncio.run_coroutine_threadsafe(
-            manager.broadcast({"type": "task_update", "data": task_data}),
-            _loop,
-        )
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                manager.broadcast({"type": "task_update", "data": task_data}),
+                _loop,
+            )
+            future.add_done_callback(_log_broadcast_failure)
+        except RuntimeError:
+            logger.debug("Task update dropped because the event loop is closing")
+
+
+def _log_broadcast_failure(future) -> None:
+    try:
+        future.result()
+    except Exception:
+        logger.exception("WebSocket task update broadcast failed")
 
 
 task_manager.add_listener(on_task_update)
@@ -63,14 +76,23 @@ async def task_websocket(websocket: WebSocket):
         while True:
             data = await websocket.receive_text()
             # Handle client messages (e.g., subscribe to specific task)
-            msg = json.loads(data)
+            try:
+                msg = json.loads(data)
+            except json.JSONDecodeError:
+                await websocket.send_json({"type": "error", "error": "Invalid JSON message"})
+                continue
             if msg.get("type") == "subscribe":
                 task_id = msg.get("task_id")
                 task = task_manager.get_task(task_id)
                 if task:
-                    await websocket.send_json({
-                        "type": "task_update",
-                        "data": task.model_dump(),
-                    })
-    except (WebSocketDisconnect, Exception):
+                    await websocket.send_json(
+                        {
+                            "type": "task_update",
+                            "data": task.model_dump(),
+                        }
+                    )
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception:
+        logger.exception("WebSocket task connection failed")
         manager.disconnect(websocket)

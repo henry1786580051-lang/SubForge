@@ -18,7 +18,6 @@ logger = setup_logger("whisperx_asr")
 
 
 DEFAULT_EN_ALIGN_MODEL = "WAV2VEC2_ASR_LARGE_LV60K_960H"
-DEFAULT_LOCAL_MLX_MODEL = "/Users/guwenhan/Desktop/YouTube/model/whisper-large-v3-fp16"
 LOCAL_MLX_MODEL_NAMES = (
     "whisper-large-v3-fp16",
     "mlx-whisper-large-v3-fp16",
@@ -38,7 +37,7 @@ MLX_WHISPER_MODELS = {
 
 
 def _candidate_local_model_dirs() -> list[Path]:
-    candidates = [Path(DEFAULT_LOCAL_MLX_MODEL)]
+    candidates: list[Path] = []
     env_path = os.environ.get("SUBFORGE_MLX_WHISPER_MODEL", "").strip()
     if env_path:
         candidates.insert(0, Path(env_path).expanduser())

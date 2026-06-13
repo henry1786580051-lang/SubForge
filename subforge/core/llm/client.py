@@ -18,7 +18,7 @@ from tenacity import (
 from subforge.core.utils.cache import get_llm_cache, memoize
 from subforge.core.utils.logger import setup_logger
 
-from .request_logger import create_logging_http_client, log_llm_response
+from .request_logger import create_logging_http_client, log_llm_error, log_llm_response
 
 _global_client: Optional[OpenAI] = None
 _client_lock = threading.Lock()
@@ -114,12 +114,16 @@ def _call_llm_api(
     if client is None:
         client = get_llm_client()
 
-    response = client.chat.completions.create(
-        model=model,
-        messages=messages,  # pyright: ignore[reportArgumentType]
-        temperature=temperature,
-        **kwargs,
-    )
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,  # pyright: ignore[reportArgumentType]
+            temperature=temperature,
+            **kwargs,
+        )
+    except Exception as exc:
+        log_llm_error(exc)
+        raise
 
     # 记录响应内容
     log_llm_response(response)

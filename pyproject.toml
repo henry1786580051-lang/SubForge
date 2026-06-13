@@ -103,6 +103,7 @@ packages = ["subforge"]
 "resource/assets" = "subforge/resources/assets"
 "resource/subtitle_style" = "subforge/resources/subtitle_style"
 "resource/translations" = "subforge/resources/translations"
+"resource/ten_vad" = "subforge/resources/ten_vad"
 
 [tool.uv]
 environments = [

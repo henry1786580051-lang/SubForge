@@ -1,30 +1,34 @@
 """Silero VAD — standalone speech segment detection as preprocessing."""
 
 import logging
+import threading
 from pathlib import Path
 from typing import List, Tuple
 
 logger = logging.getLogger(__name__)
 
 _vad_model = None
+_vad_lock = threading.RLock()
 
 
 def _load_model():
     """Lazy-load Silero VAD model via torch.hub."""
     global _vad_model
-    if _vad_model is not None:
-        return
+    with _vad_lock:
+        if _vad_model is not None:
+            return
 
-    import torch
-    logger.info("Loading Silero VAD model...")
-    _vad_model, _ = torch.hub.load(
-        repo_or_dir="snakers4/silero-vad",
-        model="silero_vad",
-        trust_repo=True,
-    )
-    if _vad_model is None:
-        raise RuntimeError("Silero VAD model failed to load")
-    logger.info("Silero VAD model loaded")
+        import torch
+
+        logger.info("Loading Silero VAD model...")
+        _vad_model, _ = torch.hub.load(
+            repo_or_dir="snakers4/silero-vad",
+            model="silero_vad",
+            trust_repo=True,
+        )
+        if _vad_model is None:
+            raise RuntimeError("Silero VAD model failed to load")
+        logger.info("Silero VAD model loaded")
 
 
 def run_vad_inference(
@@ -50,23 +54,36 @@ def run_vad_inference(
     Returns:
         List of (start_ms, end_ms) tuples for detected speech segments
     """
+    if sample_rate <= 0:
+        raise ValueError("sample_rate must be positive")
+    if not 0 <= threshold <= 1:
+        raise ValueError("threshold must be between 0 and 1")
+    if min_speech_ms < 0 or min_silence_ms < 0 or speech_pad_ms < 0:
+        raise ValueError("VAD duration parameters must be non-negative")
+    if len(samples) == 0:
+        return []
+    if audio_len_ms <= 0:
+        audio_len_ms = int(round(len(samples) / sample_rate * 1000))
+
     import numpy as np
     import torch
 
-    _load_model()
-    assert _vad_model is not None  # guaranteed by _load_model
-
     window_size = 512  # 32ms at 16kHz
     speech_probs = []
-    _vad_model.reset_states()
+    # Silero keeps recurrent state inside the shared model. Reset and inference
+    # must be one atomic operation or concurrent jobs corrupt each other's VAD.
+    with _vad_lock:
+        _load_model()
+        assert _vad_model is not None  # guaranteed by _load_model
+        _vad_model.reset_states()
 
-    for i in range(0, len(samples), window_size):
-        chunk = samples[i:i + window_size]
-        if len(chunk) < window_size:
-            chunk = np.pad(chunk, (0, window_size - len(chunk)))
-        tensor = torch.from_numpy(chunk)
-        prob = _vad_model(tensor, sample_rate).item()
-        speech_probs.append(prob)
+        for i in range(0, len(samples), window_size):
+            chunk = samples[i : i + window_size]
+            if len(chunk) < window_size:
+                chunk = np.pad(chunk, (0, window_size - len(chunk)))
+            tensor = torch.from_numpy(chunk)
+            prob = _vad_model(tensor, sample_rate).item()
+            speech_probs.append(prob)
 
     # Group consecutive speech frames into segments
     frame_duration_ms = window_size / sample_rate * 1000
@@ -168,7 +185,7 @@ def detect_speech_segments(
     coverage = total_speech_ms / audio_len_ms * 100 if audio_len_ms > 0 else 0
     logger.info(
         f"Silero VAD: {len(padded)} speech segments, "
-        f"{total_speech_ms/1000:.1f}s / {audio_len_ms/1000:.1f}s ({coverage:.1f}%)"
+        f"{total_speech_ms / 1000:.1f}s / {audio_len_ms / 1000:.1f}s ({coverage:.1f}%)"
     )
 
     return padded
@@ -177,4 +194,5 @@ def detect_speech_segments(
 def is_available() -> bool:
     """Check if Silero VAD is available (requires torch)."""
     import importlib.util
+
     return importlib.util.find_spec("torch") is not None

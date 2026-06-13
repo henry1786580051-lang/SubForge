@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from app.core.task_manager import task_manager
 from app.security import validate_path
+from subforge.core.asr.whisperx_asr import default_mlx_model
 
 logger = logging.getLogger(__name__)
 
@@ -39,16 +40,20 @@ def detect_hardware() -> dict:
         try:
             out = subprocess.check_output(
                 ["sysctl", "-n", "machdep.cpu.brand_string"],
-                text=True, timeout=5,
+                text=True,
+                timeout=5,
             ).strip()
             result["chip"] = out
 
             # Parse core count from sysctl
             try:
-                perf_cores = int(subprocess.check_output(
-                    ["sysctl", "-n", "hw.perflevel0.logicalcpu"],
-                    text=True, timeout=5,
-                ).strip())
+                perf_cores = int(
+                    subprocess.check_output(
+                        ["sysctl", "-n", "hw.perflevel0.logicalcpu"],
+                        text=True,
+                        timeout=5,
+                    ).strip()
+                )
             except Exception:
                 perf_cores = 8
 
@@ -66,7 +71,8 @@ def detect_hardware() -> dict:
         try:
             out = subprocess.check_output(
                 ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-                text=True, timeout=5,
+                text=True,
+                timeout=5,
             ).strip()
             result["gpu"] = out.split("\n")[0]
             result["device"] = "cuda"
@@ -74,6 +80,7 @@ def detect_hardware() -> dict:
             result["compute_type"] = "float16"
         except Exception:
             import os
+
             result["n_threads"] = os.cpu_count() or 4
 
     return result
@@ -84,15 +91,37 @@ async def get_hardware_info():
     """Detect hardware and return optimal whisper settings."""
     return detect_hardware()
 
+
 # Whisper.cpp model definitions
 WHISPER_CPP_MODELS = {
-    "tiny": {"url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin", "size": "75MB"},
-    "base": {"url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin", "size": "142MB"},
-    "small": {"url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin", "size": "466MB"},
-    "medium": {"url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin", "size": "1.5GB"},
-    "large-v1": {"url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v1.bin", "size": "3.1GB"},
-    "large-v2": {"url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v2.bin", "size": "3.1GB"},
-    "large-v3": {"url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin", "size": "3.1GB"},
+    "tiny": {
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
+        "size": "75MB",
+    },
+    "base": {
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
+        "size": "142MB",
+    },
+    "small": {
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
+        "size": "466MB",
+    },
+    "medium": {
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin",
+        "size": "1.5GB",
+    },
+    "large-v1": {
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v1.bin",
+        "size": "3.1GB",
+    },
+    "large-v2": {
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v2.bin",
+        "size": "3.1GB",
+    },
+    "large-v3": {
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin",
+        "size": "3.1GB",
+    },
 }
 
 WHISPERX_MODELS = {
@@ -107,12 +136,15 @@ WHISPERX_MODELS = {
     },
 }
 
+_default_mlx_model = default_mlx_model()
+_default_mlx_model_id = _default_mlx_model if Path(_default_mlx_model).is_dir() else "mlx-large-v3"
 WHISPERX_LOCAL_MLX_MODELS = {
-    "/Users/guwenhan/Desktop/YouTube/model/whisper-large-v3-fp16": {
+    _default_mlx_model_id: {
         "name": "MLX Large V3 FP16",
         "category": "whisperx",
         "type": "mlx",
         "size": "3.1GB",
+        "model": _default_mlx_model,
     },
 }
 
@@ -214,22 +246,24 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
         whisper_model_size = get_config_value("whisper_model_size", "base")
         if req.model == "whisper_cpp":
             from subforge.core.entities import WhisperModelEnum
+
             try:
                 config.whisper_model = WhisperModelEnum(whisper_model_size)
             except ValueError:
                 config.whisper_model = WhisperModelEnum.BASE
         elif req.model == "whisperx":
-            local_mlx_default = "/Users/guwenhan/Desktop/YouTube/model/whisper-large-v3-fp16"
-            if whisper_model_size in {"", "large-v2"} and PathLib(local_mlx_default).exists():
-                whisper_model_size = local_mlx_default
+            if whisper_model_size in {"", "large-v2", "mlx-large-v3"}:
+                whisper_model_size = "large-v3"
             config.whisperx_model = whisper_model_size
             from subforge.core.entities import FasterWhisperModelEnum
+
             try:
                 config.faster_whisper_model = FasterWhisperModelEnum(whisper_model_size)
             except ValueError:
                 config.faster_whisper_model = None
         elif req.model == "faster_whisper":
             from subforge.core.entities import FasterWhisperModelEnum
+
             try:
                 config.faster_whisper_model = FasterWhisperModelEnum(whisper_model_size)
             except ValueError:
@@ -245,6 +279,7 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
         if whisper_model_dir:
             import subforge.config as vc_config
             import subforge.core.asr.whisper_cpp as wc_module
+
             vc_config.MODEL_PATH = PathLib(whisper_model_dir)
             wc_module.MODEL_PATH = PathLib(whisper_model_dir)
 
@@ -256,9 +291,7 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
         temp_audio_file.close()
 
         loop = asyncio.get_event_loop()
-        success = await loop.run_in_executor(
-            None, video2audio, req.file_path, temp_audio_path
-        )
+        success = await loop.run_in_executor(None, video2audio, req.file_path, temp_audio_path)
         if not success:
             raise RuntimeError("Failed to extract audio from video")
         _raise_if_cancelled(task_id)
@@ -281,12 +314,16 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
                 partial_data.save(partial_srt_path)
                 task = task_manager.get_task(task_id)
                 if task:
-                    task_manager.update_progress(task_id, task.progress, subtitle_file=partial_srt_path)
+                    task_manager.update_progress(
+                        task_id, task.progress, subtitle_file=partial_srt_path
+                    )
             except Exception as e:
                 logger.warning(f"Failed to save partial segment: {e}")
 
         # Run transcription on the extracted audio
-        result = await loop.run_in_executor(None, transcribe, temp_audio_path, config, _on_progress, _on_segment)
+        result = await loop.run_in_executor(
+            None, transcribe, temp_audio_path, config, _on_progress, _on_segment
+        )
         _raise_if_cancelled(task_id)
 
         # Save subtitle file
@@ -305,9 +342,12 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
             subtitle_path = work_dir / f"{video_stem}.srt"
             _raise_if_cancelled(task_id)
             result.save(str(subtitle_path))
-            task_manager.complete_task(task_id, {
-                "subtitle_file": str(subtitle_path),
-            })
+            task_manager.complete_task(
+                task_id,
+                {
+                    "subtitle_file": str(subtitle_path),
+                },
+            )
         else:
             raise RuntimeError(
                 "Transcription produced no subtitle segments. Check the selected "
@@ -329,11 +369,13 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
 def _get_models_dir() -> Path:
     """Get the whisper models directory, respecting user config."""
     from app.api.config import get_config_value
+
     custom_dir = get_config_value("whisper_model_dir", "")
     if custom_dir:
         models_dir = Path(custom_dir)
     else:
         from subforge.config import APPDATA_PATH
+
         models_dir = APPDATA_PATH / "models"
     models_dir.mkdir(parents=True, exist_ok=True)
     return models_dir
@@ -347,38 +389,47 @@ async def list_whisper_models():
     result = []
     for model_id, info in WHISPER_CPP_MODELS.items():
         model_path = models_dir / f"ggml-{model_id}.bin"
-        result.append({
-            "id": model_id,
-            "name": model_id,
-            "category": "whisper_cpp",
-            "type": "ggml",
-            "size": info["size"],
-            "downloaded": model_path.exists(),
-            "path": str(model_path),
-        })
+        result.append(
+            {
+                "id": model_id,
+                "name": model_id,
+                "category": "whisper_cpp",
+                "type": "ggml",
+                "size": info["size"],
+                "downloaded": model_path.exists(),
+                "downloadable": True,
+                "path": str(model_path),
+            }
+        )
     for model_id, info in WHISPERX_LOCAL_MLX_MODELS.items():
-        model_path = Path(model_id)
-        result.append({
-            "id": model_id,
-            "name": info["name"],
-            "category": info["category"],
-            "type": info["type"],
-            "size": info["size"],
-            "downloaded": model_path.exists(),
-            "path": str(model_path),
-        })
+        model_path = Path(info["model"])
+        result.append(
+            {
+                "id": model_id,
+                "name": info["name"],
+                "category": info["category"],
+                "type": info["type"],
+                "size": info["size"],
+                "downloaded": model_path.exists(),
+                "downloadable": False,
+                "path": str(model_path),
+            }
+        )
     for model_id, info in WHISPERX_MODELS.items():
         model_path = models_dir / info["filename"]
-        result.append({
-            "id": model_id,
-            "name": info["name"],
-            "category": info["category"],
-            "type": info["type"],
-            "size": info["size"],
-            "downloaded": model_path.exists(),
-            "path": str(model_path),
-            "align_model": info["align_model"],
-        })
+        result.append(
+            {
+                "id": model_id,
+                "name": info["name"],
+                "category": info["category"],
+                "type": info["type"],
+                "size": info["size"],
+                "downloaded": model_path.exists(),
+                "downloadable": True,
+                "path": str(model_path),
+                "align_model": info["align_model"],
+            }
+        )
     return result
 
 
@@ -396,7 +447,7 @@ async def download_whisper_model(req: DownloadModelRequest):
         models_dir = _get_models_dir()
         model_path = models_dir / WHISPERX_MODELS[req.model_id]["filename"]
     elif req.model_id in WHISPERX_LOCAL_MLX_MODELS:
-        model_path = Path(req.model_id)
+        model_path = Path(WHISPERX_LOCAL_MLX_MODELS[req.model_id]["model"])
         if model_path.exists():
             return {"status": "already_exists", "path": str(model_path)}
         raise HTTPException(

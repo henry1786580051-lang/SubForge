@@ -1,10 +1,10 @@
-import shutil
+import hashlib
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
-from app.core.task_manager import task_manager
 from app.security import validate_path
 
 router = APIRouter()
@@ -15,6 +15,28 @@ UPLOAD_DIR = Path("/tmp/subforge/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _parse_range_header(range_header: str, file_size: int) -> tuple[int, int]:
+    """Parse one HTTP byte range and reject malformed or multipart ranges."""
+    if file_size <= 0 or not range_header.startswith("bytes="):
+        raise ValueError("Invalid Range header")
+    value = range_header[6:].strip()
+    if not value or "," in value or "-" not in value:
+        raise ValueError("Invalid Range header")
+
+    start_text, end_text = value.split("-", 1)
+    if not start_text:
+        suffix_length = int(end_text)
+        if suffix_length <= 0:
+            raise ValueError("Invalid suffix range")
+        return max(0, file_size - suffix_length), file_size - 1
+
+    start = int(start_text)
+    end = int(end_text) if end_text else file_size - 1
+    if start < 0 or start >= file_size or end < start:
+        raise ValueError("Range out of bounds")
+    return start, min(end, file_size - 1)
+
+
 @router.post("/upload")
 async def upload_file(file: UploadFile):
     """Upload a media file for processing."""
@@ -22,26 +44,36 @@ async def upload_file(file: UploadFile):
         raise HTTPException(status_code=400, detail="No filename provided")
 
     from os.path import basename
+
     safe_name = basename(file.filename)
     safe_name = "".join(c for c in safe_name if c.isalnum() or c in "._- ")
     if not safe_name:
         raise HTTPException(status_code=400, detail="Invalid filename")
-    dest = UPLOAD_DIR / safe_name
+    upload_dir = UPLOAD_DIR / uuid.uuid4().hex
+    upload_dir.mkdir(parents=True, exist_ok=False)
+    dest = upload_dir / safe_name
 
     size = 0
-    with open(dest, "wb") as f:
-        while chunk := await file.read(1024 * 1024):
-            size += len(chunk)
-            if size > MAX_UPLOAD_SIZE:
-                dest.unlink(missing_ok=True)
-                raise HTTPException(status_code=413, detail="File too large")
-            f.write(chunk)
+    try:
+        with open(dest, "wb") as f:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_UPLOAD_SIZE:
+                    raise HTTPException(status_code=413, detail="File too large")
+                f.write(chunk)
+    except BaseException:
+        dest.unlink(missing_ok=True)
+        try:
+            upload_dir.rmdir()
+        except OSError:
+            pass
+        raise
 
     return {"file_path": str(dest), "filename": safe_name}
 
 
 @router.get("/info")
-async def get_file_info(path: str = Query(..., description="File path")):
+def get_file_info(path: str = Query(..., description="File path")):
     """Get media file information using ffprobe."""
     import json
     import subprocess
@@ -57,8 +89,10 @@ async def get_file_info(path: str = Query(..., description="File path")):
         result = subprocess.run(
             [
                 "ffprobe",
-                "-v", "quiet",
-                "-print_format", "json",
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
                 "-show_format",
                 "-show_streams",
                 str(file_path),
@@ -77,9 +111,7 @@ async def get_file_info(path: str = Query(..., description="File path")):
             (s for s in probe.get("streams", []) if s.get("codec_type") == "video"),
             None,
         )
-        audio_streams = [
-            s for s in probe.get("streams", []) if s.get("codec_type") == "audio"
-        ]
+        audio_streams = [s for s in probe.get("streams", []) if s.get("codec_type") == "audio"]
         fmt = probe.get("format", {})
 
         return {
@@ -93,7 +125,9 @@ async def get_file_info(path: str = Query(..., description="File path")):
                 "height": video_stream.get("height"),
                 "codec": video_stream.get("codec_name"),
                 "fps": video_stream.get("r_frame_rate"),
-            } if video_stream else None,
+            }
+            if video_stream
+            else None,
             "audio_tracks": [
                 {
                     "index": i,
@@ -109,12 +143,14 @@ async def get_file_info(path: str = Query(..., description="File path")):
         raise HTTPException(status_code=500, detail="ffprobe timed out")
     except FileNotFoundError:
         raise HTTPException(status_code=500, detail="ffprobe not installed")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/thumbnail")
-async def get_thumbnail(path: str = Query(...)):
+def get_thumbnail(path: str = Query(...)):
     """Generate a video thumbnail."""
     import subprocess
 
@@ -125,16 +161,22 @@ async def get_thumbnail(path: str = Query(...)):
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
 
-    thumb_path = UPLOAD_DIR / f"{file_path.stem}_thumb.jpg"
+    path_hash = hashlib.sha256(str(file_path).encode("utf-8")).hexdigest()[:16]
+    thumb_path = UPLOAD_DIR / f"{file_path.stem}_{path_hash}_thumb.jpg"
 
-    if not thumb_path.exists():
+    if not thumb_path.exists() or thumb_path.stat().st_mtime_ns < file_path.stat().st_mtime_ns:
         result = subprocess.run(
             [
-                "ffmpeg", "-y",
-                "-i", str(file_path),
-                "-ss", "00:00:01",
-                "-vframes", "1",
-                "-vf", "scale=320:-1",
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(file_path),
+                "-ss",
+                "00:00:01",
+                "-vframes",
+                "1",
+                "-vf",
+                "scale=320:-1",
                 str(thumb_path),
             ],
             capture_output=True,
@@ -147,7 +189,7 @@ async def get_thumbnail(path: str = Query(...)):
 
 
 @router.get("/stream")
-async def stream_video(path: str = Query(...), request: Request = None):
+def stream_video(request: Request, path: str = Query(...)):
     """Stream a video file for HTML5 video player with range support."""
     import mimetypes
     import os
@@ -163,17 +205,12 @@ async def stream_video(path: str = Query(...), request: Request = None):
     file_size = os.path.getsize(file_path)
 
     # Handle range requests for video seeking
-    range_header = request.headers.get("range") if request else None
+    range_header = request.headers.get("range")
     if range_header:
         try:
-            range_match = range_header.replace("bytes=", "").split("-")
-            start = int(range_match[0]) if range_match[0] else 0
-            end = int(range_match[1]) if range_match[1] else file_size - 1
+            start, end = _parse_range_header(range_header, file_size)
         except (ValueError, IndexError):
             raise HTTPException(status_code=416, detail="Invalid Range header")
-        if start >= file_size or start < 0:
-            raise HTTPException(status_code=416, detail="Range out of bounds")
-        end = min(end, file_size - 1)
 
         def iter_range():
             with open(file_path, "rb") as f:

@@ -1,4 +1,6 @@
+import contextvars
 import json
+import logging
 import threading
 import time
 from datetime import datetime
@@ -12,9 +14,14 @@ from subforge.core.llm.context import get_task_context
 LLM_LOG_FILE = LOG_PATH / "llm_requests.jsonl"
 MAX_LOG_SIZE = 10 * 1024 * 1024  # 10MB
 
+logger = logging.getLogger(__name__)
 
 _log_lock = threading.Lock()
 _pending_requests: Dict[int, Dict[str, Any]] = {}  # 暂存请求信息，等待响应后合并
+_current_request_key: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "subforge_llm_request_key",
+    default=None,
+)
 
 
 # ==================== 日志写入 ====================
@@ -42,8 +49,7 @@ def _write_log(entry: Dict[str, Any]) -> None:
             with open(LLM_LOG_FILE, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).debug(f"Failed to write LLM log: {e}")
+        logger.debug("Failed to write LLM log: %s", e)
 
 
 # ==================== HTTPX Hooks ====================
@@ -59,8 +65,10 @@ def _on_request(request: httpx.Request) -> None:
     except (json.JSONDecodeError, UnicodeDecodeError):
         request_body = {"raw": request.content.decode("utf-8", errors="replace")}
 
+    request_key = id(request)
+    _current_request_key.set(request_key)
     with _log_lock:
-        _pending_requests[id(request)] = {
+        _pending_requests[request_key] = {
             "start_time": time.time(),
             "url": str(request.url),
             "request": request_body,
@@ -94,20 +102,16 @@ def create_logging_http_client() -> httpx.Client:
 
 def log_llm_response(response: Any) -> None:
     """记录完整的请求+响应（在 SDK 解析响应后调用）"""
+    key = _current_request_key.get()
+    if key is None:
+        logger.debug("No request context found for LLM response log")
+        return
+
     with _log_lock:
-        if not _pending_requests:
-            return
-
-        # 优先选择已完成响应的请求（有 duration_ms）
-        completed_key = None
-        for key, pending in _pending_requests.items():
-            if pending.get("completed"):
-                completed_key = key
-                break
-
-        # 如果没有已完成的，取第一个
-        key = completed_key if completed_key else next(iter(_pending_requests))
-        pending = _pending_requests.pop(key)
+        pending = _pending_requests.pop(key, None)
+    _current_request_key.set(None)
+    if pending is None:
+        return
 
     # 序列化完整响应体
     response_data = {}
@@ -130,3 +134,33 @@ def log_llm_response(response: Any) -> None:
     }
 
     _write_log(log_entry)
+
+
+def log_llm_error(error: Exception) -> None:
+    """Log and release the exact pending request when the SDK raises."""
+    key = _current_request_key.get()
+    if key is None:
+        return
+    with _log_lock:
+        pending = _pending_requests.pop(key, None)
+    _current_request_key.set(None)
+    if pending is None:
+        return
+
+    ctx = get_task_context()
+    _write_log(
+        {
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "task_id": ctx.task_id if ctx else "",
+            "file_name": ctx.file_name if ctx else "",
+            "stage": ctx.stage if ctx else "",
+            "url": pending.get("url", ""),
+            "status": pending.get("status", 0),
+            "duration_ms": pending.get(
+                "duration_ms",
+                int((time.time() - pending.get("start_time", time.time())) * 1000),
+            ),
+            "request": pending.get("request", {}),
+            "error": f"{type(error).__name__}: {error}",
+        }
+    )

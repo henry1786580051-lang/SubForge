@@ -20,7 +20,7 @@ SubForge 是一个 AI 驱动的视频字幕工具，覆盖转录、断句、优�
 
 | 能力 | 说明 |
 | --- | --- |
-| 语音转文字 | 默认使用 WhisperX 工作流：MLX Whisper 转录 + forced alignment 词级时间轴 |
+| 语音转文字 | 默认使用 WhisperX 工作流：MLX Whisper 转录 + forced alignment 词级时间轴 + VAD 保守校验 |
 | 智能断句 | 使用 LLM 按语义重排字幕，避免机械切分和超长字幕 |
 | 字幕优化 | 自动修正错别字、补全标点、去除冗余语气词 |
 | 智能翻译 | 支持上下文感知翻译、反思翻译和免费翻译引擎 |
@@ -34,19 +34,36 @@ SubForge 的重点不只是“把语音转成文字”，而是尽量让字幕�
 
 ### 转录优化
 
-转录前会先对音频做预处理，再使用 MLX Whisper 完成 Apple Silicon 加速转录，最后通过 WhisperX forced alignment 生成词级时间轴：
+转录前会先对音频做预处理，再使用 MLX Whisper 完成 Apple Silicon 加速转录。文本在对齐前会将数字、单位和符号转为可对齐的口语形式，然后由 WhisperX forced alignment 生成词级时间轴。TEN-VAD 仅对可疑边界做保守校验，避免为了修正少量错误而破坏已经正确的字幕：
 
 ```text
-原始音频 -> DeepFilterNet3 降噪 -> MLX Whisper 转录 -> WhisperX forced alignment -> 词级时间轴 -> 字幕断句
+原始音频
+  -> DeepFilterNet3 可选降噪
+  -> MLX Whisper 转录
+  -> 数字/单位/符号语音规范化
+  -> WhisperX forced alignment
+  -> TEN-VAD 时间轴保守校验（Silero VAD 回退）
+  -> 词级时间轴
+  -> 智能断句与翻译
 ```
 
 | 技术 | 作用 |
 | --- | --- |
 | DeepFilterNet3 | 降低车内、户外、咖啡厅等场景的背景噪音，突出人声 |
 | MLX Whisper | Apple Silicon 专门优化的本地 Whisper 推理，默认使用本地 MLX 模型 |
-| WhisperX forced alignment | 使用对齐模型把转录文本落到词级时间轴，改善句尾拖尾和跨静音区问题 |
+| WhisperX forced alignment | 使用独立对齐模型把转录文本落到词级时间轴 |
+| 对齐前语音规范化 | 将 `350` 、`mph` 、`kg` 等数字与单位展开为可对齐的口语 token，对齐后恢复原文展示 |
+| TEN-VAD | 默认的语音活动检测器，用于校验可疑句首和句尾，不全局覆盖 WhisperX 的正确对齐 |
+| Silero VAD | TEN-VAD 不可用或运行失败时的回退方案，保证跨平台可用性 |
 | Content Integrity Score | 用语音时长比例监控内容完整性，避免参数过严导致漏转录 |
 | Whisper.cpp 兼容通道 | 保留 whisper.cpp 作为备用本地引擎，适合已有 ggml 模型的用户 |
+
+### 可靠性与桌面端
+
+- 转录、断句和翻译任务通过 WebSocket 实时推送进度与中间结果。
+- 上传文件、缩略图和导出结果使用独立路径与范围请求处理，避免同名文件或并发任务相互覆盖。
+- LLM 请求日志按请求绑定，并发翻译不会错配 prompt 和 response。
+- macOS 桌面包内置 FFmpeg、DeepFilterNet3 运行时和 TEN-VAD；Whisper/forced alignment 模型由用户在设置页管理，不重复打包大模型。
 
 ### 智能翻译
 

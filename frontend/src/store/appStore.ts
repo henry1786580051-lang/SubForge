@@ -154,7 +154,7 @@ export const useAppStore = create<AppState>((set) => ({
     needTranslate: true,
     needReflect: false,
     customPrompt: "",
-    whisperModelSize: "/Users/guwenhan/Desktop/YouTube/model/whisper-large-v3-fp16",
+    whisperModelSize: "large-v3",
     whisperxAlignModel: "WAV2VEC2_ASR_LARGE_LV60K_960H",
     whisperxBatchSize: 8,
     enableAudioEnhancement: true,

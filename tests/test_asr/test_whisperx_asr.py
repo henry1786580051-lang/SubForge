@@ -1,9 +1,9 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from subforge.core.asr.whisperx_asr import (
-    DEFAULT_LOCAL_MLX_MODEL,
     WhisperXASR,
     _install_offline_sentence_tokenizer,
     _mlx_model_repo,
@@ -83,9 +83,7 @@ def test_whisperx_normalizes_english_numbers_models_units_and_symbols():
     assert _spoken_token("2026") == "twenty twenty six"
     assert _spoken_token("M4") == "M four"
     assert _spoken_token("543hp") == "five hundred forty three horsepower"
-    assert _spoken_token("$79,995.") == (
-        "seventy nine thousand nine hundred ninety five dollars."
-    )
+    assert _spoken_token("$79,995.") == ("seventy nine thousand nine hundred ninety five dollars.")
     assert _spoken_token("10%") == "ten percent"
     assert _spoken_token("0-60") == "zero to sixty"
     assert _spoken_token("AWD") == "A W D"
@@ -135,9 +133,7 @@ def test_whisperx_restores_display_tokens_from_spoken_alignment():
         for index, word in enumerate(spoken)
     ]
 
-    restored = _restore_display_alignment(
-        {"segments": [{"words": aligned_words}]}, plans
-    )
+    restored = _restore_display_alignment({"segments": [{"words": aligned_words}]}, plans)
 
     assert restored is not None
     words = restored["segments"][0]["words"]
@@ -154,10 +150,13 @@ def test_whisperx_rejects_incomplete_spoken_mapping():
     _, plans = _prepare_spoken_alignment(segments, "en")
 
     assert plans is not None
-    assert _restore_display_alignment(
-        {"segments": [{"words": [{"word": "twenty", "start": 1.0, "end": 1.2}]}]},
-        plans,
-    ) is None
+    assert (
+        _restore_display_alignment(
+            {"segments": [{"words": [{"word": "twenty", "start": 1.0, "end": 1.2}]}]},
+            plans,
+        )
+        is None
+    )
 
 
 def test_whisperx_maps_standard_model_name_to_mlx_repo():
@@ -166,8 +165,9 @@ def test_whisperx_maps_standard_model_name_to_mlx_repo():
 
 
 def test_whisperx_defaults_to_local_mlx_model_when_available():
-    assert default_mlx_model() == DEFAULT_LOCAL_MLX_MODEL
-    assert _mlx_model_repo("") == DEFAULT_LOCAL_MLX_MODEL
+    default_model = default_mlx_model()
+    assert default_model == "large-v3" or Path(default_model).is_dir()
+    assert _mlx_model_repo("") == default_model
 
 
 def test_whisperx_prepares_model_safetensors_alias(tmp_path):

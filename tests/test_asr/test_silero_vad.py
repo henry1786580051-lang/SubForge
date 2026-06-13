@@ -1,5 +1,9 @@
 """Tests for Silero VAD speech segment detection."""
 
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 import pytest
 import soundfile as sf
@@ -41,10 +45,10 @@ def mixed_wav(tmp_path):
 
 
 class TestDetectSpeechSegments:
-
     def test_silence_returns_empty_or_minimal(self, silence_wav):
         """Pure silence should produce no segments or very few."""
         from subforge.core.asr.silero_vad import detect_speech_segments
+
         result = detect_speech_segments(silence_wav, threshold=0.5)
         # Should have 0 or very few segments (noise floor)
         assert len(result) <= 2
@@ -52,6 +56,7 @@ class TestDetectSpeechSegments:
     def test_segments_are_sorted(self, noise_wav):
         """Segments must be sorted by start time."""
         from subforge.core.asr.silero_vad import detect_speech_segments
+
         result = detect_speech_segments(noise_wav, threshold=0.3)
         for i in range(1, len(result)):
             assert result[i][0] >= result[i - 1][0]
@@ -59,6 +64,7 @@ class TestDetectSpeechSegments:
     def test_segments_do_not_overlap(self, noise_wav):
         """Adjacent segments must not overlap."""
         from subforge.core.asr.silero_vad import detect_speech_segments
+
         result = detect_speech_segments(noise_wav, threshold=0.3)
         for i in range(1, len(result)):
             assert result[i][0] >= result[i - 1][1]
@@ -66,6 +72,7 @@ class TestDetectSpeechSegments:
     def test_segments_within_audio_bounds(self, noise_wav):
         """All segments must be within [0, audio_duration + padding]."""
         from subforge.core.asr.silero_vad import detect_speech_segments
+
         result = detect_speech_segments(noise_wav, threshold=0.3, speech_pad_ms=500)
         audio_len_ms = 5000  # 5 seconds
         for start, end in result:
@@ -76,21 +83,23 @@ class TestDetectSpeechSegments:
     def test_invalid_path_raises(self):
         """Non-existent file should raise FileNotFoundError."""
         from subforge.core.asr.silero_vad import detect_speech_segments
+
         with pytest.raises(FileNotFoundError):
             detect_speech_segments("/nonexistent/path.wav")
 
     def test_none_path_raises(self):
         """None path should raise FileNotFoundError."""
         from subforge.core.asr.silero_vad import detect_speech_segments
+
         with pytest.raises(FileNotFoundError):
             detect_speech_segments(None)
 
 
 class TestParameterSensitivity:
-
     def test_higher_threshold_same_or_fewer_segments(self, noise_wav):
         """Higher threshold should detect same or less speech."""
         from subforge.core.asr.silero_vad import detect_speech_segments
+
         low = detect_speech_segments(noise_wav, threshold=0.3)
         high = detect_speech_segments(noise_wav, threshold=0.7)
         low_dur = sum(e - s for s, e in low)
@@ -100,6 +109,7 @@ class TestParameterSensitivity:
     def test_larger_pad_more_coverage(self, noise_wav):
         """Larger padding should produce equal or more total duration."""
         from subforge.core.asr.silero_vad import detect_speech_segments
+
         small = detect_speech_segments(noise_wav, threshold=0.3, speech_pad_ms=100)
         large = detect_speech_segments(noise_wav, threshold=0.3, speech_pad_ms=500)
         small_dur = sum(e - s for s, e in small)
@@ -109,12 +119,57 @@ class TestParameterSensitivity:
     def test_larger_min_silence_merges_more(self, noise_wav):
         """Larger min_silence_ms should produce fewer, longer segments."""
         from subforge.core.asr.silero_vad import detect_speech_segments
+
         small = detect_speech_segments(noise_wav, threshold=0.3, min_silence_ms=100)
         large = detect_speech_segments(noise_wav, threshold=0.3, min_silence_ms=500)
         assert len(large) <= len(small) + 2  # allow small margin
 
 
 class TestRunVadInference:
+    def test_shared_model_inference_is_serialized(self, monkeypatch):
+        """Concurrent calls must not interleave a stateful Silero model."""
+        import subforge.core.asr.silero_vad as silero_vad
+
+        class Probability:
+            def item(self):
+                return 1.0
+
+        class StatefulModel:
+            def __init__(self):
+                self.active = 0
+                self.max_active = 0
+                self.guard = threading.Lock()
+
+            def reset_states(self):
+                pass
+
+            def __call__(self, _tensor, _sample_rate):
+                with self.guard:
+                    self.active += 1
+                    self.max_active = max(self.max_active, self.active)
+                time.sleep(0.03)
+                with self.guard:
+                    self.active -= 1
+                return Probability()
+
+        model = StatefulModel()
+        monkeypatch.setattr(silero_vad, "_vad_model", model)
+        samples = np.ones(512, dtype=np.float32)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(
+                    silero_vad.run_vad_inference,
+                    samples,
+                    threshold=0,
+                    min_speech_ms=0,
+                )
+                for _ in range(2)
+            ]
+            results = [future.result() for future in futures]
+
+        assert model.max_active == 1
+        assert all(result == [(0, 32)] for result in results)
 
     def test_returns_list_of_tuples(self, noise_wav):
         """run_vad_inference should return List[Tuple[int, int]]."""
@@ -138,44 +193,83 @@ class TestRunVadInference:
     def test_empty_samples_returns_empty(self):
         """Empty audio should return empty list."""
         from subforge.core.asr.silero_vad import run_vad_inference
+
         result = run_vad_inference(np.array([], dtype=np.float32), audio_len_ms=0)
         assert result == []
+
+    def test_audio_length_is_derived_when_omitted(self, monkeypatch):
+        import subforge.core.asr.silero_vad as silero_vad
+
+        class Probability:
+            def item(self):
+                return 1.0
+
+        class Model:
+            def reset_states(self):
+                pass
+
+            def __call__(self, _tensor, _sample_rate):
+                return Probability()
+
+        monkeypatch.setattr(silero_vad, "_vad_model", Model())
+        result = silero_vad.run_vad_inference(
+            np.ones(16000, dtype=np.float32),
+            threshold=0,
+            min_speech_ms=0,
+        )
+
+        assert result == [(0, 1000)]
 
     def test_no_overlap_with_large_padding(self):
         """Gap-aware padding must never produce overlapping segments."""
         from subforge.core.asr.silero_vad import run_vad_inference
+
         # Simulate speech-like signal with 3 bursts separated by 500ms silence
         sr = 16000
         samples = np.zeros(sr * 10, dtype=np.float32)  # 10 seconds
         # Burst 1: 0.5s - 2.0s
-        samples[int(sr * 0.5):int(sr * 2.0)] = 0.5 * np.random.default_rng(42).uniform(-1, 1, int(sr * 1.5))
+        samples[int(sr * 0.5) : int(sr * 2.0)] = 0.5 * np.random.default_rng(42).uniform(
+            -1, 1, int(sr * 1.5)
+        )
         # Burst 2: 2.5s - 4.0s (only 500ms gap from burst 1)
-        samples[int(sr * 2.5):int(sr * 4.0)] = 0.5 * np.random.default_rng(43).uniform(-1, 1, int(sr * 1.5))
+        samples[int(sr * 2.5) : int(sr * 4.0)] = 0.5 * np.random.default_rng(43).uniform(
+            -1, 1, int(sr * 1.5)
+        )
         # Burst 3: 4.5s - 6.0s (only 500ms gap from burst 2)
-        samples[int(sr * 4.5):int(sr * 6.0)] = 0.5 * np.random.default_rng(44).uniform(-1, 1, int(sr * 1.5))
+        samples[int(sr * 4.5) : int(sr * 6.0)] = 0.5 * np.random.default_rng(44).uniform(
+            -1, 1, int(sr * 1.5)
+        )
 
         result = run_vad_inference(
-            samples, audio_len_ms=10000,
-            threshold=0.5, min_speech_ms=200, min_silence_ms=300,
+            samples,
+            audio_len_ms=10000,
+            threshold=0.5,
+            min_speech_ms=200,
+            min_silence_ms=300,
             speech_pad_ms=300,  # 300ms padding each side -> 600ms total per gap, but gap only 500ms
         )
         for i in range(1, len(result)):
-            assert result[i][0] >= result[i - 1][1], \
-                f"Overlap at segment {i}: end={result[i-1][1]}ms start={result[i][0]}ms"
+            assert result[i][0] >= result[i - 1][1], (
+                f"Overlap at segment {i}: end={result[i - 1][1]}ms start={result[i][0]}ms"
+            )
 
     def test_gap_split_evenly(self):
         """When gap < 2 * speech_pad_ms, padding should be split evenly."""
         from subforge.core.asr.silero_vad import run_vad_inference
+
         sr = 16000
         samples = np.zeros(sr * 5, dtype=np.float32)
         # Two bursts: 1.0s-2.0s and 2.4s-3.0s (400ms gap)
         rng = np.random.default_rng(99)
-        samples[int(sr * 1.0):int(sr * 2.0)] = 0.5 * rng.uniform(-1, 1, int(sr * 1.0))
-        samples[int(sr * 2.4):int(sr * 3.0)] = 0.5 * rng.uniform(-1, 1, int(sr * 0.6))
+        samples[int(sr * 1.0) : int(sr * 2.0)] = 0.5 * rng.uniform(-1, 1, int(sr * 1.0))
+        samples[int(sr * 2.4) : int(sr * 3.0)] = 0.5 * rng.uniform(-1, 1, int(sr * 0.6))
 
         result = run_vad_inference(
-            samples, audio_len_ms=5000,
-            threshold=0.5, min_speech_ms=200, min_silence_ms=100,
+            samples,
+            audio_len_ms=5000,
+            threshold=0.5,
+            min_speech_ms=200,
+            min_silence_ms=100,
             speech_pad_ms=300,  # 2*300=600ms > 400ms gap, must split
         )
         if len(result) >= 2:
@@ -184,5 +278,6 @@ class TestRunVadInference:
             assert gap_between >= 0, f"Overlap: {gap_between}ms"
             # When gap < 2*pad, the segments should either meet or have a tiny gap
             # (integer division may leave 1ms gap)
-            assert gap_between <= 1, \
+            assert gap_between <= 1, (
                 f"Gap too large ({gap_between}ms) — padding was not applied correctly"
+            )

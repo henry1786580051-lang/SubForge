@@ -1,14 +1,17 @@
 import json
+import os
 import threading
 import time
 from pathlib import Path
+from typing import TypeVar, cast
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 router = APIRouter()
 
-_settings_lock = threading.Lock()
+_settings_lock = threading.RLock()
+T = TypeVar("T")
 
 # Path to subforge settings.json
 try:
@@ -46,20 +49,35 @@ _cache_time: float = 0
 _CACHE_TTL = 5.0
 
 
-def get_config_value(key: str, default=None):
+def _coerce_config_value(value, default: T) -> T:
+    """Return a persisted value only when it matches the default's type."""
+    if isinstance(default, bool):
+        return cast(T, value if isinstance(value, bool) else default)
+    if isinstance(default, int):
+        return cast(T, value if isinstance(value, int) and not isinstance(value, bool) else default)
+    if isinstance(default, float):
+        return cast(T, float(value) if isinstance(value, (int, float)) else default)
+    if isinstance(default, str):
+        return cast(T, value if isinstance(value, str) else default)
+    return cast(T, value if isinstance(value, type(default)) else default)
+
+
+def get_config_value(key: str, default: T) -> T:
     """Read a single config value with TTL cache."""
     global _settings_cache, _cache_time
-    now = time.monotonic()
-    if _settings_cache is None or (now - _cache_time) > _CACHE_TTL:
-        _settings_cache = {**_DEFAULTS, **_read_settings()}
-        _cache_time = now
-    return _settings_cache.get(key, default)
+    with _settings_lock:
+        now = time.monotonic()
+        if _settings_cache is None or (now - _cache_time) > _CACHE_TTL:
+            _settings_cache = {**_DEFAULTS, **_read_settings()}
+            _cache_time = now
+        return _coerce_config_value(_settings_cache.get(key, default), default)
 
 
 def invalidate_config_cache():
     """Invalidate the config cache so next read fetches fresh values."""
     global _settings_cache
-    _settings_cache = None
+    with _settings_lock:
+        _settings_cache = None
 
 
 def _write_settings(data: dict):
@@ -71,7 +89,16 @@ def _write_settings(data: dict):
             if path is None:
                 path = Path.home() / "SubForge" / "settings.json"
             path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        temp_path = path.with_name(f".{path.name}.tmp")
+        try:
+            temp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            try:
+                os.chmod(temp_path, 0o600)
+            except OSError:
+                pass
+            temp_path.replace(path)
+        finally:
+            temp_path.unlink(missing_ok=True)
 
 
 # Default config values
@@ -112,7 +139,7 @@ _DEFAULTS = {
     "whisperx_batch_size": 8,
     "ff_mdx_kim2": False,
     "enable_audio_enhancement": True,
-    "whisper_model_size": "/Users/guwenhan/Desktop/YouTube/model/whisper-large-v3-fp16",
+    "whisper_model_size": "large-v3",
 }
 
 
@@ -159,11 +186,16 @@ async def test_llm_connection():
 
     try:
         import httpx
+
         async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
             resp = await client.post(
                 f"{base_url}/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json={"model": model, "messages": [{"role": "user", "content": "Hi"}], "max_tokens": 5},
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": "Hi"}],
+                    "max_tokens": 5,
+                },
             )
             resp.raise_for_status()
             return {"ok": True, "model": model}
@@ -187,6 +219,7 @@ async def test_whisper_connection():
 
     try:
         import httpx
+
         async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
             resp = await client.get(
                 f"{base_url}/models",

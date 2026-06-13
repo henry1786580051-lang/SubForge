@@ -52,9 +52,7 @@ class MockASR(BaseASR):
         self.mock_text_per_second = mock_text_per_second
         self.fail_on_run = fail_on_run
 
-    def _run(
-        self, callback: Optional[Callable[[int, str], None]] = None, **kwargs
-    ) -> dict:
+    def _run(self, callback: Optional[Callable[[int, str], None]] = None, **kwargs) -> dict:
         """模拟 ASR 转录，返回假数据"""
         MockASR.global_run_count += 1
 
@@ -73,7 +71,7 @@ class MockASR(BaseASR):
 
             segments = [
                 {
-                    "text": f"{self.mock_text_per_second}{i+1}",
+                    "text": f"{self.mock_text_per_second}{i + 1}",
                     "start": i,
                     "end": i + 1,
                 }
@@ -128,9 +126,7 @@ class TestChunkedASRBasics:
         """测试默认参数初始化"""
         audio_input = create_test_audio_file(60)
         try:
-            chunked = ChunkedASR(
-                asr_class=MockASR, audio_path=audio_input, asr_kwargs={}
-            )
+            chunked = ChunkedASR(asr_class=MockASR, audio_path=audio_input, asr_kwargs={})
 
             assert chunked.asr_class is MockASR
             assert chunked.audio_path == audio_input
@@ -350,9 +346,7 @@ class TestChunkMerging:
         # 20分钟 -> 3块
         audio_input = create_test_audio_file(1200)
         try:
-            chunked = ChunkedASR(
-                asr_class=MockASR, audio_path=audio_input, chunk_length=480
-            )
+            chunked = ChunkedASR(asr_class=MockASR, audio_path=audio_input, chunk_length=480)
 
             result = chunked.run()
 
@@ -402,6 +396,19 @@ class TestEdgeCases:
         finally:
             Path(audio_input).unlink()
 
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"chunk_length": 0}, "chunk_length must be positive"),
+            ({"chunk_length": 10, "chunk_overlap": 10}, "chunk_overlap must be smaller"),
+            ({"chunk_length": 10, "chunk_overlap": 11}, "chunk_overlap must be smaller"),
+            ({"chunk_concurrency": 0}, "chunk_concurrency must be positive"),
+        ],
+    )
+    def test_invalid_chunk_parameters_are_rejected(self, kwargs, message):
+        with pytest.raises(ValueError, match=message):
+            ChunkedASR(asr_class=MockASR, audio_path="unused.mp3", **kwargs)
+
 
 # ============================================================================
 # 测试错误处理
@@ -445,9 +452,7 @@ class TestProgressCallback:
             def mock_callback(progress: int, message: str):
                 callback_calls.append((progress, message))
 
-            chunked = ChunkedASR(
-                asr_class=MockASR, audio_path=audio_input, chunk_length=480
-            )
+            chunked = ChunkedASR(asr_class=MockASR, audio_path=audio_input, chunk_length=480)
 
             chunked.run(callback=mock_callback)
 

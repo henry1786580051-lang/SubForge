@@ -51,7 +51,7 @@ export default function Home() {
         needTranslate: (data.need_translate as boolean) ?? true,
         needReflect: (data.need_reflect as boolean) ?? false,
         customPrompt: (data.custom_prompt as string) || "",
-        whisperModelSize: (data.whisper_model_size as string) || "/Users/guwenhan/Desktop/YouTube/model/whisper-large-v3-fp16",
+        whisperModelSize: (data.whisper_model_size as string) || "large-v3",
         whisperxAlignModel: (data.whisperx_align_model as string) || "WAV2VEC2_ASR_LARGE_LV60K_960H",
         whisperxBatchSize: Number(data.whisperx_batch_size || 8),
         enableAudioEnhancement: (data.enable_audio_enhancement as boolean) ?? true,

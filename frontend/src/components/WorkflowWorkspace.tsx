@@ -1075,9 +1075,10 @@ function ModelChip({
   onSelect: () => void;
   progress?: number;
 }) {
+  const downloadable = model.downloadable !== false;
   return (
     <button
-      onClick={model.downloaded ? onSelect : onDownload}
+      onClick={model.downloaded || !downloadable ? onSelect : onDownload}
       className={`group flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] transition ${
         active
           ? "border-accent bg-accent-dim text-accent"
@@ -1090,6 +1091,8 @@ function ModelChip({
         <Icon icon="solar:check-circle-bold" width={14} className="text-emerald-600" />
       ) : downloading ? (
         <span className="font-mono text-accent">{progress ?? 0}%</span>
+      ) : !downloadable ? (
+        <span className="text-text-muted">手动配置</span>
       ) : (
         <span className="text-accent opacity-80 group-hover:opacity-100">下载</span>
       )}
