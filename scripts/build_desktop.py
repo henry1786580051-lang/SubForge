@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import platform
 import shutil
@@ -146,6 +147,8 @@ def prepare_ffmpeg() -> None:
 def build_pyinstaller() -> None:
     env = os.environ.copy()
     env["VIDEOCAPTIONER_DESKTOP_RUNTIME_DIR"] = str(RUNTIME_DIR)
+    if platform.system() == "Darwin":
+        env.setdefault("TORCH_USE_RTLD_GLOBAL", "1")
     _run([
         sys.executable,
         "-m",
@@ -157,6 +160,38 @@ def build_pyinstaller() -> None:
         "--workpath",
         str(BUILD_DIR / "pyinstaller"),
     ], env=env)
+
+
+def inject_packaged_mlx_runtime() -> None:
+    """Copy MLX packages without importing them during PyInstaller analysis."""
+    if not _requires_mlx_metallib():
+        return
+
+    package_sources: dict[str, Path] = {}
+    for package_name in ("mlx", "mlx_whisper"):
+        spec = importlib.util.find_spec(package_name)
+        if spec is None or not spec.submodule_search_locations:
+            raise RuntimeError(f"Missing {package_name}; install the whisperx extra before packaging")
+        package_sources[package_name] = Path(next(iter(spec.submodule_search_locations)))
+
+    bundle_roots = [
+        DIST_DIR / "SubForge" / "_internal",
+        DIST_DIR / "SubForge.app" / "Contents" / "Resources",
+    ]
+    for root in bundle_roots:
+        if not root.exists():
+            continue
+        for package_name, source in package_sources.items():
+            destination = root / package_name
+            if destination.exists():
+                shutil.rmtree(destination)
+            shutil.copytree(
+                source,
+                destination,
+                symlinks=True,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+            )
+            print(f"Injected {package_name} runtime: {destination.relative_to(ROOT)}")
 
 
 def patch_packaged_torch() -> None:
@@ -275,7 +310,13 @@ def _verify_data_root(data_root: Path, label: str) -> None:
         data_root / "resource" / "bin" / ("ffprobe.exe" if platform.system() == "Windows" else "ffprobe"),
     ]
     if _requires_mlx_metallib():
-        required.append(data_root / "mlx.metallib")
+        required.extend(
+            [
+                data_root / "mlx.metallib",
+                data_root / "mlx" / "lib" / "mlx.metallib",
+                data_root / "mlx_whisper" / "__init__.py",
+            ]
+        )
     missing = [str(path.relative_to(ROOT)) for path in required if not path.exists()]
     if missing:
         raise RuntimeError(f"Missing bundled resources in {label}:\n  - " + "\n  - ".join(missing))
@@ -345,6 +386,7 @@ def main() -> int:
     build_frontend(skip=args.skip_frontend_build)
     prepare_ffmpeg()
     build_pyinstaller()
+    inject_packaged_mlx_runtime()
     patch_packaged_torch()
     dedupe_packaged_torch_libs()
     patch_packaged_mlx_metallib()

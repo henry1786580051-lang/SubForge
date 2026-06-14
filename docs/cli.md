@@ -15,13 +15,13 @@ pip install subforge          # CLI + GUI 桌面版
 
 ```bash
 # 语音转字幕（免费）
-subforge transcribe video.mp4 --asr bijian
+subforge transcribe video.mp4 --asr whisperx --word-timestamps
 
 # 翻译字幕（免费必应翻译）
 subforge subtitle input.srt --translator bing --target-language en
 
 # 全流程：转录 → 优化 → 翻译 → 合成
-subforge process video.mp4 --asr bijian --translator bing --target-language ja
+subforge process video.mp4 --asr whisperx --translator bing --target-language ja
 
 # 给视频加字幕
 subforge synthesize video.mp4 -s subtitle.srt --subtitle-mode hard
@@ -48,7 +48,7 @@ subforge transcribe <文件> [选项]
 
 | 选项 | 说明 |
 |------|------|
-| `--asr` | ASR 引擎：`bijian`(默认,免费) `jianying`(免费) `whisper-api` `whisper-cpp`。bijian/jianying 仅支持中英文，其他语言用 whisper-api 或 whisper-cpp |
+| `--asr` | ASR 引擎：`whisperx`（Apple Silicon 默认，支持强制对齐）、`whisper-cpp`、`faster-whisper`、`whisper-api` |
 | `--language CODE` | 源语言 ISO 639-1 代码，如 `zh` `en` `ja`，或 `auto`（默认） |
 | `--word-timestamps` | 输出词级时间戳（配合字幕断句使用） |
 | `--whisper-api-key` | Whisper API 密钥（仅 `--asr whisper-api`） |
@@ -208,7 +208,7 @@ subforge process <音视频文件> [选项]
 ```bash
 # 英文视频配成中文视频
 subforge process talk.mp4 \
-  --asr bijian \
+  --asr whisperx \
   --translator bing --to zh-Hans \
   --dub-only \
   --timing strict
@@ -318,7 +318,7 @@ api_base = "https://api.openai.com/v1"
 model = "gpt-4o-mini"
 
 [transcribe]
-asr = "bijian"
+asr = "whisperx"
 
 [subtitle]
 optimize = true

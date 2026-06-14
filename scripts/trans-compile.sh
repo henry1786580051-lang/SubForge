@@ -41,7 +41,7 @@ echo ""
 # Compile specific language if provided
 if [ -n "$1" ]; then
     LANG_CODE="$1"
-    TS_FILE="$TRANS_DIR/VideoCaptioner_$LANG_CODE.ts"
+    TS_FILE="$TRANS_DIR/SubForge_$LANG_CODE.ts"
 
     if [ ! -f "$TS_FILE" ]; then
         echo "❌ Translation file not found: $TS_FILE"
@@ -49,7 +49,7 @@ if [ -n "$1" ]; then
     fi
 
     echo "📦 Compiling $LANG_CODE..."
-    $LRELEASE "$TS_FILE" -qm "$TRANS_DIR/VideoCaptioner_$LANG_CODE.qm"
+    $LRELEASE "$TS_FILE" -qm "$TRANS_DIR/SubForge_$LANG_CODE.qm"
 else
     # Compile all translation files
     for ts_file in "$TRANS_DIR"/*.ts; do

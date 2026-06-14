@@ -24,9 +24,9 @@ fi
 echo "📝 Scanning tr() calls in Python code..."
 pylupdate5 -verbose \
     $(find app -name "*.py") \
-    -ts "$TRANS_DIR/VideoCaptioner_zh_CN.ts" \
-    -ts "$TRANS_DIR/VideoCaptioner_zh_HK.ts" \
-    -ts "$TRANS_DIR/VideoCaptioner_en_US.ts"
+    -ts "$TRANS_DIR/SubForge_zh_CN.ts" \
+    -ts "$TRANS_DIR/SubForge_zh_HK.ts" \
+    -ts "$TRANS_DIR/SubForge_en_US.ts"
 
 # Remove obsolete translations
 echo ""
@@ -69,5 +69,5 @@ echo "✅ Translation strings extracted and cleaned successfully!"
 echo "📁 Translation files: resource/translations/"
 echo ""
 echo "💡 Next steps:"
-echo "   1. Edit translations with Qt Linguist: linguist resource/translations/VideoCaptioner_en_US.ts"
+echo "   1. Edit translations with Qt Linguist: linguist resource/translations/SubForge_en_US.ts"
 echo "   2. Or compile directly: ./scripts/trans-compile.sh"

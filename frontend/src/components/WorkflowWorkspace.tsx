@@ -475,7 +475,9 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
     () => models.filter((model) => model.category === "whisperx" && model.type === "alignment"),
     [models]
   );
-  const selectedModel = currentModels.find((model) => model.id === config.whisperModelSize);
+  const selectedModel = currentModels.find(
+    (model) => (model.value || model.id) === config.whisperModelSize || model.selected
+  );
   const selectedAlignModel = alignmentModels.find(
     (model) => model.align_model === config.whisperxAlignModel || model.id === config.whisperxAlignModel
   );
@@ -565,16 +567,19 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
             ) : (
               <div className="space-y-4">
                 <div>
-                  <FieldLabel label="默认转录模型" value={selectedModel?.downloaded ? "可用" : "未下载"} />
+                  <FieldLabel
+                    label="默认转录模型"
+                    value={selectedModel?.downloaded ? "本地可用" : selectedModel?.state === "on_demand" ? "首次使用下载" : "未下载"}
+                  />
                   <div className="mt-2 flex flex-wrap gap-2">
                     {currentModels.map((model) => (
                       <ModelChip
                         key={model.id}
                         model={model}
-                        active={config.whisperModelSize === model.id}
+                        active={config.whisperModelSize === (model.value || model.id) || Boolean(model.selected)}
                         downloading={downloadingModel === model.id}
                         progress={downloadProgress[model.id]}
-                        onSelect={() => void saveConfig("whisper_model_size", model.id)}
+                        onSelect={() => void saveConfig("whisper_model_size", model.value || model.id)}
                         onDownload={() => void downloadModel(model.id)}
                       />
                     ))}
@@ -1092,7 +1097,7 @@ function ModelChip({
       ) : downloading ? (
         <span className="font-mono text-accent">{progress ?? 0}%</span>
       ) : !downloadable ? (
-        <span className="text-text-muted">手动配置</span>
+        <span className="text-text-muted">{model.state === "on_demand" ? "首次使用下载" : "不可下载"}</span>
       ) : (
         <span className="text-accent opacity-80 group-hover:opacity-100">下载</span>
       )}

@@ -2,10 +2,8 @@ import logging
 from pathlib import Path
 
 from subforge.core.asr.asr_data import ASRData
-from subforge.core.asr.bcut import BcutASR
 from subforge.core.asr.chunked_asr import ChunkedASR
 from subforge.core.asr.faster_whisper import FasterWhisperASR
-from subforge.core.asr.jianying import JianYingASR
 from subforge.core.asr.whisper_api import WhisperAPI
 from subforge.core.asr.whisper_cpp import WhisperCppASR
 from subforge.core.asr.whisperx_asr import WhisperXASR
@@ -310,13 +308,6 @@ def _build_whisperx_kwargs(
     }
 
 
-def _build_simple_kwargs(config: TranscribeConfig, use_cache: bool = True) -> dict:
-    return {
-        "use_cache": use_cache,
-        "need_word_time_stamp": config.need_word_time_stamp,
-    }
-
-
 # --- ASR instance creation ---
 
 def _create_single_asr(audio_path: str, config: TranscribeConfig):
@@ -333,10 +324,6 @@ def _create_single_asr(audio_path: str, config: TranscribeConfig):
         kwargs = _build_faster_whisper_kwargs(config, use_cache=False)
         kwargs["vad_filter"] = False  # VAD already done
         return FasterWhisperASR(audio_path, **kwargs)
-    elif model_type == getattr(TranscribeModelEnum, "JIANYING", None):
-        return JianYingASR(audio_path, **_build_simple_kwargs(config, use_cache=False))
-    elif model_type == getattr(TranscribeModelEnum, "BIJIAN", None):
-        return BcutASR(audio_path, **_build_simple_kwargs(config, use_cache=False))
     else:
         raise ValueError(f"Invalid transcription model: {model_type}")
 
@@ -371,14 +358,6 @@ def _create_asr_instance(audio_path: str, config: TranscribeConfig, on_segment=N
         return ChunkedASR(asr_class=FasterWhisperASR, audio_path=audio_path,
                           asr_kwargs=_build_faster_whisper_kwargs(config),
                           chunk_concurrency=1, chunk_length=60 * 20)
-
-    elif model_type == getattr(TranscribeModelEnum, "JIANYING", None):
-        return ChunkedASR(asr_class=JianYingASR, audio_path=audio_path,
-                          asr_kwargs=_build_simple_kwargs(config))
-
-    elif model_type == getattr(TranscribeModelEnum, "BIJIAN", None):
-        return ChunkedASR(asr_class=BcutASR, audio_path=audio_path,
-                          asr_kwargs=_build_simple_kwargs(config))
 
     else:
         raise ValueError(f"Invalid transcription model: {model_type}")

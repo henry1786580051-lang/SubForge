@@ -101,6 +101,7 @@ packages = ["subforge"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "resource/assets" = "subforge/resources/assets"
+"resource/fonts" = "subforge/resources/fonts"
 "resource/subtitle_style" = "subforge/resources/subtitle_style"
 "resource/translations" = "subforge/resources/translations"
 "resource/ten_vad" = "subforge/resources/ten_vad"

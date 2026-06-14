@@ -88,6 +88,16 @@ def default_mlx_model() -> str:
     return "large-v3"
 
 
+def resolve_mlx_model(model: str = "") -> str:
+    """Resolve a configured MLX model name to its local path or HF repo."""
+    return _mlx_model_repo(model)
+
+
+def is_valid_mlx_model_dir(path: str | Path) -> bool:
+    """Return whether a directory contains a usable MLX Whisper model."""
+    return _is_valid_mlx_model_dir(Path(path).expanduser())
+
+
 def _normalize_language(language: str | None) -> str | None:
     value = (language or "").strip().lower()
     if not value or value == "auto":

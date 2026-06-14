@@ -49,7 +49,7 @@ def _whisper_cpp_config() -> TranscribeConfig:
     )
 
 
-def test_create_asr_instance_whisper_cpp_does_not_require_removed_jianying_enum(monkeypatch):
+def test_create_asr_instance_whisper_cpp(monkeypatch):
     monkeypatch.setattr(transcribe_module, "ChunkedASR", DummyChunkedASR)
     config = _whisper_cpp_config()
     config.whisper_cpp_path = "/tmp/whisper-cli"
@@ -213,7 +213,7 @@ def test_create_single_asr_whisperx_prefers_explicit_mlx_model_path(monkeypatch)
     assert asr.kwargs["whisper_model"] == "/Users/guwenhan/Desktop/YouTube/model/whisper-large-v3-fp16"
 
 
-def test_create_single_asr_whisper_cpp_does_not_require_removed_jianying_enum(monkeypatch):
+def test_create_single_asr_whisper_cpp(monkeypatch):
     monkeypatch.setattr(transcribe_module, "WhisperCppASR", DummyWhisperCppASR)
 
     asr = transcribe_module._create_single_asr("audio.wav", _whisper_cpp_config())

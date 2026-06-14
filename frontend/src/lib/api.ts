@@ -80,6 +80,8 @@ export const transcribeApi = {
       body: JSON.stringify(data),
     }),
   listModels: () => request<AsrModelInfo[]>("/api/transcribe/models"),
+  modelStatus: () => request<AsrModelStatus>("/api/transcribe/model-status"),
+  testModel: () => request<AsrModelTestResult>("/api/transcribe/test-model", { method: "POST" }),
   hardware: () => request<{ platform: string; arch: string; chip: string; device: string; n_threads: number; compute_type: string; gpu: string }>("/api/transcribe/hardware"),
   downloadModel: (model_id: string) =>
     request<{ task_id?: string; status: string; path?: string }>("/api/transcribe/download-model", {
@@ -193,6 +195,38 @@ export interface AsrModelInfo {
   downloadable?: boolean;
   path: string;
   align_model?: string;
+  value?: string;
+  selected?: boolean;
+  state?: "ready" | "missing" | "on_demand" | string;
+  detail?: string;
+  resolved_model?: string;
+}
+
+export interface AsrModelStatus {
+  engine: string;
+  engine_name: string;
+  model_id: string;
+  model_value: string;
+  model_name: string;
+  resolved_model: string;
+  model_path: string;
+  model_ready: boolean;
+  model_state: "ready" | "missing" | "on_demand" | string;
+  model_message: string;
+  alignment_model: string;
+  alignment_path: string;
+  alignment_ready: boolean;
+  platform_supported: boolean;
+  runtime_ready: boolean;
+  testable: boolean;
+}
+
+export interface AsrModelTestResult extends AsrModelStatus {
+  ok: boolean;
+  error?: string;
+  elapsed_seconds?: number;
+  transcript?: string;
+  segment_count?: number;
 }
 
 export interface LlmLogEntry {

@@ -47,7 +47,12 @@ docs/.vitepress/dist/
 # Claude Code
 .claude/
 CLAUDE.md
-videocaptioner/_version.py
+
+# Local agent skills and instructions
+.agents/
+skills/
+skills-lock.json
+frontend/AGENTS.md
 
 # CodeGraph
 .codegraph/

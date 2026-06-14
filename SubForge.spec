@@ -1,21 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files
 
 block_cipher = None
 ROOT = os.path.dirname(os.path.abspath(SPEC))
 
+# MLX is injected after PyInstaller finishes. Importing mlx_whisper while
+# collecting submodules initializes Metal and can terminate headless builds.
 optional_hiddenimports = []
 optional_datas = []
-for optional_pkg in (
-    'mlx',
-    'mlx_whisper',
-):
-    try:
-        optional_hiddenimports += collect_submodules(optional_pkg)
-        optional_datas += collect_data_files(optional_pkg, include_py_files=False)
-    except Exception:
-        pass
 
 # DeepFilterNet is used only for local enhancement inference. Avoid collecting
 # training, evaluation, and visualization modules, which pull unnecessary
@@ -183,6 +176,7 @@ a = Analysis(
     runtime_hooks=[],
     excludes=[
         'torchvision',
+        'mlx', 'mlx_whisper',
         'modelscope',
         'tensorflow', 'keras',
         'PyQt5', 'PyQt-Fluent-Widgets', 'qfluentwidgets',

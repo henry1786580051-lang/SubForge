@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.0.3 - 2026-06-14
+
+### Added
+
+- Added an ASR model status panel that clearly shows the active engine, selected model, local model path, runtime readiness, and forced-alignment model state.
+- Added a model self-test action so users can verify the current transcription configuration before starting a full job.
+- Added backend model discovery and health-check APIs, including automatic detection of local MLX Whisper models.
+
+### Fixed
+
+- Fixed packaged macOS builds failing when MLX modules initialized Metal during PyInstaller analysis.
+- Fixed MLX Whisper runtime resources not being available inside the installed macOS application.
+- Fixed ambiguous WhisperX model selection and misleading manual-configuration labels for locally installed MLX models.
+- Fixed WhisperX model resolution so the selected MLX model is consistently used by transcription jobs and model tests.
+
+### Changed
+
+- Improved WhisperX settings with explicit selected, locally ready, and on-demand download states.
+- Simplified the ASR implementation by removing unused Bcut and Jianying transcription backends and their obsolete tests and documentation.
+- Removed unused repository skills, starter assets, launcher scripts, and inactive Claude workflows.
+- Reduced desktop packaging overhead by injecting the MLX runtime after PyInstaller analysis and verifying all required MLX resources in the final bundle.
+
 ## v1.0.2 - 2026-06-02
 
 ### Fixed

@@ -30,6 +30,7 @@ def build_app_bundle() -> Path:
     build_desktop.build_frontend()
     build_desktop.prepare_ffmpeg()
     build_desktop.build_pyinstaller()
+    build_desktop.inject_packaged_mlx_runtime()
     build_desktop.patch_packaged_torch()
     build_desktop.dedupe_packaged_torch_libs()
     build_desktop.patch_packaged_mlx_metallib()
@@ -48,6 +49,7 @@ def create_dmg(app_path: Path):
     import dmgbuild
 
     print(f"Creating DMG -> {DMG_OUTPUT} ...")
+    DMG_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
 
     if DMG_OUTPUT.exists():
         DMG_OUTPUT.unlink()

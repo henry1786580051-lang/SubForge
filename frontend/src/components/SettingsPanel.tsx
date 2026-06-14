@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useAppStore } from "@/store/appStore";
 import { configApi, transcribeApi, tasksApi } from "@/lib/api";
+import type { AsrModelInfo, AsrModelStatus, AsrModelTestResult } from "@/lib/api";
 
 const LLM_PROVIDERS = [
   { id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1" },
@@ -41,7 +42,7 @@ const FASTER_WHISPER_MODELS = [
 ];
 
 const MLX_WHISPER_MODELS = [
-  ...FASTER_WHISPER_MODELS.map((model) => ({ ...model, localOnly: true })),
+  ...FASTER_WHISPER_MODELS.map((model) => ({ ...model, onDemand: true })),
 ];
 
 const WHISPERX_ALIGNMENT_MODELS = [
@@ -64,6 +65,10 @@ export function SettingsPanel() {
   const [downloadingModel, setDownloadingModel] = useState<string | null>(null);
   const [downloadedModels, setDownloadedModels] = useState<Set<string>>(new Set());
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
+  const [asrModels, setAsrModels] = useState<AsrModelInfo[]>([]);
+  const [modelStatus, setModelStatus] = useState<AsrModelStatus | null>(null);
+  const [testingAsrModel, setTestingAsrModel] = useState(false);
+  const [asrTestResult, setAsrTestResult] = useState<AsrModelTestResult | null>(null);
   const downloadPollsRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
 
   useEffect(() => () => {
@@ -81,6 +86,16 @@ export function SettingsPanel() {
   const [detectingWhisperModels, setDetectingWhisperModels] = useState(false);
   const [whisperModelError, setWhisperModelError] = useState<string | null>(null);
   const [customUrls, setCustomUrls] = useState<Record<string, string>>({});
+
+  const refreshAsrState = async () => {
+    const [models, status] = await Promise.all([
+      transcribeApi.listModels(),
+      transcribeApi.modelStatus(),
+    ]);
+    setAsrModels(models);
+    setDownloadedModels(new Set(models.filter((model) => model.downloaded).map((model) => model.id)));
+    setModelStatus(status);
+  };
 
   useEffect(() => {
     configApi.get().then((data) => {
@@ -110,10 +125,7 @@ export function SettingsPanel() {
     transcribeApi.hardware().then((hw) => setHwInfo(hw)).catch(() => {});
 
     // Check which whisper models are already downloaded
-    transcribeApi.listModels().then((models) => {
-      const downloaded = new Set(models.filter((m) => m.downloaded).map((m) => m.id));
-      setDownloadedModels(downloaded);
-    }).catch(() => {});
+    refreshAsrState().catch(() => {});
   }, []);
 
   const handleSave = async (key: string, value: unknown) => {
@@ -137,6 +149,10 @@ export function SettingsPanel() {
       const mappedKey = configKeyMap[key];
       if (mappedKey) {
         useAppStore.getState().setConfig({ [mappedKey]: value });
+      }
+      if (["transcribe_model", "whisper_model_size", "whisperx_align_model", "whisper_model_dir", "whisper_cpp_path"].includes(key)) {
+        setAsrTestResult(null);
+        await refreshAsrState();
       }
     }
     catch (err) { useAppStore.getState().setError(err instanceof Error ? err.message : "Save failed"); }
@@ -194,6 +210,7 @@ export function SettingsPanel() {
       if (result.status === "already_exists") {
         setDownloadedModels((prev) => new Set([...prev, modelId]));
         setDownloadingModel(null);
+        await refreshAsrState();
         return;
       }
       if (result.task_id) {
@@ -208,6 +225,7 @@ export function SettingsPanel() {
               setDownloadedModels((prev) => new Set([...prev, modelId]));
               setDownloadingModel(null);
               setDownloadProgress((prev) => { const n = { ...prev }; delete n[modelId]; return n; });
+              await refreshAsrState();
             } else if (task.status === "failed") {
               clearInterval(downloadPollsRef.current.get(modelId)!);
               downloadPollsRef.current.delete(modelId);
@@ -232,6 +250,7 @@ export function SettingsPanel() {
   if (loading) return <div className="flex items-center justify-center h-full"><div className="w-6 h-6 rounded-full border-2 border-accent/20 border-t-accent animate-spin" /></div>;
 
   const currentProvider = LLM_PROVIDERS.find((p) => p.id === selectedProvider);
+  const effectiveWhisperModel = modelStatus?.model_value || (settings.whisper_model_size as string) || "large-v3";
 
   return (
     <div className="flex flex-col h-full bg-background overflow-auto">
@@ -360,6 +379,11 @@ export function SettingsPanel() {
                   }`}>
                   <div className="flex items-center gap-2">
                     <span className="text-[12px] font-medium text-text-primary">{e.name}</span>
+                    {(settings.transcribe_model as string) === e.id && (
+                      <span className="ml-auto inline-flex items-center gap-1 text-[9px] font-semibold text-accent">
+                        <span className="h-1.5 w-1.5 rounded-full bg-accent" />当前
+                      </span>
+                    )}
                   </div>
                   <span className="text-[10px] text-text-muted">{e.desc}</span>
                 </button>
@@ -375,6 +399,77 @@ export function SettingsPanel() {
               <p className="text-[10px] text-emerald-600 mt-1.5">Apple Silicon 原生 Metal 加速，NVIDIA GPU 上使用 CPU + int8 量化</p>
             )}
           </SettingsField>
+
+          {modelStatus && (
+            <div className="-mx-5 overflow-hidden border-y border-accent/20 bg-accent-dim/50">
+              <div className="flex items-start justify-between gap-4 border-b border-accent/10 px-4 py-3.5">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[10px] font-semibold text-accent">当前生效配置</span>
+                    <span className={`h-1.5 w-1.5 rounded-full ${modelStatus.testable ? "bg-emerald-500" : "bg-amber-500"}`} />
+                  </div>
+                  <p className="mt-1 text-[14px] font-semibold text-text-primary">
+                    {modelStatus.engine_name} · {modelStatus.model_name}
+                  </p>
+                  <p className="mt-1 text-[10px] leading-4 text-text-muted">{modelStatus.model_message}</p>
+                </div>
+                <button
+                  onClick={async () => {
+                    setTestingAsrModel(true);
+                    setAsrTestResult(null);
+                    try {
+                      const result = await transcribeApi.testModel();
+                      setAsrTestResult(result);
+                      await refreshAsrState();
+                    } catch (err) {
+                      setAsrTestResult({
+                        ...modelStatus,
+                        ok: false,
+                        error: err instanceof Error ? err.message : "模型测试失败",
+                      });
+                    } finally {
+                      setTestingAsrModel(false);
+                    }
+                  }}
+                  disabled={testingAsrModel || !modelStatus.testable}
+                  className="shrink-0 rounded-md bg-accent px-3 py-1.5 text-[11px] font-semibold text-white transition-all hover:bg-accent/90 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {testingAsrModel ? "正在测试..." : "测试当前模型"}
+                </button>
+              </div>
+              <div className="grid gap-px bg-accent/10 sm:grid-cols-2">
+                <div className="bg-surface/70 px-4 py-3">
+                  <p className="text-[10px] text-text-muted">转录模型</p>
+                  <p className="mt-1 truncate text-[11px] font-medium text-text-primary" title={modelStatus.model_path || modelStatus.resolved_model}>
+                    {modelStatus.model_ready ? "本地已就绪" : modelStatus.model_state === "on_demand" ? "首次使用自动下载" : "不可用"}
+                  </p>
+                  {(modelStatus.model_path || modelStatus.resolved_model) && (
+                    <p className="mt-1 truncate font-mono text-[9px] text-text-muted" title={modelStatus.model_path || modelStatus.resolved_model}>
+                      {modelStatus.model_path || modelStatus.resolved_model}
+                    </p>
+                  )}
+                </div>
+                <div className="bg-surface/70 px-4 py-3">
+                  <p className="text-[10px] text-text-muted">Forced alignment</p>
+                  <p className="mt-1 truncate text-[11px] font-medium text-text-primary" title={modelStatus.alignment_model}>
+                    {modelStatus.engine === "whisperx"
+                      ? `${modelStatus.alignment_model} · ${modelStatus.alignment_ready ? "已缓存" : "首次使用下载"}`
+                      : "当前引擎不使用"}
+                  </p>
+                </div>
+              </div>
+              {asrTestResult && (
+                <div className={`border-t px-4 py-3 text-[11px] ${asrTestResult.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-red-200 bg-red-50 text-red-600"}`}>
+                  {asrTestResult.ok ? (
+                    <div>
+                      <p className="font-semibold">模型测试通过 · {asrTestResult.elapsed_seconds}s · {asrTestResult.segment_count} 个片段</p>
+                      {asrTestResult.transcript && <p className="mt-1 line-clamp-2 text-[10px] opacity-80">{asrTestResult.transcript}</p>}
+                    </div>
+                  ) : `测试失败：${asrTestResult.error || "未知错误"}`}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Hardware detection info */}
           {hwInfo && hwInfo.chip !== "Unknown" && (
@@ -491,7 +586,7 @@ export function SettingsPanel() {
                   placeholder="/opt/homebrew/bin/whisper-cli" className="input-field" />
               </SettingsField>
             )}
-            <SettingsField label="模型存储目录" description="留空则使用默认目录（~/SubForge/models）">
+            <SettingsField label="模型存储目录" description={(settings.transcribe_model as string) === "whisperx" ? "用于保存 forced alignment 模型；MLX 模型会优先自动识别已下载的本地目录" : "留空则使用默认目录（~/SubForge/models）"}>
               <input type="text" value={(settings.whisper_model_dir as string) || ""}
                 onChange={(e) => setSettings((prev) => ({ ...prev, whisper_model_dir: e.target.value }))}
                 onBlur={(e) => handleSave("whisper_model_dir", e.target.value)}
@@ -505,40 +600,51 @@ export function SettingsPanel() {
                   placeholder="WAV2VEC2_ASR_LARGE_LV60K_960H" className="input-field" />
               </SettingsField>
             )}
-            <SettingsField label="模型下载" description={settings.transcribe_model === "whisper_cpp" ? "Whisper.cpp GGML 模型" : settings.transcribe_model === "whisperx" ? "WhisperX 的 MLX 转录模型和 forced alignment 模型" : "FasterWhisper 模型（HuggingFace）"}>
+            <SettingsField label="模型状态" description={settings.transcribe_model === "whisper_cpp" ? "下载并检查 Whisper.cpp GGML 模型" : settings.transcribe_model === "whisperx" ? "MLX 模型首次使用时自动下载；已检测到的本地模型会明确标记" : "FasterWhisper 模型（HuggingFace）"}>
               <div className="space-y-2">
-                {(settings.transcribe_model === "whisper_cpp" ? WHISPER_CPP_MODELS : settings.transcribe_model === "whisperx" ? MLX_WHISPER_MODELS : FASTER_WHISPER_MODELS).map((m) => (
-                  <div key={m.id} className="flex items-center justify-between p-3 rounded-lg border border-border bg-[rgba(0,0,0,0.01)]">
+                {(settings.transcribe_model === "whisper_cpp" ? WHISPER_CPP_MODELS : settings.transcribe_model === "whisperx" ? MLX_WHISPER_MODELS : FASTER_WHISPER_MODELS).map((m) => {
+                  const apiModel = asrModels.find((item) =>
+                    item.category === settings.transcribe_model && (item.value || item.id) === m.id
+                  );
+                  const isSelected = effectiveWhisperModel === m.id || Boolean(apiModel?.selected);
+                  const isReady = Boolean(apiModel?.downloaded);
+                  const isOnDemand = apiModel?.state === "on_demand" || Boolean((m as { onDemand?: boolean }).onDemand);
+                  return (
+                  <div key={m.id} className={`flex items-center justify-between gap-3 rounded-lg border p-3 ${isSelected ? "border-accent/40 bg-accent-dim/40" : "border-border bg-[rgba(0,0,0,0.01)]"}`}>
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
                         <span className="text-[12px] font-medium text-text-primary">{m.name}</span>
                         <span className="text-[10px] text-text-muted font-mono">{m.size}</span>
-                        {Boolean((m as { localOnly?: boolean }).localOnly) && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600">本地</span>}
+                        {isSelected && <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent text-white">当前使用</span>}
+                        {isReady && <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600">本地已就绪</span>}
+                        {!isReady && isOnDemand && <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">按需下载</span>}
                       </div>
                       <span className="text-[10px] text-text-muted">{m.desc}</span>
+                      {apiModel?.path && <p className="mt-1 max-w-[360px] truncate font-mono text-[9px] text-text-muted" title={apiModel.path}>{apiModel.path}</p>}
                     </div>
-                    <button onClick={() => handleDownloadModel(m.id)} disabled={downloadingModel === m.id || downloadedModels.has(m.id) || Boolean((m as { localOnly?: boolean }).localOnly)}
+                    <button onClick={() => settings.transcribe_model === "whisperx" ? handleSave("whisper_model_size", m.id) : handleDownloadModel(m.id)} disabled={downloadingModel === m.id || (settings.transcribe_model !== "whisperx" && isReady)}
                       className={`px-3 py-1.5 text-[11px] rounded-md transition-all font-medium disabled:opacity-50 ${
-                        downloadedModels.has(m.id)
-                          ? "bg-emerald-50 text-emerald-600 cursor-default"
-                          : Boolean((m as { localOnly?: boolean }).localOnly)
+                        isSelected
+                          ? "bg-accent text-white cursor-default"
+                          : isReady
                           ? "bg-emerald-50 text-emerald-600 cursor-default"
                           : "bg-accent-dim text-accent hover:bg-accent/15"
                       }`}>
-                      {downloadedModels.has(m.id) || Boolean((m as { localOnly?: boolean }).localOnly) ? (
+                      {isSelected ? "已选择" : isReady ? (
                         <span className="flex items-center gap-1.5">
                           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>
-                          {Boolean((m as { localOnly?: boolean }).localOnly) && !downloadedModels.has(m.id) ? "手动配置" : "已下载"}
+                          已下载
                         </span>
                       ) : downloadingModel === m.id ? (
                         <span className="flex items-center gap-1.5">
                           <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" strokeDasharray="42 21" strokeLinecap="round" /></svg>
                           {downloadProgress[m.id] != null ? `${downloadProgress[m.id]}%` : "下载中"}
                         </span>
-                      ) : "下载"}
+                      ) : settings.transcribe_model === "whisperx" ? "选择" : "下载"}
                     </button>
                   </div>
-                ))}
+                  );
+                })}
                 {(settings.transcribe_model as string) === "whisperx" && (
                   <div className="pt-2 mt-2 border-t border-border space-y-2">
                     <p className="text-[10px] text-text-muted uppercase tracking-wider">Forced alignment</p>
@@ -581,22 +687,28 @@ export function SettingsPanel() {
 
           {/* Whisper model selection */}
           {((settings.transcribe_model as string) === "whisper_cpp" || (settings.transcribe_model as string) === "faster_whisper" || (settings.transcribe_model as string) === "whisperx") && (
-            <SettingsField label="默认模型" description="选择转录时使用的模型大小">
+            <SettingsField label="默认转录模型" description="蓝色高亮项就是下一次转录实际使用的模型">
               <div className="flex flex-wrap gap-1.5">
-                {(settings.transcribe_model === "whisper_cpp" ? WHISPER_CPP_MODELS : settings.transcribe_model === "whisperx" ? MLX_WHISPER_MODELS : FASTER_WHISPER_MODELS).map((m) => (
+                {(settings.transcribe_model === "whisper_cpp" ? WHISPER_CPP_MODELS : settings.transcribe_model === "whisperx" ? MLX_WHISPER_MODELS : FASTER_WHISPER_MODELS).map((m) => {
+                  const apiModel = asrModels.find((item) =>
+                    item.category === settings.transcribe_model && (item.value || item.id) === m.id
+                  );
+                  const active = effectiveWhisperModel === m.id || Boolean(apiModel?.selected);
+                  return (
                   <button key={m.id} onClick={() => handleSave("whisper_model_size", m.id)}
                     className={`px-2.5 py-1.5 rounded-lg border text-[11px] transition-all flex items-center gap-1.5 ${
-                      ((settings.whisper_model_size as string) || "base") === m.id
+                      active
                         ? "border-accent bg-accent-dim text-accent font-medium"
                         : "border-border text-text-secondary hover:border-[rgba(0,0,0,0.12)]"
                     }`}>
                     {m.name}
                     <span className="text-[9px] text-text-muted">{m.size}</span>
-                    {downloadedModels.has(m.id) && (
+                    {apiModel?.downloaded && (
                       <svg className="w-3 h-3 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>
                     )}
                   </button>
-                ))}
+                  );
+                })}
               </div>
             </SettingsField>
           )}
