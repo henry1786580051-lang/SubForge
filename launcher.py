@@ -13,10 +13,32 @@ import time
 import urllib.error
 import urllib.request
 
-# Fix path for PyInstaller frozen mode
-if getattr(sys, 'frozen', False):
-    sys.path.insert(0, sys._MEIPASS)
-    sys.path.insert(0, os.path.join(sys._MEIPASS, 'backend'))
+
+def _configure_frozen_runtime_paths() -> None:
+    """Expose packages injected after PyInstaller analysis to frozen Python."""
+    if not getattr(sys, "frozen", False):
+        return
+
+    runtime_paths = [
+        os.fspath(sys._MEIPASS),
+        os.path.join(os.fspath(sys._MEIPASS), "backend"),
+    ]
+    executable_dir = os.path.dirname(os.path.abspath(sys.executable))
+    contents_dir = os.path.dirname(executable_dir)
+    if os.path.basename(executable_dir) == "MacOS":
+        runtime_paths.extend(
+            [
+                os.path.join(contents_dir, "Resources"),
+                os.path.join(contents_dir, "Frameworks"),
+            ]
+        )
+
+    for path in reversed(runtime_paths):
+        if os.path.isdir(path) and path not in sys.path:
+            sys.path.insert(0, path)
+
+
+_configure_frozen_runtime_paths()
 
 HOST = "127.0.0.1"
 PREFERRED_PORT = 8000

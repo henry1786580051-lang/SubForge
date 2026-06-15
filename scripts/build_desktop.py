@@ -193,6 +193,20 @@ def inject_packaged_mlx_runtime() -> None:
             )
             print(f"Injected {package_name} runtime: {destination.relative_to(ROOT)}")
 
+    app_contents = DIST_DIR / "SubForge.app" / "Contents"
+    resources = app_contents / "Resources"
+    frameworks = app_contents / "Frameworks"
+    if resources.is_dir() and frameworks.is_dir():
+        for package_name in package_sources:
+            link = frameworks / package_name
+            if link.exists() or link.is_symlink():
+                if link.is_dir() and not link.is_symlink():
+                    shutil.rmtree(link)
+                else:
+                    link.unlink()
+            link.symlink_to(Path("..") / "Resources" / package_name)
+            print(f"Linked injected runtime: {link.relative_to(ROOT)}")
+
 
 def patch_packaged_torch() -> None:
     """Patch PyInstaller-collected torch for macOS frozen import semantics.

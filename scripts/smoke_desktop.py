@@ -25,6 +25,8 @@ def _find_executable(bundle: Path) -> Path:
     if platform.system() == "Windows":
         candidates.append(bundle / "SubForge.exe")
     else:
+        if bundle.suffix == ".app":
+            candidates.append(bundle / "Contents" / "MacOS" / "SubForge")
         candidates.append(bundle / "SubForge")
         candidates.append(bundle / "SubForge.app" / "Contents" / "MacOS" / "SubForge")
     for candidate in candidates:
@@ -38,6 +40,8 @@ def _find_bundled_tool(bundle: Path, name: str) -> Path:
     candidates = [
         bundle / "_internal" / "resource" / "bin" / exe_name,
         bundle / "resource" / "bin" / exe_name,
+        bundle / "Contents" / "Frameworks" / "resource" / "bin" / exe_name,
+        bundle / "Contents" / "Resources" / "resource" / "bin" / exe_name,
         bundle / "SubForge.app" / "Contents" / "Frameworks" / "resource" / "bin" / exe_name,
         bundle / "SubForge.app" / "Contents" / "Resources" / "resource" / "bin" / exe_name,
     ]
@@ -131,6 +135,13 @@ def main() -> int:
         if not exe.exists():
             raise RuntimeError(f"Executable not found: {exe}")
         print(f"Verified executable: {exe}")
+
+        if platform.system() == "Darwin" and platform.machine() == "arm64":
+            env = os.environ.copy()
+            env["SUBFORGE_CHECK_ASR"] = "1"
+            env.setdefault("TORCH_USE_RTLD_GLOBAL", "1")
+            _run([str(exe)], env=env)
+            print("Verified packaged MLX Whisper and WhisperX imports")
 
     return 0
 
