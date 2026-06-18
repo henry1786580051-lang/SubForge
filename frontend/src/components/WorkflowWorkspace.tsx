@@ -142,7 +142,6 @@ function ImportWorkspace() {
     ffmpegOk,
     fileInfo,
     setFileInfo,
-    setStep,
     setSubtitles,
     setSubtitleFile,
     setVideoFile,
@@ -164,7 +163,6 @@ function ImportWorkspace() {
         const info = await filesApi.info(uploaded.file_path);
         setFileInfo(info);
         useAppStore.getState().addToast("素材已导入", "success");
-        setStep("transcribe");
       } catch (err) {
         useAppStore
           .getState()
@@ -173,7 +171,7 @@ function ImportWorkspace() {
         setUploading(null);
       }
     },
-    [setFileInfo, setStep, setVideoFile]
+    [setFileInfo, setVideoFile]
   );
 
   const loadSubtitle = useCallback(
@@ -185,7 +183,6 @@ function ImportWorkspace() {
         setSubtitleFile(loaded.file_path);
         setSubtitles(loaded.segments);
         useAppStore.getState().addToast("字幕已导入", "success");
-        setStep("subtitle");
       } catch (err) {
         useAppStore
           .getState()
@@ -194,7 +191,7 @@ function ImportWorkspace() {
         setUploading(null);
       }
     },
-    [setStep, setSubtitleFile, setSubtitles]
+    [setSubtitleFile, setSubtitles]
   );
 
   const handleDrop = useCallback(

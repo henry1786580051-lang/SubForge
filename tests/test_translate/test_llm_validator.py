@@ -132,7 +132,14 @@ class TestValidateLLmResponse:
 
     @pytest.mark.parametrize(
         "placeholder",
-        ["（本句已并入前一句）", "此句无需翻译，见上", "内容同上"],
+        [
+            "（本句已并入前一句）",
+            "此句无需翻译，见上",
+            "内容同上",
+            "（合并至上一条）",
+            "本句已经合并到上条字幕",
+            "此句在最终字幕中省略",
+        ],
     )
     def test_rejects_additional_placeholder_variants(self, placeholder):
         t = _make_translator()
@@ -170,6 +177,30 @@ class TestValidateLLmResponse:
                     )
                 ],
             )
+
+    def test_chunk_validation_rejects_placeholder_before_progress_callback(self, monkeypatch):
+        progress = []
+        t = _make_translator()
+        t.use_cache = False
+        t.update_callback = progress.append
+        chunk = [SubtitleProcessData(index=1, original_text="A complete sentence.")]
+
+        monkeypatch.setattr(
+            t,
+            "_translate_chunk",
+            lambda _chunk: [
+                SubtitleProcessData(
+                    index=1,
+                    original_text="A complete sentence.",
+                    translated_text="（合并至上一条）",
+                )
+            ],
+        )
+
+        with pytest.raises(RuntimeError, match="placeholder translations"):
+            t._safe_translate_chunk(chunk)
+
+        assert progress == []
 
     def test_reflect_mode_valid(self):
         t = _make_translator(is_reflect=True)

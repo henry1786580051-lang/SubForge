@@ -6,7 +6,7 @@ import { filesApi, API_BASE } from "@/lib/api";
 import { formatTime, formatDuration, formatSize, parseSrtTime } from "@/lib/format";
 
 export function VideoPanel() {
-  const { videoFile, setVideoFile, fileInfo, setFileInfo, setStep, subtitles, currentTime, setCurrentTime, isPlaying, setIsPlaying, seekToTime, setSeekToTime } = useAppStore();
+  const { videoFile, setVideoFile, fileInfo, setFileInfo, subtitles, currentTime, setCurrentTime, isPlaying, setIsPlaying, seekToTime, setSeekToTime } = useAppStore();
   const [isDragging, setIsDragging] = useState(false);
   const [urlInput, setUrlInput] = useState("");
   const [showUrlInput, setShowUrlInput] = useState(false);
@@ -32,9 +32,8 @@ export function VideoPanel() {
     try {
       const { file_path } = await filesApi.upload(file);
       setVideoFile(file_path);
-      setStep("transcribe");
     } catch (err) { useAppStore.getState().setError(err instanceof Error ? err.message : "上传失败"); } finally { setIsUploading(false); }
-  }, [setVideoFile, setStep]);
+  }, [setVideoFile]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragging(true); }, []);
   const handleDragLeave = useCallback(() => { setIsDragging(false); }, []);
@@ -184,7 +183,7 @@ export function VideoPanel() {
           <div className="flex items-center gap-2 bg-surface rounded-lg border border-border p-1.5 shadow-sm">
             <input type="text" placeholder="输入视频URL (YouTube, Bilibili...)" value={urlInput} onChange={(e) => setUrlInput(e.target.value)}
               className="flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted px-2" />
-            <button onClick={() => { if (urlInput) { setVideoFile(urlInput); setStep("transcribe"); } }}
+            <button onClick={() => { if (urlInput) setVideoFile(urlInput); }}
               className="px-3 py-1.5 text-xs rounded-md bg-accent text-white hover:bg-accent-hover transition-all font-medium btn-press">
               下载
             </button>

@@ -25,7 +25,6 @@ export function useTaskMonitor() {
     setTaskState,
     setSubtitleFile,
     setSubtitles,
-    setStep,
     setError,
     setIsProcessing,
   } = useAppStore();
@@ -57,7 +56,6 @@ export function useTaskMonitor() {
     // it can return stale or partially written content in packaged builds.
     if (task.status === "running" && task.preview_segments) {
       setSubtitles(task.preview_segments);
-      if (task.preview_segments.length > 0 && !store.subtitleFile) setStep("subtitle");
     }
 
     // Compatibility fallback for older backends that only expose a partial file.
@@ -70,7 +68,6 @@ export function useTaskMonitor() {
         .then((subFile) => {
           if (task.id !== useAppStore.getState().currentTaskId) return;
           if (!task.preview_segments) setSubtitles(subFile.segments);
-          if (!useAppStore.getState().subtitleFile) setStep("subtitle");
         })
         .catch(() => {});
     }
@@ -86,7 +83,6 @@ export function useTaskMonitor() {
           .load(result.subtitle_file as string)
           .then((subFile) => {
             setSubtitles(subFile.segments);
-            setStep("subtitle");
           })
           .catch((err) => {
             setError(err instanceof Error ? err.message : "Failed to load subtitles");

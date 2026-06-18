@@ -313,21 +313,7 @@ class LLMTranslator(BaseTranslator):
 
     @staticmethod
     def _looks_like_placeholder_translation(text: str) -> bool:
-        text = str(text or "").strip()
-        if not text:
-            return True
-        normalized = re.sub(r"\s+", "", text)
-        placeholder_patterns = [
-            r"(?:此|本)?句.*(?:合并|并入|省略|略去)",
-            r"(?:合并|并入|接上|延续).*(?:上一句|上句|前一句|前文)",
-            r"(?:上一句|上句|前一句|前文).*(?:合并|包含|已译|并入)",
-            r"(?:最终版本|最终字幕).*(?:合并|省略)",
-            r"(?:内容)?(?:同上|见上|略|省略|无需翻译|不单独翻译)",
-            r"merged(?:with|into)?(?:previous|above)",
-            r"sameasabove",
-            r"omitted",
-        ]
-        return any(re.search(pattern, normalized, flags=re.IGNORECASE) for pattern in placeholder_patterns)
+        return BaseTranslator._looks_like_placeholder_translation(text)
 
     def _validate_no_placeholder_translations(
         self,

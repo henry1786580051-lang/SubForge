@@ -14,13 +14,17 @@ _background_tasks: set[asyncio.Task] = set()
 
 
 def _preview_segments(data) -> list[dict]:
+    from subforge.core.translate.base import BaseTranslator
+
     return [
         {
             "id": index,
             "start": segment._ms_to_srt_time(segment.start_time),
             "end": segment._ms_to_srt_time(segment.end_time),
             "text": segment.text,
-            "translated": segment.translated_text or "",
+            "translated": ""
+            if BaseTranslator._looks_like_placeholder_translation(segment.translated_text or "")
+            else segment.translated_text or "",
         }
         for index, segment in enumerate(data.segments, 1)
     ]
@@ -96,6 +100,7 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
         from subforge.core.asr.asr_data import ASRData
         from subforge.core.optimize.optimize import SubtitleOptimizer
         from subforge.core.split.split import SubtitleSplitter
+        from subforge.core.translate.base import BaseTranslator
         from subforge.core.translate.context import TranslationContext, build_translation_context
         from subforge.core.translate.factory import TranslatorFactory
         from subforge.core.translate.types import TargetLanguage
@@ -215,7 +220,13 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
                 with preview_lock:
                     for item in result:
                         idx = int(item.index) - 1
-                        if 0 <= idx < len(asr_data.segments) and item.translated_text:
+                        if (
+                            0 <= idx < len(asr_data.segments)
+                            and item.translated_text
+                            and not BaseTranslator._looks_like_placeholder_translation(
+                                item.translated_text
+                            )
+                        ):
                             asr_data.segments[idx].translated_text = item.translated_text
                     translate_count[0] = min(
                         len(asr_data.segments),

@@ -98,19 +98,23 @@ MiMo v2.5-pro 是推理模型，Reasoning tokens 占 Completion 的主要部分�
 
 ### 运行 Web 版本
 
+需要 Python 3.10-3.12、[uv](https://docs.astral.sh/uv/) 和 Node.js 20+。Apple Silicon 用户如需使用默认的 WhisperX + MLX 转录流程，应安装 `whisperx` 和 `denoise` 可选依赖：
+
 ```bash
 git clone https://github.com/henry1786580051-lang/SubForge.git
 cd SubForge
 
-uv sync
-PYTHONPATH=backend .venv/bin/uvicorn app.main:app --port 8000
+uv sync --extra whisperx --extra denoise
+PYTHONPATH=backend uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
+
+Windows/Linux 或只使用云端 Whisper API 时，可将安装命令简化为 `uv sync`。
 
 另开一个终端启动前端：
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
@@ -126,16 +130,31 @@ uv run subforge doctor
 常用命令包括：
 
 ```bash
-uv run subforge transcribe input.mp4
+# Apple Silicon 本地 MLX Whisper + WhisperX forced alignment
+uv run subforge transcribe input.mp4 --asr whisperx --language auto --word-timestamps
+
+# 使用已配置 API 的云端转录
+uv run subforge transcribe input.mp4 --asr whisper-api
+
 uv run subforge subtitle input.srt
 uv run subforge dub input.srt
 ```
 
 ### 启动桌面版
 
+普通用户应直接从 [GitHub Releases](https://github.com/henry1786580051-lang/SubForge/releases) 下载 DMG 或 Windows 安装包。源码运行当前桌面应用时，需要先生成前端静态文件：
+
 ```bash
-uv run subforge-gui
+cd frontend
+npm ci
+npm run build
+cd ..
+
+uv sync --extra whisperx --extra denoise
+uv run python launcher.py
 ```
+
+`subforge-gui` 是旧版 PyQt 界面入口，不代表当前发布的桌面应用。
 
 ## 推荐配置
 

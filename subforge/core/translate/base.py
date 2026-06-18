@@ -152,16 +152,7 @@ class BaseTranslator(ABC):
                 empty.append(str(source.index))
             else:
                 output = translated.translated_text.strip()
-                compact = re.sub(r"\s+", "", output)
-                if re.search(
-                    r"(?:此|本)?句.*(?:合并|并入|省略|略去)|"
-                    r"(?:合并|并入|接上|延续|已译).*(?:上一句|上句|前一句|前文)|"
-                    r"(?:上一句|上句|前一句|前文).*(?:合并|包含|已译|并入)|"
-                    r"(?:同上|见上|无需翻译|不单独翻译)|"
-                    r"merged(?:with|into)?(?:the)?(?:previous|above)|sameasabove|omitted",
-                    compact,
-                    flags=re.IGNORECASE,
-                ):
+                if self._looks_like_placeholder_translation(output):
                     placeholders.append(str(source.index))
                 if self._is_untranslated_output(output, source.original_text):
                     untranslated.append(str(source.index))
@@ -184,6 +175,29 @@ class BaseTranslator(ABC):
             "Translation incomplete; refusing to save mixed source/target subtitles ("
             + "; ".join(parts)
             + ")"
+        )
+
+    @staticmethod
+    def _looks_like_placeholder_translation(text: str) -> bool:
+        """Detect LLM notes that are not actual translations."""
+        text = str(text or "").strip()
+        if not text:
+            return True
+        compact = re.sub(r"\s+", "", text)
+        previous_refs = r"上一句|上句|上一条|上条|前一句|前一条|前文|前面"
+        placeholder_patterns = [
+            r"(?:此|本)?句.*(?:合并|并入|省略|略去|无需翻译|不单独翻译)",
+            rf"(?:已)?(?:合并|并入|接上|延续|已译|包含).*(?:{previous_refs})",
+            rf"(?:{previous_refs}).*(?:合并|包含|已译|并入|已经翻译)",
+            r"(?:最终版本|最终字幕).*(?:合并|省略)",
+            r"(?:内容)?(?:同上|见上|略|省略|无需翻译|不单独翻译)",
+            r"merged(?:with|into)?(?:the)?(?:previous|above)",
+            r"sameasabove",
+            r"omitted",
+        ]
+        return any(
+            re.search(pattern, compact, flags=re.IGNORECASE)
+            for pattern in placeholder_patterns
         )
 
     def _is_untranslated_output(self, output: str, source: str) -> bool:
@@ -221,11 +235,19 @@ class BaseTranslator(ABC):
                     if isinstance(cached_result, list) and all(
                         isinstance(item, SubtitleProcessData) for item in cached_result
                     ):
-                        return cached_result
-                    logger.warning("Discarding invalid translation cache entry: %s", cache_key)
-                    self._cache.delete(cache_key)
+                        try:
+                            self._validate_translated_list(chunk, cached_result)
+                        except RuntimeError:
+                            logger.warning("Discarding invalid translation cache entry: %s", cache_key)
+                            self._cache.delete(cache_key)
+                        else:
+                            return cached_result
+                    else:
+                        logger.warning("Discarding invalid translation cache entry: %s", cache_key)
+                        self._cache.delete(cache_key)
 
             result = self._translate_chunk(chunk)
+            self._validate_translated_list(chunk, result)
 
             if self.update_callback:
                 self.update_callback(result)
