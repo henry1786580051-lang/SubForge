@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import os
 import platform
@@ -11,6 +12,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import urllib.request
 import zipfile
 from pathlib import Path
 
@@ -22,6 +24,11 @@ ARTIFACT_DIR = ROOT / "artifacts"
 RUNTIME_DIR = BUILD_DIR / "desktop-runtime"
 FRONTEND_DIR = ROOT / "frontend"
 FRONTEND_OUT_DIR = FRONTEND_DIR / "out"
+WHISPER_CPP_WINDOWS_URL = (
+    "https://github.com/ggml-org/whisper.cpp/releases/download/"
+    "v1.9.1/whisper-bin-x64.zip"
+)
+WHISPER_CPP_WINDOWS_SHA256 = "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab6092594b0a063539"
 
 
 def _run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
@@ -142,6 +149,45 @@ def prepare_ffmpeg() -> None:
             mode = dst.stat().st_mode
             dst.chmod(mode | stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         print(f"Bundled {dst.relative_to(ROOT)}")
+
+
+def prepare_whisper_cpp() -> None:
+    """Bundle the official whisper.cpp CLI and DLLs in Windows builds."""
+    if platform.system() != "Windows":
+        return
+
+    archive = BUILD_DIR / "downloads" / "whisper-bin-x64-v1.9.1.zip"
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    if not archive.exists():
+        print(f"Downloading {WHISPER_CPP_WINDOWS_URL}")
+        urllib.request.urlretrieve(WHISPER_CPP_WINDOWS_URL, archive)
+
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    if digest != WHISPER_CPP_WINDOWS_SHA256:
+        archive.unlink(missing_ok=True)
+        raise RuntimeError(
+            "whisper.cpp archive checksum mismatch: "
+            f"expected {WHISPER_CPP_WINDOWS_SHA256}, got {digest}"
+        )
+
+    extract_dir = BUILD_DIR / "whisper-cpp-windows"
+    if extract_dir.exists():
+        shutil.rmtree(extract_dir)
+    with zipfile.ZipFile(archive) as zf:
+        zf.extractall(extract_dir)
+
+    runtime_bin = RUNTIME_DIR / "resource" / "bin"
+    runtime_bin.mkdir(parents=True, exist_ok=True)
+    runtime_files = [
+        path for path in extract_dir.rglob("*")
+        if path.is_file() and path.suffix.lower() in {".exe", ".dll"}
+    ]
+    cli = next((path for path in runtime_files if path.name.lower() == "whisper-cli.exe"), None)
+    if cli is None:
+        raise RuntimeError("Official whisper.cpp archive does not contain whisper-cli.exe")
+    for source in runtime_files:
+        shutil.copy2(source, runtime_bin / source.name)
+    print(f"Bundled whisper.cpp runtime: {cli.name} and required DLLs")
 
 
 def build_pyinstaller() -> None:
@@ -323,6 +369,8 @@ def _verify_data_root(data_root: Path, label: str) -> None:
         data_root / "resource" / "bin" / ("ffmpeg.exe" if platform.system() == "Windows" else "ffmpeg"),
         data_root / "resource" / "bin" / ("ffprobe.exe" if platform.system() == "Windows" else "ffprobe"),
     ]
+    if platform.system() == "Windows":
+        required.append(data_root / "resource" / "bin" / "whisper-cli.exe")
     if _requires_mlx_metallib():
         required.extend(
             [
@@ -399,6 +447,7 @@ def main() -> int:
     ensure_version_file(version)
     build_frontend(skip=args.skip_frontend_build)
     prepare_ffmpeg()
+    prepare_whisper_cpp()
     build_pyinstaller()
     inject_packaged_mlx_runtime()
     patch_packaged_torch()

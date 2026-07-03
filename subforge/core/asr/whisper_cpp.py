@@ -332,7 +332,9 @@ class WhisperCppASR(BaseASR):
         if callback is None:
             callback = _default_callback
 
-        is_const_me_version = True if os.name == "nt" else False
+        # SubForge bundles the official whisper.cpp CLI on Windows. The old
+        # Const-me port used different output arguments and is not supported.
+        is_const_me_version = False
 
         with tempfile.TemporaryDirectory() as temp_path:
             temp_dir = Path(temp_path)
@@ -494,7 +496,14 @@ def _whisper_executable_search_dirs() -> list[Path]:
 
 def detect_whisper_executable() -> str:
     """Detect available whisper.cpp executable path."""
-    executable_names = ("whisper-cli", "whisper-cpp", "main")
+    executable_names = (
+        "whisper-cli.exe",
+        "whisper-cpp.exe",
+        "main.exe",
+        "whisper-cli",
+        "whisper-cpp",
+        "main",
+    )
 
     for name in executable_names:
         if found := shutil.which(name):

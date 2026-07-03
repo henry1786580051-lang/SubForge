@@ -538,13 +538,18 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
         <aside className="flex min-h-0 flex-col gap-5 overflow-auto pr-1">
           <Panel title="ASR 引擎" icon="solar:tuning-square-2-bold-duotone">
             <div className="grid grid-cols-2 gap-2">
-              {ASR_ENGINES.map((engine) => (
+              {ASR_ENGINES.map((engine) => {
+                const unsupported = engine.id === "whisperx" && !config.whisperxSupported;
+                return (
                 <button
                   key={engine.id}
+                  disabled={unsupported}
                   onClick={() => void saveConfig("transcribe_model", engine.id)}
                   className={`rounded-xl border p-3 text-left transition-all ${
                     config.transcribeModel === engine.id
                       ? "border-accent bg-accent-dim text-accent"
+                      : unsupported
+                      ? "cursor-not-allowed border-border bg-background text-text-muted opacity-45"
                       : "border-border bg-background text-text-secondary hover:border-border-active"
                   }`}
                 >
@@ -552,9 +557,9 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                     <Icon icon={engine.icon} width={18} />
                     <span className="text-[13px] font-semibold">{engine.name}</span>
                   </div>
-                  <p className="mt-1.5 text-[10px] leading-4 text-text-muted">{engine.desc}</p>
+                  <p className="mt-1.5 text-[10px] leading-4 text-text-muted">{unsupported ? "仅支持 Apple Silicon" : engine.desc}</p>
                 </button>
-              ))}
+              )})}
             </div>
           </Panel>
 

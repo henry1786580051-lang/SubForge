@@ -54,6 +54,7 @@ export default function Home() {
         whisperModelSize: (data.whisper_model_size as string) || "large-v3",
         whisperxAlignModel: (data.whisperx_align_model as string) || "WAV2VEC2_ASR_LARGE_LV60K_960H",
         whisperxBatchSize: Number(data.whisperx_batch_size || 8),
+        whisperxSupported: (data.whisperx_supported as boolean) ?? true,
         enableAudioEnhancement: (data.enable_audio_enhancement as boolean) ?? true,
       });
     }).catch(() => {});

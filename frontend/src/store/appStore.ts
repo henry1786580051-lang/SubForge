@@ -62,6 +62,7 @@ interface AppState {
     whisperModelSize: string;
     whisperxAlignModel: string;
     whisperxBatchSize: number;
+    whisperxSupported: boolean;
     enableAudioEnhancement: boolean;
   };
   setConfig: (config: Partial<AppState["config"]>) => void;
@@ -157,6 +158,7 @@ export const useAppStore = create<AppState>((set) => ({
     whisperModelSize: "large-v3",
     whisperxAlignModel: "WAV2VEC2_ASR_LARGE_LV60K_960H",
     whisperxBatchSize: 8,
+    whisperxSupported: true,
     enableAudioEnhancement: true,
   },
   setConfig: (partial) =>

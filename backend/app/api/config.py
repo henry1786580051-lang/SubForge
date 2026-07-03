@@ -1,5 +1,6 @@
 import json
 import os
+import platform
 import threading
 import time
 from pathlib import Path
@@ -68,7 +69,7 @@ def get_config_value(key: str, default: T) -> T:
     with _settings_lock:
         now = time.monotonic()
         if _settings_cache is None or (now - _cache_time) > _CACHE_TTL:
-            _settings_cache = {**_DEFAULTS, **_read_settings()}
+            _settings_cache = _effective_config(_read_settings())
             _cache_time = now
         return _coerce_config_value(_settings_cache.get(key, default), default)
 
@@ -102,8 +103,10 @@ def _write_settings(data: dict):
 
 
 # Default config values
+_IS_APPLE_SILICON = platform.system() == "Darwin" and platform.machine().lower() == "arm64"
+
 _DEFAULTS = {
-    "transcribe_model": "whisperx",
+    "transcribe_model": "whisperx" if _IS_APPLE_SILICON else "whisper_cpp",
     "source_language": "auto",
     "target_language": "chinese",
     "translator": "bing",
@@ -139,8 +142,16 @@ _DEFAULTS = {
     "whisperx_batch_size": 8,
     "ff_mdx_kim2": False,
     "enable_audio_enhancement": True,
-    "whisper_model_size": "large-v3",
+    "whisper_model_size": "large-v3" if _IS_APPLE_SILICON else "base",
 }
+
+
+def _effective_config(stored: dict) -> dict:
+    """Apply platform constraints to persisted settings without rewriting them."""
+    config = {**_DEFAULTS, **stored}
+    if not _IS_APPLE_SILICON and config.get("transcribe_model") == "whisperx":
+        config["transcribe_model"] = "whisper_cpp"
+    return config
 
 
 class ConfigUpdate(BaseModel):
@@ -152,8 +163,12 @@ class ConfigUpdate(BaseModel):
 async def get_config():
     """Get current application configuration."""
     stored = _read_settings()
-    config = {**_DEFAULTS, **stored}
-    return config
+    config = _effective_config(stored)
+    return {
+        **config,
+        "runtime_platform": platform.system().lower(),
+        "whisperx_supported": _IS_APPLE_SILICON,
+    }
 
 
 @router.post("/")
@@ -161,6 +176,11 @@ async def update_config(update: ConfigUpdate):
     """Update a configuration value."""
     if update.key not in _DEFAULTS:
         raise HTTPException(status_code=400, detail=f"Unknown config key: {update.key}")
+    if update.key == "transcribe_model" and update.value == "whisperx" and not _IS_APPLE_SILICON:
+        raise HTTPException(
+            status_code=400,
+            detail="WhisperX MLX 转录仅支持 Apple Silicon；Windows 请使用 Whisper.cpp。",
+        )
     stored = _read_settings()
     stored[update.key] = update.value
     _write_settings(stored)

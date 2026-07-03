@@ -136,6 +136,16 @@ def main() -> int:
             raise RuntimeError(f"Executable not found: {exe}")
         print(f"Verified executable: {exe}")
 
+        if platform.system() == "Windows":
+            whisper_cli = _find_bundled_tool(bundle, "whisper-cli")
+            _run([str(whisper_cli), "--help"])
+            print("Verified bundled whisper.cpp CLI")
+
+            env = os.environ.copy()
+            env["SUBFORGE_CHECK_DENOISE"] = "1"
+            _run([str(exe)], env=env)
+            print("Verified packaged DeepFilterNet3 imports")
+
         if platform.system() == "Darwin" and platform.machine() == "arm64":
             env = os.environ.copy()
             env["SUBFORGE_CHECK_ASR"] = "1"

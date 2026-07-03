@@ -112,6 +112,7 @@ export function SettingsPanel() {
       if (data.whisper_model_size !== undefined) storeUpdates.whisperModelSize = data.whisper_model_size as string;
       if (data.whisperx_align_model !== undefined) storeUpdates.whisperxAlignModel = data.whisperx_align_model as string;
       if (data.whisperx_batch_size !== undefined) storeUpdates.whisperxBatchSize = Number(data.whisperx_batch_size || 4);
+      if (data.whisperx_supported !== undefined) storeUpdates.whisperxSupported = !!data.whisperx_supported;
       if (data.enable_audio_enhancement !== undefined) storeUpdates.enableAudioEnhancement = !!data.enable_audio_enhancement;
       if (Object.keys(storeUpdates).length > 0) useAppStore.getState().setConfig(storeUpdates);
       // Detect current provider from base URL
@@ -370,11 +371,15 @@ export function SettingsPanel() {
                 { id: "whisper_cpp", name: "Whisper.cpp", desc: "macOS 推荐 · Metal GPU 加速" },
                 { id: "faster_whisper", name: "FasterWhisper", desc: "NVIDIA GPU 推荐 · CUDA 加速" },
                 { id: "whisper_api", name: "Whisper API", desc: "云端接口，无需本地算力" },
-              ].map((e) => (
-                <button key={e.id} onClick={async () => { await handleSave("transcribe_model", e.id); useAppStore.getState().setConfig({ transcribeModel: e.id }); }}
+              ].map((e) => {
+                const unsupported = e.id === "whisperx" && settings.whisperx_supported === false;
+                return (
+                <button key={e.id} disabled={unsupported} onClick={async () => { await handleSave("transcribe_model", e.id); useAppStore.getState().setConfig({ transcribeModel: e.id }); }}
                   className={`p-3 rounded-xl border-2 text-left transition-all ${
                     (settings.transcribe_model as string) === e.id
                       ? "border-accent bg-accent-dim"
+                      : unsupported
+                      ? "border-border opacity-45 cursor-not-allowed"
                       : "border-border hover:border-[rgba(0,0,0,0.12)]"
                   }`}>
                   <div className="flex items-center gap-2">
@@ -385,9 +390,9 @@ export function SettingsPanel() {
                       </span>
                     )}
                   </div>
-                  <span className="text-[10px] text-text-muted">{e.desc}</span>
+                  <span className="text-[10px] text-text-muted">{unsupported ? "仅支持 Apple Silicon" : e.desc}</span>
                 </button>
-              ))}
+              )})}
             </div>
             {(settings.transcribe_model as string) === "faster_whisper" && (
               <p className="text-[10px] text-amber-600 mt-1.5">需要 NVIDIA GPU 和 faster-whisper-xxl，macOS 上仅支持 CPU 模式（无 GPU 加速）</p>

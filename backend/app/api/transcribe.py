@@ -417,8 +417,10 @@ def _current_model_status() -> dict:
     """Describe the effective ASR engine and model selected in settings."""
     from app.api.config import get_config_value
 
-    engine = str(get_config_value("transcribe_model", "whisperx") or "whisperx")
-    model_value = str(get_config_value("whisper_model_size", "large-v3") or "large-v3")
+    default_engine = "whisperx" if platform.system() == "Darwin" and platform.machine() == "arm64" else "whisper_cpp"
+    default_model = "large-v3" if default_engine == "whisperx" else "base"
+    engine = str(get_config_value("transcribe_model", default_engine) or default_engine)
+    model_value = str(get_config_value("whisper_model_size", default_model) or default_model)
     models_dir = _get_models_dir()
     engine_names = {
         "whisperx": "WhisperX",
@@ -616,7 +618,8 @@ async def list_whisper_models():
 
     from app.api.config import get_config_value
 
-    selected_engine = str(get_config_value("transcribe_model", "whisperx") or "whisperx")
+    default_engine = "whisperx" if platform.system() == "Darwin" and platform.machine() == "arm64" else "whisper_cpp"
+    selected_engine = str(get_config_value("transcribe_model", default_engine) or default_engine)
     selected_model = str(get_config_value("whisper_model_size", "large-v3") or "large-v3")
     if selected_model == "mlx-large-v3":
         selected_model = "large-v3"

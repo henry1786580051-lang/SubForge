@@ -38,3 +38,19 @@ def test_write_settings_is_atomic_and_private(tmp_path, monkeypatch):
     assert not (tmp_path / ".settings.json.tmp").exists()
     if os.name != "nt":
         assert settings_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_effective_config_migrates_whisperx_on_unsupported_platform(monkeypatch):
+    monkeypatch.setattr(config_module, "_IS_APPLE_SILICON", False)
+
+    config = config_module._effective_config({"transcribe_model": "whisperx"})
+
+    assert config["transcribe_model"] == "whisper_cpp"
+
+
+def test_effective_config_keeps_whisperx_on_apple_silicon(monkeypatch):
+    monkeypatch.setattr(config_module, "_IS_APPLE_SILICON", True)
+
+    config = config_module._effective_config({"transcribe_model": "whisperx"})
+
+    assert config["transcribe_model"] == "whisperx"
