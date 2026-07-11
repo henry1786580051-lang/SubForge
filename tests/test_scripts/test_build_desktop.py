@@ -11,3 +11,17 @@ def test_build_version_prefers_repository_version_file(monkeypatch, tmp_path):
     monkeypatch.setattr(build_desktop, "ROOT", tmp_path)
 
     assert build_desktop._version() == "9.8.7"
+
+
+def test_pyinstaller_receives_release_version(monkeypatch):
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["env"] = kwargs["env"]
+
+    monkeypatch.setattr(build_desktop, "_run", fake_run)
+
+    build_desktop.build_pyinstaller("9.8.7")
+
+    assert captured["env"]["SUBFORGE_BUILD_VERSION"] == "9.8.7"

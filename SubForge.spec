@@ -4,6 +4,7 @@ from PyInstaller.utils.hooks import collect_data_files
 
 block_cipher = None
 ROOT = os.path.dirname(os.path.abspath(SPEC))
+APP_VERSION = os.environ.get('SUBFORGE_BUILD_VERSION', '0.0.0-dev')
 
 # MLX is injected after PyInstaller finishes. Importing mlx_whisper while
 # collecting submodules initializes Metal and can terminate headless builds.
@@ -234,7 +235,8 @@ app = BUNDLE(
     bundle_identifier='com.subforge.app',
     info_plist={
         'CFBundleDisplayName': 'SubForge',
-        'CFBundleShortVersionString': '1.0.0',
+        'CFBundleShortVersionString': APP_VERSION,
+        'CFBundleVersion': APP_VERSION,
         'NSHighResolutionCapable': True,
         'NSRequiresAquaSystemAppearance': False,
     },

@@ -8,6 +8,7 @@ import hashlib
 import importlib.util
 import os
 import platform
+import plistlib
 import re
 import shutil
 import stat
@@ -213,9 +214,10 @@ def prepare_whisper_cpp() -> None:
     print(f"Bundled whisper.cpp runtime: {cli.name} and required DLLs")
 
 
-def build_pyinstaller() -> None:
+def build_pyinstaller(version: str) -> None:
     env = os.environ.copy()
     env["VIDEOCAPTIONER_DESKTOP_RUNTIME_DIR"] = str(RUNTIME_DIR)
+    env["SUBFORGE_BUILD_VERSION"] = version
     if platform.system() == "Darwin":
         env.setdefault("TORCH_USE_RTLD_GLOBAL", "1")
     _run([
@@ -407,7 +409,7 @@ def _verify_data_root(data_root: Path, label: str) -> None:
         raise RuntimeError(f"Missing bundled resources in {label}:\n  - " + "\n  - ".join(missing))
 
 
-def _verify_macos_app(app: Path) -> None:
+def _verify_macos_app(app: Path, expected_version: str) -> None:
     exe = app / "Contents" / "MacOS" / "SubForge"
     if not exe.exists():
         raise RuntimeError(f"Executable not found: {exe}")
@@ -429,10 +431,18 @@ def _verify_macos_app(app: Path) -> None:
         raise RuntimeError(f"Cannot locate packaged frontend in macOS app. Checked:\n  - {roots}")
 
     _verify_data_root(data_root, str(app.relative_to(ROOT)))
+    info_plist = app / "Contents" / "Info.plist"
+    with info_plist.open("rb") as file:
+        bundle_info = plistlib.load(file)
+    actual_version = bundle_info.get("CFBundleShortVersionString")
+    if actual_version != expected_version:
+        raise RuntimeError(
+            f"macOS bundle version mismatch: expected {expected_version}, got {actual_version}"
+        )
     print(f"Verified macOS app bundle: {app.relative_to(ROOT)}")
 
 
-def verify_bundle() -> None:
+def verify_bundle(version: str) -> None:
     bundle = DIST_DIR / "SubForge"
     if platform.system() == "Windows":
         exe = bundle / "SubForge.exe"
@@ -445,7 +455,7 @@ def verify_bundle() -> None:
     print(f"Verified desktop bundle: {bundle.relative_to(ROOT)}")
     app = DIST_DIR / "SubForge.app"
     if platform.system() == "Darwin" and app.exists():
-        _verify_macos_app(app)
+        _verify_macos_app(app, version)
 
 
 def archive(version: str) -> None:
@@ -472,13 +482,13 @@ def main() -> int:
         build_frontend(version, skip=args.skip_frontend_build)
         prepare_ffmpeg()
         prepare_whisper_cpp()
-        build_pyinstaller()
+        build_pyinstaller(version)
         inject_packaged_mlx_runtime()
         patch_packaged_torch()
         dedupe_packaged_torch_libs()
         patch_packaged_mlx_metallib()
         resign_macos_app()
-        verify_bundle()
+        verify_bundle(version)
         if not args.no_archive:
             archive(version)
     finally:
