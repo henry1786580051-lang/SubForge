@@ -8,6 +8,7 @@ import hashlib
 import importlib.util
 import os
 import platform
+import re
 import shutil
 import stat
 import subprocess
@@ -49,12 +50,15 @@ def _requires_mlx_metallib() -> bool:
 
 
 def _version() -> str:
-    try:
-        import importlib.metadata
-
-        return importlib.metadata.version("subforge").lstrip("v")
-    except Exception:
-        pass
+    version_file = ROOT / "subforge" / "_version.py"
+    if version_file.is_file():
+        match = re.search(
+            r"^__version__\s*=\s*(?:version\s*=\s*)?['\"]([^'\"]+)['\"]",
+            version_file.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+        if match:
+            return match.group(1).lstrip("v")
     try:
         result = subprocess.run(
             [sys.executable, "-m", "hatchling", "version"],
@@ -73,6 +77,12 @@ def _version() -> str:
         )
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip().lstrip("v")
+    try:
+        import importlib.metadata
+
+        return importlib.metadata.version("subforge").lstrip("v")
+    except Exception:
+        pass
     return "0.0.0-dev"
 
 
