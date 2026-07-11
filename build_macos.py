@@ -26,16 +26,20 @@ def build_app_bundle() -> Path:
 
     version = build_desktop._version()
     build_desktop.clean()
-    build_desktop.ensure_version_file(version)
-    build_desktop.build_frontend()
-    build_desktop.prepare_ffmpeg()
-    build_desktop.build_pyinstaller()
-    build_desktop.inject_packaged_mlx_runtime()
-    build_desktop.patch_packaged_torch()
-    build_desktop.dedupe_packaged_torch_libs()
-    build_desktop.patch_packaged_mlx_metallib()
-    build_desktop.resign_macos_app()
-    build_desktop.verify_bundle()
+    original_version_file = build_desktop.ensure_version_file(version)
+    try:
+        build_desktop.build_frontend(version)
+        build_desktop.prepare_ffmpeg()
+        build_desktop.prepare_whisper_cpp()
+        build_desktop.build_pyinstaller()
+        build_desktop.inject_packaged_mlx_runtime()
+        build_desktop.patch_packaged_torch()
+        build_desktop.dedupe_packaged_torch_libs()
+        build_desktop.patch_packaged_mlx_metallib()
+        build_desktop.resign_macos_app()
+        build_desktop.verify_bundle()
+    finally:
+        build_desktop.restore_version_file(original_version_file)
     app_path = PROJECT_ROOT / "dist" / f"{APP_NAME}.app"
     if not app_path.exists():
         raise RuntimeError(f"{app_path} not found after desktop build")
