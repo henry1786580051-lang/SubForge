@@ -831,6 +831,33 @@ class TestRemovePunctuationEdgeCases:
         assert asr_data.segments[0].text == "Hello, world!"  # 不变
 
 
+class TestChineseTranslationPunctuationFinalization:
+    def test_replaces_chinese_punctuation_only_in_translated_lines(self):
+        asr_data = ASRData(
+            [
+                ASRDataSeg(
+                    "Hello, world.",
+                    0,
+                    1000,
+                    translated_text="你好，世界。 这是测试，完成。",
+                ),
+                ASRDataSeg(
+                    "中文原文，保留。",
+                    1000,
+                    2000,
+                    translated_text="English, translation.",
+                ),
+            ]
+        )
+
+        asr_data.replace_chinese_translation_punctuation()
+
+        assert asr_data.segments[0].text == "Hello, world."
+        assert asr_data.segments[0].translated_text == "你好 世界 这是测试 完成"
+        assert asr_data.segments[1].text == "中文原文，保留。"
+        assert asr_data.segments[1].translated_text == "English, translation."
+
+
 class TestFormatConversionEdgeCases:
     """测试格式转换边缘情况"""
 

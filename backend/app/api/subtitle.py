@@ -281,6 +281,14 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
             _raise_if_cancelled(task_id)
             task_manager.update_progress(task_id, 95, "Bilingual subtitles finalized")
 
+            if (
+                req.target_language.lower() in {"chinese", "cantonese"}
+                and bool(get_config_value("replace_chinese_punctuation", True))
+            ):
+                task_manager.update_progress(task_id, 96, "Cleaning Chinese subtitle punctuation...")
+                asr_data.replace_chinese_translation_punctuation()
+                _save_partial(asr_data, "Chinese subtitle punctuation cleaned")
+
         # Save result
         task_manager.update_progress(task_id, 95, "Saving result...")
         output_path = Path(req.subtitle_file).with_stem(

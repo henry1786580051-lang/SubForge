@@ -111,7 +111,5 @@ jobs:
           gh release view "$TAG" >/dev/null 2>&1 || \
             gh release create "$TAG" --title "$TAG" --generate-notes
           if [ "$RUNNER_OS" = "Windows" ]; then
-            gh release upload "$TAG" artifacts/*.zip artifacts/*-setup.exe --clobber
-          else
-            gh release upload "$TAG" artifacts/*.zip --clobber
+            gh release upload "$TAG" artifacts/*-setup.exe --clobber
           fi

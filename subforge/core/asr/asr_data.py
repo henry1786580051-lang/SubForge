@@ -227,6 +227,22 @@ class ASRData:
             )
         return self
 
+    def replace_chinese_translation_punctuation(self) -> "ASRData":
+        """Replace Chinese commas and periods in translated subtitle lines.
+
+        This is a display-only finalization pass for Chinese subtitle output.
+        It deliberately touches only ``translated_text`` entries containing Han
+        characters, leaving the source line and English punctuation unchanged.
+        """
+        han_characters = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+        for seg in self.segments:
+            translated = seg.translated_text
+            if not translated or not han_characters.search(translated):
+                continue
+            translated = re.sub(r"[，。]+", " ", translated)
+            seg.translated_text = re.sub(r"[ \t]{2,}", " ", translated).strip()
+        return self
+
     def save(
         self,
         save_path: str,

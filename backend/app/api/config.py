@@ -142,6 +142,7 @@ _DEFAULTS = {
     "whisperx_batch_size": 8,
     "ff_mdx_kim2": False,
     "enable_audio_enhancement": True,
+    "replace_chinese_punctuation": True,
     "whisper_model_size": "large-v3" if _IS_APPLE_SILICON else "base",
 }
 

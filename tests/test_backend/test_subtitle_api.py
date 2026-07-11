@@ -10,6 +10,7 @@ from app.core.task_manager import task_manager
 
 import subforge.core.llm as llm_module
 import subforge.core.split.split as split_module
+from subforge.core.translate.factory import TranslatorFactory
 
 
 def test_subtitle_request_does_not_default_to_stale_llm_model():
@@ -99,3 +100,60 @@ def test_subtitle_pipeline_uses_explicit_llm_client_without_env_mutation(
     }
     assert os.environ["OPENAI_API_KEY"] == "original-key"
     assert os.environ["OPENAI_BASE_URL"] == "https://original.test/v1"
+
+
+def test_subtitle_pipeline_cleans_chinese_translation_punctuation(tmp_path, monkeypatch):
+    import asyncio
+
+    subtitle_path = tmp_path / "input.srt"
+    subtitle_path.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello, world.\n",
+        encoding="utf-8",
+    )
+    settings = {
+        "thread_num": 1,
+        "batch_size": 1,
+        "replace_chinese_punctuation": True,
+    }
+    monkeypatch.setattr(
+        config_module,
+        "get_config_value",
+        lambda key, default=None: settings.get(key, default),
+    )
+
+    class FakeSplitter:
+        def __init__(self, **_kwargs):
+            pass
+
+        def split_subtitle(self, asr_data):
+            return asr_data
+
+    class FakeTranslator:
+        def translate_subtitle(self, asr_data):
+            asr_data.segments[0].translated_text = "你好，世界。"
+            return asr_data
+
+    monkeypatch.setattr(split_module, "SubtitleSplitter", FakeSplitter)
+    monkeypatch.setattr(
+        TranslatorFactory,
+        "create_translator",
+        staticmethod(lambda **_kwargs: FakeTranslator()),
+    )
+
+    task = task_manager.create_task("subtitle")
+    asyncio.run(
+        _run_subtitle(
+            task.id,
+            SubtitleRequest(
+                subtitle_file=str(subtitle_path),
+                target_language="chinese",
+                translator="bing",
+                need_optimize=False,
+                need_translate=True,
+            ),
+        )
+    )
+
+    output = subtitle_path.with_stem("input_processed").read_text(encoding="utf-8")
+    assert "你好 世界" in output
+    assert "Hello, world." in output

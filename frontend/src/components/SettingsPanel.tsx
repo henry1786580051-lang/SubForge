@@ -820,6 +820,23 @@ export function SettingsPanel() {
               <span className="text-[12px] text-text-primary font-mono w-8 text-right">{(settings.batch_size as number) || 10}</span>
             </div>
           </SettingsField>
+          <SettingsField label="中文标点美化" description="完成中文翻译与断句后，将译文中的中文逗号、句号替换为空格；不调用 LLM，不影响英文原文">
+            <button
+              onClick={() => handleSave("replace_chinese_punctuation", !settings.replace_chinese_punctuation)}
+              className="flex items-center gap-2 group"
+            >
+              <div className={`w-7 h-[15px] rounded-full transition-all duration-200 relative flex items-center ${
+                settings.replace_chinese_punctuation !== false ? "bg-accent/20" : "bg-[rgba(0,0,0,0.06)]"
+              }`}>
+                <div className={`absolute w-[11px] h-[11px] rounded-full transition-all duration-200 shadow-sm ${
+                  settings.replace_chinese_punctuation !== false ? "left-[13px] bg-accent" : "left-[2px] bg-text-muted"
+                }`} />
+              </div>
+              <span className="text-[12px] text-text-muted group-hover:text-text-secondary transition-colors">
+                {settings.replace_chinese_punctuation !== false ? "已开启" : "已关闭"}
+              </span>
+            </button>
+          </SettingsField>
           {/* Custom prompt moved to subtitle page */}
         </SettingsSection>
 

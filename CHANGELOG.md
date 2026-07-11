@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.0.5 - 2026-07-11
+
+### Added
+
+- Added Chinese subtitle punctuation beautification. After Chinese translation and bilingual resegmentation, Chinese commas and periods in translated lines are replaced with spaces for a cleaner subtitle appearance.
+- Added a subtitle-processing setting to enable or disable Chinese punctuation beautification. It is enabled by default and runs locally without using an LLM or consuming tokens.
+- Added a Windows x64 EXE installer built and smoke-tested by GitHub Actions.
+
+### Fixed
+
+- Fixed Windows desktop builds defaulting to the Apple Silicon-only MLX/WhisperX path. Windows now defaults to bundled Whisper.cpp and prevents selecting the unsupported WhisperX engine.
+- Bundled the official whisper.cpp Windows CLI and required DLLs, and fixed Windows CLI invocation to use the current official command-line interface.
+
+### Changed
+
+- Release automation now publishes only the Windows EXE installer from GitHub Actions; ZIP bundles remain available only as short-lived CI artifacts.
+
 ## v1.0.3 - 2026-06-14
 
 ### Added
