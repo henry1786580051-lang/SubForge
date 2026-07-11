@@ -4,7 +4,7 @@ from subforge.core.asr.asr_data import ASRData, ASRDataSeg
 from subforge.core.entities import SubtitleProcessData
 from subforge.core.translate import base as translate_base
 from subforge.core.translate.base import BaseTranslator
-from subforge.core.translate.types import TargetLanguage
+from subforge.core.translate.types import TargetLanguage, get_language_code
 
 
 class FakeCache:
@@ -114,3 +114,26 @@ def test_translate_subtitle_rejects_empty_translations(monkeypatch):
 
     with pytest.raises(RuntimeError, match="Translation incomplete"):
         translator.translate_subtitle(asr_data)
+
+
+@pytest.mark.parametrize(
+    "target_language",
+    [
+        TargetLanguage.TRADITIONAL_CHINESE,
+        TargetLanguage.KOREAN,
+        TargetLanguage.CANTONESE,
+    ],
+)
+def test_asian_target_languages_reject_untranslated_english(target_language):
+    translator = object.__new__(DummyTranslator)
+    translator.target_language = target_language
+
+    assert translator._is_untranslated_output(
+        "This output was not translated",
+        "This output was not translated",
+    )
+
+
+def test_unsupported_provider_language_does_not_fallback_to_chinese():
+    with pytest.raises(ValueError, match="does not support"):
+        get_language_code(TargetLanguage.CANTONESE, "deeplx")

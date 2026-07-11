@@ -1,4 +1,6 @@
 import hashlib
+import shutil
+import time
 import uuid
 from pathlib import Path
 
@@ -11,8 +13,33 @@ router = APIRouter()
 
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024 * 1024  # 10 GB
 
-UPLOAD_DIR = Path("/tmp/subforge/uploads")
+UPLOAD_ROOT = Path("/tmp/subforge/uploads")
+UPLOAD_DIR = UPLOAD_ROOT / f"session-{uuid.uuid4().hex}"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def cleanup_stale_uploads(max_age_seconds: int = 7 * 24 * 60 * 60) -> None:
+    """Remove abandoned uploads from earlier application sessions."""
+    cutoff = time.time() - max_age_seconds
+    if not UPLOAD_ROOT.exists():
+        return
+    for path in UPLOAD_ROOT.iterdir():
+        if path == UPLOAD_DIR:
+            continue
+        try:
+            if path.stat().st_mtime >= cutoff:
+                continue
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink(missing_ok=True)
+        except OSError:
+            continue
+
+
+def cleanup_session_uploads() -> None:
+    """Remove uploads and thumbnails owned by this application process."""
+    shutil.rmtree(UPLOAD_DIR, ignore_errors=True)
 
 
 def _parse_range_header(range_header: str, file_size: int) -> tuple[int, int]:

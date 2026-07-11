@@ -19,10 +19,8 @@ def _configure_frozen_runtime_paths() -> None:
     if not getattr(sys, "frozen", False):
         return
 
-    runtime_paths = [
-        os.fspath(sys._MEIPASS),
-        os.path.join(os.fspath(sys._MEIPASS), "backend"),
-    ]
+    bundle_root = os.fspath(getattr(sys, "_MEIPASS"))
+    runtime_paths = [bundle_root, os.path.join(bundle_root, "backend")]
     executable_dir = os.path.dirname(os.path.abspath(sys.executable))
     contents_dir = os.path.dirname(executable_dir)
     if os.path.basename(executable_dir) == "MacOS":

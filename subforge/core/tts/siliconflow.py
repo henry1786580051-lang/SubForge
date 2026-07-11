@@ -55,7 +55,7 @@ class VoiceCloneManager:
         # 检查缓存（避免重复上传）
         cache_key = self._generate_cache_key(audio_path, text, model)
         cached_uri = self.cache.get(cache_key)
-        if cached_uri:
+        if isinstance(cached_uri, str) and cached_uri:
             logger.debug(f"Using cache的声音克隆 URI: {cached_uri}")
             return cached_uri
 
@@ -84,7 +84,7 @@ class VoiceCloneManager:
 
         result = response.json()
         voice_uri = result.get("uri")
-        if not voice_uri:
+        if not isinstance(voice_uri, str) or not voice_uri:
             raise ValueError(f"API 未返回 URI: {result}")
 
         logger.debug(f"获得声音克隆 URI: {voice_uri}")

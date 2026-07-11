@@ -157,3 +157,70 @@ def test_subtitle_pipeline_cleans_chinese_translation_punctuation(tmp_path, monk
     output = subtitle_path.with_stem("input_processed").read_text(encoding="utf-8")
     assert "你好 世界" in output
     assert "Hello, world." in output
+
+
+def test_subtitle_pipeline_does_not_split_bilingual_cues_after_translation(
+    tmp_path,
+    monkeypatch,
+):
+    import asyncio
+
+    subtitle_path = tmp_path / "input.srt"
+    source = (
+        "I don't really think there's any point in going into sport, "
+        "especially since we're trying to be efficient."
+    )
+    subtitle_path.write_text(
+        f"1\n00:00:00,000 --> 00:00:04,000\n{source}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        config_module,
+        "get_config_value",
+        lambda key, default=None: {
+            "thread_num": 1,
+            "batch_size": 1,
+            "replace_chinese_punctuation": True,
+        }.get(key, default),
+    )
+
+    class FakeSplitter:
+        def __init__(self, **_kwargs):
+            pass
+
+        def split_subtitle(self, asr_data):
+            return asr_data
+
+    class FakeTranslator:
+        def translate_subtitle(self, asr_data):
+            asr_data.segments[0].translated_text = (
+                "我觉得没必要切到运动模式 毕竟咱们现在是奔着省油去的"
+            )
+            return asr_data
+
+    monkeypatch.setattr(split_module, "SubtitleSplitter", FakeSplitter)
+    monkeypatch.setattr(
+        TranslatorFactory,
+        "create_translator",
+        staticmethod(lambda **_kwargs: FakeTranslator()),
+    )
+
+    task = task_manager.create_task("subtitle")
+    asyncio.run(
+        _run_subtitle(
+            task.id,
+            SubtitleRequest(
+                subtitle_file=str(subtitle_path),
+                target_language="chinese",
+                translator="bing",
+                need_optimize=False,
+                need_translate=True,
+            ),
+        )
+    )
+
+    output_path = subtitle_path.with_stem("input_processed")
+    output = output_path.read_text(encoding="utf-8")
+    assert output.count(" --> ") == 1
+    assert source in output
+    assert "我觉得没必要切到运动模式 毕竟咱们现在是奔着省油去的" in output

@@ -18,6 +18,12 @@ function getWebSocketBase(): string {
   return `${protocol}//${window.location.host}`;
 }
 
+function subscribeToTask(ws: WebSocket, taskId: string | null) {
+  if (taskId && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "subscribe", task_id: taskId }));
+  }
+}
+
 export function useTaskMonitor() {
   const {
     currentTaskId,
@@ -128,7 +134,9 @@ export function useTaskMonitor() {
     }
     try {
       const ws = new WebSocket(`${getWebSocketBase()}/ws/tasks`);
-      ws.onopen = () => {};
+      ws.onopen = () => {
+        subscribeToTask(ws, useAppStore.getState().currentTaskId);
+      };
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
@@ -165,6 +173,10 @@ export function useTaskMonitor() {
       wsRef.current?.close();
     };
   }, [connectWs]);
+
+  useEffect(() => {
+    if (wsRef.current) subscribeToTask(wsRef.current, currentTaskId);
+  }, [currentTaskId]);
 
   // Poll task status as fallback
   useEffect(() => {

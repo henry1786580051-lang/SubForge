@@ -7,6 +7,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 
 import app.api.config as config_module
+import pytest
+from fastapi import HTTPException
 
 
 def test_get_config_value_rejects_corrupted_types(monkeypatch):
@@ -54,3 +56,26 @@ def test_effective_config_keeps_whisperx_on_apple_silicon(monkeypatch):
     config = config_module._effective_config({"transcribe_model": "whisperx"})
 
     assert config["transcribe_model"] == "whisperx"
+
+
+def test_effective_config_discards_corrupted_persisted_types():
+    config = config_module._effective_config(
+        {"thread_num": "ten", "enable_audio_enhancement": "false"}
+    )
+
+    assert config["thread_num"] == 5
+    assert config["enable_audio_enhancement"] is True
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("thread_num", 0),
+        ("batch_size", 101),
+        ("translator", "unknown"),
+        ("target_language", "hindi"),
+    ],
+)
+def test_config_update_rejects_values_that_would_silently_fallback(key, value):
+    with pytest.raises(HTTPException):
+        config_module._validate_config_update(key, value)

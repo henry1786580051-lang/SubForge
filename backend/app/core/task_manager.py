@@ -37,6 +37,7 @@ class TaskManager:
         self._tasks: dict[str, TaskInfo] = {}
         self._listeners: list[Callable] = []
         self._running_tasks: dict[str, asyncio.Task] = {}
+        self._cancel_callbacks: dict[str, list[Callable[[], Any]]] = {}
         self._lock = threading.RLock()
 
     def create_task(self, task_type: str) -> TaskInfo:
@@ -77,7 +78,7 @@ class TaskManager:
                 TaskStatus.CANCELLED,
             }:
                 return
-            task.progress = progress
+            task.progress = max(task.progress, min(100, max(0, int(progress))))
             task.message = message
             task.status = TaskStatus.RUNNING
             if subtitle_file is not None:
@@ -95,6 +96,7 @@ class TaskManager:
             task.progress = 100
             task.result = result
             self._running_tasks.pop(task_id, None)
+            self._cancel_callbacks.pop(task_id, None)
         self._notify_listeners(task_id)
 
     def fail_task(self, task_id: str, error: str):
@@ -105,6 +107,7 @@ class TaskManager:
             task.status = TaskStatus.FAILED
             task.error = error
             self._running_tasks.pop(task_id, None)
+            self._cancel_callbacks.pop(task_id, None)
         self._notify_listeners(task_id)
 
     def register_running_task(self, task_id: str, async_task: asyncio.Task):
@@ -117,6 +120,20 @@ class TaskManager:
         with self._lock:
             self._running_tasks.pop(task_id, None)
 
+    def register_cancel_callback(self, task_id: str, callback: Callable[[], Any]) -> None:
+        with self._lock:
+            if task_id in self._tasks:
+                self._cancel_callbacks.setdefault(task_id, []).append(callback)
+
+    def unregister_cancel_callback(self, task_id: str, callback: Callable[[], Any]) -> None:
+        with self._lock:
+            callbacks = self._cancel_callbacks.get(task_id)
+            if not callbacks:
+                return
+            self._cancel_callbacks[task_id] = [item for item in callbacks if item != callback]
+            if not self._cancel_callbacks[task_id]:
+                self._cancel_callbacks.pop(task_id, None)
+
     def cancel_task(self, task_id: str) -> bool:
         with self._lock:
             task = self._tasks.get(task_id)
@@ -124,6 +141,12 @@ class TaskManager:
                 return False
             task.status = TaskStatus.CANCELLED
             async_task = self._running_tasks.pop(task_id, None)
+            callbacks = self._cancel_callbacks.pop(task_id, [])
+        for callback in callbacks:
+            try:
+                callback()
+            except Exception:
+                logger.exception("Task cancellation callback failed for task %s", task_id)
         if async_task:
             async_task.cancel()
         self._notify_listeners(task_id)
@@ -145,6 +168,7 @@ class TaskManager:
             for t in to_remove:
                 self._tasks.pop(t.id, None)
                 self._running_tasks.pop(t.id, None)
+                self._cancel_callbacks.pop(t.id, None)
 
     def add_listener(self, callback: Callable):
         with self._lock:

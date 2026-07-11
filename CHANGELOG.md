@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.0.6 - 2026-07-11
+
+### Added
+
+- Added final bilingual subtitle integrity validation. Every translated cue must retain its source text, timing, speaker, and a non-empty, non-placeholder translation before export.
+- Added task-scoped WebSocket subscriptions and richer live subtitle previews for transcription and subtitle-processing jobs.
+- Added cancellation callbacks for blocking desktop tasks so closing or cancelling the application can terminate active subprocesses cleanly.
+- Added regression coverage for bilingual clause alignment, translation completeness, concurrent task updates, upload isolation, configuration validation, and packaged model handling.
+
+### Fixed
+
+- Fixed translated subtitles being split again by unrelated source/target character positions, which could create blank Chinese lines or attach a translation to the wrong English clause.
+- Fixed failed translation chunks being silently replaced with source text and then exported as apparently completed subtitles.
+- Fixed merge-placeholder responses such as `（合并至上一条）` surviving translation validation.
+- Fixed desktop tasks failing to display intermediate transcription and translation results consistently.
+- Fixed task progress moving backwards and late worker completion overwriting a cancelled task.
+- Fixed application shutdown waiting indefinitely for blocking transcription or translation work.
+- Fixed concurrent uploads with the same filename overwriting one another and added cleanup for abandoned session files.
+- Fixed corrupted or invalid persisted settings silently falling back to unintended models or processing parameters.
+- Fixed concurrent model downloads racing to replace the same destination.
+- Fixed packaged WhisperX/MLX runtime initialization and model-path handling across source and desktop builds.
+
+### Changed
+
+- Bilingual subtitle cues are now structurally locked after source-language sentence splitting; long lines remain in the same timed cue and are left to the subtitle renderer to wrap naturally.
+- Expanded CI to lint backend, launcher, and build scripts, run the broader offline Python test suite, and build/lint the Next.js frontend.
+- Updated the architecture documentation to reflect the current Next.js, FastAPI, pywebview, MLX Whisper, WhisperX, TEN-VAD, and DeepFilterNet3 workflow.
+
 ## v1.0.5 - 2026-07-11
 
 ### Added

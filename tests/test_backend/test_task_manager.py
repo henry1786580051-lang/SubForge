@@ -88,3 +88,25 @@ def test_task_progress_carries_preview_segments():
     updated = manager.get_task(task.id)
     assert updated is not None
     assert updated.preview_segments == preview
+
+
+def test_progress_is_clamped_and_does_not_move_backwards():
+    manager = TaskManager()
+    task = manager.create_task("subtitle")
+
+    manager.update_progress(task.id, 70, "Translating")
+    manager.update_progress(task.id, 63, "Preparing context")
+    assert manager.get_task(task.id).progress == 70
+
+    manager.update_progress(task.id, 500, "Finishing")
+    assert manager.get_task(task.id).progress == 100
+
+
+def test_cancel_task_runs_registered_cleanup_callback():
+    manager = TaskManager()
+    task = manager.create_task("subtitle")
+    calls = []
+    manager.register_cancel_callback(task.id, lambda: calls.append(task.id))
+
+    assert manager.cancel_task(task.id) is True
+    assert calls == [task.id]

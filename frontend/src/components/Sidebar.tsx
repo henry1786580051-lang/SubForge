@@ -2,6 +2,8 @@
 
 import { useAppStore, WorkflowStep } from "@/store/appStore";
 
+const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || "1.0.5";
+
 const steps: { id: WorkflowStep; label: string; icon: string }[] = [
   { id: "import", label: "导入", icon: "M12 4v16m-8-8h16" },
   { id: "transcribe", label: "转录", icon: "M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m-4-8a4 4 0 018 0v1a4 4 0 01-8 0v-1z" },
@@ -114,7 +116,7 @@ export function Sidebar() {
           <div className="px-3 pt-2">
             <div className="flex items-center gap-2">
               <span className="w-1.5 h-1.5 rounded-full bg-accent/50" />
-              <span className="text-[11px] text-text-muted">v1.0.0</span>
+              <span className="text-[11px] text-text-muted">v{APP_VERSION}</span>
             </div>
           </div>
         )}

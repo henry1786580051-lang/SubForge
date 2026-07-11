@@ -79,6 +79,15 @@ def test_whisper_cpp_keeps_full_audio_when_word_timestamps_enabled():
     assert kwargs["use_vad"] is False
 
 
+def test_whisper_cpp_receives_instance_scoped_model_directory():
+    config = _whisper_cpp_config()
+    config.faster_whisper_model_dir = "/tmp/custom-models"
+
+    kwargs = transcribe_module._build_whisper_cpp_kwargs(config)
+
+    assert kwargs["model_dir"] == "/tmp/custom-models"
+
+
 def test_whisper_cpp_disables_internal_vad_for_sentence_level_runs():
     config = _whisper_cpp_config()
     config.need_word_time_stamp = False

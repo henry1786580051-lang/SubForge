@@ -3,7 +3,7 @@
 import json
 import re
 from dataclasses import replace
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, cast
 
 import json_repair
 import openai
@@ -125,7 +125,7 @@ class LLMTranslator(BaseTranslator):
 
     def _agent_loop(
         self, system_prompt: str, subtitle_dict: Dict[str, str]
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
         """Agent loop翻译字幕块"""
         context_text = self.translation_context.render()
         if context_text:
@@ -172,7 +172,7 @@ class LLMTranslator(BaseTranslator):
                 response_dict, subtitle_dict
             )
             if is_valid:
-                return response_dict
+                return cast(Dict[str, Any], response_dict)
             else:
                 messages.append(
                     {
@@ -199,7 +199,7 @@ class LLMTranslator(BaseTranslator):
         if not is_valid:
             logger.warning(f"LLM translation failed validation after {self.MAX_STEPS} retries: {error_msg}")
             raise RuntimeError(f"LLM translation failed validation: {error_msg}")
-        return last_response_dict
+        return cast(Dict[str, Any], last_response_dict)
 
     def _neighbor_context(self, subtitle_dict: Dict[str, str], before: bool) -> List[Dict[str, str]]:
         if not self._all_source_by_index:

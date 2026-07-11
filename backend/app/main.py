@@ -21,6 +21,7 @@ from app.api import (  # noqa: E402
     transcribe,
     websocket,
 )
+from subforge.config import VERSION  # noqa: E402
 
 
 @asynccontextmanager
@@ -30,16 +31,18 @@ async def lifespan(app: FastAPI):
 
     from app.api.websocket import set_event_loop
     set_event_loop(asyncio.get_running_loop())
+    files.cleanup_stale_uploads()
     from subforge.config import APPDATA_PATH
     APPDATA_PATH.mkdir(parents=True, exist_ok=True)
     yield
     # Shutdown: cleanup resources
+    files.cleanup_session_uploads()
 
 
 app = FastAPI(
     title="SubForge API",
     description="AI-powered video captioning backend",
-    version="1.0.0",
+    version=VERSION,
     lifespan=lifespan,
 )
 
@@ -72,6 +75,7 @@ async def health_check():
     ffprobe_ok = shutil.which("ffprobe") is not None
     return {
         "status": "ok",
+        "version": VERSION,
         "ffmpeg": ffmpeg_ok,
         "ffprobe": ffprobe_ok,
         "pid": os.getpid(),
@@ -83,8 +87,8 @@ async def health_check():
 def _find_static_dir() -> Path | None:
     """Find the frontend static export directory."""
     import sys
-    if getattr(sys, 'frozen', False):
-        base = Path(sys._MEIPASS)
+    if getattr(sys, "frozen", False):
+        base = Path(getattr(sys, "_MEIPASS"))
     else:
         base = _project_root
     static = base / "frontend" / "out"
@@ -97,13 +101,14 @@ _static_dir = _find_static_dir()
 if _static_dir:
     from fastapi.responses import FileResponse
 
-    app.mount("/_next", StaticFiles(directory=str(_static_dir / "_next")), name="next_static")
+    static_root = _static_dir
+    app.mount("/_next", StaticFiles(directory=str(static_root / "_next")), name="next_static")
 
     @app.get("/{full_path:path}")
     async def serve_frontend(full_path: str):
-        file_path = (_static_dir / full_path).resolve()
-        if not file_path.is_relative_to(_static_dir.resolve()):
-            return FileResponse(str(_static_dir / "index.html"))
+        file_path = (static_root / full_path).resolve()
+        if not file_path.is_relative_to(static_root.resolve()):
+            return FileResponse(str(static_root / "index.html"))
         if file_path.is_file():
             return FileResponse(str(file_path))
-        return FileResponse(str(_static_dir / "index.html"))
+        return FileResponse(str(static_root / "index.html"))

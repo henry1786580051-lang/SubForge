@@ -379,7 +379,7 @@ def _restore_display_alignment(
         for token in plan.tokens:
             group = spoken_words[word_index : word_index + token.spoken_word_count]
             word_index += token.spoken_word_count
-            restored = {"word": token.display_text}
+            restored: dict[str, Any] = {"word": token.display_text}
             starts = [_float_seconds(word.get("start")) for word in group]
             ends = [_float_seconds(word.get("end")) for word in group]
             valid_starts = [value for value in starts if value is not None]
@@ -387,7 +387,11 @@ def _restore_display_alignment(
             if len(valid_starts) == len(group) and len(valid_ends) == len(group):
                 restored["start"] = min(valid_starts)
                 restored["end"] = max(valid_ends)
-            scores = [word.get("score") for word in group if isinstance(word.get("score"), (int, float))]
+            scores = [
+                float(score)
+                for word in group
+                if isinstance((score := word.get("score")), (int, float))
+            ]
             if scores:
                 restored["score"] = round(sum(scores) / len(scores), 3)
             words.append(restored)
@@ -425,13 +429,13 @@ def install_whisperx_runtime_stubs() -> None:
 
     if "whisperx.transcribe" not in sys.modules:
         transcribe = types.ModuleType("whisperx.transcribe")
-        transcribe.load_model = _unsupported
+        setattr(transcribe, "load_model", _unsupported)
         sys.modules["whisperx.transcribe"] = transcribe
 
     if "whisperx.diarize" not in sys.modules:
         diarize = types.ModuleType("whisperx.diarize")
-        diarize.assign_word_speakers = _unsupported
-        diarize.DiarizationPipeline = _unsupported
+        setattr(diarize, "assign_word_speakers", _unsupported)
+        setattr(diarize, "DiarizationPipeline", _unsupported)
         sys.modules["whisperx.diarize"] = diarize
 
 
@@ -802,24 +806,24 @@ class WhisperXASR(BaseASR):
 
             def _align(segments_to_align: list[dict]) -> dict:
                 try:
-                    return whisperx_align(
+                    return dict(whisperx_align(
                         segments_to_align,
                         alignment_model,
                         alignment_metadata,
                         audio,
                         self.align_device,
                         return_char_alignments=True,
-                    )
+                    ))
                 except TypeError:
                     # Keep compatibility with older externally managed WhisperX
                     # installations that do not expose character alignments.
-                    return whisperx_align(
+                    return dict(whisperx_align(
                         segments_to_align,
                         alignment_model,
                         alignment_metadata,
                         audio,
                         self.align_device,
-                    )
+                    ))
 
             aligned = _align(spoken_align_segments)
             if alignment_plans:

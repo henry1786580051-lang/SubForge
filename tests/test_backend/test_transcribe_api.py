@@ -22,6 +22,12 @@ def _config_values(tmp_path: Path) -> dict:
     }
 
 
+def test_whisper_cpp_download_urls_are_pinned_to_an_immutable_revision():
+    for model in transcribe_api.WHISPER_CPP_MODELS.values():
+        assert "/resolve/main/" not in model["url"]
+        assert transcribe_api.WHISPER_CPP_REVISION in model["url"]
+
+
 def test_model_status_reports_detected_local_mlx_model(tmp_path, monkeypatch):
     values = _config_values(tmp_path)
     local_model = tmp_path / "whisper-large-v3-fp16"

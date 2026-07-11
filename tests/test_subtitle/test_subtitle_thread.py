@@ -308,6 +308,7 @@ class TestSubtitleThreadTranslate:
 class TestSubtitleThreadFullPipeline:
     """Test complete subtitle processing pipeline."""
 
+    @pytest.mark.integration
     def test_split_and_translate(
         self, subtitle_file, output_dir, base_config, mock_llm_client
     ):

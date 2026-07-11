@@ -221,6 +221,10 @@ def run(args: Namespace, config: dict) -> int:
                     progress.finish()  # Clean spinner without duplicate error
                 return EXIT.USAGE_ERROR
 
+            from subforge.core.subtitle.validation import (
+                lock_source_segments,
+                validate_bilingual_result,
+            )
             from subforge.core.translate.context import (
                 TranslationContext,
                 build_translation_context,
@@ -243,6 +247,7 @@ def run(args: Namespace, config: dict) -> int:
                 if progress:
                     progress.update(65, f"Translating to {target_lang_code}...")
 
+            source_lock = lock_source_segments(asr_data)
             translator = TranslatorFactory.create_translator(
                 translator_type=translator_type,
                 thread_num=thread_num,
@@ -255,19 +260,9 @@ def run(args: Namespace, config: dict) -> int:
                 translation_context=translation_context,
             )
             asr_data = translator.translate_subtitle(asr_data)
+            validate_bilingual_result(asr_data, source_lock)
             asr_data.remove_punctuation()
-
-            # 3.5 Resegment (split long translated subtitles)
-            if progress:
-                progress.update(90, "Resegmenting subtitles...")
-            from subforge.core.subtitle.resegment import resegment_subtitles
-            max_chars_en = get(config, "subtitle.max_chars_en", 42)
-            max_chars_cjk = get(config, "subtitle.max_chars_cjk", 16)
-            asr_data = resegment_subtitles(
-                asr_data,
-                max_chars_en=max_chars_en,
-                max_chars_cjk=max_chars_cjk,
-            )
+            validate_bilingual_result(asr_data)
 
         asr_data.extend_sentence_tails_conservatively()
 

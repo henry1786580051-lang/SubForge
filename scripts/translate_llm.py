@@ -265,7 +265,7 @@ def translate_file(ts_file: Path, target_lang: str) -> None:
     print(f"📁 File: {ts_file}")
     print("\n💡 Next steps:")
     print(f"   1. Review: linguist {ts_file}")
-    print(f"   2. Compile: ./scripts/trans-compile.sh")
+    print("   2. Compile: ./scripts/trans-compile.sh")
     print(f"   3. Test: Switch to {target_lang} in app\n")
 
 

@@ -133,7 +133,7 @@ export const llmLogsApi = {
 
 // Health
 export const healthApi = {
-  check: () => request<{ status: string; ffmpeg: boolean; ffprobe: boolean }>("/api/health"),
+  check: () => request<{ status: string; version: string; ffmpeg: boolean; ffprobe: boolean }>("/api/health"),
 };
 
 // Types

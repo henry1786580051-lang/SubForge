@@ -31,13 +31,39 @@ jobs:
         run: uv sync --frozen
 
       - name: Lint
-        run: uv run ruff check subforge/
+        run: uv run ruff check subforge backend launcher.py scripts
 
       - name: Type check CLI
         run: uv run pyright subforge/cli/
 
       - name: Unit tests
-        run: uv run pytest tests/test_cli tests/test_dubbing -q
+        run: >-
+          uv run pytest
+          tests/test_cli tests/test_dubbing tests/test_backend tests/test_asr
+          tests/test_translate tests/test_llm -m "not integration" -q
 
       - name: Build package
         run: uv build
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build frontend
+        run: npm run build

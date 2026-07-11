@@ -76,9 +76,12 @@ class BaseTranslator(ABC):
             new_segments = self._set_segments_translated_text(asr_data.segments, translated_list)
 
             return ASRData(new_segments)
+        except RuntimeError:
+            logger.exception("Translation failed")
+            raise
         except Exception as e:
-            logger.error(f"Translation failed: {str(e)}")
-            raise RuntimeError(f"Translation failed: {str(e)}")
+            logger.exception("Translation failed")
+            raise RuntimeError(f"Translation failed: {str(e)}") from e
         finally:
             self.stop()
 
@@ -98,6 +101,7 @@ class BaseTranslator(ABC):
         future_to_chunk = {}
         translated_list = []
         failed_count = 0
+        failed_errors: list[str] = []
         total_segments = sum(len(c) for c in chunks)
         if self.executor is None:
             raise RuntimeError("Translation thread pool is not initialized")
@@ -114,15 +118,18 @@ class BaseTranslator(ABC):
                 translated_list.extend(result)
             except Exception as e:
                 logger.error(f"Translation chunk failed: {e}")
+                failed_errors.append(str(e))
                 failed_count += len(future_to_chunk[future])
                 translated_list.extend(future_to_chunk[future])
 
         # Raise if all or most translations failed
         if failed_count > 0 and total_segments > 0:
             fail_rate = failed_count / total_segments
+            detail = f" First error: {failed_errors[0]}" if failed_errors else ""
             raise RuntimeError(
                 f"Translation failed: {failed_count}/{total_segments} segments failed "
                 f"({fail_rate:.0%}). Check your API key, model limits, and network connection."
+                + detail
             )
 
         return translated_list
@@ -201,7 +208,13 @@ class BaseTranslator(ABC):
         )
 
     def _is_untranslated_output(self, output: str, source: str) -> bool:
-        if self.target_language.value not in {"简体中文", "繁體中文", "日本語", "한국어"}:
+        if self.target_language not in {
+            TargetLanguage.SIMPLIFIED_CHINESE,
+            TargetLanguage.TRADITIONAL_CHINESE,
+            TargetLanguage.CANTONESE,
+            TargetLanguage.JAPANESE,
+            TargetLanguage.KOREAN,
+        }:
             return False
         if re.search(r"[一-鿿぀-ヿ가-힯]", output):
             return False

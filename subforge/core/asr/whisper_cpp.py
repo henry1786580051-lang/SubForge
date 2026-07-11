@@ -172,6 +172,7 @@ class WhisperCppASR(BaseASR):
         language="en",
         whisper_cpp_path=None,
         whisper_model=None,
+        model_dir: str = "",
         use_cache: bool = False,
         need_word_time_stamp: bool = False,
         n_threads: int = 4,
@@ -192,7 +193,7 @@ class WhisperCppASR(BaseASR):
 
         # Find model file in models directory
         if whisper_model:
-            models_dir = Path(MODEL_PATH)
+            models_dir = Path(model_dir).expanduser() if model_dir else Path(MODEL_PATH)
             model_files = list(models_dir.glob(f"*ggml*{whisper_model}*.bin"))
             if not model_files:
                 raise ValueError(

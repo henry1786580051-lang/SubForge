@@ -6,10 +6,12 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from app.core.blocking import run_blocking
 from app.core.task_manager import task_manager
 from app.security import validate_path
 from subforge.core.asr.whisperx_asr import (
@@ -24,6 +26,7 @@ router = APIRouter()
 
 _background_tasks: set[asyncio.Task] = set()
 _model_test_lock = asyncio.Lock()
+_model_download_locks: dict[str, asyncio.Lock] = {}
 
 
 def _preview_segments(data) -> list[dict]:
@@ -113,34 +116,36 @@ async def get_hardware_info():
     return detect_hardware()
 
 
-# Whisper.cpp model definitions
+# Whisper.cpp model definitions. Pin downloads to an immutable repository
+# revision so an upstream branch update cannot silently replace model bytes.
+WHISPER_CPP_REVISION = "5359861c739e955e79d9a303bcbc70fb988958b1"
 WHISPER_CPP_MODELS = {
     "tiny": {
-        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
+        "url": f"https://huggingface.co/ggerganov/whisper.cpp/resolve/{WHISPER_CPP_REVISION}/ggml-tiny.bin",
         "size": "75MB",
     },
     "base": {
-        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
+        "url": f"https://huggingface.co/ggerganov/whisper.cpp/resolve/{WHISPER_CPP_REVISION}/ggml-base.bin",
         "size": "142MB",
     },
     "small": {
-        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
+        "url": f"https://huggingface.co/ggerganov/whisper.cpp/resolve/{WHISPER_CPP_REVISION}/ggml-small.bin",
         "size": "466MB",
     },
     "medium": {
-        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin",
+        "url": f"https://huggingface.co/ggerganov/whisper.cpp/resolve/{WHISPER_CPP_REVISION}/ggml-medium.bin",
         "size": "1.5GB",
     },
     "large-v1": {
-        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v1.bin",
+        "url": f"https://huggingface.co/ggerganov/whisper.cpp/resolve/{WHISPER_CPP_REVISION}/ggml-large-v1.bin",
         "size": "3.1GB",
     },
     "large-v2": {
-        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v2.bin",
+        "url": f"https://huggingface.co/ggerganov/whisper.cpp/resolve/{WHISPER_CPP_REVISION}/ggml-large-v2.bin",
         "size": "3.1GB",
     },
     "large-v3": {
-        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin",
+        "url": f"https://huggingface.co/ggerganov/whisper.cpp/resolve/{WHISPER_CPP_REVISION}/ggml-large-v3.bin",
         "size": "3.1GB",
     },
 }
@@ -171,12 +176,14 @@ MLX_MODEL_SIZES = {
 
 
 class TranscribeRequest(BaseModel):
-    file_path: str
-    model: str = "whisper_cpp"
-    language: str = "auto"
-    device: str = "auto"
-    n_threads: int = 4
-    compute_type: str = "default"
+    file_path: str = Field(max_length=4096)
+    model: Literal["whisper_cpp", "whisperx", "faster_whisper", "whisper_api"] = (
+        "whisper_cpp"
+    )
+    language: str = Field(default="auto", min_length=1, max_length=32)
+    device: str = Field(default="auto", max_length=32)
+    n_threads: int = Field(default=4, ge=1, le=128)
+    compute_type: str = Field(default="default", max_length=32)
 
 
 def _build_transcribe_config(
@@ -302,15 +309,6 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
 
         config = _build_transcribe_config(req.model, req.language)
 
-        # Override MODEL_PATH if user configured a custom whisper model directory
-        if config.faster_whisper_model_dir:
-            import subforge.config as vc_config
-            import subforge.core.asr.whisper_cpp as wc_module
-
-            model_dir = PathLib(config.faster_whisper_model_dir)
-            vc_config.MODEL_PATH = model_dir
-            wc_module.MODEL_PATH = model_dir
-
         # Extract audio from video to temp WAV file
         task_manager.update_progress(task_id, 10, "Extracting audio from video...")
         _raise_if_cancelled(task_id)
@@ -318,8 +316,7 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
         temp_audio_path = temp_audio_file.name
         temp_audio_file.close()
 
-        loop = asyncio.get_event_loop()
-        success = await loop.run_in_executor(None, video2audio, req.file_path, temp_audio_path)
+        success = await run_blocking(video2audio, req.file_path, temp_audio_path)
         if not success:
             raise RuntimeError("Failed to extract audio from video")
         _raise_if_cancelled(task_id)
@@ -353,8 +350,8 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
                 logger.warning(f"Failed to save partial segment: {e}")
 
         # Run transcription on the extracted audio
-        result = await loop.run_in_executor(
-            None, transcribe, temp_audio_path, config, _on_progress, _on_segment
+        result = await run_blocking(
+            transcribe, temp_audio_path, config, _on_progress, _on_segment
         )
         _raise_if_cancelled(task_id)
 
@@ -696,7 +693,7 @@ async def list_whisper_models():
 
 
 class DownloadModelRequest(BaseModel):
-    model_id: str
+    model_id: str = Field(min_length=1, max_length=128)
 
 
 @router.post("/download-model")
@@ -735,31 +732,61 @@ async def _download_model(task_id: str, model_id: str, dest: Path):
         url = WHISPER_CPP_MODELS[model_id]["url"]
     else:
         url = WHISPERX_MODELS[model_id]["url"]
-    tmp_dest = dest.with_name(f"{dest.name}.part")
+    max_bytes = {
+        "tiny": 200 * 1024**2,
+        "base": 300 * 1024**2,
+        "small": 750 * 1024**2,
+        "medium": 2 * 1024**3,
+        "large-v1": 4 * 1024**3,
+        "large-v2": 4 * 1024**3,
+        "large-v3": 4 * 1024**3,
+        "whisperx-align-en-large": 2 * 1024**3,
+    }[model_id]
+    tmp_dest = dest.with_name(f".{dest.name}.{task_id}.part")
+    download_lock = _model_download_locks.setdefault(str(dest), asyncio.Lock())
     try:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        task_manager.update_progress(task_id, 0, f"开始下载 {model_id} 模型...")
+        async with download_lock:
+            if dest.exists():
+                task_manager.complete_task(task_id, {"path": str(dest)})
+                return
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            task_manager.update_progress(task_id, 0, f"开始下载 {model_id} 模型...")
 
-        async with httpx.AsyncClient(follow_redirects=True, timeout=300) as client:
-            async with client.stream("GET", url) as resp:
-                resp.raise_for_status()
-                total = int(resp.headers.get("content-length", 0))
-                downloaded = 0
+            async with httpx.AsyncClient(follow_redirects=True, timeout=300) as client:
+                async with client.stream("GET", url) as resp:
+                    resp.raise_for_status()
+                    total = int(resp.headers.get("content-length", 0))
+                    if total > max_bytes:
+                        raise RuntimeError("Model download exceeds the expected size limit")
+                    downloaded = 0
+                    last_pct = -1
 
-                with open(tmp_dest, "wb") as f:
-                    async for chunk in resp.aiter_bytes(chunk_size=1024 * 64):
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if total > 0:
-                            pct = int(downloaded / total * 100)
-                            task_manager.update_progress(task_id, pct, f"下载中... {pct}%")
+                    with open(tmp_dest, "wb") as f:
+                        async for chunk in resp.aiter_bytes(chunk_size=1024 * 1024):
+                            downloaded += len(chunk)
+                            if downloaded > max_bytes:
+                                raise RuntimeError("Model download exceeds the expected size limit")
+                            f.write(chunk)
+                            if total > 0:
+                                pct = min(99, int(downloaded / total * 100))
+                                if pct > last_pct:
+                                    last_pct = pct
+                                    task_manager.update_progress(
+                                        task_id, pct, f"下载中... {pct}%"
+                                    )
 
-        tmp_dest.replace(dest)
-        task_manager.complete_task(task_id, {"path": str(dest)})
+            if downloaded == 0 or (total > 0 and downloaded != total):
+                raise RuntimeError("Model download was empty or incomplete")
+            tmp_dest.replace(dest)
+            task_manager.complete_task(task_id, {"path": str(dest)})
     except asyncio.CancelledError:
         tmp_dest.unlink(missing_ok=True)
         raise
     except Exception as e:
         # Clean up partial download
         tmp_dest.unlink(missing_ok=True)
+        logger.exception("Model download failed for %s", model_id)
         task_manager.fail_task(task_id, str(e))
+    finally:
+        if not download_lock.locked():
+            _model_download_locks.pop(str(dest), None)

@@ -76,12 +76,21 @@ def _version() -> str:
     return "0.0.0-dev"
 
 
-def ensure_version_file(version: str) -> None:
+def ensure_version_file(version: str) -> bytes | None:
+    """Inject the build version and return the original file for restoration."""
     version_file = ROOT / "subforge" / "_version.py"
-    if version_file.exists():
-        return
+    original = version_file.read_bytes() if version_file.exists() else None
     version_file.write_text(f'__version__ = "{version}"\n', encoding="utf-8")
-    print(f"Generated {version_file.relative_to(ROOT)} ({version})")
+    print(f"Injected {version_file.relative_to(ROOT)} ({version})")
+    return original
+
+
+def restore_version_file(original: bytes | None) -> None:
+    version_file = ROOT / "subforge" / "_version.py"
+    if original is None:
+        version_file.unlink(missing_ok=True)
+    else:
+        version_file.write_bytes(original)
 
 
 def clean() -> None:
@@ -91,13 +100,17 @@ def clean() -> None:
             shutil.rmtree(path)
 
 
-def build_frontend(skip: bool = False) -> None:
+def build_frontend(version: str, skip: bool = False) -> None:
     """Refresh the static frontend used by packaged desktop builds."""
     if skip:
         print("Skipping frontend build")
     elif (FRONTEND_DIR / "package.json").exists() and (FRONTEND_DIR / "node_modules").is_dir():
         try:
-            _run([_npm_command(), "run", "build"], cwd=str(FRONTEND_DIR))
+            _run(
+                [_npm_command(), "run", "build"],
+                cwd=str(FRONTEND_DIR),
+                env={**os.environ, "NEXT_PUBLIC_APP_VERSION": version},
+            )
         except subprocess.CalledProcessError as exc:
             if not FRONTEND_OUT_DIR.is_dir():
                 raise
@@ -444,19 +457,22 @@ def main() -> int:
     version = _version()
     if args.clean:
         clean()
-    ensure_version_file(version)
-    build_frontend(skip=args.skip_frontend_build)
-    prepare_ffmpeg()
-    prepare_whisper_cpp()
-    build_pyinstaller()
-    inject_packaged_mlx_runtime()
-    patch_packaged_torch()
-    dedupe_packaged_torch_libs()
-    patch_packaged_mlx_metallib()
-    resign_macos_app()
-    verify_bundle()
-    if not args.no_archive:
-        archive(version)
+    original_version_file = ensure_version_file(version)
+    try:
+        build_frontend(version, skip=args.skip_frontend_build)
+        prepare_ffmpeg()
+        prepare_whisper_cpp()
+        build_pyinstaller()
+        inject_packaged_mlx_runtime()
+        patch_packaged_torch()
+        dedupe_packaged_torch_libs()
+        patch_packaged_mlx_metallib()
+        resign_macos_app()
+        verify_bundle()
+        if not args.no_archive:
+            archive(version)
+    finally:
+        restore_version_file(original_version_file)
     return 0
 
 

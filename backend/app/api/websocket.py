@@ -1,8 +1,9 @@
 import asyncio
 import json
 import logging
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 
 from app.core.task_manager import task_manager
 
@@ -20,21 +21,28 @@ def set_event_loop(loop: asyncio.AbstractEventLoop):
 
 class ConnectionManager:
     def __init__(self):
-        self.active_connections: list[WebSocket] = []
+        self.active_connections: dict[WebSocket, set[str]] = {}
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
-        self.active_connections.append(websocket)
+        self.active_connections[websocket] = set()
 
     def disconnect(self, websocket: WebSocket):
         try:
-            self.active_connections.remove(websocket)
-        except ValueError:
+            del self.active_connections[websocket]
+        except KeyError:
             pass
 
-    async def broadcast(self, message: dict):
+    def subscribe(self, websocket: WebSocket, task_id: str) -> None:
+        subscriptions = self.active_connections.get(websocket)
+        if subscriptions is not None:
+            subscriptions.add(task_id)
+
+    async def broadcast(self, task_id: str, message: dict):
         dead = []
-        for connection in self.active_connections:
+        for connection, subscriptions in list(self.active_connections.items()):
+            if task_id not in subscriptions:
+                continue
             try:
                 await connection.send_json(message)
             except Exception:
@@ -46,12 +54,24 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+def _is_allowed_origin(origin: str | None) -> bool:
+    """Allow native clients and frontend pages served from loopback only."""
+    if not origin:
+        return True
+    parsed = urlparse(origin)
+    return parsed.scheme in {"http", "https"} and parsed.hostname in {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    }
+
+
 def on_task_update(task_id: str, task_data: dict):
     """Called by TaskManager when a task updates."""
     if _loop and _loop.is_running():
         try:
             future = asyncio.run_coroutine_threadsafe(
-                manager.broadcast({"type": "task_update", "data": task_data}),
+                manager.broadcast(task_id, {"type": "task_update", "data": task_data}),
                 _loop,
             )
             future.add_done_callback(_log_broadcast_failure)
@@ -71,6 +91,9 @@ task_manager.add_listener(on_task_update)
 
 @router.websocket("/tasks")
 async def task_websocket(websocket: WebSocket):
+    if not _is_allowed_origin(websocket.headers.get("origin")):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
     await manager.connect(websocket)
     try:
         while True:
@@ -83,14 +106,20 @@ async def task_websocket(websocket: WebSocket):
                 continue
             if msg.get("type") == "subscribe":
                 task_id = msg.get("task_id")
+                if not isinstance(task_id, str):
+                    await websocket.send_json({"type": "error", "error": "Invalid task ID"})
+                    continue
                 task = task_manager.get_task(task_id)
                 if task:
+                    manager.subscribe(websocket, task_id)
                     await websocket.send_json(
                         {
                             "type": "task_update",
                             "data": task.model_dump(),
                         }
                     )
+                else:
+                    await websocket.send_json({"type": "error", "error": "Task not found"})
     except WebSocketDisconnect:
         manager.disconnect(websocket)
     except Exception:

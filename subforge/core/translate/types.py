@@ -222,5 +222,8 @@ def get_language_code(target_language: TargetLanguage, translator_type: str) -> 
     if target_language in mapping:
         return mapping[target_language]
 
-    # 默认返回简体中文
-    return mapping.get(TargetLanguage.SIMPLIFIED_CHINESE, "zh-CN")
+    if translator_type not in lang_map:
+        raise ValueError(f"Unsupported translator type: {translator_type}")
+    raise ValueError(
+        f"{translator_type} does not support target language: {target_language.value}"
+    )

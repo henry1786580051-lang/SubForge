@@ -126,7 +126,10 @@ export function SettingsPanel() {
     transcribeApi.hardware().then((hw) => setHwInfo(hw)).catch(() => {});
 
     // Check which whisper models are already downloaded
-    refreshAsrState().catch(() => {});
+    const asrRefreshTimer = window.setTimeout(() => {
+      refreshAsrState().catch(() => {});
+    }, 0);
+    return () => window.clearTimeout(asrRefreshTimer);
   }, []);
 
   const handleSave = async (key: string, value: unknown) => {
@@ -760,7 +763,7 @@ export function SettingsPanel() {
             <select value={(settings.target_language as string) || "english"} onChange={(e) => handleSave("target_language", e.target.value)} className="input-field">
               <option value="chinese">中文</option><option value="english">英文</option><option value="japanese">日文</option><option value="korean">韩文</option>
               <option value="french">法语</option><option value="german">德语</option><option value="spanish">西班牙语</option><option value="portuguese">葡萄牙语</option>
-              <option value="russian">俄语</option><option value="arabic">阿拉伯语</option><option value="hindi">印地语</option><option value="thai">泰语</option>
+              <option value="russian">俄语</option><option value="arabic">阿拉伯语</option><option value="thai">泰语</option>
               <option value="vietnamese">越南语</option><option value="indonesian">印尼语</option><option value="turkish">土耳其语</option><option value="polish">波兰语</option>
               <option value="dutch">荷兰语</option><option value="swedish">瑞典语</option><option value="ukrainian">乌克兰语</option>
             </select>

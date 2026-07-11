@@ -238,6 +238,7 @@ def _build_whisper_cpp_kwargs(
         "language": config.transcribe_language,
         "whisper_cpp_path": config.whisper_cpp_path or None,
         "whisper_model": config.whisper_model.value if config.whisper_model else None,
+        "model_dir": config.faster_whisper_model_dir or "",
         "n_threads": getattr(config, "whisper_n_threads", 4),
         "use_vad": effective_use_vad,
         "segment_callback": segment_callback,

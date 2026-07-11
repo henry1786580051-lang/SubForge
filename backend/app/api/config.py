@@ -149,7 +149,10 @@ _DEFAULTS = {
 
 def _effective_config(stored: dict) -> dict:
     """Apply platform constraints to persisted settings without rewriting them."""
-    config = {**_DEFAULTS, **stored}
+    config = {
+        key: _coerce_config_value(stored.get(key, default), default)
+        for key, default in _DEFAULTS.items()
+    }
     if not _IS_APPLE_SILICON and config.get("transcribe_model") == "whisperx":
         config["transcribe_model"] = "whisper_cpp"
     return config
@@ -158,6 +161,68 @@ def _effective_config(stored: dict) -> dict:
 class ConfigUpdate(BaseModel):
     key: str
     value: str | int | float | bool
+
+
+_INTEGER_RANGES = {
+    "font_size": (8, 200),
+    "max_word_count_cjk": (1, 200),
+    "max_word_count_english": (1, 200),
+    "thread_num": (1, 32),
+    "batch_size": (1, 100),
+    "whisper_n_threads": (0, 128),
+    "whisperx_batch_size": (1, 64),
+}
+
+_CHOICES = {
+    "transcribe_model": {"whisperx", "whisper_cpp", "faster_whisper", "whisper_api"},
+    "translator": {"llm", "bing", "google", "deeplx"},
+    "target_language": {
+        "chinese", "english", "japanese", "korean", "french", "german",
+        "spanish", "portuguese", "russian", "cantonese", "thai", "vietnamese",
+        "indonesian", "malay", "tagalog", "italian", "dutch", "polish",
+        "turkish", "swedish", "ukrainian", "arabic",
+    },
+}
+
+
+def _validate_config_update(key: str, value: str | int | float | bool):
+    default = _DEFAULTS[key]
+    if isinstance(default, bool):
+        if not isinstance(value, bool):
+            raise HTTPException(status_code=422, detail=f"{key} must be a boolean")
+    elif isinstance(default, int):
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise HTTPException(status_code=422, detail=f"{key} must be an integer")
+    elif isinstance(default, float):
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise HTTPException(status_code=422, detail=f"{key} must be a number")
+        value = float(value)
+    elif isinstance(default, str):
+        if not isinstance(value, str):
+            raise HTTPException(status_code=422, detail=f"{key} must be a string")
+        max_length = 100_000 if key == "custom_prompt" else 8_192
+        if len(value) > max_length:
+            raise HTTPException(status_code=422, detail=f"{key} is too long")
+
+    if key in _INTEGER_RANGES:
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise HTTPException(status_code=422, detail=f"{key} must be an integer")
+        minimum, maximum = _INTEGER_RANGES[key]
+        if not minimum <= value <= maximum:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{key} must be between {minimum} and {maximum}",
+            )
+    if key == "outline_width":
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise HTTPException(status_code=422, detail="outline_width must be a number")
+        if not 0 <= value <= 20:
+            raise HTTPException(
+                status_code=422, detail="outline_width must be between 0 and 20"
+            )
+    if key in _CHOICES and value not in _CHOICES[key]:
+        raise HTTPException(status_code=422, detail=f"Unsupported {key}: {value}")
+    return value
 
 
 @router.get("/")
@@ -177,16 +242,17 @@ async def update_config(update: ConfigUpdate):
     """Update a configuration value."""
     if update.key not in _DEFAULTS:
         raise HTTPException(status_code=400, detail=f"Unknown config key: {update.key}")
-    if update.key == "transcribe_model" and update.value == "whisperx" and not _IS_APPLE_SILICON:
+    value = _validate_config_update(update.key, update.value)
+    if update.key == "transcribe_model" and value == "whisperx" and not _IS_APPLE_SILICON:
         raise HTTPException(
             status_code=400,
             detail="WhisperX MLX 转录仅支持 Apple Silicon；Windows 请使用 Whisper.cpp。",
         )
     stored = _read_settings()
-    stored[update.key] = update.value
+    stored[update.key] = value
     _write_settings(stored)
     invalidate_config_cache()
-    return {"status": "ok", "key": update.key, "value": update.value}
+    return {"status": "ok", "key": update.key, "value": value}
 
 
 @router.get("/test-llm")

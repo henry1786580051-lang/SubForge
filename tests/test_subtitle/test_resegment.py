@@ -1,8 +1,46 @@
+import pytest
+
 from subforge.core.asr.asr_data import ASRData, ASRDataSeg
 from subforge.core.subtitle.resegment import resegment_subtitles
 
 
-def test_resegment_preserves_bilingual_segment_alignment():
+@pytest.mark.parametrize(
+    ("source", "translation", "part_count"),
+    [
+        (
+            "in this interior, it's a pretty nice overall well-thought-out package.",
+            "整个设计考虑得非常周到",
+            2,
+        ),
+        (
+            "I don't really think there's any point in going into sport, "
+            "especially since we're trying to be efficient.",
+            "我觉得没必要切到运动模式 毕竟咱们现在是奔着省油去的",
+            3,
+        ),
+        (
+            "A lot of these magazine companies get on these midsize sedans for "
+            "needing to have razor sharp handling.",
+            "很多车评媒体老揪着中型轿车 非要人家操控像刀切一样犀利",
+            3,
+        ),
+    ],
+)
+def test_resegment_does_not_recreate_known_bilingual_clause_mismatches(
+    source,
+    translation,
+    part_count,
+):
+    data = ASRData([ASRDataSeg(source, 0, part_count * 2000, translation)])
+
+    result = resegment_subtitles(data, max_chars_en=50, max_chars_cjk=18)
+
+    assert len(result.segments) == 1
+    assert result.segments[0].text == source
+    assert result.segments[0].translated_text == translation
+
+
+def test_resegment_keeps_long_bilingual_segment_locked():
     data = ASRData(
         [
             ASRDataSeg(
@@ -16,17 +54,10 @@ def test_resegment_preserves_bilingual_segment_alignment():
 
     result = resegment_subtitles(data, max_chars_en=50, max_chars_cjk=18)
 
-    assert len(result.segments) > 1
-    assert all(seg.text for seg in result.segments)
-    assert all(seg.translated_text for seg in result.segments)
-    assert result.segments[0].start_time == 0
-    assert result.segments[-1].end_time == 6000
-    assert all(
-        result.segments[i].end_time <= result.segments[i + 1].start_time
-        for i in range(len(result.segments) - 1)
-    )
-    assert "".join(seg.text.replace(" ", "") for seg in result.segments) == data.segments[0].text.replace(" ", "")
-    assert "".join(seg.translated_text for seg in result.segments) == data.segments[0].translated_text
+    assert len(result.segments) == 1
+    assert result.segments[0].text == data.segments[0].text
+    assert result.segments[0].translated_text == data.segments[0].translated_text
+    assert (result.segments[0].start_time, result.segments[0].end_time) == (0, 6000)
 
 
 def test_resegment_keeps_short_bilingual_when_only_translation_is_long():
@@ -48,7 +79,7 @@ def test_resegment_keeps_short_bilingual_when_only_translation_is_long():
     assert result.segments[0].translated_text == data.segments[0].translated_text
 
 
-def test_resegment_splits_long_duration_bilingual_with_shared_part_count():
+def test_resegment_keeps_long_duration_bilingual_segment_locked():
     data = ASRData(
         [
             ASRDataSeg(
@@ -62,9 +93,9 @@ def test_resegment_splits_long_duration_bilingual_with_shared_part_count():
 
     result = resegment_subtitles(data, max_chars_en=50, max_chars_cjk=18)
 
-    assert len(result.segments) > 1
-    assert "".join(seg.text.replace(" ", "") for seg in result.segments) == data.segments[0].text.replace(" ", "")
-    assert "".join(seg.translated_text for seg in result.segments) == data.segments[0].translated_text
+    assert len(result.segments) == 1
+    assert result.segments[0].text == data.segments[0].text
+    assert result.segments[0].translated_text == data.segments[0].translated_text
 
 
 def test_resegment_keeps_short_bilingual_sentence_unchanged():
