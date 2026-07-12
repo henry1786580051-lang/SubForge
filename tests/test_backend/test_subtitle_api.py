@@ -10,6 +10,7 @@ from app.core.task_manager import task_manager
 
 import subforge.core.llm as llm_module
 import subforge.core.split.split as split_module
+from subforge.core.entities import SubtitleProcessData
 from subforge.core.translate.factory import TranslatorFactory
 
 
@@ -224,3 +225,82 @@ def test_subtitle_pipeline_does_not_split_bilingual_cues_after_translation(
     assert output.count(" --> ") == 1
     assert source in output
     assert "我觉得没必要切到运动模式 毕竟咱们现在是奔着省油去的" in output
+
+
+def test_failed_translation_saves_punctuation_cleaned_recovery_file(
+    tmp_path,
+    monkeypatch,
+):
+    import asyncio
+
+    subtitle_path = tmp_path / "input.srt"
+    subtitle_path.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nFirst source.\n\n"
+        "2\n00:00:01,100 --> 00:00:02,000\nSecond source.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        config_module,
+        "get_config_value",
+        lambda key, default=None: {
+            "thread_num": 1,
+            "batch_size": 2,
+            "replace_chinese_punctuation": True,
+        }.get(key, default),
+    )
+
+    class FakeSplitter:
+        def __init__(self, **_kwargs):
+            pass
+
+        def split_subtitle(self, asr_data):
+            return asr_data
+
+    class FakeTranslator:
+        def __init__(self, update_callback):
+            self.update_callback = update_callback
+
+        def translate_subtitle(self, _asr_data):
+            self.update_callback(
+                [
+                    SubtitleProcessData(
+                        index=1,
+                        original_text="First source.",
+                        translated_text="第一条，已经完成。",
+                    )
+                ]
+            )
+            raise RuntimeError("second item failed")
+
+    monkeypatch.setattr(split_module, "SubtitleSplitter", FakeSplitter)
+    monkeypatch.setattr(
+        TranslatorFactory,
+        "create_translator",
+        staticmethod(
+            lambda **kwargs: FakeTranslator(kwargs["update_callback"])
+        ),
+    )
+
+    task = task_manager.create_task("subtitle")
+    asyncio.run(
+        _run_subtitle(
+            task.id,
+            SubtitleRequest(
+                subtitle_file=str(subtitle_path),
+                target_language="chinese",
+                translator="bing",
+                need_optimize=False,
+                need_translate=True,
+            ),
+        )
+    )
+
+    recovery_path = subtitle_path.with_stem("input_recovery")
+    recovery = recovery_path.read_text(encoding="utf-8")
+    task_result = task_manager.get_task(task.id)
+
+    assert "第一条 已经完成" in recovery
+    assert "第二条" not in recovery
+    assert task_result.status.value == "failed"
+    assert task_result.result == {"recovery_file": str(recovery_path)}
+    assert task_result.subtitle_file == str(recovery_path)

@@ -150,6 +150,28 @@ class TestValidateLLmResponse:
         assert ok is False
         assert "Placeholder" in msg
 
+    @pytest.mark.parametrize(
+        "translation",
+        [
+            "我觉得很多厂家都忽略了这一点。",
+            "这项战略调整非常重要。",
+            "下面先做一个简略介绍。",
+        ],
+    )
+    def test_placeholder_validation_allows_normal_words_containing_lue(
+        self,
+        translation,
+    ):
+        t = _make_translator()
+
+        ok, msg = t._validate_llm_response(
+            {"0": translation},
+            {"0": "This is a complete source sentence."},
+        )
+
+        assert ok is True
+        assert msg == ""
+
     def test_final_validation_rejects_untranslated_and_placeholder_items(self):
         t = _make_translator()
         source = [SubtitleProcessData(index=1, original_text="This is a complete sentence.")]

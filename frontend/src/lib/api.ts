@@ -116,6 +116,22 @@ export const configApi = {
       method: "POST",
       body: JSON.stringify({ key, value }),
     }),
+  switchLlmProvider: (data: {
+    provider: string;
+    current_base_url: string;
+    current_api_key: string;
+    current_model: string;
+  }) =>
+    request<{
+      status: string;
+      provider: string;
+      base_url: string;
+      api_key: string;
+      model: string;
+    }>("/api/config/llm-provider", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   fetchModels: () => request<{ models: string[]; error?: string }>("/api/config/models"),
   testLlm: () => request<{ ok: boolean; model?: string; error?: string }>("/api/config/test-llm"),
   testWhisper: () => request<{ ok: boolean; error?: string }>("/api/config/test-whisper"),

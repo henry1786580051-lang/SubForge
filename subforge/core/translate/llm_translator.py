@@ -10,7 +10,12 @@ import openai
 
 from subforge.core.llm import call_llm
 from subforge.core.prompts import get_prompt
-from subforge.core.translate.base import BaseTranslator, SubtitleProcessData, logger
+from subforge.core.translate.base import (
+    BaseTranslator,
+    PartialTranslationError,
+    SubtitleProcessData,
+    logger,
+)
 from subforge.core.translate.context import TranslationContext
 from subforge.core.translate.types import TargetLanguage
 from subforge.core.utils.cache import generate_cache_key
@@ -524,7 +529,7 @@ class LLMTranslator(BaseTranslator):
                 return True
             return not re.search(r"[一-鿿぀-ヿ가-힯]", text)
 
-        failures: list[str] = []
+        failures: list[int] = []
         translated_items: list[SubtitleProcessData] = []
 
         for data in subtitle_chunk:
@@ -551,11 +556,13 @@ class LLMTranslator(BaseTranslator):
                 translated_items.append(replace(data, translated_text=translated_text))
             except Exception as e:
                 logger.error(f"Single item translation failed {data.index}: {str(e)}")
-                failures.append(str(data.index))
+                failures.append(data.index)
 
         if failures:
-            raise RuntimeError(
-                f"Single item translation failed for {len(failures)}/{len(subtitle_chunk)} entries: {failures}"
+            raise PartialTranslationError(
+                f"Single item translation failed for {len(failures)}/{len(subtitle_chunk)} entries: {failures}",
+                completed=translated_items,
+                failed_indices=failures,
             )
         return translated_items
 

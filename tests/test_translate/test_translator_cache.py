@@ -3,7 +3,7 @@ import pytest
 from subforge.core.asr.asr_data import ASRData, ASRDataSeg
 from subforge.core.entities import SubtitleProcessData
 from subforge.core.translate import base as translate_base
-from subforge.core.translate.base import BaseTranslator
+from subforge.core.translate.base import BaseTranslator, PartialTranslationError
 from subforge.core.translate.types import TargetLanguage, get_language_code
 
 
@@ -52,6 +52,23 @@ class FailingTranslator(DummyTranslator):
 class EmptyTranslator(DummyTranslator):
     def _translate_chunk(self, subtitle_chunk):
         return subtitle_chunk
+
+
+class PartiallyFailingTranslator(DummyTranslator):
+    def _translate_chunk(self, subtitle_chunk):
+        completed = [
+            SubtitleProcessData(
+                index=item.index,
+                original_text=item.original_text,
+                translated_text=f"译文{item.index}",
+            )
+            for item in subtitle_chunk[:-1]
+        ]
+        raise PartialTranslationError(
+            "one item failed",
+            completed=completed,
+            failed_indices=[subtitle_chunk[-1].index],
+        )
 
 
 def test_translator_does_not_read_or_write_cache_when_disabled(monkeypatch):
@@ -114,6 +131,26 @@ def test_translate_subtitle_rejects_empty_translations(monkeypatch):
 
     with pytest.raises(RuntimeError, match="Translation incomplete"):
         translator.translate_subtitle(asr_data)
+
+
+def test_partial_chunk_failure_preserves_completed_items_and_counts_exact_failure(
+    monkeypatch,
+):
+    fake_cache = FakeCache()
+    monkeypatch.setattr(translate_base, "get_translate_cache", lambda: fake_cache)
+    monkeypatch.setattr(translate_base, "is_cache_enabled", lambda: False)
+    progress = []
+    translator = PartiallyFailingTranslator(fake_cache, use_cache=False)
+    translator.update_callback = progress.extend
+    chunk = [
+        SubtitleProcessData(index=index, original_text=f"source {index}")
+        for index in range(1, 11)
+    ]
+
+    with pytest.raises(RuntimeError, match=r"1/10 segments failed"):
+        translator._parallel_translate([chunk])
+
+    assert [item.index for item in progress] == list(range(1, 10))
 
 
 @pytest.mark.parametrize(

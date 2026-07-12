@@ -99,13 +99,19 @@ class TaskManager:
             self._cancel_callbacks.pop(task_id, None)
         self._notify_listeners(task_id)
 
-    def fail_task(self, task_id: str, error: str):
+    def fail_task(
+        self,
+        task_id: str,
+        error: str,
+        result: dict[str, Any] | None = None,
+    ):
         with self._lock:
             task = self._tasks.get(task_id)
             if not task or task.status == TaskStatus.CANCELLED:
                 return
             task.status = TaskStatus.FAILED
             task.error = error
+            task.result = result
             self._running_tasks.pop(task_id, None)
             self._cancel_callbacks.pop(task_id, None)
         self._notify_listeners(task_id)

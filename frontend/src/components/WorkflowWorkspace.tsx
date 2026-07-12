@@ -101,7 +101,7 @@ const ASR_ENGINES = [
     id: "faster_whisper",
     name: "FasterWhisper",
     desc: "CTranslate2 · CUDA 设备更合适",
-    icon: "solar:speedometer-bold-duotone",
+    icon: "solar:cpu-bold-duotone",
   },
   {
     id: "whisper_api",
@@ -525,7 +525,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
           <div className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
             <VideoPanel />
           </div>
-          <div className="grid min-h-0 grid-cols-[minmax(280px,0.7fr)_minmax(260px,0.3fr)] gap-5 max-lg:grid-cols-1">
+          <div className="grid min-h-0 grid-cols-2 gap-5 max-lg:grid-cols-1">
             <Panel title="实时字幕预览" icon="solar:playlist-bold-duotone" fill>
               <LiveSubtitleList subtitles={subtitles} />
             </Panel>
@@ -537,7 +537,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
 
         <aside className="flex min-h-0 flex-col gap-5 overflow-auto pr-1">
           <Panel title="ASR 引擎" icon="solar:tuning-square-2-bold-duotone">
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-2.5">
               {ASR_ENGINES.map((engine) => {
                 const unsupported = engine.id === "whisperx" && !config.whisperxSupported;
                 return (
@@ -545,7 +545,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                   key={engine.id}
                   disabled={unsupported}
                   onClick={() => void saveConfig("transcribe_model", engine.id)}
-                  className={`rounded-xl border p-3 text-left transition-all ${
+                  className={`flex min-h-[100px] flex-col rounded-lg border p-3.5 text-left transition-[border-color,background-color,transform] duration-200 active:translate-y-px ${
                     config.transcribeModel === engine.id
                       ? "border-accent bg-accent-dim text-accent"
                       : unsupported
@@ -553,11 +553,13 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                       : "border-border bg-background text-text-secondary hover:border-border-active"
                   }`}
                 >
-                  <div className="flex items-center gap-2">
-                    <Icon icon={engine.icon} width={18} />
-                    <span className="text-[13px] font-semibold">{engine.name}</span>
+                  <div className="flex min-h-5 items-center gap-2.5">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+                      <Icon icon={engine.icon} width={18} />
+                    </span>
+                    <span className="text-[13px] font-semibold leading-5">{engine.name}</span>
                   </div>
-                  <p className="mt-1.5 text-[10px] leading-4 text-text-muted">{unsupported ? "仅支持 Apple Silicon" : engine.desc}</p>
+                  <p className="mt-2 min-h-8 text-[10px] leading-4 text-text-muted">{unsupported ? "仅支持 Apple Silicon" : engine.desc}</p>
                 </button>
               )})}
             </div>
@@ -573,7 +575,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                     label="默认转录模型"
                     value={selectedModel?.downloaded ? "本地可用" : selectedModel?.state === "on_demand" ? "首次使用下载" : "未下载"}
                   />
-                  <div className="mt-2 flex flex-wrap gap-2">
+                  <div className="mt-2 grid grid-cols-2 gap-2 max-md:grid-cols-1">
                     {currentModels.map((model) => (
                       <ModelChip
                         key={model.id}
@@ -832,11 +834,13 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
                   placeholder="mimo-v2.5-pro"
                 />
               </label>
-              <ToggleLine
-                label="反思模式"
-                checked={config.needReflect}
-                onChange={(value) => void saveConfig("need_reflect", value)}
-              />
+              <div className="pt-3">
+                <ToggleLine
+                  label="反思模式"
+                  checked={config.needReflect}
+                  onChange={(value) => void saveConfig("need_reflect", value)}
+                />
+              </div>
             </div>
           </Panel>
 
@@ -956,8 +960,8 @@ function Panel({
 }) {
   return (
     <section className={`rounded-2xl border border-border bg-surface p-4 shadow-sm ${fill ? "flex min-h-0 flex-1 flex-col overflow-hidden" : ""}`}>
-      <div className="mb-3 flex shrink-0 items-center gap-2">
-        <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-accent-dim text-accent">
+      <div className="mb-3.5 flex min-h-8 shrink-0 items-center gap-2.5">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent-dim text-accent">
           <Icon icon={icon} width={18} />
         </span>
         <h2 className="text-[14px] font-semibold text-text-primary">{title}</h2>
@@ -1061,8 +1065,8 @@ function EmptyState({
 function FieldLabel({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <span className="text-[11px] font-medium text-text-muted">{label}</span>
-      <span className="rounded-full bg-background px-2 py-0.5 text-[10px] text-text-muted">{value}</span>
+      <span className="text-[11px] font-semibold text-text-secondary">{label}</span>
+      <span className="shrink-0 rounded-md bg-background px-2 py-1 text-[10px] font-medium text-text-muted">{value}</span>
     </div>
   );
 }
@@ -1086,23 +1090,30 @@ function ModelChip({
   return (
     <button
       onClick={model.downloaded || !downloadable ? onSelect : onDownload}
-      className={`group flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] transition ${
+      className={`group flex min-h-10 min-w-0 items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left text-[11px] transition-[border-color,background-color,transform] duration-200 active:translate-y-px ${
         active
           ? "border-accent bg-accent-dim text-accent"
           : "border-border bg-background text-text-secondary hover:border-border-active"
       }`}
     >
-      <span className="font-medium">{model.name || model.id.split("/").pop() || model.id}</span>
-      <span className="text-text-muted">{model.size}</span>
-      {model.downloaded ? (
-        <Icon icon="solar:check-circle-bold" width={14} className="text-emerald-600" />
-      ) : downloading ? (
-        <span className="font-mono text-accent">{progress ?? 0}%</span>
-      ) : !downloadable ? (
-        <span className="text-text-muted">{model.state === "on_demand" ? "首次使用下载" : "不可下载"}</span>
-      ) : (
-        <span className="text-accent opacity-80 group-hover:opacity-100">下载</span>
-      )}
+      <span className="flex min-w-0 items-baseline gap-2">
+        <span className="truncate font-semibold">{model.name || model.id.split("/").pop() || model.id}</span>
+        <span className="shrink-0 text-[10px] text-text-muted">{model.size}</span>
+      </span>
+      <span className="flex shrink-0 items-center gap-1 text-[10px] font-medium">
+        {model.downloaded ? (
+          <>
+            <span className="text-emerald-700">可用</span>
+            <Icon icon="solar:check-circle-bold" width={14} className="text-emerald-600" />
+          </>
+        ) : downloading ? (
+          <span className="font-mono text-accent">{progress ?? 0}%</span>
+        ) : !downloadable ? (
+          <span className="text-text-muted">{model.state === "on_demand" ? "首次使用下载" : "不可下载"}</span>
+        ) : (
+          <span className="text-accent opacity-80 group-hover:opacity-100">下载</span>
+        )}
+      </span>
     </button>
   );
 }

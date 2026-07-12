@@ -93,12 +93,12 @@ export function VideoPanel() {
   );
 
   return (
-    <div className="flex flex-col h-full bg-surface relative">
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-surface">
       <input ref={fileInputRef} type="file" accept="video/*,audio/*" className="hidden" onChange={handleFileChange} />
 
       {/* Video area */}
       <div
-        className={`flex-1 flex items-center justify-center relative transition-all duration-300 ${isDragging ? "drop-zone-active" : ""}`}
+        className={`relative flex min-h-0 flex-1 items-center justify-center overflow-hidden transition-all duration-300 ${isDragging ? "drop-zone-active" : ""}`}
         onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
       >
         {isUploading ? (
@@ -108,7 +108,7 @@ export function VideoPanel() {
           </div>
         ) : !videoFile ? (
           <div
-            className={`w-[85%] max-w-2xl aspect-video rounded-xl border-2 border-dashed flex flex-col items-center justify-center cursor-pointer transition-all duration-300 ${
+            className={`aspect-video h-[90%] max-h-[90%] w-auto max-w-[85%] rounded-xl border-2 border-dashed flex flex-col items-center justify-center cursor-pointer transition-all duration-300 ${
               isDragging
                 ? "border-accent/50 bg-accent-dim"
                 : "border-border hover:border-accent/30 hover:bg-accent-dim drop-zone-idle"
@@ -124,7 +124,7 @@ export function VideoPanel() {
             <p className="text-xs text-text-muted">支持 MP4, MKV, AVI, MOV, MP3, WAV 等格式</p>
           </div>
         ) : (
-          <div className="w-[85%] max-w-2xl aspect-video rounded-xl bg-black border border-border flex items-center justify-center relative overflow-hidden shadow-md">
+          <div className="relative flex aspect-video h-[90%] max-h-[90%] w-auto max-w-[85%] items-center justify-center overflow-hidden rounded-xl border border-border bg-black shadow-md">
             {hasVideo && (
               <video
                 ref={videoRef}
@@ -192,7 +192,7 @@ export function VideoPanel() {
       )}
 
       {/* Controls */}
-      <div className="px-4 py-3 border-t border-border bg-surface">
+      <div className="shrink-0 border-t border-border bg-surface px-4 py-3">
         <div className="flex items-center gap-3 mb-3">
           <div className="flex-1 h-1 progress-track cursor-pointer group rounded-full bg-[rgba(0,0,0,0.06)] overflow-hidden" onClick={handleSeek}>
             <div className="progress-bar h-full bg-accent rounded-full transition-all relative" style={{ width: duration > 0 ? `${(currentTime / duration) * 100}%` : "0%" }}>

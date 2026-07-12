@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import sys
@@ -79,3 +80,107 @@ def test_effective_config_discards_corrupted_persisted_types():
 def test_config_update_rejects_values_that_would_silently_fallback(key, value):
     with pytest.raises(HTTPException):
         config_module._validate_config_update(key, value)
+
+
+def test_effective_config_migrates_legacy_llm_credentials_to_detected_provider():
+    config = config_module._effective_config(
+        {
+            "llm_base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+            "llm_api_key": "mimo-secret",
+            "llm_model": "mimo-v2.5-pro",
+        }
+    )
+
+    assert config["llm_provider"] == "mimo"
+    assert config["llm_profiles"]["mimo"] == {
+        "base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+        "api_key": "mimo-secret",
+        "model": "mimo-v2.5-pro",
+    }
+
+
+def test_switch_llm_provider_keeps_credentials_isolated_and_restores_them(
+    tmp_path,
+    monkeypatch,
+):
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setattr(config_module, "_SETTINGS_CANDIDATES", [settings_path])
+    config_module._write_settings(
+        {
+            "llm_base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+            "llm_api_key": "mimo-secret",
+            "llm_model": "mimo-v2.5-pro",
+        }
+    )
+
+    deepseek = asyncio.run(
+        config_module.switch_llm_provider(
+            config_module.LlmProviderSwitch(
+                provider="deepseek",
+                current_base_url="https://token-plan-cn.xiaomimimo.com/v1",
+                current_api_key="mimo-secret",
+                current_model="mimo-v2.5-pro",
+            )
+        )
+    )
+
+    assert deepseek == {
+        "status": "ok",
+        "provider": "deepseek",
+        "base_url": "https://api.deepseek.com",
+        "api_key": "",
+        "model": "",
+    }
+
+    mimo = asyncio.run(
+        config_module.switch_llm_provider(
+            config_module.LlmProviderSwitch(
+                provider="mimo",
+                current_base_url="https://api.deepseek.com/v1",
+                current_api_key="deepseek-secret",
+                current_model="deepseek-chat",
+            )
+        )
+    )
+
+    assert mimo["base_url"] == "https://token-plan-cn.xiaomimimo.com/v1"
+    assert mimo["api_key"] == "mimo-secret"
+    assert mimo["model"] == "mimo-v2.5-pro"
+    stored = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert stored["llm_profiles"]["deepseek"]["api_key"] == "deepseek-secret"
+    assert stored["llm_profiles"]["mimo"]["api_key"] == "mimo-secret"
+
+
+def test_updating_active_llm_key_updates_only_active_profile(tmp_path, monkeypatch):
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setattr(config_module, "_SETTINGS_CANDIDATES", [settings_path])
+    config_module._write_settings(
+        {
+            "llm_provider": "deepseek",
+            "llm_base_url": "https://api.deepseek.com",
+            "llm_api_key": "old-key",
+            "llm_model": "deepseek-chat",
+            "llm_profiles": {
+                "deepseek": {
+                    "base_url": "https://api.deepseek.com",
+                    "api_key": "old-key",
+                    "model": "deepseek-chat",
+                },
+                "mimo": {
+                    "base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+                    "api_key": "mimo-key",
+                    "model": "mimo-v2.5-pro",
+                },
+            },
+        }
+    )
+
+    asyncio.run(
+        config_module.update_config(
+            config_module.ConfigUpdate(key="llm_api_key", value="new-deepseek-key")
+        )
+    )
+
+    stored = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert stored["llm_profiles"]["deepseek"]["api_key"] == "new-deepseek-key"
+    assert stored["llm_profiles"]["mimo"]["api_key"] == "mimo-key"

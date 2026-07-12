@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TypeVar, cast
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 router = APIRouter()
 
@@ -105,6 +105,21 @@ def _write_settings(data: dict):
 # Default config values
 _IS_APPLE_SILICON = platform.system() == "Darwin" and platform.machine().lower() == "arm64"
 
+_LLM_PROVIDER_URLS = {
+    "openai": "https://api.openai.com/v1",
+    "deepseek": "https://api.deepseek.com",
+    "mimo": "https://token-plan-cn.xiaomimimo.com/v1",
+    "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "zhipu": "https://open.bigmodel.cn/api/paas/v4",
+    "moonshot": "https://api.moonshot.cn/v1",
+    "baichuan": "https://api.baichuan-ai.com/v1",
+    "yi": "https://api.lingyiwanwu.com/v1",
+    "minimax": "https://api.minimax.chat/v1",
+    "siliconflow": "https://api.siliconflow.cn/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+    "custom": "",
+}
+
 _DEFAULTS = {
     "transcribe_model": "whisperx" if _IS_APPLE_SILICON else "whisper_cpp",
     "source_language": "auto",
@@ -125,6 +140,8 @@ _DEFAULTS = {
     "llm_base_url": "",
     "llm_api_key": "",
     "llm_model": "gpt-4o-mini",
+    "llm_provider": "custom",
+    "llm_profiles": {},
     "max_word_count_cjk": 25,
     "max_word_count_english": 18,
     "thread_num": 5,
@@ -147,6 +164,36 @@ _DEFAULTS = {
 }
 
 
+def _detect_llm_provider(base_url: str) -> str:
+    normalized = str(base_url or "").strip().rstrip("/")
+    for provider, default_url in _LLM_PROVIDER_URLS.items():
+        if default_url and normalized.startswith(default_url.rstrip("/")):
+            return provider
+    return "custom"
+
+
+def _sanitize_llm_profiles(value) -> dict[str, dict[str, str]]:
+    if not isinstance(value, dict):
+        return {}
+    profiles = {}
+    for provider, profile in value.items():
+        if provider not in _LLM_PROVIDER_URLS or not isinstance(profile, dict):
+            continue
+        profiles[provider] = {
+            "base_url": str(profile.get("base_url") or "")[:8192],
+            "api_key": str(profile.get("api_key") or "")[:8192],
+            "model": str(profile.get("model") or "")[:256],
+        }
+    return profiles
+
+
+def _active_llm_provider(stored: dict) -> str:
+    provider = stored.get("llm_provider")
+    if provider in _LLM_PROVIDER_URLS:
+        return provider
+    return _detect_llm_provider(str(stored.get("llm_base_url") or ""))
+
+
 def _effective_config(stored: dict) -> dict:
     """Apply platform constraints to persisted settings without rewriting them."""
     config = {
@@ -155,12 +202,32 @@ def _effective_config(stored: dict) -> dict:
     }
     if not _IS_APPLE_SILICON and config.get("transcribe_model") == "whisperx":
         config["transcribe_model"] = "whisper_cpp"
+    provider = _active_llm_provider(stored)
+    profiles = _sanitize_llm_profiles(stored.get("llm_profiles"))
+    if provider not in profiles and any(
+        str(stored.get(key) or "").strip()
+        for key in ("llm_base_url", "llm_api_key", "llm_model")
+    ):
+        profiles[provider] = {
+            "base_url": str(stored.get("llm_base_url") or ""),
+            "api_key": str(stored.get("llm_api_key") or ""),
+            "model": str(stored.get("llm_model") or ""),
+        }
+    config["llm_provider"] = provider
+    config["llm_profiles"] = profiles
     return config
 
 
 class ConfigUpdate(BaseModel):
     key: str
     value: str | int | float | bool
+
+
+class LlmProviderSwitch(BaseModel):
+    provider: str = Field(max_length=64)
+    current_base_url: str = Field(default="", max_length=8192)
+    current_api_key: str = Field(default="", max_length=8192)
+    current_model: str = Field(default="", max_length=256)
 
 
 _INTEGER_RANGES = {
@@ -182,6 +249,7 @@ _CHOICES = {
         "indonesian", "malay", "tagalog", "italian", "dutch", "polish",
         "turkish", "swedish", "ukrainian", "arabic",
     },
+    "llm_provider": set(_LLM_PROVIDER_URLS),
 }
 
 
@@ -242,6 +310,11 @@ async def update_config(update: ConfigUpdate):
     """Update a configuration value."""
     if update.key not in _DEFAULTS:
         raise HTTPException(status_code=400, detail=f"Unknown config key: {update.key}")
+    if update.key in {"llm_provider", "llm_profiles"}:
+        raise HTTPException(
+            status_code=400,
+            detail="LLM providers must be changed through the provider switch endpoint",
+        )
     value = _validate_config_update(update.key, update.value)
     if update.key == "transcribe_model" and value == "whisperx" and not _IS_APPLE_SILICON:
         raise HTTPException(
@@ -250,9 +323,70 @@ async def update_config(update: ConfigUpdate):
         )
     stored = _read_settings()
     stored[update.key] = value
+    if update.key in {"llm_base_url", "llm_api_key", "llm_model"}:
+        provider = _active_llm_provider(stored)
+        profiles = _sanitize_llm_profiles(stored.get("llm_profiles"))
+        profile = profiles.setdefault(
+            provider,
+            {
+                "base_url": str(stored.get("llm_base_url") or ""),
+                "api_key": str(stored.get("llm_api_key") or ""),
+                "model": str(stored.get("llm_model") or ""),
+            },
+        )
+        profile_key = {
+            "llm_base_url": "base_url",
+            "llm_api_key": "api_key",
+            "llm_model": "model",
+        }[update.key]
+        profile[profile_key] = str(value)
+        stored["llm_profiles"] = profiles
     _write_settings(stored)
     invalidate_config_cache()
     return {"status": "ok", "key": update.key, "value": value}
+
+
+@router.post("/llm-provider")
+async def switch_llm_provider(update: LlmProviderSwitch):
+    """Atomically save the current LLM profile and activate another one."""
+    if update.provider not in _LLM_PROVIDER_URLS:
+        raise HTTPException(status_code=422, detail="Unsupported LLM provider")
+
+    stored = _read_settings()
+    current_provider = _active_llm_provider(stored)
+    profiles = _sanitize_llm_profiles(stored.get("llm_profiles"))
+    profiles[current_provider] = {
+        "base_url": update.current_base_url.strip(),
+        "api_key": update.current_api_key,
+        "model": update.current_model.strip(),
+    }
+    target = profiles.get(update.provider)
+    if target is None:
+        target = {
+            "base_url": _LLM_PROVIDER_URLS[update.provider],
+            "api_key": "",
+            "model": "",
+        }
+        profiles[update.provider] = target
+
+    stored.update(
+        {
+            "llm_provider": update.provider,
+            "llm_base_url": target["base_url"],
+            "llm_api_key": target["api_key"],
+            "llm_model": target["model"],
+            "llm_profiles": profiles,
+        }
+    )
+    _write_settings(stored)
+    invalidate_config_cache()
+    return {
+        "status": "ok",
+        "provider": update.provider,
+        "base_url": target["base_url"],
+        "api_key": target["api_key"],
+        "model": target["model"],
+    }
 
 
 @router.get("/test-llm")

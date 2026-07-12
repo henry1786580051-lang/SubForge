@@ -97,6 +97,7 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
     from pathlib import Path as PathLib
 
     partial_srt_path = None
+    asr_data = None
     try:
         from app.api.config import get_config_value
         custom_prompt = req.custom_prompt or get_config_value("custom_prompt", "")
@@ -291,9 +292,12 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
             translation_context = TranslationContext(custom_prompt=custom_prompt)
             if translator_type == TranslatorType.OPENAI:
                 task_manager.update_progress(task_id, 63, "Generating translation context...")
+                if asr_data is None:
+                    raise RuntimeError("Subtitle data is unavailable before translation")
+                translation_source: ASRData = asr_data
                 translation_context = await run_blocking(
                     lambda: build_translation_context(
-                        asr_data,
+                        translation_source,
                         model=llm_model,
                         target_language=target_lang,
                         custom_prompt=custom_prompt,
@@ -352,7 +356,48 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
         raise
     except Exception as e:
         logger.exception("Subtitle task %s failed", task_id)
-        task_manager.fail_task(task_id, str(e))
+        recovery_path = None
+        if asr_data is not None and any(
+            (segment.translated_text or "").strip() for segment in asr_data.segments
+        ):
+            try:
+                if (
+                    req.target_language.lower() in {"chinese", "cantonese"}
+                    and bool(get_config_value("replace_chinese_punctuation", True))
+                ):
+                    asr_data.replace_chinese_translation_punctuation()
+                recovery_path = Path(req.subtitle_file).with_stem(
+                    Path(req.subtitle_file).stem + "_recovery"
+                ).with_suffix(".srt")
+                from subforge.core.entities import SubtitleLayoutEnum
+
+                await run_blocking(
+                    lambda: asr_data.save(
+                        str(recovery_path),
+                        layout=SubtitleLayoutEnum.TRANSLATE_ON_TOP,
+                    )
+                )
+                task = task_manager.get_task(task_id)
+                task_manager.update_progress(
+                    task_id,
+                    task.progress if task else 0,
+                    "Translation failed; partial result saved",
+                    subtitle_file=str(recovery_path),
+                    preview_segments=_preview_segments(asr_data),
+                )
+                logger.warning(
+                    "Saved recoverable subtitle result for failed task %s: %s",
+                    task_id,
+                    recovery_path,
+                )
+            except Exception:
+                logger.exception("Failed to save subtitle recovery file for task %s", task_id)
+                recovery_path = None
+        task_manager.fail_task(
+            task_id,
+            str(e),
+            {"recovery_file": str(recovery_path)} if recovery_path else None,
+        )
     finally:
         if partial_srt_path:
             try:

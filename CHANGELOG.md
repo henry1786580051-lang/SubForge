@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.0.7 - 2026-07-12
+
+### Added
+
+- Added provider-specific LLM profiles so each service keeps its own Base URL, API key, and model when users switch providers.
+- Added recoverable subtitle output for failed translation jobs, preserving completed translations and applying Chinese punctuation cleanup before saving the recovery file.
+- Added stricter final translation validation for empty, untranslated, and merge-placeholder responses, with focused retries for incomplete batches.
+- Added a unified ASR scheme summary and self-test that clearly identifies the active engine, transcription model, forced-alignment model, hardware, and acceleration path.
+
+### Fixed
+
+- Fixed translation jobs failing near completion without saving the already completed bilingual subtitles.
+- Fixed LLM responses such as `（合并至上一条）`, `内容同上`, and untranslated English lines being accepted as completed Chinese translations.
+- Fixed switching LLM providers reusing the previous provider's API key.
+- Fixed the desktop application hanging during shutdown while background work was still completing.
+- Fixed clipped video controls in the transcription workspace and aligned the two lower quality panels with the video panel.
+- Fixed inconsistent ASR engine card heights, a missing FasterWhisper icon, irregular model controls, and cramped reflection-mode spacing.
+
+### Changed
+
+- Redesigned Settings into dedicated LLM, speech recognition, subtitle processing, and file storage workspaces while retaining the existing backend configuration contract.
+- Simplified speech-recognition settings into current scheme, engine, transcription model, word-level alignment, and advanced configuration layers; removed the duplicate default-model selector.
+- Improved transcription and subtitle workspaces with stable responsive dimensions, clearer model states, and more consistent card alignment.
+- Pinned GitHub Actions to `uv 0.10.11` so CI and desktop builds no longer depend on fetching the mutable `latest` version manifest.
+
 ## v1.0.6 - 2026-07-11
 
 ### Added

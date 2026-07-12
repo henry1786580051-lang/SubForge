@@ -15,6 +15,20 @@ from subforge.core.utils.logger import setup_logger
 logger = setup_logger("subtitle_translator")
 
 
+class PartialTranslationError(RuntimeError):
+    """A batch failed after producing validated translations for some items."""
+
+    def __init__(
+        self,
+        message: str,
+        completed: List[SubtitleProcessData],
+        failed_indices: List[int],
+    ):
+        super().__init__(message)
+        self.completed = completed
+        self.failed_indices = failed_indices
+
+
 class BaseTranslator(ABC):
     """翻译器基类"""
 
@@ -119,8 +133,13 @@ class BaseTranslator(ABC):
             except Exception as e:
                 logger.error(f"Translation chunk failed: {e}")
                 failed_errors.append(str(e))
-                failed_count += len(future_to_chunk[future])
-                translated_list.extend(future_to_chunk[future])
+                if isinstance(e, PartialTranslationError):
+                    translated_list.extend(e.completed)
+                    failed_count += len(e.failed_indices)
+                    if self.update_callback and e.completed:
+                        self.update_callback(e.completed)
+                else:
+                    failed_count += len(future_to_chunk[future])
 
         # Raise if all or most translations failed
         if failed_count > 0 and total_segments > 0:
@@ -190,10 +209,12 @@ class BaseTranslator(ABC):
         text = str(text or "").strip()
         if not text:
             return True
-        compact = re.sub(r"\s+", "", text)
+        compact = re.sub(r"\s+", "", text).strip(
+            "()（）[]【】<>《》“”\"'。，、；;：:！!?"
+        )
         previous_refs = r"上一句|上句|上一条|上条|前一句|前一条|前文|前面"
         placeholder_patterns = [
-            r"(?:此|本)?句.*(?:合并|并入|省略|略去|无需翻译|不单独翻译)",
+            r"(?:此|本)句.*(?:合并|并入|省略|略去|无需翻译|不单独翻译).*",
             rf"(?:已)?(?:合并|并入|接上|延续|已译|包含).*(?:{previous_refs})",
             rf"(?:{previous_refs}).*(?:合并|包含|已译|并入|已经翻译)",
             r"(?:最终版本|最终字幕).*(?:合并|省略)",
@@ -203,7 +224,7 @@ class BaseTranslator(ABC):
             r"omitted",
         ]
         return any(
-            re.search(pattern, compact, flags=re.IGNORECASE)
+            re.fullmatch(pattern, compact, flags=re.IGNORECASE)
             for pattern in placeholder_patterns
         )
 
