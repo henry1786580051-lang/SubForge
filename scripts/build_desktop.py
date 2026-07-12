@@ -51,6 +51,10 @@ def _requires_mlx_metallib() -> bool:
 
 
 def _version() -> str:
+    explicit_version = os.environ.get("SUBFORGE_BUILD_VERSION", "").strip()
+    if explicit_version:
+        return explicit_version.lstrip("v")
+
     version_file = ROOT / "subforge" / "_version.py"
     if version_file.is_file():
         match = re.search(

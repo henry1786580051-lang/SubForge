@@ -1,6 +1,12 @@
 from scripts import build_desktop
 
 
+def test_build_version_prefers_explicit_release_environment(monkeypatch):
+    monkeypatch.setenv("SUBFORGE_BUILD_VERSION", "v9.8.7")
+
+    assert build_desktop._version() == "9.8.7"
+
+
 def test_build_version_prefers_repository_version_file(monkeypatch, tmp_path):
     package_dir = tmp_path / "subforge"
     package_dir.mkdir()
