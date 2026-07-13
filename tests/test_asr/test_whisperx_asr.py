@@ -1,4 +1,3 @@
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -164,10 +163,26 @@ def test_whisperx_maps_standard_model_name_to_mlx_repo():
     assert _mlx_model_repo("mlx-community/custom-model") == "mlx-community/custom-model"
 
 
-def test_whisperx_defaults_to_local_mlx_model_when_available():
-    default_model = default_mlx_model()
-    assert default_model == "large-v3" or Path(default_model).is_dir()
-    assert _mlx_model_repo("") == default_model
+def test_whisperx_defaults_to_local_mlx_model_when_available(monkeypatch, tmp_path):
+    local_model = tmp_path / "whisper-large-v3-fp16"
+    local_model.mkdir()
+    monkeypatch.setattr(
+        "subforge.core.asr.whisperx_asr._find_local_mlx_model",
+        lambda: local_model,
+    )
+
+    assert default_mlx_model() == str(local_model)
+    assert _mlx_model_repo("") == str(local_model)
+
+
+def test_whisperx_defaults_to_remote_mlx_repo_without_local_model(monkeypatch):
+    monkeypatch.setattr(
+        "subforge.core.asr.whisperx_asr._find_local_mlx_model",
+        lambda: None,
+    )
+
+    assert default_mlx_model() == "large-v3"
+    assert _mlx_model_repo("") == "mlx-community/whisper-large-v3-mlx"
 
 
 def test_whisperx_prepares_model_safetensors_alias(tmp_path):
