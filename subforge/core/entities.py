@@ -569,6 +569,10 @@ class TranscribeConfig:
     whisperx_align_model: str = "WAV2VEC2_ASR_LARGE_LV60K_960H"
     whisperx_batch_size: int = 4
     enable_audio_enhancement: bool = True
+    speaker_diarization: str = "off"
+    diarization_model: str = "pyannote/speaker-diarization-community-1"
+    diarization_token: str = ""
+    diarization_model_dir: str = ""
 
     def _mask_key(self, key: Optional[str]) -> str:
         """Mask sensitive key for display"""
@@ -585,6 +589,7 @@ class TranscribeConfig:
         lines.append(f"Language: {self.transcribe_language or 'Auto'}")
         lines.append(f"Word Timestamp: {self.need_word_time_stamp}")
         lines.append(f"Audio Enhancement: {self.enable_audio_enhancement}")
+        lines.append(f"Speaker Diarization: {self.speaker_diarization}")
         lines.append(
             f"Output Format: {self.output_format.value if self.output_format else 'None'}"
         )

@@ -62,7 +62,9 @@ def test_subtitle_pipeline_uses_explicit_llm_client_without_env_mutation(
         "batch_size": 1,
     }
 
-    monkeypatch.setattr(config_module, "get_config_value", lambda key, default=None: settings.get(key, default))
+    monkeypatch.setattr(
+        config_module, "get_config_value", lambda key, default=None: settings.get(key, default)
+    )
 
     created = {}
     client = object()
@@ -160,6 +162,65 @@ def test_subtitle_pipeline_cleans_chinese_translation_punctuation(tmp_path, monk
     assert "Hello, world." in output
 
 
+def test_subtitle_pipeline_hides_speaker_markers_in_final_output(tmp_path, monkeypatch):
+    import asyncio
+
+    subtitle_path = tmp_path / "input.srt"
+    subtitle_path.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n[Speaker 1] Hello world\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        config_module,
+        "get_config_value",
+        lambda key, default=None: {
+            "speaker_diarization": "auto",
+            "thread_num": 1,
+            "batch_size": 1,
+            "replace_chinese_punctuation": True,
+        }.get(key, default),
+    )
+
+    class FakeSplitter:
+        def __init__(self, **_kwargs):
+            pass
+
+        def split_subtitle(self, asr_data):
+            return asr_data
+
+    class FakeTranslator:
+        def translate_subtitle(self, asr_data):
+            asr_data.segments[0].translated_text = "你好世界"
+            return asr_data
+
+    monkeypatch.setattr(split_module, "SubtitleSplitter", FakeSplitter)
+    monkeypatch.setattr(
+        TranslatorFactory,
+        "create_translator",
+        staticmethod(lambda **_kwargs: FakeTranslator()),
+    )
+
+    task = task_manager.create_task("subtitle")
+    asyncio.run(
+        _run_subtitle(
+            task.id,
+            SubtitleRequest(
+                subtitle_file=str(subtitle_path),
+                target_language="chinese",
+                translator="bing",
+                need_optimize=False,
+                need_translate=True,
+            ),
+        )
+    )
+
+    output = subtitle_path.with_stem("input_processed").read_text(encoding="utf-8")
+    assert "Speaker 1" not in output
+    assert not any(line.startswith("- ") for line in output.splitlines())
+    assert "你好世界" in output
+    assert "Hello world" in output
+
+
 def test_subtitle_pipeline_does_not_split_bilingual_cues_after_translation(
     tmp_path,
     monkeypatch,
@@ -194,9 +255,9 @@ def test_subtitle_pipeline_does_not_split_bilingual_cues_after_translation(
 
     class FakeTranslator:
         def translate_subtitle(self, asr_data):
-            asr_data.segments[0].translated_text = (
-                "我觉得没必要切到运动模式 毕竟咱们现在是奔着省油去的"
-            )
+            asr_data.segments[
+                0
+            ].translated_text = "我觉得没必要切到运动模式 毕竟咱们现在是奔着省油去的"
             return asr_data
 
     monkeypatch.setattr(split_module, "SubtitleSplitter", FakeSplitter)
@@ -276,9 +337,7 @@ def test_failed_translation_saves_punctuation_cleaned_recovery_file(
     monkeypatch.setattr(
         TranslatorFactory,
         "create_translator",
-        staticmethod(
-            lambda **kwargs: FakeTranslator(kwargs["update_callback"])
-        ),
+        staticmethod(lambda **kwargs: FakeTranslator(kwargs["update_callback"])),
     )
 
     task = task_manager.create_task("subtitle")

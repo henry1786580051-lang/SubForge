@@ -159,6 +159,9 @@ _DEFAULTS = {
     "whisperx_batch_size": 8,
     "ff_mdx_kim2": False,
     "enable_audio_enhancement": True,
+    "speaker_diarization": "off",
+    "diarization_model": "pyannote/speaker-diarization-community-1",
+    "huggingface_token": "",
     "replace_chinese_punctuation": True,
     "whisper_model_size": "large-v3" if _IS_APPLE_SILICON else "base",
 }
@@ -250,6 +253,7 @@ _CHOICES = {
         "turkish", "swedish", "ukrainian", "arabic",
     },
     "llm_provider": set(_LLM_PROVIDER_URLS),
+    "speaker_diarization": {"off", "two", "auto"},
 }
 
 

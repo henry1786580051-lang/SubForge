@@ -116,6 +116,7 @@ const TRANSCRIBE_STAGES = [
   "音频增强",
   "Whisper 转录",
   "词级对齐",
+  "说话人识别",
   "时间轴修正",
   "写入字幕",
 ];
@@ -432,6 +433,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
         whisperx_align_model: "whisperxAlignModel",
         whisperx_batch_size: "whisperxBatchSize",
         enable_audio_enhancement: "enableAudioEnhancement",
+        speaker_diarization: "speakerDiarization",
       };
       const mapped = map[key];
       if (mapped) setConfig({ [mapped]: value });
@@ -472,6 +474,12 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
     () => models.filter((model) => model.category === "whisperx" && model.type === "alignment"),
     [models]
   );
+  const diarizationModels = useMemo(
+    () => models.filter((model) => model.category === "whisperx" && model.type === "diarization"),
+    [models]
+  );
+  const diarizationReady =
+    config.speakerDiarization === "off" || diarizationModels.some((model) => model.downloaded);
   const selectedModel = currentModels.find(
     (model) => (model.value || model.id) === config.whisperModelSize || model.selected
   );
@@ -591,7 +599,8 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                 </div>
 
                 {config.transcribeModel === "whisperx" && (
-                  <div>
+                  <div className="space-y-4">
+                    <div>
                     <FieldLabel
                       label="Forced alignment"
                       value={selectedAlignModel?.downloaded ? "词级时间轴可用" : "需要模型"}
@@ -613,6 +622,49 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                           onDownload={() => void downloadModel(model.id)}
                         />
                       ))}
+                    </div>
+                    </div>
+
+                    <div>
+                      <FieldLabel
+                        label="说话人识别"
+                        value={config.speakerDiarization === "off" ? "关闭" : config.speakerDiarization === "two" ? "双人" : "自动人数"}
+                      />
+                      <div className="mt-2 grid grid-cols-3 gap-2" role="group" aria-label="说话人识别模式">
+                        {([[
+                          "off", "关闭"
+                        ], ["two", "双人"], ["auto", "自动"]] as const).map(([value, label]) => (
+                          <button
+                            key={value}
+                            onClick={() => void saveConfig("speaker_diarization", value)}
+                            className={`h-9 rounded-md border text-[11px] font-medium transition-colors ${
+                              config.speakerDiarization === value
+                                ? "border-accent bg-accent-dim text-accent"
+                                : "border-border bg-background text-text-secondary hover:border-border-active"
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      {config.speakerDiarization !== "off" && (
+                        <div className="mt-2 space-y-2">
+                          {diarizationModels.map((model) => (
+                            <ModelRow
+                              key={model.id}
+                              model={model}
+                              active={Boolean(model.downloaded)}
+                              downloading={downloadingModel === model.id}
+                              progress={downloadProgress[model.id]}
+                              onSelect={() => undefined}
+                              onDownload={() => void downloadModel(model.id)}
+                            />
+                          ))}
+                          <p className="text-[10px] leading-4 text-text-muted">
+                            多人模式会先比较原音、6 dB 与 12 dB 轻度降噪，仅在所有说话人覆盖率不下降时采用降噪结果。
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -669,7 +721,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
             title="开始转录"
             description={videoFile ? videoFile.split("/").pop() || videoFile : "先导入视频或音频文件"}
             primaryLabel={taskStatus === "running" ? "转录中" : "开始转录"}
-            disabled={!videoFile || isProcessing}
+            disabled={!videoFile || isProcessing || !diarizationReady}
             progress={taskProgress}
             message={taskMessage}
             running={isProcessing}

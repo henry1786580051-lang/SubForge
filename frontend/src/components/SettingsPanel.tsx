@@ -129,6 +129,7 @@ export function SettingsPanel() {
       if (data.whisperx_batch_size !== undefined) storeUpdates.whisperxBatchSize = Number(data.whisperx_batch_size || 4);
       if (data.whisperx_supported !== undefined) storeUpdates.whisperxSupported = !!data.whisperx_supported;
       if (data.enable_audio_enhancement !== undefined) storeUpdates.enableAudioEnhancement = !!data.enable_audio_enhancement;
+      if (data.speaker_diarization !== undefined) storeUpdates.speakerDiarization = data.speaker_diarization as "off" | "two" | "auto";
       if (Object.keys(storeUpdates).length > 0) useAppStore.getState().setConfig(storeUpdates);
       // Prefer the persisted provider; detect legacy configurations by URL.
       const url = (data.llm_base_url as string) || "";
@@ -171,6 +172,7 @@ export function SettingsPanel() {
         whisperx_align_model: "whisperxAlignModel",
         whisperx_batch_size: "whisperxBatchSize",
         enable_audio_enhancement: "enableAudioEnhancement",
+        speaker_diarization: "speakerDiarization",
       };
       const mappedKey = configKeyMap[key];
       if (mappedKey) {
@@ -748,7 +750,8 @@ export function SettingsPanel() {
                 </div>
               </details>
                 {(settings.transcribe_model as string) === "whisperx" && (
-                  <div className="pt-2 mt-2 border-t border-border space-y-2">
+                  <div className="pt-2 mt-2 border-t border-border space-y-5">
+                    <div className="space-y-2">
                     <div>
                       <p className="text-[12px] font-semibold text-text-secondary">词级时间轴对齐</p>
                       <p className="mt-0.5 text-[10px] text-text-muted">使用独立对齐模型，提高单词起止时间精度</p>
@@ -787,6 +790,70 @@ export function SettingsPanel() {
                         </button>
                       </div>
                     )})}
+                    </div>
+
+                    <div className="space-y-3 border-t border-border pt-4">
+                      <div>
+                        <p className="text-[12px] font-semibold text-text-secondary">说话人识别</p>
+                        <p className="mt-0.5 text-[10px] text-text-muted">双人/多人模式会自动比较原音与轻度降噪，并优先保护较弱说话人的识别覆盖率</p>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        {([[
+                          "off", "关闭"
+                        ], ["two", "双人对话"], ["auto", "自动人数"]] as const).map(([value, label]) => (
+                          <button
+                            key={value}
+                            onClick={() => void handleSave("speaker_diarization", value)}
+                            className={`h-9 rounded-md border text-[11px] font-medium transition-colors ${
+                              settings.speaker_diarization === value
+                                ? "border-accent bg-accent-dim text-accent"
+                                : "border-border text-text-secondary hover:border-border-active"
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      {(settings.speaker_diarization as string) !== "off" && (() => {
+                        const model = asrModels.find((item) => item.type === "diarization");
+                        if (!model) return null;
+                        const ready = downloadedModels.has(model.id) || model.downloaded;
+                        return (
+                          <div className="rounded-lg border border-border bg-[rgba(0,0,0,0.01)] p-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[12px] font-medium text-text-primary">{model.name}</span>
+                                  <span className={`text-[9px] font-semibold ${ready ? "text-emerald-600" : "text-amber-700"}`}>
+                                    {ready ? "本地可用" : "需要下载"}
+                                  </span>
+                                </div>
+                                <p className="mt-0.5 text-[10px] text-text-muted">{model.size} · CPU 推理 · WhisperX</p>
+                              </div>
+                              {!ready && (
+                                <button
+                                  onClick={() => void handleDownloadModel(model.id)}
+                                  disabled={downloadingModel === model.id}
+                                  className="shrink-0 rounded-md bg-accent-dim px-3 py-1.5 text-[11px] font-medium text-accent disabled:opacity-50"
+                                >
+                                  {downloadingModel === model.id ? `${downloadProgress[model.id] || 0}%` : "下载模型"}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
+                      <SettingsField label="Hugging Face Token" description="首次下载 Community-1 时使用；需先在模型页面接受使用条款">
+                        <input
+                          type="password"
+                          value={(settings.huggingface_token as string) || ""}
+                          onChange={(event) => setSettings((previous) => ({ ...previous, huggingface_token: event.target.value }))}
+                          onBlur={(event) => void handleSave("huggingface_token", event.target.value)}
+                          placeholder="hf_..."
+                          className="input-field"
+                        />
+                      </SettingsField>
+                    </div>
                   </div>
                 )}
             </SettingsField>

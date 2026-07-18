@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 block_cipher = None
 ROOT = os.path.dirname(os.path.abspath(SPEC))
@@ -40,8 +40,8 @@ for optional_pkg in ('df', 'libdf'):
         pass
 
 # Keep WhisperX/Transformers collection narrow. SubForge uses MLX Whisper for
-# transcription and WhisperX only for forced alignment; diarization and the full
-# Transformers model zoo are not needed and make the macOS bundle much larger.
+# transcription, WhisperX for forced alignment, and pyannote only for optional
+# speaker diarization. Training and visualization stacks remain excluded.
 optional_hiddenimports += [
     'whisperx',
     'whisperx.alignment',
@@ -49,20 +49,47 @@ optional_hiddenimports += [
     'whisperx.schema',
     'whisperx.log_utils',
     'whisperx.utils',
+    'pyannote.audio',
+    'pyannote.audio.core',
+    'pyannote.audio.core.pipeline',
+    'pyannote.audio.pipelines',
+    'pyannote.audio.pipelines.speaker_diarization',
+    'pyannote.audio.models',
+    'pyannote.audio.models.segmentation',
+    'pyannote.core',
+    'pyannote.database',
+    'pyannote.metrics',
+    'pyannote.pipeline',
+    'lightning',
+    'lightning_fabric',
+    'pytorch_lightning',
+    'sklearn',
     'transformers',
     'transformers.models.wav2vec2',
     'transformers.models.wav2vec2.modeling_wav2vec2',
     'transformers.models.wav2vec2.processing_wav2vec2',
-        'transformers.models.wav2vec2.tokenization_wav2vec2',
-        'numba',
-        'llvmlite',
-        'tokenizers',
-        'tiktoken_ext',
-        'tiktoken_ext.openai_public',
+    'transformers.models.wav2vec2.tokenization_wav2vec2',
+    'tokenizers',
+    'tiktoken_ext',
+    'tiktoken_ext.openai_public',
 ]
-for optional_pkg in ('whisperx', 'transformers', 'tokenizers', 'tiktoken'):
+try:
+    optional_hiddenimports += collect_submodules('pyannote.audio.models')
+except Exception:
+    pass
+for optional_pkg in (
+    'whisperx', 'transformers', 'tokenizers', 'tiktoken',
+    'pyannote.audio', 'pyannote.core', 'pyannote.database',
+    'pyannote.metrics', 'pyannote.pipeline',
+):
     try:
-        optional_datas += collect_data_files(optional_pkg, include_py_files=False)
+        package_datas = collect_data_files(optional_pkg, include_py_files=False)
+        if optional_pkg == 'whisperx':
+            package_datas = [
+                item for item in package_datas
+                if os.path.basename(item[0]) != 'pytorch_model.bin'
+            ]
+        optional_datas += package_datas
     except Exception:
         pass
 
@@ -79,29 +106,33 @@ if os.path.isdir(frontend_out):
 # Collect backend data files
 backend_datas = collect_data_files('app', include_py_files=False)
 
-# Also include backend source files as data (for import at runtime)
-backend_src = []
-backend_dir = os.path.join(ROOT, 'backend', 'app')
-if os.path.isdir(backend_dir):
-    for root, dirs, files in os.walk(backend_dir):
-        for f in files:
-            if f.endswith('.py'):
-                src = os.path.join(root, f)
-                dest = os.path.relpath(root, os.path.join(ROOT, 'backend'))
-                backend_src.append((src, dest))
-
 # Collect subforge prompt/resource files
 vc_datas = collect_data_files('subforge.core.prompts', include_py_files=False)
 
-# Collect resource directory (assets, fonts, subtitle_style)
+# Collect only resources used by the webview desktop application. Legacy Qt
+# translations, screenshots, and alternate UI fonts remain in the source tree.
 resource_datas = []
 resource_dir = os.path.join(ROOT, 'resource')
-if os.path.isdir(resource_dir):
-    for root, dirs, files in os.walk(resource_dir):
-        for f in files:
-            src = os.path.join(root, f)
-            dest = os.path.relpath(root, ROOT)
-            resource_datas.append((src, dest))
+resource_entries = [
+    'assets/default_bg.png',
+    'assets/en.mp3',
+    'assets/logo.png',
+    'fonts/NotoSansSC-Regular.ttf',
+    'subtitle_style',
+    'ten_vad',
+]
+for entry in resource_entries:
+    source = os.path.join(resource_dir, entry)
+    if os.path.isfile(source):
+        resource_datas.append((source, os.path.dirname(os.path.join('resource', entry))))
+    elif os.path.isdir(source):
+        for root, dirs, files in os.walk(source):
+            dirs.sort()
+            files.sort()
+            for f in files:
+                src = os.path.join(root, f)
+                dest = os.path.relpath(root, ROOT)
+                resource_datas.append((src, dest))
 
 # Also bundle ffmpeg/ffprobe from desktop-runtime if available
 runtime_datas = []
@@ -116,7 +147,7 @@ a = Analysis(
     [os.path.join(ROOT, 'launcher.py')],
     pathex=[ROOT, os.path.join(ROOT, 'backend')],
     binaries=[],
-    datas=frontend_datas + backend_datas + vc_datas + backend_src + resource_datas + runtime_datas + optional_datas,
+    datas=frontend_datas + backend_datas + vc_datas + resource_datas + runtime_datas + optional_datas,
     hiddenimports=[
         'torch',
         'torch.hub',
@@ -155,6 +186,7 @@ a = Analysis(
         'subforge.core.asr.whisper_api',
         'subforge.core.asr.whisper_cpp',
         'subforge.core.asr.whisperx_asr',
+        'subforge.core.asr.speaker_diarization',
         'subforge.core.asr.faster_whisper',
         'subforge.core.asr.chunked_asr',
         'subforge.core.asr.transcribe',
@@ -176,7 +208,6 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        'torchvision',
         'mlx', 'mlx_whisper',
         'modelscope',
         'tensorflow', 'keras',
@@ -187,13 +218,13 @@ a = Analysis(
         'whisperx.diarize',
         'whisperx.asr', 'whisperx.transcribe', 'whisperx.vads',
         'whisperx.vads.pyannote', 'whisperx.vads.silero',
-        'pyannote', 'pyannote.audio', 'pyannote.core', 'pyannote.database',
         'pyannoteai', 'pyannoteai_sdk',
-        'pyannote.metrics', 'pyannote.pipeline',
+        'speechbrain',
         'torchcodec',
-        'lightning', 'pytorch_lightning',
-        'sklearn', 'scikit_learn',
-        'optuna',
+        # MLX Whisper's packaged timing module receives a correct pure-Python
+        # fallback in build_desktop.py; forced alignment does not use its DTW JIT.
+        'numba', 'llvmlite',
+        'pytest', '_pytest', 'tkinter',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

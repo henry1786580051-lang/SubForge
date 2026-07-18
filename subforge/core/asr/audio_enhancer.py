@@ -123,12 +123,19 @@ def _load_model(device=None):
             raise
 
 
-def enhance_audio(input_path: str, output_path: str | None = None) -> str:
+def enhance_audio(
+    input_path: str,
+    output_path: str | None = None,
+    *,
+    atten_lim_db: float | None = None,
+) -> str:
     """Enhance audio file using DeepFilterNet3.
 
     Args:
         input_path: Path to input audio file (any format ffmpeg supports)
         output_path: Path for output WAV file (16kHz mono). If None, creates temp file.
+        atten_lim_db: Maximum noise attenuation in dB. ``None`` keeps the
+            historical unrestricted DeepFilterNet behavior.
 
     Returns:
         Path to enhanced audio file
@@ -162,7 +169,11 @@ def enhance_audio(input_path: str, output_path: str | None = None) -> str:
         if info.frames <= 0:
             raise ValueError("Input audio is empty")
         sr = info.samplerate
-        logger.info("Enhancing audio: %.1fs", info.frames / sr)
+        logger.info(
+            "Enhancing audio: %.1fs (attenuation limit: %s)",
+            info.frames / sr,
+            f"{atten_lim_db:g} dB" if atten_lim_db is not None else "unrestricted",
+        )
 
         # Stream 60-second blocks to disk. This keeps long videos from holding
         # the source audio and every enhanced chunk in memory simultaneously.
@@ -192,7 +203,12 @@ def enhance_audio(input_path: str, output_path: str | None = None) -> str:
                 ):
                     chunk_tensor = torch.from_numpy(chunk).float().unsqueeze(0)
                     try:
-                        enhanced = enhance(_df_model, _df_state, chunk_tensor)
+                        enhanced = enhance(
+                            _df_model,
+                            _df_state,
+                            chunk_tensor,
+                            atten_lim_db=atten_lim_db,
+                        )
                     except Exception:
                         if _device_name(_df_device) != "mps":
                             raise
@@ -200,7 +216,12 @@ def enhance_audio(input_path: str, output_path: str | None = None) -> str:
                         logger.debug("DeepFilterNet3 MPS enhancement traceback", exc_info=True)
                         _df_mps_failed = True
                         _move_model_to_device(torch.device("cpu"))
-                        enhanced = enhance(_df_model, _df_state, chunk_tensor)
+                        enhanced = enhance(
+                            _df_model,
+                            _df_state,
+                            chunk_tensor,
+                            atten_lim_db=atten_lim_db,
+                        )
                     enhanced_chunk = enhanced.squeeze(0).cpu().numpy()
                     output_file.write(enhanced_chunk)
                     processed_frames += len(chunk)

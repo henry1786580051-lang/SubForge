@@ -4,7 +4,7 @@ import os
 import platform
 import re
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Literal, Optional, Tuple
 
 from langdetect import LangDetectException, detect
 
@@ -49,18 +49,19 @@ def handle_long_path(path: str) -> str:
     Returns:
         Path with \\?\ prefix if needed (Windows only)
     """
-    if (
-        platform.system() == "Windows"
-        and len(path) > 260
-        and not path.startswith("\\\\?\\")
-    ):
+    if platform.system() == "Windows" and len(path) > 260 and not path.startswith("\\\\?\\"):
         return rf"\\?\{os.path.abspath(path)}"
     return path
 
 
 class ASRDataSeg:
     def __init__(
-        self, text: str, start_time: int, end_time: int, translated_text: str = "", speaker_id: str = ""
+        self,
+        text: str,
+        start_time: int,
+        end_time: int,
+        translated_text: str = "",
+        speaker_id: str = "",
     ):
         self.text = text
         self.translated_text = translated_text
@@ -163,9 +164,7 @@ class ASRData:
             return False
 
         # 统计符合词级模式的片段数量
-        word_level_count = sum(
-            1 for seg in self.segments if self._is_word_level_segment(seg)
-        )
+        word_level_count = sum(1 for seg in self.segments if self._is_word_level_segment(seg))
 
         WORD_LEVEL_THRESHOLD = 0.8
         word_level_ratio = word_level_count / len(self.segments)
@@ -194,9 +193,7 @@ class ASRData:
                 continue
 
             # 计算总音素数
-            total_phonemes = sum(
-                math.ceil(len(w.group()) / CHARS_PER_PHONEME) for w in words_list
-            )
+            total_phonemes = sum(math.ceil(len(w.group()) / CHARS_PER_PHONEME) for w in words_list)
             time_per_phoneme = duration / max(total_phonemes, 1)
 
             # 为每个词分配时间戳
@@ -209,7 +206,10 @@ class ASRData:
                 word_end_time = min(current_time + word_duration, seg.end_time)
                 new_segments.append(
                     ASRDataSeg(
-                        text=word, start_time=current_time, end_time=word_end_time
+                        text=word,
+                        start_time=current_time,
+                        end_time=word_end_time,
+                        speaker_id=seg.speaker_id,
                     )
                 )
                 current_time = word_end_time
@@ -222,9 +222,7 @@ class ASRData:
         punctuation = r"[，。]"
         for seg in self.segments:
             seg.text = re.sub(f"{punctuation}+$", "", seg.text.strip())
-            seg.translated_text = re.sub(
-                f"{punctuation}+$", "", seg.translated_text.strip()
-            )
+            seg.translated_text = re.sub(f"{punctuation}+$", "", seg.translated_text.strip())
         return self
 
     def replace_chinese_translation_punctuation(self) -> "ASRData":
@@ -248,6 +246,7 @@ class ASRData:
         save_path: str,
         ass_style: Optional[str] = None,
         layout: SubtitleLayoutEnum = SubtitleLayoutEnum.ORIGINAL_ON_TOP,
+        speaker_style: Literal["label", "dash", "none"] = "label",
     ) -> None:
         """Save ASRData to file in specified format.
 
@@ -261,7 +260,11 @@ class ASRData:
         Path(save_path).parent.mkdir(parents=True, exist_ok=True)
 
         if save_path.endswith(".srt"):
-            self.to_srt(save_path=save_path, layout=layout)
+            self.to_srt(
+                save_path=save_path,
+                layout=layout,
+                speaker_style=speaker_style,
+            )
         elif save_path.endswith(".txt"):
             self.to_txt(save_path=save_path, layout=layout)
         elif save_path.endswith(".json"):
@@ -303,6 +306,7 @@ class ASRData:
         self,
         layout: SubtitleLayoutEnum = SubtitleLayoutEnum.ORIGINAL_ON_TOP,
         save_path=None,
+        speaker_style: Literal["label", "dash", "none"] = "label",
     ) -> str:
         """Convert to SRT subtitle format"""
         self.fix_boundary_overlaps()
@@ -320,11 +324,19 @@ class ASRData:
             else:  # ONLY_TRANSLATE
                 text = translated if translated else original
 
-            # Prefix speaker label if speaker_id is set
-            if seg.speaker_id:
-                speaker_prefix = f"[{seg.speaker_id}] "
+            should_prefix_speaker = speaker_style == "dash" or (
+                bool(seg.speaker_id) and speaker_style == "label"
+            )
+            if should_prefix_speaker:
+                speaker_prefix = f"[{seg.speaker_id}] " if speaker_style == "label" else "- "
                 text = "\n".join(
-                    speaker_prefix + line if line.strip() else line
+                    (
+                        line
+                        if speaker_style == "dash" and line.lstrip().startswith("- ")
+                        else speaker_prefix + line
+                    )
+                    if line.strip()
+                    else line
                     for line in text.split("\n")
                 )
 
@@ -434,14 +446,10 @@ class ASRData:
                         start_time, end_time, "Default", original
                     )
             elif layout == SubtitleLayoutEnum.ONLY_ORIGINAL:
-                ass_content += dialogue_template.format(
-                    start_time, end_time, "Default", original
-                )
+                ass_content += dialogue_template.format(start_time, end_time, "Default", original)
             else:  # ONLY_TRANSLATE
                 text = translated if has_translation else original
-                ass_content += dialogue_template.format(
-                    start_time, end_time, "Default", text
-                )
+                ass_content += dialogue_template.format(start_time, end_time, "Default", text)
 
         if save_path:
             save_path = handle_long_path(save_path)
@@ -478,29 +486,26 @@ class ASRData:
 
         # return vtt_text
 
-    def merge_segments(
-        self, start_index: int, end_index: int, merged_text: Optional[str] = None
-    ):
+    def merge_segments(self, start_index: int, end_index: int, merged_text: Optional[str] = None):
         """Merge segments from start_index to end_index (inclusive)."""
-        if (
-            start_index < 0
-            or end_index >= len(self.segments)
-            or start_index > end_index
-        ):
+        if start_index < 0 or end_index >= len(self.segments) or start_index > end_index:
             raise IndexError("Invalid segment index")
         merged_start_time = self.segments[start_index].start_time
         merged_end_time = self.segments[end_index].end_time
         if merged_text is None:
-            merged_text = "".join(
-                seg.text for seg in self.segments[start_index : end_index + 1]
-            )
+            merged_text = "".join(seg.text for seg in self.segments[start_index : end_index + 1])
         merged_translated = " ".join(
-            seg.translated_text for seg in self.segments[start_index : end_index + 1]
+            seg.translated_text
+            for seg in self.segments[start_index : end_index + 1]
             if seg.translated_text
         )
-        merged_seg = ASRDataSeg(merged_text, merged_start_time, merged_end_time,
-                                translated_text=merged_translated,
-                                speaker_id=self.segments[start_index].speaker_id)
+        merged_seg = ASRDataSeg(
+            merged_text,
+            merged_start_time,
+            merged_end_time,
+            translated_text=merged_translated,
+            speaker_id=self.segments[start_index].speaker_id,
+        )
         self.segments[start_index : end_index + 1] = [merged_seg]
 
     def merge_with_next_segment(self, index: int) -> None:
@@ -513,9 +518,13 @@ class ASRData:
         merged_translated = ""
         if current_seg.translated_text or next_seg.translated_text:
             merged_translated = f"{current_seg.translated_text} {next_seg.translated_text}".strip()
-        merged_seg = ASRDataSeg(merged_text, current_seg.start_time, next_seg.end_time,
-                                translated_text=merged_translated,
-                                speaker_id=current_seg.speaker_id)
+        merged_seg = ASRDataSeg(
+            merged_text,
+            current_seg.start_time,
+            next_seg.end_time,
+            translated_text=merged_translated,
+            speaker_id=current_seg.speaker_id,
+        )
         self.segments[index] = merged_seg
         del self.segments[index + 1]
 
@@ -533,12 +542,15 @@ class ASRData:
             Self for method chaining
         """
         import logging
+
         logger = logging.getLogger(__name__)
 
         if not self.segments:
             return self
 
-        logger.info(f"filter_hallucinations called with audio_path={audio_path}, segments={len(self.segments)}")
+        logger.info(
+            f"filter_hallucinations called with audio_path={audio_path}, segments={len(self.segments)}"
+        )
 
         if self.is_word_timestamp():
             logger.info("Skipping hallucination energy filter for word-level timestamps")
@@ -562,6 +574,7 @@ class ASRData:
         close neighboring subtitles and leaves in-segment repetitions intact.
         """
         import logging
+
         logger = logging.getLogger(__name__)
 
         def _token_spans(text: str) -> list[tuple[str, int, int]]:
@@ -578,7 +591,7 @@ class ASRData:
                 return -1
             last_start = len(haystack) - len(needle)
             for start in range(last_start + 1):
-                if haystack[start:start + len(needle)] == needle:
+                if haystack[start : start + len(needle)] == needle:
                     return start
             return -1
 
@@ -741,21 +754,71 @@ class ASRData:
         terminal punctuation and the combined subtitle remains readable.
         """
         import logging
+
         logger = logging.getLogger(__name__)
 
         if len(self.segments) < 2:
             return self
 
         continuation_starts = {
-            "a", "an", "and", "as", "at", "because", "but", "by", "for",
-            "from", "have", "in", "into", "is", "it", "its", "of", "on",
-            "or", "seems", "than", "that", "the", "this", "to", "was",
-            "were", "which", "with",
+            "a",
+            "an",
+            "and",
+            "as",
+            "at",
+            "because",
+            "but",
+            "by",
+            "for",
+            "from",
+            "have",
+            "in",
+            "into",
+            "is",
+            "it",
+            "its",
+            "of",
+            "on",
+            "or",
+            "seems",
+            "than",
+            "that",
+            "the",
+            "this",
+            "to",
+            "was",
+            "were",
+            "which",
+            "with",
         }
         dangling_ends = {
-            "a", "an", "and", "as", "at", "because", "but", "by", "for",
-            "from", "i", "if", "in", "into", "is", "it", "of", "on", "or",
-            "that", "the", "this", "to", "was", "were", "which", "with",
+            "a",
+            "an",
+            "and",
+            "as",
+            "at",
+            "because",
+            "but",
+            "by",
+            "for",
+            "from",
+            "i",
+            "if",
+            "in",
+            "into",
+            "is",
+            "it",
+            "of",
+            "on",
+            "or",
+            "that",
+            "the",
+            "this",
+            "to",
+            "was",
+            "were",
+            "which",
+            "with",
         }
 
         def _tokens(text: str) -> list[str]:
@@ -850,6 +913,7 @@ class ASRData:
         strong replacement boundary and the subtitle has a large silent overrun.
         """
         import logging
+
         logger = logging.getLogger(__name__)
 
         if not self.segments or not speech_segments:
@@ -939,10 +1003,13 @@ class ASRData:
             max_spoken_ms = _max_spoken_duration_ms(words)
             short_tail_overrun = words <= 5 and tail_silence_ms >= 1200
             long_tail_overrun = (
-                tail_silence_ms >= 1800
-                and duration_ms > _min_readable_duration_ms(words) + 800
+                tail_silence_ms >= 1800 and duration_ms > _min_readable_duration_ms(words) + 800
             )
-            if duration_ms <= max_spoken_ms + 400 and not short_tail_overrun and not long_tail_overrun:
+            if (
+                duration_ms <= max_spoken_ms + 400
+                and not short_tail_overrun
+                and not long_tail_overrun
+            ):
                 continue
 
             min_end = seg.start_time + _min_readable_duration_ms(words)
@@ -974,6 +1041,7 @@ class ASRData:
         2. Insert micro-gaps between segments where audio energy drops significantly
         """
         import logging
+
         logger = logging.getLogger(__name__)
 
         try:
@@ -986,7 +1054,7 @@ class ASRData:
         try:
             logger.info(f"Analyzing audio for speech detection: {audio_path}")
             audio = AudioSegment.from_file(audio_path)
-            logger.info(f"Audio loaded: {len(audio)/1000:.1f}s")
+            logger.info(f"Audio loaded: {len(audio) / 1000:.1f}s")
         except Exception as e:
             logger.error(f"Failed to load audio: {e}")
             return
@@ -995,15 +1063,15 @@ class ASRData:
         window_ms = 50
         energies = []
         for i in range(0, len(audio), window_ms):
-            chunk = audio[i:i + window_ms]
+            chunk = audio[i : i + window_ms]
             rms = chunk.rms
-            energies.append({'time_ms': i, 'rms': rms})
+            energies.append({"time_ms": i, "rms": rms})
 
         if not energies:
             return
 
         # Calculate energy statistics
-        rms_values = [e['rms'] for e in energies]
+        rms_values = [e["rms"] for e in energies]
         avg_rms = sum(rms_values) / len(rms_values)
         # Silence threshold: 30% of average RMS, but at least 100
         silence_threshold = max(avg_rms * 0.3, 100)
@@ -1232,9 +1300,8 @@ class ASRData:
                     padded_start = max(seg.start_time, cluster_start - 150)
                     padded_end = min(seg.end_time, cluster_end + 150)
                     padded_duration = padded_end - padded_start
-                    enough_text_capacity = (
-                        words <= 8
-                        or padded_duration >= min(max_reasonable_duration_ms * 0.6, words * 300 + 500)
+                    enough_text_capacity = words <= 8 or padded_duration >= min(
+                        max_reasonable_duration_ms * 0.6, words * 300 + 500
                     )
                     if padded_duration >= 500 and enough_text_capacity:
                         logger.debug(
@@ -1323,11 +1390,7 @@ class ASRData:
             # energy gating misses some subtitle tails. For complete sentences,
             # apply a conservative speech-rate cap to trim only the trailing end.
             duration_ms = seg.end_time - seg.start_time
-            if (
-                words >= 6
-                and duration_ms >= 3500
-                and _ends_with_sentence_punctuation(seg.text)
-            ):
+            if words >= 6 and duration_ms >= 3500 and _ends_with_sentence_punctuation(seg.text):
                 sentence_tail_cap_ms = max(3000, min(7000, words * 320 + 600))
                 if duration_ms > sentence_tail_cap_ms:
                     min_duration_ms = max(2500, words * 250)
@@ -1362,8 +1425,8 @@ class ASRData:
             # Sample energy in the segment
             segment_energies = []
             for e in energies:
-                if start_ms <= e['time_ms'] < end_ms:
-                    segment_energies.append(e['rms'])
+                if start_ms <= e["time_ms"] < end_ms:
+                    segment_energies.append(e["rms"])
 
             if segment_energies:
                 avg_segment_rms = sum(segment_energies) / len(segment_energies)
@@ -1371,21 +1434,53 @@ class ASRData:
                 if avg_segment_rms > silence_threshold * 0.5:
                     filtered.append(seg)
                 else:
-                    logger.debug(f"Removed silent segment: {seg.start_time/1000:.1f}-{seg.end_time/1000:.1f}s")
+                    logger.debug(
+                        f"Removed silent segment: {seg.start_time / 1000:.1f}-{seg.end_time / 1000:.1f}s"
+                    )
             else:
                 filtered.append(seg)
 
-        logger.info(f"Filtered segments: {original_count} -> {len(filtered)} (removed {original_count - len(filtered)})")
+        logger.info(
+            f"Filtered segments: {original_count} -> {len(filtered)} (removed {original_count - len(filtered)})"
+        )
         self.segments = filtered
 
     def _filter_by_text_heuristics(self) -> None:
         """Filter segments using text-based heuristics (fallback)."""
         # Common whisper hallucination patterns
         hallucination_patterns = {
-            "thank you", "thanks", "you", "the", "a", "an", "is", "it", "we",
-            "um", "uh", "hmm", "ah", "oh", "like", "so", "well", "yeah",
-            "okay", "ok", "right", "yes", "no", "and", "but", "or",
-            "字幕", "字幕由", "感谢", "谢谢", "订阅", "观看",
+            "thank you",
+            "thanks",
+            "you",
+            "the",
+            "a",
+            "an",
+            "is",
+            "it",
+            "we",
+            "um",
+            "uh",
+            "hmm",
+            "ah",
+            "oh",
+            "like",
+            "so",
+            "well",
+            "yeah",
+            "okay",
+            "ok",
+            "right",
+            "yes",
+            "no",
+            "and",
+            "but",
+            "or",
+            "字幕",
+            "字幕由",
+            "感谢",
+            "谢谢",
+            "订阅",
+            "观看",
         }
 
         filtered = []
@@ -1416,6 +1511,7 @@ class ASRData:
         shifts following tokens.
         """
         import logging
+
         logger = logging.getLogger(__name__)
 
         if not self.segments or not self.is_word_timestamp():
@@ -1463,15 +1559,14 @@ class ASRData:
         forced-alignment edge is already close to that speech boundary.
         """
         import logging
+
         logger = logging.getLogger(__name__)
 
         if not self.segments or not self.is_word_timestamp() or not speech_segments:
             return self
 
         speech = sorted(
-            (max(0, start), max(0, end))
-            for start, end in speech_segments
-            if end > start
+            (max(0, start), max(0, end)) for start, end in speech_segments if end > start
         )
         adjusted = 0
         word_cursor = 0
@@ -1538,6 +1633,7 @@ class ASRData:
         target and a real gap exists before the next segment.
         """
         import logging
+
         logger = logging.getLogger(__name__)
 
         if len(self.segments) < 2 or self.is_word_timestamp():
@@ -1663,9 +1759,7 @@ class ASRData:
 
             # Only adjust very small gaps (micro-flicker), preserve larger pauses
             if 0 < time_gap < threshold_ms:
-                mid_time = (
-                    current_seg.end_time + next_seg.start_time
-                ) // 2 + time_gap // 4
+                mid_time = (current_seg.end_time + next_seg.start_time) // 2 + time_gap // 4
                 current_seg.end_time = mid_time
                 next_seg.start_time = mid_time
 
@@ -1834,6 +1928,37 @@ class ASRData:
             if len(non_empty) < 2:
                 return None
 
+            dialogue_marked = all(re.match(r"^-\s+", line.strip()) for line in non_empty)
+            if dialogue_marked:
+                non_empty = [re.sub(r"^-\s+", "", line.strip()) for line in non_empty]
+
+            # Generated translated-on-top subtitles may contain language-neutral
+            # amounts or identical numeric lines. Keep these round-trippable even
+            # when speaker display markers are intentionally hidden.
+            if len(non_empty) == 2:
+                left_family = _line_family(non_empty[0])
+                right_family = _line_family(non_empty[1])
+                if (
+                    left_family == "cjk"
+                    and right_family == "other"
+                    and re.search(r"\d", non_empty[1])
+                ):
+                    return non_empty[1], non_empty[0]
+                if (
+                    right_family == "cjk"
+                    and left_family == "other"
+                    and re.search(r"\d", non_empty[0])
+                ):
+                    return non_empty[0], non_empty[1]
+                normalized_left = re.sub(r"\s+", "", non_empty[0])
+                normalized_right = re.sub(r"\s+", "", non_empty[1])
+                if (
+                    left_family == right_family == "other"
+                    and re.search(r"\d", normalized_left + normalized_right)
+                    and (dialogue_marked or normalized_left == normalized_right)
+                ):
+                    return non_empty[1], non_empty[0]
+
             best: tuple[int, int, str, str] | None = None
             for split_index in range(1, len(non_empty)):
                 left = non_empty[:split_index]
@@ -1844,7 +1969,11 @@ class ASRData:
                 score = 0
                 if {left_family, right_family} == {"cjk", "latin"}:
                     score = 100
-                elif left_family != right_family and left_family != "other" and right_family != "other":
+                elif (
+                    left_family != right_family
+                    and left_family != "other"
+                    and right_family != "other"
+                ):
                     score = 60
                 elif (
                     left_family != right_family
@@ -1912,7 +2041,7 @@ class ASRData:
                 speaker_match = speaker_pattern.match(text_lines[0])
                 if speaker_match:
                     speaker_id = speaker_match.group(1)
-                    text_lines[0] = text_lines[0][speaker_match.end():]
+                    text_lines[0] = text_lines[0][speaker_match.end() :]
 
             bilingual = _split_bilingual_lines(text_lines)
             if bilingual:
@@ -1927,10 +2056,14 @@ class ASRData:
                     )
                 )
             elif len(text_lines) == 1:
-                segments.append(ASRDataSeg(text_lines[0], start_time, end_time, speaker_id=speaker_id))
+                segments.append(
+                    ASRDataSeg(text_lines[0], start_time, end_time, speaker_id=speaker_id)
+                )
             else:
                 # Multi-line subtitle: preserve line breaks with \n
-                segments.append(ASRDataSeg("\n".join(text_lines), start_time, end_time, speaker_id=speaker_id))
+                segments.append(
+                    ASRDataSeg("\n".join(text_lines), start_time, end_time, speaker_id=speaker_id)
+                )
 
         return ASRData(segments)
 
@@ -1953,7 +2086,11 @@ class ASRData:
         for block in blocks:
             stripped = block.strip()
             if not header_done:
-                if stripped.startswith("WEBVTT") or stripped.startswith("NOTE") or stripped.startswith("STYLE"):
+                if (
+                    stripped.startswith("WEBVTT")
+                    or stripped.startswith("NOTE")
+                    or stripped.startswith("STYLE")
+                ):
                     continue
                 header_done = True
             if stripped:
@@ -1987,12 +2124,16 @@ class ASRData:
             groups = match.groups()
             time_parts = [int(g) if g is not None else 0 for g in groups]
             start_time = (
-                time_parts[0] * 3600000 + time_parts[1] * 60000 +
-                time_parts[2] * 1000 + time_parts[3]
+                time_parts[0] * 3600000
+                + time_parts[1] * 60000
+                + time_parts[2] * 1000
+                + time_parts[3]
             )
             end_time = (
-                time_parts[4] * 3600000 + time_parts[5] * 60000 +
-                time_parts[6] * 1000 + time_parts[7]
+                time_parts[4] * 3600000
+                + time_parts[5] * 60000
+                + time_parts[6] * 1000
+                + time_parts[7]
             )
 
             text_line = "\n".join(lines[text_start:])
@@ -2061,12 +2202,8 @@ class ASRData:
             timestamp_row = re.search(r"\n(.*?<c>.*?</c>.*)", block)
             if timestamp_row:
                 text = re.sub(r"<c>|</c>", "", timestamp_row.group(1))
-                block_start_time_string = (
-                    f"{match.group(1)}:{match.group(2)}:{match.group(3)}"
-                )
-                block_end_time_string = (
-                    f"{match.group(4)}:{match.group(5)}:{match.group(6)}"
-                )
+                block_start_time_string = f"{match.group(1)}:{match.group(2)}:{match.group(3)}"
+                block_end_time_string = f"{match.group(4)}:{match.group(5)}:{match.group(6)}"
                 text = f"<{block_start_time_string}>{text}<{block_end_time_string}>"
 
                 word_segments = split_timestamped_text(text)
@@ -2133,9 +2270,7 @@ class ASRData:
                             segments.append(temp_segments[time_key])
                             del temp_segments[time_key]
                         else:
-                            segment = ASRDataSeg(
-                                text="", start_time=start_time, end_time=end_time
-                            )
+                            segment = ASRDataSeg(text="", start_time=start_time, end_time=end_time)
                             if style == "Default":
                                 segment.text = text
                             else:

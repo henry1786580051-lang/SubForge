@@ -17,6 +17,9 @@ import urllib.request
 def _configure_frozen_runtime_paths() -> None:
     """Expose packages injected after PyInstaller analysis to frozen Python."""
     if not getattr(sys, "frozen", False):
+        backend_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backend")
+        if os.path.isdir(backend_dir) and backend_dir not in sys.path:
+            sys.path.insert(0, backend_dir)
         return
 
     bundle_root = os.fspath(getattr(sys, "_MEIPASS"))
@@ -55,18 +58,36 @@ def find_available_port(preferred_port: int = PREFERRED_PORT) -> int:
     raise RuntimeError("No available localhost port found")
 
 
-def start_server(port: int, server_errors: list[str]):
+def start_server(port: int, server_errors: list[str], server_holder: list | None = None):
     import uvicorn
 
     try:
-        uvicorn.run(
+        config = uvicorn.Config(
             "app.main:app",
             host=HOST,
             port=port,
             log_level="warning",
         )
+        server = uvicorn.Server(config)
+        if server_holder is not None:
+            server_holder.append(server)
+        server.run()
     except Exception as exc:
         server_errors.append(str(exc))
+
+
+def _cleanup_desktop_session(server=None) -> None:
+    """Request backend shutdown and remove files owned by this process."""
+    if server is not None:
+        server.should_exit = True
+    try:
+        from app.api.files import cleanup_session_uploads
+
+        cleanup_session_uploads()
+    except Exception:
+        # Closing the native window must remain reliable even during a partial
+        # backend startup or interpreter teardown.
+        pass
 
 
 def wait_for_server(url: str, server_errors: list[str], timeout_seconds: float = 15.0) -> bool:
@@ -122,7 +143,12 @@ def main():
     port = find_available_port()
     url = f"http://{HOST}:{port}"
     server_errors: list[str] = []
-    server_thread = threading.Thread(target=start_server, args=(port, server_errors), daemon=True)
+    server_holder: list = []
+    server_thread = threading.Thread(
+        target=start_server,
+        args=(port, server_errors, server_holder),
+        daemon=True,
+    )
     server_thread.start()
 
     if not wait_for_server(url, server_errors):
@@ -150,9 +176,16 @@ def main():
         js_api=api,
     )
 
+    exit_started = threading.Event()
+
     def force_exit():
         # PyInstaller desktop builds can keep non-UI worker threads alive after
-        # the native window closes. Exit the app process once the UI is gone.
+        # the native window closes. Clean this session first, then retain the
+        # hard-exit fallback that prevents shutdown hangs.
+        if exit_started.is_set():
+            return
+        exit_started.set()
+        _cleanup_desktop_session(server_holder[0] if server_holder else None)
         os._exit(0)
 
     try:
@@ -187,9 +220,7 @@ if __name__ == "__main__":
         import traceback
 
         try:
-            import llvmlite  # noqa: F401
             import mlx_whisper  # noqa: F401
-            import numba  # noqa: F401
 
             from subforge.core.asr.whisperx_asr import install_whisperx_runtime_stubs
 
@@ -219,6 +250,60 @@ if __name__ == "__main__":
             traceback.print_exc()
             raise SystemExit(1)
         except Exception:
+            traceback.print_exc()
+            raise SystemExit(1)
+    if os.environ.get("SUBFORGE_CHECK_DIARIZATION") == "1":
+        import traceback
+
+        try:
+            from pyannote.audio import Pipeline  # noqa: F401
+
+            from subforge.core.asr.asr_data import ASRData, ASRDataSeg
+            from subforge.core.asr.speaker_diarization import (
+                SpeakerTurn,
+                assign_speakers,
+                diarize_audio,
+            )
+
+            segments = ASRData([ASRDataSeg("Hello", 0, 1000)])
+            turns = [SpeakerTurn(start_ms=0, end_ms=1000, speaker_id="Speaker 1")]
+            assigned = assign_speakers(segments, turns)
+            if assigned.segments[0].speaker_id != "Speaker 1":
+                raise RuntimeError("Packaged speaker assignment returned an invalid result")
+            print("Pyannote speaker diarization import: ok")
+            print("Speaker assignment smoke test: ok")
+            audio_path = os.environ.get("SUBFORGE_DIARIZATION_AUDIO_PATH", "")
+            model_path = os.environ.get("SUBFORGE_DIARIZATION_MODEL_PATH", "")
+            if audio_path and model_path:
+                inferred_turns = diarize_audio(
+                    audio_path,
+                    model=model_path,
+                    model_dir=os.path.dirname(model_path),
+                )
+                print(f"Speaker diarization inference: {len(inferred_turns)} turns")
+            raise SystemExit(0)
+        except Exception:
+            traceback.print_exc()
+            raise SystemExit(1)
+    if os.environ.get("SUBFORGE_CHECK_BACKEND") == "1":
+        try:
+            from app.main import app
+
+            route_paths = {route.path for route in app.routes}
+            required_paths = {
+                "/api/health",
+                "/api/transcribe/start",
+                "/api/subtitle/start",
+                "/api/subtitles/load",
+            }
+            missing = required_paths - route_paths
+            if missing:
+                raise RuntimeError(f"Packaged backend routes are missing: {sorted(missing)}")
+            print("Packaged FastAPI routes: ok")
+            raise SystemExit(0)
+        except Exception:
+            import traceback
+
             traceback.print_exc()
             raise SystemExit(1)
     main()

@@ -14,6 +14,7 @@ from subforge.core.llm.context import get_task_context
 
 LLM_LOG_FILE = LOG_PATH / "llm_requests.jsonl"
 MAX_LOG_SIZE = 10 * 1024 * 1024  # 10MB
+MAX_PENDING_REQUESTS = 1000
 
 logger = logging.getLogger(__name__)
 
@@ -88,8 +89,17 @@ def _on_request(request: httpx.Request, log_context: Optional[dict[str, str]] = 
         request_body = {"raw": request.content.decode("utf-8", errors="replace")}
 
     request_key = id(request)
+    previous_key = _current_request_key.get()
     _current_request_key.set(request_key)
     with _log_lock:
+        # OpenAI-compatible clients can retry in the same execution context.
+        # Only the last request is paired with the SDK response, so release the
+        # superseded attempt instead of retaining it for the process lifetime.
+        if previous_key is not None and previous_key != request_key:
+            _pending_requests.pop(previous_key, None)
+        while len(_pending_requests) >= MAX_PENDING_REQUESTS:
+            oldest_key = next(iter(_pending_requests))
+            _pending_requests.pop(oldest_key, None)
         _pending_requests[request_key] = {
             "start_time": time.time(),
             "url": str(request.url),

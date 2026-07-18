@@ -4,8 +4,6 @@ Verifies that unmatched, gap, and trailing ASR segments are always
 preserved in the result — never silently dropped.
 """
 
-from unittest.mock import MagicMock
-
 from subforge.core.asr.asr_data import ASRDataSeg
 from subforge.core.split.split import SubtitleSplitter
 
@@ -147,3 +145,19 @@ def test_timestamps_preserved_in_fallback():
     assert fallback_seg is not None, f"'fallback' was dropped! Got: {[s.text for s in result]}"
     assert fallback_seg.start_time == 5000
     assert fallback_seg.end_time == 6000
+
+
+def test_llm_sentence_cannot_merge_across_speaker_boundary():
+    splitter = _make_splitter()
+    segments = [
+        ASRDataSeg("Do you like it", 0, 1000, speaker_id="Speaker 1"),
+        ASRDataSeg("Yes I do", 1000, 1800, speaker_id="Speaker 2"),
+    ]
+
+    result = splitter._merge_segments_based_on_sentences(
+        segments,
+        ["Do you like it Yes I do"],
+    )
+
+    assert [segment.speaker_id for segment in result] == ["Speaker 1", "Speaker 2"]
+    assert [segment.text for segment in result] == ["Do you like it", "Yes I do"]

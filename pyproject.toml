@@ -59,6 +59,7 @@ denoise = [
 whisperx = [
     "mlx-whisper>=0.4.2; platform_system == 'Darwin' and platform_machine == 'arm64'",
     "whisperx>=3.8.6,<3.9.0",
+    "pyannote.audio>=4.0,<5",
     "transformers>=4.37,<5",
 ]
 

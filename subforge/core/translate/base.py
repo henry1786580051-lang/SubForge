@@ -209,9 +209,7 @@ class BaseTranslator(ABC):
         text = str(text or "").strip()
         if not text:
             return True
-        compact = re.sub(r"\s+", "", text).strip(
-            "()（）[]【】<>《》“”\"'。，、；;：:！!?"
-        )
+        compact = re.sub(r"\s+", "", text).strip("()（）[]【】<>《》“”\"'。，、；;：:！!?")
         previous_refs = r"上一句|上句|上一条|上条|前一句|前一条|前文|前面"
         placeholder_patterns = [
             r"(?:此|本)句.*(?:合并|并入|省略|略去|无需翻译|不单独翻译).*",
@@ -223,10 +221,16 @@ class BaseTranslator(ABC):
             r"sameasabove",
             r"omitted",
         ]
-        return any(
-            re.fullmatch(pattern, compact, flags=re.IGNORECASE)
-            for pattern in placeholder_patterns
+        if any(
+            re.fullmatch(pattern, compact, flags=re.IGNORECASE) for pattern in placeholder_patterns
+        ):
+            return True
+        meta_note = re.compile(
+            r"(?:\(|（|\[|【)\s*(?:应为|疑似|译注|注\s*[:：]|原文(?:应为)?|可能是)"
+            r"[^\)）\]】]*(?:\)|）|\]|】)",
+            flags=re.IGNORECASE,
         )
+        return bool(meta_note.search(text))
 
     def _is_untranslated_output(self, output: str, source: str) -> bool:
         if self.target_language not in {
@@ -272,7 +276,9 @@ class BaseTranslator(ABC):
                         try:
                             self._validate_translated_list(chunk, cached_result)
                         except RuntimeError:
-                            logger.warning("Discarding invalid translation cache entry: %s", cache_key)
+                            logger.warning(
+                                "Discarding invalid translation cache entry: %s", cache_key
+                            )
                             self._cache.delete(cache_key)
                         else:
                             return cached_result

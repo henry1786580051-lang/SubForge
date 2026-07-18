@@ -169,6 +169,150 @@ def test_transcribe_keeps_word_results_when_vad_refinement_fails(monkeypatch):
     assert result.segments[1].end_time == 1_700
 
 
+def test_transcribe_diarization_uses_original_audio_and_preserves_timing(monkeypatch):
+    enhancer = importlib.import_module("subforge.core.asr.audio_enhancer")
+    diarization = importlib.import_module("subforge.core.asr.speaker_diarization")
+    speech_vad = importlib.import_module("subforge.core.asr.speech_vad")
+    monkeypatch.setattr(
+        transcribe_module,
+        "_create_asr_instance",
+        lambda *_args, **_kwargs: DummyWordTimestampASR(),
+    )
+    monkeypatch.setattr(
+        diarization,
+        "diarize_audio",
+        lambda audio_path, **_kwargs: [
+            diarization.SpeakerTurn(0, 2_000, "Speaker 1"),
+            diarization.SpeakerTurn(2_000, 4_000, "Speaker 2"),
+        ],
+    )
+    monkeypatch.setattr(
+        diarization,
+        "require_local_diarization_model",
+        lambda *_args, **_kwargs: "/tmp/diarization-model",
+    )
+    monkeypatch.setattr(speech_vad, "is_available", lambda: False)
+    monkeypatch.setattr(enhancer, "is_available", lambda: False)
+    config = TranscribeConfig(
+        transcribe_model=TranscribeModelEnum.WHISPERX,
+        need_word_time_stamp=True,
+        enable_audio_enhancement=True,
+        speaker_diarization="two",
+    )
+
+    result = transcribe_module.transcribe("original.wav", config)
+
+    assert [segment.speaker_id for segment in result.segments] == [
+        "Speaker 1",
+        "Speaker 1",
+        "Speaker 2",
+        "Speaker 2",
+    ]
+    assert [(segment.start_time, segment.end_time) for segment in result.segments] == [
+        (1_100, 1_300),
+        (1_350, 1_700),
+        (2_300, 2_600),
+        (2_650, 2_900),
+    ]
+
+
+def test_transcribe_uses_selected_multispeaker_attenuation_but_original_for_vad(
+    monkeypatch, tmp_path
+):
+    adaptive = importlib.import_module("subforge.core.asr.adaptive_enhancement")
+    enhancer = importlib.import_module("subforge.core.asr.audio_enhancer")
+    diarization = importlib.import_module("subforge.core.asr.speaker_diarization")
+    speech_vad = importlib.import_module("subforge.core.asr.speech_vad")
+    enhanced_path = tmp_path / "enhanced.wav"
+    enhanced_path.write_bytes(b"audio")
+    asr_paths = []
+    vad_paths = []
+
+    monkeypatch.setattr(
+        transcribe_module,
+        "_create_asr_instance",
+        lambda audio_path, *_args, **_kwargs: (
+            asr_paths.append(audio_path) or DummyWordTimestampASR()
+        ),
+    )
+    monkeypatch.setattr(diarization, "require_local_diarization_model", lambda *_a, **_k: "model")
+    monkeypatch.setattr(
+        diarization,
+        "diarize_audio",
+        lambda *_args, **_kwargs: [
+            diarization.SpeakerTurn(0, 2_000, "Speaker 1"),
+            diarization.SpeakerTurn(2_000, 4_000, "Speaker 2"),
+        ],
+    )
+    monkeypatch.setattr(enhancer, "is_available", lambda: True)
+    monkeypatch.setattr(
+        enhancer,
+        "enhance_audio",
+        lambda _path, output_path=None, **_kwargs: output_path or str(enhanced_path),
+    )
+    monkeypatch.setattr(
+        adaptive,
+        "calibrate_audio_enhancement",
+        lambda *_args, **_kwargs: adaptive.EnhancementCalibration(6.0, ()),
+    )
+    monkeypatch.setattr(speech_vad, "is_available", lambda: True)
+    monkeypatch.setattr(
+        speech_vad,
+        "detect_speech_segments",
+        lambda path, **_kwargs: vad_paths.append(path) or [],
+    )
+    monkeypatch.setattr(
+        transcribe_module.ASRData,
+        "filter_hallucinations",
+        lambda self, audio_path: vad_paths.append(audio_path),
+    )
+    config = TranscribeConfig(
+        transcribe_model=TranscribeModelEnum.WHISPERX,
+        need_word_time_stamp=True,
+        enable_audio_enhancement=True,
+        speaker_diarization="two",
+    )
+
+    transcribe_module.transcribe("original.wav", config)
+
+    assert asr_paths == [str(enhanced_path)]
+    assert vad_paths == ["original.wav", "original.wav"]
+
+
+def test_transcribe_maps_engine_progress_without_regressing(monkeypatch):
+    speech_vad = importlib.import_module("subforge.core.asr.speech_vad")
+    progress_updates = []
+
+    class ProgressASR:
+        def run(self, callback=None):
+            callback(20, "decode")
+            callback(65, "align")
+            callback(100, "done")
+            return DummyWordTimestampASR().run()
+
+    monkeypatch.setattr(
+        transcribe_module,
+        "_create_asr_instance",
+        lambda *_args, **_kwargs: ProgressASR(),
+    )
+    monkeypatch.setattr(speech_vad, "is_available", lambda: False)
+    config = TranscribeConfig(
+        transcribe_model=TranscribeModelEnum.WHISPERX,
+        enable_audio_enhancement=False,
+    )
+
+    transcribe_module.transcribe(
+        "audio.wav",
+        config,
+        callback=lambda progress, _message: progress_updates.append(progress),
+    )
+
+    assert progress_updates == sorted(progress_updates)
+    assert 42 in progress_updates
+    assert 69 in progress_updates
+    assert 90 in progress_updates
+
+
 def test_create_asr_instance_whisperx_uses_forced_alignment_backend(monkeypatch):
     monkeypatch.setattr(transcribe_module, "ChunkedASR", DummyChunkedASR)
     config = TranscribeConfig(

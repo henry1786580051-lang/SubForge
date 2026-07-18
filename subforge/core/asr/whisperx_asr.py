@@ -463,14 +463,28 @@ def _install_offline_sentence_tokenizer(alignment_module: Any) -> None:
     if not callable(nltk_load):
         return
 
+    fallback_tokenizer: _OfflineSentenceTokenizer | None = None
+    fallback_logged = False
+    unavailable_resources: set[str] = set()
+
     def _load_or_fallback(resource: str):
+        nonlocal fallback_tokenizer, fallback_logged
+        if resource in unavailable_resources:
+            if fallback_tokenizer is None:
+                fallback_tokenizer = _OfflineSentenceTokenizer()
+            return fallback_tokenizer
         try:
             return nltk_load(resource)
         except LookupError:
-            logger.warning(
-                "NLTK Punkt data is unavailable; using offline sentence boundaries"
-            )
-            return _OfflineSentenceTokenizer()
+            unavailable_resources.add(resource)
+            if not fallback_logged:
+                logger.warning(
+                    "NLTK Punkt data is unavailable; using offline sentence boundaries"
+                )
+                fallback_logged = True
+            if fallback_tokenizer is None:
+                fallback_tokenizer = _OfflineSentenceTokenizer()
+            return fallback_tokenizer
 
     alignment_module.nltk_load = _load_or_fallback
     alignment_module._subforge_offline_tokenizer_installed = True

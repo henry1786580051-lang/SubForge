@@ -4,7 +4,11 @@ on:
   pull_request:
     paths:
       - "subforge/**"
+      - "backend/**"
+      - "frontend/**"
       - "resource/**"
+      - "launcher.py"
+      - "build_macos.py"
       - "scripts/build_desktop.py"
       - "scripts/smoke_desktop.py"
       - "SubForge.spec"

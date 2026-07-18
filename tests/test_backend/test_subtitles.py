@@ -3,10 +3,13 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 
 from app.api.subtitles import (
     _normalize_segment_timing,
+    _timestamp_to_ms,
     segments_to_ass,
     segments_to_srt,
     segments_to_txt,
@@ -58,3 +61,14 @@ def test_bilingual_exports_put_translation_above_source():
     assert "这张图展示的是航空燃油成本。\nThis chart shows jet fuel costs." in vtt
     assert txt.startswith("这张图展示的是航空燃油成本。\nThis chart shows jet fuel costs.")
     assert "这张图展示的是航空燃油成本。\\NThis chart shows jet fuel costs." in ass
+
+
+@pytest.mark.parametrize("value", ["", "not-a-time", "00:61:00.000", -1, float("nan")])
+def test_strict_timestamp_parser_rejects_invalid_values(value):
+    with pytest.raises(ValueError):
+        _timestamp_to_ms(value, strict=True)
+
+
+def test_strict_timestamp_parser_keeps_supported_formats():
+    assert _timestamp_to_ms("00:01:02,345", strict=True) == 62_345
+    assert _timestamp_to_ms("1:02.34", strict=True) == 62_340

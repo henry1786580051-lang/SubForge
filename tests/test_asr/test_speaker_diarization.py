@@ -1,0 +1,145 @@
+from pathlib import Path
+
+from subforge.core.asr.asr_data import ASRData, ASRDataSeg
+from subforge.core.asr.speaker_diarization import (
+    SpeakerTurn,
+    _deserialize_cached_turns,
+    assign_speakers,
+    is_diarization_model_dir,
+    require_local_diarization_model,
+    resolve_diarization_model,
+    smooth_speaker_assignments,
+)
+
+
+def test_assign_speakers_preserves_text_and_timestamps():
+    data = ASRData(
+        [
+            ASRDataSeg("Hello", 100, 400),
+            ASRDataSeg("there", 420, 700),
+            ASRDataSeg("Hi", 900, 1_100),
+        ]
+    )
+    original = [(segment.text, segment.start_time, segment.end_time) for segment in data]
+
+    assign_speakers(
+        data,
+        [
+            SpeakerTurn(0, 800, "Speaker 1"),
+            SpeakerTurn(850, 1_300, "Speaker 2"),
+        ],
+    )
+
+    assert [(segment.text, segment.start_time, segment.end_time) for segment in data] == original
+    assert [segment.speaker_id for segment in data] == [
+        "Speaker 1",
+        "Speaker 1",
+        "Speaker 2",
+    ]
+
+
+def test_assign_speakers_uses_largest_overlap_at_change_point():
+    data = ASRData([ASRDataSeg("handoff", 900, 1_300)])
+    turns = [
+        SpeakerTurn(0, 1_000, "Speaker 1"),
+        SpeakerTurn(1_000, 2_000, "Speaker 2"),
+    ]
+
+    assign_speakers(data, turns)
+
+    assert data.segments[0].speaker_id == "Speaker 2"
+
+
+def test_assign_speakers_does_not_fill_distant_silence():
+    data = ASRData([ASRDataSeg("uncertain", 2_000, 2_200)])
+
+    assign_speakers(data, [SpeakerTurn(0, 1_000, "Speaker 1")])
+
+    assert data.segments[0].speaker_id == ""
+
+
+def test_assign_speakers_suppresses_only_short_isolated_flip():
+    data = ASRData(
+        [
+            ASRDataSeg("one", 0, 200),
+            ASRDataSeg("brief", 210, 410),
+            ASRDataSeg("again", 420, 650),
+        ]
+    )
+    turns = [
+        SpeakerTurn(0, 205, "Speaker 1"),
+        SpeakerTurn(205, 415, "Speaker 2"),
+        SpeakerTurn(415, 700, "Speaker 1"),
+    ]
+
+    assign_speakers(data, turns)
+
+    assert [segment.speaker_id for segment in data] == ["Speaker 1"] * 3
+
+
+def test_smooth_speaker_assignments_repairs_island_and_boundary_prefix():
+    data = ASRData(
+        [
+            ASRDataSeg("It", 0, 100, speaker_id="Speaker 1"),
+            ASRDataSeg("is", 120, 220, speaker_id="Speaker 2"),
+            ASRDataSeg("great.", 240, 500, speaker_id="Speaker 1"),
+            ASRDataSeg("It's", 700, 900, speaker_id="Speaker 1"),
+            ASRDataSeg("fast.", 920, 1_200, speaker_id="Speaker 2"),
+        ]
+    )
+
+    smooth_speaker_assignments(data)
+
+    assert [segment.speaker_id for segment in data] == [
+        "Speaker 1",
+        "Speaker 1",
+        "Speaker 1",
+        "Speaker 2",
+        "Speaker 2",
+    ]
+
+
+def test_smooth_speaker_assignments_fills_short_unlabeled_edge():
+    data = ASRData(
+        [
+            ASRDataSeg("Oh", 0, 100),
+            ASRDataSeg("yes", 120, 300, speaker_id="Speaker 2"),
+        ]
+    )
+
+    smooth_speaker_assignments(data)
+
+    assert [segment.speaker_id for segment in data] == ["Speaker 2", "Speaker 2"]
+
+
+def test_resolve_diarization_model_prefers_managed_snapshot(tmp_path: Path):
+    local_model = tmp_path / "pyannote-speaker-diarization-community-1"
+    local_model.mkdir()
+    (local_model / "config.yaml").write_text("pipeline: {}", encoding="utf-8")
+
+    assert is_diarization_model_dir(local_model)
+    assert resolve_diarization_model("pyannote/speaker-diarization-community-1", tmp_path) == str(
+        local_model
+    )
+
+
+def test_require_local_diarization_model_fails_before_asr(tmp_path: Path):
+    try:
+        require_local_diarization_model("pyannote/speaker-diarization-community-1", tmp_path)
+    except RuntimeError as exc:
+        assert "not downloaded" in str(exc)
+    else:
+        raise AssertionError("Expected a missing-model error")
+
+
+def test_cached_diarization_turns_are_strictly_validated():
+    cached = [
+        {"start_ms": 0, "end_ms": 500, "speaker_id": "Speaker 1"},
+        {"start_ms": 510, "end_ms": 900, "speaker_id": "Speaker 2"},
+    ]
+
+    assert _deserialize_cached_turns(cached) == [
+        SpeakerTurn(0, 500, "Speaker 1"),
+        SpeakerTurn(510, 900, "Speaker 2"),
+    ]
+    assert _deserialize_cached_turns([{"start_ms": 500, "end_ms": 100}]) == []

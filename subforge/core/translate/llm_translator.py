@@ -2,6 +2,7 @@
 
 import json
 import re
+import threading
 from dataclasses import replace
 from typing import Any, Callable, Dict, List, Optional, Tuple, cast
 
@@ -52,14 +53,18 @@ class LLMTranslator(BaseTranslator):
         self.model = model
         self.custom_prompt = custom_prompt
         self.is_reflect = is_reflect
-        self.translation_context = translation_context or TranslationContext(custom_prompt=custom_prompt)
+        self.translation_context = translation_context or TranslationContext(
+            custom_prompt=custom_prompt
+        )
         self._all_source_by_index: Dict[int, str] = {}
         self.llm_client = llm_client
+        self._fatal_provider_error = threading.Event()
+        self._fatal_provider_message = ""
 
     def translate_subtitle(self, subtitle_data):
-        self._all_source_by_index = {
-            i: seg.text for i, seg in enumerate(subtitle_data.segments, 1)
-        }
+        self._fatal_provider_error.clear()
+        self._fatal_provider_message = ""
+        self._all_source_by_index = {i: seg.text for i, seg in enumerate(subtitle_data.segments, 1)}
         try:
             return super().translate_subtitle(subtitle_data)
         finally:
@@ -69,9 +74,9 @@ class LLMTranslator(BaseTranslator):
         self, subtitle_chunk: List[SubtitleProcessData]
     ) -> List[SubtitleProcessData]:
         """翻译字幕块"""
-        logger.debug(
-            f"[+]正在翻译字幕: {subtitle_chunk[0].index} - {subtitle_chunk[-1].index}"
-        )
+        if self._fatal_provider_error.is_set():
+            raise RuntimeError(self._fatal_provider_message or "LLM provider request rejected")
+        logger.debug(f"[+]正在翻译字幕: {subtitle_chunk[0].index} - {subtitle_chunk[-1].index}")
 
         # 转换为字典格式用于API调用
         subtitle_dict = {str(data.index): data.original_text for data in subtitle_chunk}
@@ -119,18 +124,37 @@ class LLMTranslator(BaseTranslator):
             logger.error(f"OpenAI Rate Limit Error: {str(e)}")
             raise
         except openai.AuthenticationError as e:
+            self._open_provider_circuit(e)
             logger.error(f"OpenAI Authentication Error: {str(e)}")
             raise
         except openai.NotFoundError as e:
+            self._open_provider_circuit(e)
             logger.error(f"OpenAI NotFound Error: {str(e)}")
             raise
         except Exception as e:
+            if self._is_fatal_provider_error(e):
+                self._open_provider_circuit(e)
+                raise RuntimeError(self._fatal_provider_message) from e
             logger.error(f"LLM translation error: {e}")
             return self._translate_chunk_single(subtitle_chunk)
 
-    def _agent_loop(
-        self, system_prompt: str, subtitle_dict: Dict[str, str]
-    ) -> Dict[str, Any]:
+    @staticmethod
+    def _is_fatal_provider_error(error: Exception) -> bool:
+        """Return whether retrying the same request cannot succeed."""
+        return getattr(error, "status_code", None) in {401, 402, 403, 404}
+
+    def _open_provider_circuit(self, error: Exception) -> None:
+        status = getattr(error, "status_code", None)
+        detail = str(error).strip()
+        prefix = (
+            f"LLM provider rejected requests with HTTP {status}"
+            if status
+            else "LLM provider rejected requests"
+        )
+        self._fatal_provider_message = f"{prefix}: {detail}"
+        self._fatal_provider_error.set()
+
+    def _agent_loop(self, system_prompt: str, subtitle_dict: Dict[str, str]) -> Dict[str, Any]:
         """Agent loop翻译字幕块"""
         context_text = self.translation_context.render()
         if context_text:
@@ -173,9 +197,7 @@ class LLMTranslator(BaseTranslator):
                 continue
             response_dict = json_repair.loads(content.strip())
             last_response_dict = response_dict
-            is_valid, error_message = self._validate_llm_response(
-                response_dict, subtitle_dict
-            )
+            is_valid, error_message = self._validate_llm_response(response_dict, subtitle_dict)
             if is_valid:
                 return cast(Dict[str, Any], response_dict)
             else:
@@ -188,25 +210,29 @@ class LLMTranslator(BaseTranslator):
                 messages.append(
                     {
                         "role": "user",
-                    "content": (
-                        f"Error: {error_message}\n\n"
-                        f"Fix the errors above and output ONLY a valid JSON dictionary "
-                        f"with ALL {len(subtitle_dict)} current_subtitles keys. "
-                        "Do not include context keys."
-                    ),
-                }
-            )
+                        "content": (
+                            f"Error: {error_message}\n\n"
+                            f"Fix the errors above and output ONLY a valid JSON dictionary "
+                            f"with ALL {len(subtitle_dict)} current_subtitles keys. "
+                            "Do not include context keys."
+                        ),
+                    }
+                )
 
         if last_response_dict is None:
             raise RuntimeError("LLM translation failed after all retry attempts")
         # Validate last attempt before returning
         is_valid, error_msg = self._validate_llm_response(last_response_dict, subtitle_dict)
         if not is_valid:
-            logger.warning(f"LLM translation failed validation after {self.MAX_STEPS} retries: {error_msg}")
+            logger.warning(
+                f"LLM translation failed validation after {self.MAX_STEPS} retries: {error_msg}"
+            )
             raise RuntimeError(f"LLM translation failed validation: {error_msg}")
         return cast(Dict[str, Any], last_response_dict)
 
-    def _neighbor_context(self, subtitle_dict: Dict[str, str], before: bool) -> List[Dict[str, str]]:
+    def _neighbor_context(
+        self, subtitle_dict: Dict[str, str], before: bool
+    ) -> List[Dict[str, str]]:
         if not self._all_source_by_index:
             return []
         numeric_keys = sorted(int(k) for k in subtitle_dict if str(k).isdigit())
@@ -363,9 +389,34 @@ class LLMTranslator(BaseTranslator):
             return False
 
         stopwords = {
-            "a", "an", "and", "are", "as", "at", "but", "for", "from", "in",
-            "is", "it", "its", "it's", "of", "on", "or", "so", "that", "the",
-            "this", "to", "today", "tomorrow", "was", "well", "with", "you",
+            "a",
+            "an",
+            "and",
+            "are",
+            "as",
+            "at",
+            "but",
+            "for",
+            "from",
+            "in",
+            "is",
+            "it",
+            "its",
+            "it's",
+            "of",
+            "on",
+            "or",
+            "so",
+            "that",
+            "the",
+            "this",
+            "to",
+            "today",
+            "tomorrow",
+            "was",
+            "well",
+            "with",
+            "you",
         }
 
         def is_name_like(token: str) -> bool:
@@ -385,7 +436,9 @@ class LLMTranslator(BaseTranslator):
 
         return all(is_name_like(token) for token in source_tokens)
 
-    def _validate_preserved_tokens(self, response_dict: Dict[str, Any], subtitle_dict: Dict[str, str], extract_text) -> Tuple[bool, str]:
+    def _validate_preserved_tokens(
+        self, response_dict: Dict[str, Any], subtitle_dict: Dict[str, str], extract_text
+    ) -> Tuple[bool, str]:
         """Catch likely dropped model names, years, specs, and alphanumeric terms."""
         missing: list[str] = []
 
@@ -514,9 +567,7 @@ class LLMTranslator(BaseTranslator):
         self, subtitle_chunk: List[SubtitleProcessData]
     ) -> List[SubtitleProcessData]:
         """单条翻译模式"""
-        single_prompt = get_prompt(
-            "translate/single", target_language=self.target_language.value
-        )
+        single_prompt = get_prompt("translate/single", target_language=self.target_language.value)
 
         def _looks_untranslated(text: str, original: str) -> bool:
             if self.target_language.value not in {"简体中文", "繁體中文", "日本語", "한국어"}:
@@ -533,6 +584,8 @@ class LLMTranslator(BaseTranslator):
         translated_items: list[SubtitleProcessData] = []
 
         for data in subtitle_chunk:
+            if self._fatal_provider_error.is_set():
+                raise RuntimeError(self._fatal_provider_message or "LLM provider request rejected")
             try:
                 response = call_llm(
                     messages=[

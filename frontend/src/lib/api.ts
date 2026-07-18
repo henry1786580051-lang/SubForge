@@ -192,6 +192,7 @@ export interface SubtitleSegment {
   end: string;
   text: string;
   translated: string;
+  speaker?: string;
 }
 
 export interface SubtitleFile {

@@ -88,9 +88,11 @@ export function useTaskMonitor() {
         subtitlesApi
           .load(result.subtitle_file as string)
           .then((subFile) => {
+            if (task.id !== useAppStore.getState().currentTaskId) return;
             setSubtitles(subFile.segments);
           })
           .catch((err) => {
+            if (task.id !== useAppStore.getState().currentTaskId) return;
             setError(err instanceof Error ? err.message : "Failed to load subtitles");
           });
       }
@@ -99,9 +101,11 @@ export function useTaskMonitor() {
         subtitlesApi
           .load(result.subtitle_file as string)
           .then((subFile) => {
+            if (task.id !== useAppStore.getState().currentTaskId) return;
             setSubtitles(subFile.segments);
           })
           .catch((err) => {
+            if (task.id !== useAppStore.getState().currentTaskId) return;
             setError(err instanceof Error ? err.message : "Failed to load translated subtitles");
           });
       }

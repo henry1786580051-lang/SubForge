@@ -34,11 +34,84 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None, on_segm
     if config.transcribe_model is None:
         raise ValueError("Transcription model not set")
 
+    diarization_mode = getattr(config, "speaker_diarization", "off")
+    diarization_turns = None
+    if diarization_mode != "off":
+        from subforge.core.asr.speaker_diarization import (
+            diarize_audio,
+            require_local_diarization_model,
+        )
+
+        require_local_diarization_model(
+            getattr(config, "diarization_model", ""),
+            getattr(config, "diarization_model_dir", "") or None,
+        )
+        callback(2, "Analyzing speakers from the original audio...")
+        num_speakers = 2 if diarization_mode == "two" else None
+
+        def _diarization_progress(_progress: int, message: str) -> None:
+            callback(4, message)
+
+        diarization_turns = diarize_audio(
+            audio_path,
+            model=getattr(config, "diarization_model", ""),
+            token=getattr(config, "diarization_token", ""),
+            model_dir=getattr(config, "diarization_model_dir", "") or None,
+            num_speakers=num_speakers,
+            callback=_diarization_progress,
+        )
+
     # Enhance audio with DeepFilterNet3 when the optional denoise stack is
     # installed. This is especially useful before VAD on noisy in-car footage.
     enhanced_path = None
     audio_for_asr = audio_path
-    if config.enable_audio_enhancement:
+    preserve_multiple_speakers = diarization_mode != "off"
+    if preserve_multiple_speakers and config.enable_audio_enhancement:
+        try:
+            from subforge.core.asr.adaptive_enhancement import (
+                calibrate_audio_enhancement,
+            )
+            from subforge.core.asr.audio_enhancer import enhance_audio, is_available
+
+            if is_available() and diarization_turns:
+                callback(7, "Preparing adaptive multi-speaker denoise calibration...")
+
+                def _transcribe_calibration_sample(sample_path: str) -> ASRData:
+                    return _create_single_asr(sample_path, config).run()
+
+                calibration = calibrate_audio_enhancement(
+                    audio_path,
+                    diarization_turns,
+                    transcribe_sample=_transcribe_calibration_sample,
+                    enhance=enhance_audio,
+                    callback=lambda index, message: callback(8 + index * 4, message),
+                )
+                if calibration.attenuation_db is not None:
+                    callback(
+                        22,
+                        f"Applying {calibration.attenuation_db:g} dB adaptive denoise...",
+                    )
+                    enhanced_path = enhance_audio(
+                        audio_path,
+                        atten_lim_db=calibration.attenuation_db,
+                    )
+                    audio_for_asr = enhanced_path
+                else:
+                    callback(22, "Original audio retained for speaker coverage...")
+            else:
+                logger.info(
+                    "Adaptive multi-speaker denoise unavailable; using original audio"
+                )
+                callback(22, "Using original audio to preserve multiple speakers...")
+        except Exception as e:
+            logger.warning(
+                "Adaptive multi-speaker denoise calibration failed, using original: %s",
+                e,
+                exc_info=True,
+            )
+            callback(22, "Adaptive denoise unavailable; using original audio...")
+            audio_for_asr = audio_path
+    elif config.enable_audio_enhancement:
         try:
             from subforge.core.asr.audio_enhancer import enhance_audio, is_available
 
@@ -72,10 +145,15 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None, on_segm
 
         # Fallback: transcribe full audio
         if asr_data is None:
-            callback(10, "Preparing transcription...")
+            callback(25 if preserve_multiple_speakers else 10, "Preparing transcription...")
             asr = _create_asr_instance(audio_for_asr, config, on_segment=on_segment)
             callback(30, "Sending audio to ASR engine...")
-            asr_data = asr.run(callback=callback)
+
+            def _asr_progress(progress: int, message: str) -> None:
+                bounded = max(0, min(100, int(progress)))
+                callback(30 + int(bounded * 0.6), message)
+
+            asr_data = asr.run(callback=_asr_progress)
             callback(90, "Processing results...")
 
         if asr_data.is_word_timestamp():
@@ -85,7 +163,7 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None, on_segm
 
                 if vad_available():
                     speech_segments = detect_speech_segments(
-                        audio_for_asr,
+                        audio_path if preserve_multiple_speakers else audio_for_asr,
                         threshold=0.5,
                         min_speech_ms=160,
                         min_silence_ms=180,
@@ -101,7 +179,9 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None, on_segm
         asr_data.fix_boundary_overlaps()
 
         # Filter hallucinated segments using audio energy analysis
-        asr_data.filter_hallucinations(audio_path=audio_for_asr)
+        asr_data.filter_hallucinations(
+            audio_path=audio_path if preserve_multiple_speakers else audio_for_asr
+        )
 
         # Remove duplicate text emitted around VAD/chunk boundaries before the
         # final timing pass, so exports do not keep short repeated fragments.
@@ -120,6 +200,12 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None, on_segm
         # Keep the final exported timeline monotonic even if a post-processor
         # changed segment boundaries.
         asr_data.fix_boundary_overlaps()
+
+        if diarization_turns:
+            from subforge.core.asr.speaker_diarization import assign_speakers
+
+            callback(96, "Assigning speaker turns...")
+            assign_speakers(asr_data, diarization_turns)
 
         return asr_data
     finally:

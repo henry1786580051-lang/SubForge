@@ -40,7 +40,8 @@ jobs:
         run: >-
           uv run pytest
           tests/test_cli tests/test_dubbing tests/test_backend tests/test_asr
-          tests/test_translate tests/test_llm -m "not integration" -q
+          tests/test_translate tests/test_llm tests/test_split tests/test_scripts
+          tests/test_launcher.py -m "not integration" -q
 
       - name: Build package
         run: uv build

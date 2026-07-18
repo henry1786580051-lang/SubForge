@@ -64,6 +64,7 @@ interface AppState {
     whisperxBatchSize: number;
     whisperxSupported: boolean;
     enableAudioEnhancement: boolean;
+    speakerDiarization: "off" | "two" | "auto";
   };
   setConfig: (config: Partial<AppState["config"]>) => void;
 
@@ -160,6 +161,7 @@ export const useAppStore = create<AppState>((set) => ({
     whisperxBatchSize: 8,
     whisperxSupported: true,
     enableAudioEnhancement: true,
+    speakerDiarization: "off",
   },
   setConfig: (partial) =>
     set((state) => ({ config: { ...state.config, ...partial } })),

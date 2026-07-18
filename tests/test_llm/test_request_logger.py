@@ -98,3 +98,27 @@ def test_log_extracts_context_model_stage_and_tokens(tmp_path, monkeypatch):
     assert entry["tokens"] == 150
     assert entry["reasoning_tokens"] == 20
     assert entry["timestamp"]
+
+
+def test_retry_releases_superseded_pending_request():
+    request_logger._pending_requests.clear()
+    request_logger._current_request_key.set(None)
+    first = httpx.Request(
+        "POST",
+        "https://example.test/v1/chat/completions",
+        content=json.dumps({"model": "test", "messages": []}),
+    )
+    retry = httpx.Request(
+        "POST",
+        "https://example.test/v1/chat/completions",
+        content=json.dumps({"model": "test", "messages": []}),
+    )
+
+    request_logger._on_request(first)
+    request_logger._on_response(httpx.Response(429, request=first))
+    request_logger._on_request(retry)
+
+    assert id(first) not in request_logger._pending_requests
+    assert id(retry) in request_logger._pending_requests
+    request_logger._pending_requests.clear()
+    request_logger._current_request_key.set(None)

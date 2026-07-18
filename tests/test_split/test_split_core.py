@@ -216,6 +216,21 @@ class TestGroupByTimeGaps:
         assert len(groups[0]) == 1
         assert len(groups[1]) == 2
 
+    def test_speaker_change_is_a_hard_boundary(self):
+        segments = [
+            ASRDataSeg("Hello", 0, 500, speaker_id="Speaker 1"),
+            ASRDataSeg("Yes", 500, 900, speaker_id="Speaker 2"),
+            ASRDataSeg("Exactly", 900, 1400, speaker_id="Speaker 2"),
+        ]
+        splitter = SubtitleSplitter(thread_num=1, model="gpt-4o-mini")
+
+        groups = splitter._group_by_time_gaps(segments, max_gap=1500)
+
+        assert [[segment.text for segment in group] for group in groups] == [
+            ["Hello"],
+            ["Yes", "Exactly"],
+        ]
+
     def test_does_not_split_after_dangling_english_tail(self):
         """英文介词后的短暂停顿不应切断名词短语"""
         segments = [
@@ -547,6 +562,21 @@ class TestMergeShortSegment:
         splitter.merge_short_segment(segments)
         # 不应该合并（间隔太大）
         assert len(segments) == original_len
+
+    def test_no_merge_across_speakers(self):
+        segments = [
+            ASRDataSeg("Hi", 0, 100, speaker_id="Speaker 1"),
+            ASRDataSeg("Yes", 100, 200, speaker_id="Speaker 2"),
+        ]
+        splitter = SubtitleSplitter(thread_num=1, model="gpt-4o-mini")
+
+        splitter.merge_short_segment(segments)
+
+        assert len(segments) == 2
+        assert [segment.speaker_id for segment in segments] == [
+            "Speaker 1",
+            "Speaker 2",
+        ]
 
     def test_merge_respects_max_word_count(self):
         """测试合并不超过最大字数"""

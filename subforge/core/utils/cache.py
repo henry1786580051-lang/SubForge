@@ -54,6 +54,7 @@ _asr_cache = _open_cache("asr_results", tag_index=True)
 _tts_cache = _open_cache("tts_audio")
 _translate_cache = _open_cache("translate_results")
 _version_state_cache = _open_cache("version_state")
+_diarization_cache = _open_cache("speaker_diarization")
 
 
 def get_llm_cache() -> Cache:
@@ -79,6 +80,11 @@ def get_tts_cache() -> Cache:
 def get_version_state_cache() -> Cache:
     """Get version check state cache instance."""
     return _version_state_cache
+
+
+def get_diarization_cache() -> Cache:
+    """Get the content-addressed speaker diarization cache."""
+    return _diarization_cache
 
 
 def memoize(cache_instance: Cache, **kwargs):

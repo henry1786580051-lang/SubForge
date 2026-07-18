@@ -266,6 +266,8 @@ def inject_packaged_mlx_runtime() -> None:
                 symlinks=True,
                 ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
             )
+            if package_name == "mlx_whisper":
+                _make_packaged_mlx_numba_optional(destination)
             print(f"Injected {package_name} runtime: {destination.relative_to(ROOT)}")
 
     app_contents = DIST_DIR / "SubForge.app" / "Contents"
@@ -281,6 +283,37 @@ def inject_packaged_mlx_runtime() -> None:
                     link.unlink()
             link.symlink_to(Path("..") / "Resources" / package_name)
             print(f"Linked injected runtime: {link.relative_to(ROOT)}")
+
+
+def _make_packaged_mlx_numba_optional(package_dir: Path) -> None:
+    """Keep injected MLX Whisper importable without the 100+ MB LLVM runtime.
+
+    SubForge requests segment timestamps from MLX Whisper and performs word
+    alignment with WhisperX. MLX Whisper imports its optional DTW accelerator
+    eagerly, so the frozen copy needs a correct Python fallback even though the
+    accelerated function is not used by the production path.
+    """
+    timing_path = package_dir / "timing.py"
+    if not timing_path.is_file():
+        raise RuntimeError(f"Missing MLX Whisper timing module: {timing_path}")
+    needle = "import mlx.core as mx\nimport numba\n"
+    replacement = """import mlx.core as mx
+try:
+    import numba
+except ImportError:
+    class _NumbaFallback:
+        @staticmethod
+        def jit(*_args, **_kwargs):
+            return lambda function: function
+
+    numba = _NumbaFallback()
+"""
+    source = timing_path.read_text(encoding="utf-8")
+    if replacement in source:
+        return
+    if needle not in source:
+        raise RuntimeError("Unsupported MLX Whisper timing module; numba import not found")
+    timing_path.write_text(source.replace(needle, replacement, 1), encoding="utf-8")
 
 
 def patch_packaged_torch() -> None:

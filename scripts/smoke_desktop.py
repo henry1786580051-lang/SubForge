@@ -136,6 +136,11 @@ def main() -> int:
             raise RuntimeError(f"Executable not found: {exe}")
         print(f"Verified executable: {exe}")
 
+        env = os.environ.copy()
+        env["SUBFORGE_CHECK_BACKEND"] = "1"
+        _run([str(exe)], env=env)
+        print("Verified packaged FastAPI backend routes")
+
         if platform.system() == "Windows":
             whisper_cli = _find_bundled_tool(bundle, "whisper-cli")
             _run([str(whisper_cli), "--help"])
@@ -152,6 +157,12 @@ def main() -> int:
             env.setdefault("TORCH_USE_RTLD_GLOBAL", "1")
             _run([str(exe)], env=env)
             print("Verified packaged MLX Whisper and WhisperX imports")
+
+            env = os.environ.copy()
+            env["SUBFORGE_CHECK_DIARIZATION"] = "1"
+            env.setdefault("TORCH_USE_RTLD_GLOBAL", "1")
+            _run([str(exe)], env=env)
+            print("Verified packaged pyannote speaker diarization imports")
 
     return 0
 

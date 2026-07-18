@@ -31,3 +31,20 @@ def test_pyinstaller_receives_release_version(monkeypatch):
     build_desktop.build_pyinstaller("9.8.7")
 
     assert captured["env"]["SUBFORGE_BUILD_VERSION"] == "9.8.7"
+
+
+def test_packaged_mlx_whisper_gets_numba_fallback(tmp_path):
+    package_dir = tmp_path / "mlx_whisper"
+    package_dir.mkdir()
+    timing_path = package_dir / "timing.py"
+    timing_path.write_text(
+        "import mlx.core as mx\nimport numba\n\n@numba.jit(nopython=True)\ndef dtw():\n    pass\n",
+        encoding="utf-8",
+    )
+
+    build_desktop._make_packaged_mlx_numba_optional(package_dir)
+    patched = timing_path.read_text(encoding="utf-8")
+
+    assert "except ImportError:" in patched
+    assert "class _NumbaFallback:" in patched
+    assert "import numba\n\n@numba.jit" not in patched

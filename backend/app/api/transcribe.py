@@ -37,6 +37,7 @@ def _preview_segments(data) -> list[dict]:
             "end": segment._ms_to_srt_time(segment.end_time),
             "text": segment.text,
             "translated": segment.translated_text or "",
+            "speaker": segment.speaker_id or "",
         }
         for index, segment in enumerate(data.segments, 1)
     ]
@@ -162,6 +163,17 @@ WHISPERX_MODELS = {
     },
 }
 
+DIARIZATION_MODELS = {
+    "whisperx-diarization-community-1": {
+        "name": "Pyannote Community-1",
+        "category": "whisperx",
+        "type": "diarization",
+        "repo": "pyannote/speaker-diarization-community-1",
+        "dirname": "pyannote-speaker-diarization-community-1",
+        "size": "约 1.2GB",
+    },
+}
+
 MLX_MODEL_SIZES = {
     "tiny": "75MB",
     "base": "148MB",
@@ -240,6 +252,12 @@ def _build_transcribe_config(
         "WAV2VEC2_ASR_LARGE_LV60K_960H",
     )
     config.whisperx_batch_size = int(get_config_value("whisperx_batch_size", 8) or 8)
+    config.speaker_diarization = get_config_value("speaker_diarization", "off")
+    config.diarization_model = get_config_value(
+        "diarization_model", "pyannote/speaker-diarization-community-1"
+    )
+    config.diarization_token = get_config_value("huggingface_token", "")
+    config.diarization_model_dir = str(_get_models_dir())
     config.faster_whisper_ff_mdx_kim2 = bool(get_config_value("ff_mdx_kim2", False))
 
     model_dir = str(get_config_value("whisper_model_dir", "") or "").strip()
@@ -622,6 +640,7 @@ async def list_whisper_models():
         selected_model = "large-v3"
     selected_resolved = resolve_mlx_model(selected_model) if selected_engine == "whisperx" else ""
     selected_align = str(get_config_value("whisperx_align_model", "") or "")
+    selected_diarization = str(get_config_value("speaker_diarization", "off") or "off")
     result = []
     for model_id, info in WHISPER_CPP_MODELS.items():
         model_path = models_dir / f"ggml-{model_id}.bin"
@@ -689,6 +708,25 @@ async def list_whisper_models():
                 "state": "ready" if model_path.exists() else "missing",
             }
         )
+    for model_id, info in DIARIZATION_MODELS.items():
+        model_path = models_dir / info["dirname"]
+        ready = (model_path / "config.yaml").is_file()
+        result.append(
+            {
+                "id": model_id,
+                "name": info["name"],
+                "category": info["category"],
+                "type": info["type"],
+                "size": info["size"],
+                "downloaded": ready,
+                "downloadable": True,
+                "path": str(model_path),
+                "value": info["repo"],
+                "selected": selected_engine == "whisperx" and selected_diarization != "off",
+                "state": "ready" if ready else "missing",
+                "detail": "双人/多人说话人标注" if ready else "需 Hugging Face 授权后下载",
+            }
+        )
     return result
 
 
@@ -705,6 +743,9 @@ async def download_whisper_model(req: DownloadModelRequest):
     elif req.model_id in WHISPERX_MODELS:
         models_dir = _get_models_dir()
         model_path = models_dir / WHISPERX_MODELS[req.model_id]["filename"]
+    elif req.model_id in DIARIZATION_MODELS:
+        models_dir = _get_models_dir()
+        model_path = models_dir / DIARIZATION_MODELS[req.model_id]["dirname"]
     elif req.model_id.startswith("mlx-"):
         raise HTTPException(
             status_code=400,
@@ -713,7 +754,12 @@ async def download_whisper_model(req: DownloadModelRequest):
     else:
         raise HTTPException(status_code=400, detail=f"Unknown model: {req.model_id}")
 
-    if model_path.exists():
+    model_ready = (
+        (model_path / "config.yaml").is_file()
+        if req.model_id in DIARIZATION_MODELS
+        else model_path.exists()
+    )
+    if model_ready:
         return {"status": "already_exists", "path": str(model_path)}
 
     task = task_manager.create_task("download_model")
@@ -726,6 +772,10 @@ async def download_whisper_model(req: DownloadModelRequest):
 
 
 async def _download_model(task_id: str, model_id: str, dest: Path):
+    if model_id in DIARIZATION_MODELS:
+        await _download_diarization_model(task_id, model_id, dest)
+        return
+
     import httpx
 
     if model_id in WHISPER_CPP_MODELS:
@@ -787,6 +837,53 @@ async def _download_model(task_id: str, model_id: str, dest: Path):
         tmp_dest.unlink(missing_ok=True)
         logger.exception("Model download failed for %s", model_id)
         task_manager.fail_task(task_id, str(e))
+    finally:
+        if not download_lock.locked():
+            _model_download_locks.pop(str(dest), None)
+
+
+async def _download_diarization_model(task_id: str, model_id: str, dest: Path):
+    """Download a gated pyannote snapshot into the managed model folder."""
+    from app.api.config import get_config_value
+
+    token = str(get_config_value("huggingface_token", "") or "").strip()
+    if not token:
+        task_manager.fail_task(
+            task_id,
+            "请先在设置中填写 Hugging Face Token，并接受 Community-1 模型使用条款。",
+        )
+        return
+
+    download_lock = _model_download_locks.setdefault(str(dest), asyncio.Lock())
+    try:
+        async with download_lock:
+            if (dest / "config.yaml").is_file():
+                task_manager.complete_task(task_id, {"path": str(dest)})
+                return
+            task_manager.update_progress(task_id, 5, "正在验证 Hugging Face 授权...")
+
+            def _snapshot_download():
+                from huggingface_hub import snapshot_download
+
+                return snapshot_download(
+                    repo_id=DIARIZATION_MODELS[model_id]["repo"],
+                    token=token,
+                    local_dir=str(dest),
+                )
+
+            await run_blocking(_snapshot_download)
+            if not (dest / "config.yaml").is_file():
+                raise RuntimeError("下载完成但模型配置文件缺失")
+            task_manager.complete_task(task_id, {"path": str(dest)})
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.exception("Diarization model download failed")
+        task_manager.fail_task(
+            task_id,
+            "说话人模型下载失败。请确认已接受 Community-1 条款且 Token 具有读取权限："
+            + str(exc),
+        )
     finally:
         if not download_lock.locked():
             _model_download_locks.pop(str(dest), None)

@@ -115,6 +115,22 @@ def _join_segment_text(segments: List[ASRDataSeg]) -> str:
     return _join_texts([seg.text for seg in segments])
 
 
+def _dominant_speaker(segments: List[ASRDataSeg]) -> str:
+    """Choose the best-supported known speaker for a merged word group."""
+    scores: dict[str, tuple[int, int]] = {}
+    for segment in segments:
+        if not segment.speaker_id:
+            continue
+        duration, count = scores.get(segment.speaker_id, (0, 0))
+        scores[segment.speaker_id] = (
+            duration + max(1, segment.end_time - segment.start_time),
+            count + 1,
+        )
+    if not scores:
+        return ""
+    return max(scores, key=lambda speaker: scores[speaker])
+
+
 def _is_dangling_tail(text: str) -> bool:
     stripped = text.strip()
     if len(stripped) == 1 and stripped.isupper():
@@ -123,9 +139,7 @@ def _is_dangling_tail(text: str) -> bool:
     return bool(words and words[-1] in _DANGLING_TAIL_WORDS)
 
 
-def preprocess_segments(
-    segments: List[ASRDataSeg], need_lower: bool = True
-) -> List[ASRDataSeg]:
+def preprocess_segments(segments: List[ASRDataSeg], need_lower: bool = True) -> List[ASRDataSeg]:
     """预处理ASRSegments
 
     1. 移除纯标点符号的Segments
@@ -213,6 +227,15 @@ class SubtitleSplitter:
             else:
                 asr_data = subtitle_data
 
+            if asr_data.is_word_timestamp() and any(
+                segment.speaker_id for segment in asr_data.segments
+            ):
+                from subforge.core.asr.speaker_diarization import (
+                    smooth_speaker_assignments,
+                )
+
+                smooth_speaker_assignments(asr_data)
+
             if not asr_data.is_word_timestamp():
                 asr_data = asr_data.split_to_word_segments()
 
@@ -223,7 +246,9 @@ class SubtitleSplitter:
             # 3. 确定Segments数并分割
             total_word_count = count_words(txt)
             num_segments = self._determine_num_segments(total_word_count)
-            logger.debug(f"Based on word count {total_word_count},determined segment count: {num_segments}")
+            logger.debug(
+                f"Based on word count {total_word_count},determined segment count: {num_segments}"
+            )
 
             asr_data_list = self._split_asr_data(asr_data, num_segments)
 
@@ -295,9 +320,7 @@ class SubtitleSplitter:
             best_index = split_point
 
             for j in range(start, end):
-                gap = (
-                    asr_data.segments[j + 1].start_time - asr_data.segments[j].end_time
-                )
+                gap = asr_data.segments[j + 1].start_time - asr_data.segments[j].end_time
                 if gap > max_gap:
                     max_gap = gap
                     best_index = j
@@ -339,21 +362,14 @@ class SubtitleSplitter:
                 result = future.result()
                 processed_by_index[index] = result
                 if self.update_callback:
-                    partial = [
-                        processed_by_index[i]
-                        for i in sorted(processed_by_index)
-                    ]
+                    partial = [processed_by_index[i] for i in sorted(processed_by_index)]
                     self.update_callback(self._merge_processed_segments(partial))
             except Exception as e:
                 logger.error(f"Segment processing failed:{str(e)}")
                 if original is not None:
                     processed_by_index[index] = original.segments
 
-        return [
-            processed_by_index[i]
-            for i in range(len(asr_data_list))
-            if i in processed_by_index
-        ]
+        return [processed_by_index[i] for i in range(len(asr_data_list)) if i in processed_by_index]
 
     def _process_single_segment(self, asr_data_part: ASRData) -> List[ASRDataSeg]:
         """处理单个Segments(带重试和降级)"""
@@ -452,9 +468,20 @@ class SubtitleSplitter:
         result = []
         current_group = [segments[0]]
         recent_gaps = []
+        last_known_speaker = segments[0].speaker_id
 
         for i in range(1, len(segments)):
             time_gap = segments[i].start_time - segments[i - 1].end_time
+
+            current_speaker = segments[i].speaker_id
+            if last_known_speaker and current_speaker and last_known_speaker != current_speaker:
+                result.append(current_group)
+                current_group = [segments[i]]
+                recent_gaps = []
+                last_known_speaker = current_speaker
+                continue
+            if current_speaker:
+                last_known_speaker = current_speaker
 
             # 检查异常大间隔
             if check_large_gaps:
@@ -493,9 +520,7 @@ class SubtitleSplitter:
 
         return result
 
-    def _split_by_common_words(
-        self, segments: List[ASRDataSeg]
-    ) -> List[List[ASRDataSeg]]:
+    def _split_by_common_words(self, segments: List[ASRDataSeg]) -> List[List[ASRDataSeg]]:
         """在常见连接词处分割
 
         Args:
@@ -584,15 +609,13 @@ class SubtitleSplitter:
 
         for i, seg in enumerate(segments):
             max_word_count = (
-                self.max_word_count_cjk
-                if is_mainly_cjk(seg.text)
-                else self.max_word_count_english
+                self.max_word_count_cjk if is_mainly_cjk(seg.text) else self.max_word_count_english
             )
 
             # 前缀词分割
-            if any(
-                seg.text.lower().startswith(word) for word in prefix_split_words
-            ) and len(current_group) >= int(max_word_count * PREFIX_WORD_RATIO):
+            if any(seg.text.lower().startswith(word) for word in prefix_split_words) and len(
+                current_group
+            ) >= int(max_word_count * PREFIX_WORD_RATIO):
                 result.append(current_group)
                 logger.debug(f"Split before prefix word {seg.text} ")
                 current_group = []
@@ -600,10 +623,7 @@ class SubtitleSplitter:
             # 后缀词分割
             if (
                 i > 0
-                and any(
-                    segments[i - 1].text.lower().endswith(word)
-                    for word in suffix_split_words
-                )
+                and any(segments[i - 1].text.lower().endswith(word) for word in suffix_split_words)
                 and len(current_group) >= int(max_word_count * SUFFIX_WORD_RATIO)
             ):
                 result.append(current_group)
@@ -651,6 +671,7 @@ class SubtitleSplitter:
                     merged_text.strip(),
                     current_segments[0].start_time,
                     current_segments[-1].end_time,
+                    speaker_id=_dominant_speaker(current_segments),
                 )
                 result_segs.append(merged_seg)
                 continue
@@ -671,8 +692,7 @@ class SubtitleSplitter:
                 end_idx = min((5 * n) // 6, n - 2)
                 split_index = max(
                     range(start_idx, end_idx),
-                    key=lambda i: current_segments[i + 1].start_time
-                    - current_segments[i].end_time,
+                    key=lambda i: current_segments[i + 1].start_time - current_segments[i].end_time,
                     default=n // 2,
                 )
                 if split_index == 0 or split_index == n - 1:
@@ -729,19 +749,23 @@ class SubtitleSplitter:
                 if is_mainly_cjk(current_seg.text)
                 else self.max_word_count_english
             )
+            same_speaker = current_seg.speaker_id == next_seg.speaker_id
 
             # 判断是否合并
-            should_merge = (
-                time_gap < MERGE_SHORT_GAP
-                and (current_words < MERGE_MIN_WORDS or next_words < MERGE_MIN_WORDS)
-                and total_words <= max_word_count
-            ) or (
-                time_gap < MERGE_VERY_SHORT_GAP
-                and (
-                    current_words < MERGE_VERY_SHORT_WORDS
-                    or next_words < MERGE_VERY_SHORT_WORDS
+            should_merge = same_speaker and (
+                (
+                    time_gap < MERGE_SHORT_GAP
+                    and (current_words < MERGE_MIN_WORDS or next_words < MERGE_MIN_WORDS)
+                    and total_words <= max_word_count
                 )
-                and total_words <= max_word_count
+                or (
+                    time_gap < MERGE_VERY_SHORT_GAP
+                    and (
+                        current_words < MERGE_VERY_SHORT_WORDS
+                        or next_words < MERGE_VERY_SHORT_WORDS
+                    )
+                    and total_words <= max_word_count
+                )
             )
 
             if should_merge:
@@ -793,10 +817,7 @@ class SubtitleSplitter:
         def _add_original_segments(start: int, end: int, reason: str) -> None:
             """将原始ASR片段以原样加入结果,保证不丢词"""
             for i in range(start, min(end, asr_len)):
-                logger.warning(
-                    f"Fallback segment [{reason}]: "
-                    f"index={i}, text={segments[i].text!r}"
-                )
+                logger.warning(f"Fallback segment [{reason}]: index={i}, text={segments[i].text!r}")
                 new_segments.append(segments[i])
 
         asr_texts = [seg.text for seg in segments]
@@ -833,9 +854,7 @@ class SubtitleSplitter:
                 for start in range(asr_index, max_start):
                     substr = _join_texts(asr_texts[start : start + window_size])
                     substr_proc = preprocess_text(substr)
-                    ratio = difflib.SequenceMatcher(
-                        None, sentence_proc, substr_proc
-                    ).ratio()
+                    ratio = difflib.SequenceMatcher(None, sentence_proc, substr_proc).ratio()
 
                     if ratio > best_ratio:
                         best_ratio = ratio
@@ -853,9 +872,7 @@ class SubtitleSplitter:
 
                 # 间隙片段保守落回:匹配位置之前有未覆盖的ASR片段
                 if start_seg_index > asr_index:
-                    _add_original_segments(
-                        asr_index, start_seg_index, "gap before match"
-                    )
+                    _add_original_segments(asr_index, start_seg_index, "gap before match")
 
                 segs_to_merge = segments[start_seg_index : end_seg_index + 1]
 
@@ -867,7 +884,10 @@ class SubtitleSplitter:
                     merged_start_time = group[0].start_time
                     merged_end_time = group[-1].end_time
                     merged_seg = ASRDataSeg(
-                        merged_text, merged_start_time, merged_end_time
+                        merged_text,
+                        merged_start_time,
+                        merged_end_time,
+                        speaker_id=_dominant_speaker(group),
                     )
 
                     logger.debug(f"Merged segments: {merged_seg.text}")
@@ -884,7 +904,9 @@ class SubtitleSplitter:
                 # 未匹配的句子:将当前ASR片段以原样保留
                 _add_original_segments(asr_index, asr_index + 1, "unmatched sentence")
                 if unmatched_count > max_unmatched:
-                    raise ValueError(f"Unmatched sentences exceeded threshold {max_unmatched},processing aborted")
+                    raise ValueError(
+                        f"Unmatched sentences exceeded threshold {max_unmatched},processing aborted"
+                    )
                 max_shift = MATCH_LARGE_SHIFT
                 asr_index = min(asr_index + 1, asr_len - 1)
 

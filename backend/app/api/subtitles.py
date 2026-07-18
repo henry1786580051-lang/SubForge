@@ -1,3 +1,4 @@
+import math
 import re
 
 from fastapi import APIRouter, HTTPException, Query
@@ -22,16 +23,38 @@ def _export_segments(segments: list[dict], fmt: str) -> tuple[str, str]:
     return converter(segments), media_type
 
 
-def _timestamp_to_ms(value: object) -> int:
+_TIMESTAMP_RE = re.compile(
+    r"^(?:(?P<hours>\d+):)?(?P<minutes>\d{1,2}):(?P<seconds>\d{1,2})(?:[.,](?P<fraction>\d{1,3}))?$"
+)
+
+
+def _timestamp_to_ms(value: object, *, strict: bool = False) -> int:
     """Parse SRT/VTT/ASS-like timestamps into milliseconds."""
-    if isinstance(value, (int, float)):
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if strict and (not math.isfinite(value) or value < 0):
+            raise ValueError(f"Invalid timestamp: {value!r}")
         return max(0, int(value))
 
-    text = str(value or "00:00:00.000").strip().replace(",", ".")
+    text = str(value or "").strip()
     if not text:
+        if strict:
+            raise ValueError("Timestamp cannot be empty")
         return 0
 
-    parts = text.split(":")
+    match = _TIMESTAMP_RE.fullmatch(text)
+    if match:
+        hours = int(match.group("hours") or 0)
+        minutes = int(match.group("minutes"))
+        seconds = int(match.group("seconds"))
+        if minutes >= 60 or seconds >= 60:
+            if strict:
+                raise ValueError(f"Invalid timestamp: {value!r}")
+            return 0
+        fraction = (match.group("fraction") or "").ljust(3, "0")
+        milliseconds = int(fraction or 0)
+        return (hours * 3600 + minutes * 60 + seconds) * 1000 + milliseconds
+
+    parts = text.replace(",", ".").split(":")
     try:
         if len(parts) == 3:
             hours = int(parts[0])
@@ -46,7 +69,13 @@ def _timestamp_to_ms(value: object) -> int:
             minutes = 0
             seconds = float(parts[0])
     except ValueError:
+        if strict:
+            raise ValueError(f"Invalid timestamp: {value!r}") from None
         return 0
+
+
+    if strict:
+        raise ValueError(f"Invalid timestamp: {value!r}")
 
     return max(0, int(round((hours * 3600 + minutes * 60 + seconds) * 1000)))
 
@@ -59,13 +88,18 @@ def _ms_to_timestamp(ms: int) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
 
 
-def _normalize_segment_timing(segments: list[dict], min_duration_ms: int = 1) -> list[dict]:
+def _normalize_segment_timing(
+    segments: list[dict],
+    min_duration_ms: int = 1,
+    *,
+    strict_timestamps: bool = False,
+) -> list[dict]:
     """Return copied segments with sorted, non-overlapping timestamps."""
     normalized = []
     for order, seg in enumerate(segments):
         item = dict(seg)
-        start_ms = _timestamp_to_ms(item.get("start"))
-        end_ms = _timestamp_to_ms(item.get("end"))
+        start_ms = _timestamp_to_ms(item.get("start"), strict=strict_timestamps)
+        end_ms = _timestamp_to_ms(item.get("end"), strict=strict_timestamps)
         if end_ms < start_ms:
             end_ms = start_ms
         item["_order"] = order
@@ -258,7 +292,10 @@ class ExportRequest(BaseModel):
 async def export_subtitle_post(req: ExportRequest):
     """Export subtitles from POST data (for pywebview/DMG where GET download doesn't work)."""
     segments = [s.model_dump() for s in req.segments]
-    segments = _normalize_segment_timing(segments)
+    try:
+        segments = _normalize_segment_timing(segments, strict_timestamps=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     segments = _apply_language_mode(segments, req.mode)
     output, media_type = _export_segments(segments, req.format)
     return Response(
@@ -284,7 +321,10 @@ async def save_subtitle(req: SaveRequest):
         raise HTTPException(status_code=404, detail="Original file not found")
 
     suffix = file_path.suffix.lower()
-    segments = _normalize_segment_timing(req.segments)
+    try:
+        segments = _normalize_segment_timing(req.segments, strict_timestamps=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     if suffix == ".srt":
         content = segments_to_srt(segments)

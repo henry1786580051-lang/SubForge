@@ -89,7 +89,15 @@ class TestValidateLLmResponse:
     def test_cjk_target_rejects_any_full_english_entry(self):
         """A CJK batch cannot contain a fully untranslated sentence."""
         t = _make_translator()
-        resp = {"0": "你好", "1": "世界", "2": "美好的", "3": "天气", "4": "今天", "5": "不错", "6": "OK"}
+        resp = {
+            "0": "你好",
+            "1": "世界",
+            "2": "美好的",
+            "3": "天气",
+            "4": "今天",
+            "5": "不错",
+            "6": "OK",
+        }
         inp = {str(i): f"This is sentence {i}" for i in range(7)}
         ok, msg = t._validate_llm_response(resp, inp)
         assert ok is False
@@ -129,6 +137,42 @@ class TestValidateLLmResponse:
         assert ok is False
         assert "Placeholder translations" in msg
         assert "1" in msg
+
+    def test_rejects_translation_meta_annotation(self):
+        t = _make_translator()
+        resp = {"0": "是我在Couth and Mayo...（应为Mayor）的朋友"}
+        inp = {"0": "My friend from Couth and Mayor"}
+
+        ok, msg = t._validate_llm_response(resp, inp)
+
+        assert ok is False
+        assert "Placeholder translations" in msg
+
+    def test_fatal_provider_error_opens_circuit_without_single_item_fallback(self, monkeypatch):
+        translator = _make_translator()
+        fallback_called = False
+
+        class PaymentRequiredError(Exception):
+            status_code = 402
+
+        def fail_agent_loop(*_args, **_kwargs):
+            raise PaymentRequiredError("Insufficient Balance")
+
+        def fail_if_fallback_called(_chunk):
+            nonlocal fallback_called
+            fallback_called = True
+            return []
+
+        monkeypatch.setattr(translator, "_agent_loop", fail_agent_loop)
+        monkeypatch.setattr(translator, "_translate_chunk_single", fail_if_fallback_called)
+        chunk = [SubtitleProcessData(index=1, original_text="Hello")]
+
+        with pytest.raises(RuntimeError, match="HTTP 402"):
+            translator._translate_chunk(chunk)
+        with pytest.raises(RuntimeError, match="HTTP 402"):
+            translator._translate_chunk(chunk)
+
+        assert fallback_called is False
 
     @pytest.mark.parametrize(
         "placeholder",
