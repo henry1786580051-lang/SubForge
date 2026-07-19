@@ -66,4 +66,5 @@ backend/*.srt
 scripts/vad_benchmark_results.jsonl
 extract_subtitles.py
 examples/*_processed.srt
+!examples/audi_q3_minimax_m3_anthropic_processed.srt
 settings.json

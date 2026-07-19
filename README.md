@@ -3,7 +3,7 @@
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue.svg)
 ![Python](https://img.shields.io/badge/Python-3.10--3.12-3776AB?logo=python&logoColor=white)
 ![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=next.js&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.136+-009688?logo=fastapi&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 
 <p align="center">
@@ -20,79 +20,125 @@ SubForge 是一个 AI 驱动的视频字幕工具，覆盖转录、断句、优�
 
 | 能力 | 说明 |
 | --- | --- |
-| 语音转文字 | 默认使用 WhisperX 工作流：MLX Whisper 转录 + forced alignment 词级时间轴 + VAD 保守校验 |
-| 智能断句 | 使用 LLM 按语义重排字幕，避免机械切分和超长字幕 |
-| 字幕优化 | 自动修正错别字、补全标点、去除冗余语气词 |
-| 智能翻译 | 支持上下文感知翻译、反思翻译和免费翻译引擎 |
+| 语音转文字 | 默认使用 MLX Whisper + WhisperX forced alignment，生成词级时间轴并由 VAD 保守校验 |
+| 多人语音 | 可选 pyannote Community-1 说话人分离，并用自适应降噪保护较弱说话人的内容 |
+| 智能断句 | 使用 LLM 按语义重排字幕，同时校验原文完整性、长度与时间轴 |
+| 字幕优化 | 保守修正明显 ASR 错误和标点，不允许 LLM 任意改写正确原文 |
+| 智能翻译 | 支持上下文感知、反思翻译、MiniMax Anthropic 接口及 OpenAI 兼容接口 |
 | 双语字幕 | 可导出 SRT、VTT、ASS、TXT、JSON 等格式 |
 | 语音合成 | 支持字幕配音与视频合成相关工作流 |
 | Web 界面 | 拖拽上传、实时进度、在线编辑、请求日志查看 |
 
-## 核心技术与实测
+## 当前工作流
 
-SubForge 的重点不只是“把语音转成文字”，而是尽量让字幕达到可发布、可阅读、可翻译的状态。当前主流程围绕 Apple Silicon 本地转录、WhisperX 对齐和上下文翻译组织：
+SubForge 的重点不只是把语音转成文字，而是尽量让时间轴、原文和译文都达到可发布状态。默认流程围绕 Apple Silicon 本地转录、WhisperX 对齐和带完整性校验的上下文翻译组织。
 
 ### 转录优化
 
-转录前会先对音频做预处理，再使用 MLX Whisper 完成 Apple Silicon 加速转录。文本在对齐前会将数字、单位和符号转为可对齐的口语形式，然后由 WhisperX forced alignment 生成词级时间轴。TEN-VAD 仅对可疑边界做保守校验，避免为了修正少量错误而破坏已经正确的字幕：
+单人模式可直接使用 DeepFilterNet3 增强音频。多人模式先在原始音频上运行 pyannote Community-1，再抽取多名说话人的代表片段，对原音频和多档轻度降噪结果进行校准；只有在没有损失说话人覆盖时才采用降噪版本。
+
+转录文本会先将数字、单位和符号展开为 forced alignment 更容易识别的口语 token，对齐完成后再恢复原文显示。TEN-VAD 只修正可疑边界，不全局覆盖已经正确的 WhisperX 时间戳：
 
 ```text
 原始音频
-  -> DeepFilterNet3 可选降噪
-  -> MLX Whisper 转录
+  -> [多人模式] pyannote Community-1 说话人分离
+  -> DeepFilterNet3 可选/自适应降噪
+  -> MLX Whisper 转录（Apple Silicon）
   -> 数字/单位/符号语音规范化
   -> WhisperX forced alignment
   -> TEN-VAD 时间轴保守校验（Silero VAD 回退）
-  -> 词级时间轴
-  -> 智能断句与翻译
+  -> 说话人归属与词级时间轴
+  -> 智能断句 -> 保守纠错 -> 上下文生成 -> 翻译 -> 最终质量校验
 ```
 
 | 技术 | 作用 |
 | --- | --- |
-| DeepFilterNet3 | 降低车内、户外、咖啡厅等场景的背景噪音，突出人声 |
-| MLX Whisper | Apple Silicon 专门优化的本地 Whisper 推理，默认使用本地 MLX 模型 |
-| WhisperX forced alignment | 使用独立对齐模型把转录文本落到词级时间轴 |
-| 对齐前语音规范化 | 将 `350` 、`mph` 、`kg` 等数字与单位展开为可对齐的口语 token，对齐后恢复原文展示 |
-| TEN-VAD | 默认的语音活动检测器，用于校验可疑句首和句尾，不全局覆盖 WhisperX 的正确对齐 |
+| [DeepFilterNet3](https://github.com/Rikorose/DeepFilterNet) | 单人模式直接增强；多人模式按说话人覆盖率校准降噪强度，必要时保留原音频 |
+| [MLX Whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper) | Apple Silicon 专门优化的本地 Whisper 推理，默认使用本地 MLX 模型 |
+| [WhisperX forced alignment](https://github.com/m-bain/whisperX) | 使用独立对齐模型把转录文本落到词级时间轴 |
+| 对齐前语音规范化 | 将 `350`、`mph`、`kg` 等数字与单位展开为口语 token，对齐后恢复原文展示 |
+| [TEN-VAD](https://github.com/TEN-framework/ten-vad) | 默认的语音活动检测器，用于校验可疑句首和句尾，不全局覆盖 WhisperX 的正确对齐 |
 | Silero VAD | TEN-VAD 不可用或运行失败时的回退方案，保证跨平台可用性 |
-| Content Integrity Score | 用语音时长比例监控内容完整性，避免参数过严导致漏转录 |
-| Whisper.cpp 兼容通道 | 保留 whisper.cpp 作为备用本地引擎，适合已有 ggml 模型的用户 |
+| [pyannote Community-1](https://github.com/pyannote/pyannote-audio) | 可选的本地说话人分离；支持固定双人或自动人数，不把说话人标签写入最终字幕 |
+| [Whisper.cpp](https://github.com/ggml-org/whisper.cpp) 兼容通道 | 备用本地引擎，适合已有 GGML 模型的用户 |
+
+### 断句与翻译
+
+LLM 处理不是单次自由生成。每个阶段都有结构化输出、键完整性和内容约束，失败时只重试受影响的批次或单条字幕：
+
+```text
+语义断句（原文字符完整性校验）
+  -> 保守纠错（数字、专有名词和原文覆盖校验）
+  -> 全局上下文摘要
+  -> 批量翻译（默认批量/并发均可设为 10）
+  -> 可选反思重写
+  -> 漏译、占位语、思考内容、跨条数字错配检查
+  -> 仅对失败条目回退重译
+  -> 中文译文逗号/句号无 LLM 清理
+```
+
+- MiniMax 使用官方 Anthropic 兼容协议，原生区分 `thinking` 与最终 `text`，防止思考内容进入字幕。
+- 其他模型继续使用 OpenAI 兼容协议；Base URL 和 API Key 按服务商分别保存。
+- 翻译结果不得出现“合并至上一条”“同上”“省略”等编辑占位语，也不能缺少批次中的任何索引。
+- 数字与专有名词校验以防止跨字幕错配为主，不要求中英文逐词对应，避免损害自然翻译质量。
+- MiniMax M3 遇到 HTTP 429 时保持任务存活并等待恢复；其他服务使用有上限的指数退避重试。
 
 ### 可靠性与桌面端
 
 - 转录、断句和翻译任务通过 WebSocket 实时推送进度与中间结果。
 - 上传文件、缩略图和导出结果使用独立路径与范围请求处理，避免同名文件或并发任务相互覆盖。
-- LLM 请求日志按请求绑定，并发翻译不会错配 prompt 和 response。
-- macOS 桌面包内置 FFmpeg、DeepFilterNet3 运行时和 TEN-VAD；Whisper/forced alignment 模型由用户在设置页管理，不重复打包大模型。
+- LLM 日志按任务和阶段聚合，仍可展开查看单次请求；并发翻译不会错配 prompt 和 response。
+- 翻译阶段增量保存中间结果，最终校验失败时不会丢失已经完成的字幕。
+- macOS 桌面包内置 FFmpeg、DeepFilterNet3 运行时和 TEN-VAD；Whisper、forced alignment 与说话人模型由用户管理，不重复打包大模型。
 
-### 智能翻译
+## Audi Q3 实测案例
 
-LLM 翻译会结合上下文处理整段内容，而不是逐句机械直译。对于表达质量要求更高的视频，可以启用反思翻译模式：
+以下数据来自 2026 Audi Q3 英文试驾视频的完整处理：智能断句、保守纠错、上下文生成、翻译和反思模式。测试日期为 2026-07-19，API 的实时负载、限流与计费规则会变化，数据用于说明量级，不代表固定成本或速度。
 
-```text
-初译 -> 反思机翻痕迹和语境问题 -> 重写为更自然的译文
-```
-
-示例：
-
-| 阶段 | 内容 |
+| 配置 | 实测值 |
 | --- | --- |
-| 初译 | 今天我们驾驶的是全新2026款雷克萨斯ES 350h。 |
-| 反思 | “今天我们驾驶的是”偏英文语序，“全新2026款”更像新闻稿。 |
-| 重写 | 今天来试试2026新款雷克萨斯ES 350h。 |
+| 视频时长 | 34:47 |
+| 输入 | 5,803 条英语词级 SRT 片段 |
+| 模型 | `MiniMax-M3` |
+| 协议 / Base URL | Anthropic / `https://api.minimaxi.com/anthropic` |
+| 批量 / 并发 | 10 / 10 |
+| 目标语言 | 简体中文 |
+| LLM 请求日志跨度 | 约 5:16 |
+| 处理结果 | 629 条中英双语字幕 |
 
-### Token 消耗
+### Token 与缓存统计
 
-以下是 21 分钟英文试驾视频的实测数据，模型为小米 MiMo v2.5-pro，流程包含智能分句、纠错优化和智能翻译：
+| 阶段 | 请求尝试 | 成功响应 | 限流/重试 | 输入 Token | 缓存读取 | 读取占比 | 输出 Token |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 智能断句 | 38 | 38 | 0 | 44,120 | 18,546 | 42.04% | 12,168 |
+| 保守纠错 | 102 | 64 | 38 | 73,334 | 15,402 | 21.00% | 9,921 |
+| 上下文生成 | 1 | 1 | 0 | 3,014 | 128 | 4.25% | 1,372 |
+| 翻译与反思 | 117 | 114 | 3 | 395,311 | 141,647 | 35.83% | 98,249 |
+| **合计** | **258** | **217** | **41** | **515,779** | **175,723** | **34.07%** | **121,710** |
 
-| 阶段 | 调用次数 | Prompt | Completion | 其中 Reasoning | Total | 耗时 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 智能分句 | 12 | 17,709 | 51,876 | 44,322 | 69,585 | 13.8min |
-| 纠错优化 | 21 | 20,660 | 77,424 | 70,844 | 98,084 | 23.2min |
-| 智能翻译 | 20 | 13,103 | 16,745 | 10,923 | 29,848 | 5.6min |
-| 合计 | 53 | 51,472 | 146,045 | 126,089 | 197,517 | 42.5min |
+输入与输出合计记录 **637,489 Token**。“限流/重试”是 HTTP 请求级尝试，不是 41 条字幕失败。MiniMax M3 的等待策略在 429 后继续任务，最终文件没有空译文。本次 API 返回的 `cache_creation_input_tokens` 为 **0**；表中的 34.07% 是服务端报告的 `cache_read_input_tokens / input_tokens`，主要来自自动复用和重试，不应理解为 M3 主动 Prompt Cache 的稳定命中率。当前显式 Prompt Cache 只对 MiniMax M2 系列启用，实际计费应以服务商账单口径为准。
 
-MiMo v2.5-pro 是推理模型，Reasoning tokens 占 Completion 的主要部分。实际输出约 20K tokens，最终得到 389 段双语字幕。使用 Bing / Google 等免费翻译引擎可以跳过 LLM 翻译阶段；使用 LM Studio、Ollama 等本地模型则可以进一步降低 API 成本。
+### 结果校验
+
+| 指标 | 当前 Anthropic 接入 |
+| --- | ---: |
+| 最终字幕数 | 629 |
+| 原文规范化序列相似度 | 99.72% |
+| 中文译文字符数 | 9,319 |
+| 缓存读取占比 | 34.07% |
+| 空译文 / 编辑占位语 / 思考泄漏 | 0 / 0 / 0 |
+| 时间轴重叠 / 非法区间 | 0 / 0 |
+| 超过 18 个英文词的字幕 | 0 |
+| 中文译文逗号/句号残留 | 0 |
+
+原文相似度由输入与输出英文合并后转为小写、移除非字母数字字符，再使用序列匹配计算。该指标用于发现断句/纠错阶段的吞词或增词，不代表 ASR 文本本身的语义准确率。
+
+完整文件可直接检查：
+
+- [输入：词级 ASR 字幕](examples/audi_q3_word_timestamps.srt)
+- [输出：MiniMax M3 Anthropic 双语字幕](examples/audi_q3_minimax_m3_anthropic_processed.srt)
+
+最终字幕保持中文在上、英文在下，并只移除中文译文中的逗号和句号；英文标点及时间轴不受影响。
 
 ## 快速开始
 
@@ -160,40 +206,28 @@ uv run python launcher.py
 
 ### LLM
 
-智能断句、优化和翻译使用 OpenAI 兼容接口。可以在设置页中配置 API Base、API Key 和模型名称。
+智能断句、优化和翻译支持 MiniMax Anthropic 协议及 OpenAI 兼容协议。设置页会按服务商保存 Base URL、API Key 和模型名称，切换服务商不会复用另一家的密钥。
 
-| 提供商 | 示例模型 |
-| --- | --- |
-| 小米 MiMo | `mimo-v2.5-pro` |
-| DeepSeek | `deepseek-chat` |
-| OpenAI | `gpt-4o` / `gpt-4o-mini` |
-| 通义千问 | `qwen-plus` |
-| 本地模型 | LM Studio / Ollama 等 OpenAI 兼容服务 |
+| 提供商 | 协议 | 示例模型 / 说明 |
+| --- | --- | --- |
+| MiniMax | Anthropic | `MiniMax-M3`；原生思考分离，429 持续等待；M2 系列支持显式 Prompt Cache |
+| 小米 MiMo | OpenAI 兼容 | `mimo-v2.5-pro` |
+| DeepSeek | OpenAI 兼容 | `deepseek-chat` |
+| OpenAI | OpenAI | 选择账户当前可用模型 |
+| 通义千问 | OpenAI 兼容 | `qwen-plus` |
+| 本地模型 | OpenAI 兼容 | LM Studio / Ollama 等服务 |
+
+MiniMax 推荐 Base URL 为 `https://api.minimaxi.com/anthropic`。SubForge 会自动使用 `/v1/messages`，不要在 Base URL 中重复添加该路径。
 
 ### ASR
 
 | 引擎 | 适合场景 |
 | --- | --- |
 | WhisperX + MLX Whisper | 默认推荐；Apple Silicon 本地加速，配合 forced alignment 生成词级时间轴 |
-| WhisperX Alignment | forced alignment 模型分类管理，用于英语等语言的词级对齐 |
+| WhisperX Alignment | 独立管理 forced alignment 模型，用于英语等语言的词级对齐 |
 | Whisper.cpp | 备用本地转录通道，适合已有 ggml 模型的用户 |
 | Whisper API | 云端转录，配置简单 |
-
-## 示例
-
-项目内提供了一组 Lexus 试驾视频字幕样例，用来展示 ASR 原始字幕和 SubForge 处理后的差异：
-
-- [ASR 原始输出](examples/lexus_original.srt)
-- [断句与翻译后输出](examples/lexus_processed.srt)
-
-处理后的字幕会更短、更自然，并尽量保持完整语义：
-
-```text
-官方数据显示，它高速巡航的油耗大概在百公里4.9升左右。
-市区大概百公里5.4升，综合下来5.1升左右。
-这油耗表现相当惊人。
-综合马力有244匹。
-```
+| pyannote Community-1 | 多人模式；需先获得模型访问权限并在设置页下载到本地模型目录 |
 
 ## 项目结构
 
@@ -220,7 +254,7 @@ uv run ruff check .
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run lint
 npm run dev
 ```
@@ -229,7 +263,7 @@ npm run dev
 
 ```bash
 cd docs
-npm install
+npm ci
 npm run docs:dev
 ```
 
