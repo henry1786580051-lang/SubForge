@@ -97,6 +97,7 @@ LLM 处理不是单次自由生成。每个阶段都有结构化输出、键完�
 
 | 配置 | 实测值 |
 | --- | --- |
+| 原始视频 | [2026 Audi Q3 - New Turbo Compact SUV Real World City Commute](https://www.youtube.com/watch?v=dY6D-wNBEFM) |
 | 视频时长 | 34:47 |
 | 输入 | 5,803 条英语词级 SRT 片段 |
 | 模型 | `MiniMax-M3` |
