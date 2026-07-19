@@ -15,6 +15,7 @@ def test_llm_logs_group_requests_by_task(tmp_path, monkeypatch):
             "model": "mimo-v2.5-pro",
             "duration_ms": 1000,
             "tokens": 120,
+            "cache_creation_tokens": 64,
         },
         {
             "timestamp": "2026-06-13T10:00:02+00:00",
@@ -39,3 +40,4 @@ def test_llm_logs_group_requests_by_task(tmp_path, monkeypatch):
     assert group["request_count"] == 2
     assert group["duration_ms"] == 3000
     assert group["tokens"] == 300
+    assert group["cache_creation_tokens"] == 64

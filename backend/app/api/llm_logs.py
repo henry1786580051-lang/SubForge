@@ -86,6 +86,8 @@ async def get_llm_logs(
                 "duration_ms": 0,
                 "tokens": 0,
                 "prompt_tokens": 0,
+                "cached_tokens": 0,
+                "cache_creation_tokens": 0,
                 "completion_tokens": 0,
                 "reasoning_tokens": 0,
                 "entries": [],
@@ -95,7 +97,14 @@ async def get_llm_logs(
         group["request_count"] += 1
         group["error_count"] += int(bool(entry.get("error") or int(entry.get("status") or 0) >= 400))
         group["duration_ms"] += int(entry.get("duration_ms") or 0)
-        for token_key in ("tokens", "prompt_tokens", "completion_tokens", "reasoning_tokens"):
+        for token_key in (
+            "tokens",
+            "prompt_tokens",
+            "cached_tokens",
+            "cache_creation_tokens",
+            "completion_tokens",
+            "reasoning_tokens",
+        ):
             group[token_key] += int(entry.get(token_key) or 0)
         stage = str(entry.get("stage") or "").strip()
         model = str(entry.get("model") or "").strip()
@@ -108,6 +117,12 @@ async def get_llm_logs(
                 group["started_at"] = timestamp
             if not group["ended_at"] or timestamp > group["ended_at"]:
                 group["ended_at"] = timestamp
+
+    for group in groups.values():
+        prompt_tokens = group["prompt_tokens"]
+        group["cache_hit_rate"] = (
+            round(group["cached_tokens"] / prompt_tokens, 4) if prompt_tokens else 0.0
+        )
 
     grouped_entries = list(groups.values())
     total = len(grouped_entries)

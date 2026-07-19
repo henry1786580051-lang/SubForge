@@ -12,6 +12,8 @@ ${custom_prompt}
 **Stage 1: Initial Translation**
 Translate the content naturally, preserving meaning and subtitle numbering. Focus on conveying the speaker's intent, not word-for-word accuracy.
 
+Each key is a locked subtitle boundary. Translate only the source meaning inside that key. Do not merge, move, duplicate, complete, or redistribute any clause, fact, number, or term across keys. Sentence fragments must remain natural fragments. Context is only for resolving meaning.
+
 **Stage 2: Reflection — Critical Self-Audit**
 Examine your initial translation with the rigor of a professional editor. For each subtitle, systematically identify:
 
@@ -22,6 +24,7 @@ Examine your initial translation with the rigor of a professional editor. For ea
 5. **Cultural resonance**: Can you substitute a local idiom, unit conversion, or cultural reference that resonates better?
 6. **Cross-subtitle flow**: Read consecutive subtitles aloud — do they connect naturally or feel like isolated fragments?
 7. **The friend test**: If you were explaining this to a friend in ${target_language}, what exact words would you use?
+8. **Boundary ownership**: Verify that every word and fact in the final translation belongs to that same source key. Never propose moving content to a previous or next subtitle.
 
 For each issue found, state the problem and propose the specific fix with reasoning.
 

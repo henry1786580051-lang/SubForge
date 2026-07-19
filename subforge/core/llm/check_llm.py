@@ -4,7 +4,8 @@ from typing import Literal, Optional
 
 import openai
 
-from subforge.core.llm.client import normalize_base_url
+from subforge.core.llm.client import call_llm, create_client, normalize_base_url
+from subforge.core.llm.response import get_response_text
 
 
 def check_llm_connection(
@@ -26,17 +27,15 @@ def check_llm_connection(
         # 创建OpenAI客户端并发送请求到API
         base_url = normalize_base_url(base_url)
         api_key = api_key.strip()
-        response = openai.OpenAI(
-            base_url=base_url, api_key=api_key, timeout=60
-        ).chat.completions.create(
+        response = call_llm(
             model=model,
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": 'Just respond with "Hello"!'},
             ],
-            timeout=30,
+            client=create_client(base_url, api_key),
         )
-        return True, response.choices[0].message.content
+        return True, get_response_text(response)
     except openai.APIConnectionError:
         return False, "API Connection Error. Please check your network or VPN."
     except openai.RateLimitError as e:
@@ -64,9 +63,7 @@ def get_available_models(base_url: str, api_key: str) -> list[str]:
     try:
         base_url = normalize_base_url(base_url)
         # 创建OpenAI客户端并获取模型列表
-        models = openai.OpenAI(
-            base_url=base_url, api_key=api_key, timeout=5
-        ).models.list()
+        models = create_client(base_url, api_key).models.list()
 
         # 去除非文本模型
         non_text_models = (

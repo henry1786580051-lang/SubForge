@@ -114,10 +114,14 @@ _LLM_PROVIDER_URLS = {
     "moonshot": "https://api.moonshot.cn/v1",
     "baichuan": "https://api.baichuan-ai.com/v1",
     "yi": "https://api.lingyiwanwu.com/v1",
-    "minimax": "https://api.minimax.chat/v1",
+    "minimax": "https://api.minimaxi.com/anthropic",
     "siliconflow": "https://api.siliconflow.cn/v1",
     "openrouter": "https://openrouter.ai/api/v1",
     "custom": "",
+}
+_LEGACY_MINIMAX_URLS = {
+    "https://api.minimax.chat/v1",
+    "https://api.minimaxi.com/v1",
 }
 
 _DEFAULTS = {
@@ -169,6 +173,8 @@ _DEFAULTS = {
 
 def _detect_llm_provider(base_url: str) -> str:
     normalized = str(base_url or "").strip().rstrip("/")
+    if normalized.startswith(("https://api.minimax.chat", "https://api.minimaxi.com")):
+        return "minimax"
     for provider, default_url in _LLM_PROVIDER_URLS.items():
         if default_url and normalized.startswith(default_url.rstrip("/")):
             return provider
@@ -182,8 +188,11 @@ def _sanitize_llm_profiles(value) -> dict[str, dict[str, str]]:
     for provider, profile in value.items():
         if provider not in _LLM_PROVIDER_URLS or not isinstance(profile, dict):
             continue
+        base_url = str(profile.get("base_url") or "")[:8192].rstrip("/")
+        if provider == "minimax" and base_url in _LEGACY_MINIMAX_URLS:
+            base_url = _LLM_PROVIDER_URLS["minimax"]
         profiles[provider] = {
-            "base_url": str(profile.get("base_url") or "")[:8192],
+            "base_url": base_url,
             "api_key": str(profile.get("api_key") or "")[:8192],
             "model": str(profile.get("model") or "")[:256],
         }
@@ -218,6 +227,11 @@ def _effective_config(stored: dict) -> dict:
         }
     config["llm_provider"] = provider
     config["llm_profiles"] = profiles
+    active_profile = profiles.get(provider)
+    if active_profile:
+        config["llm_base_url"] = active_profile["base_url"]
+        config["llm_api_key"] = active_profile["api_key"]
+        config["llm_model"] = active_profile["model"]
     return config
 
 
@@ -399,7 +413,7 @@ async def test_llm_connection():
     stored = _read_settings()
     config = {**_DEFAULTS, **stored}
 
-    from subforge.core.llm.client import normalize_base_url
+    from subforge.core.llm.client import is_anthropic_base_url, normalize_base_url
 
     raw_base_url = (config.get("llm_base_url") or "").strip()
     base_url = normalize_base_url(raw_base_url).rstrip("/") if raw_base_url else ""
@@ -413,13 +427,14 @@ async def test_llm_connection():
         import httpx
 
         async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            anthropic_api = is_anthropic_base_url(base_url)
             resp = await client.post(
-                f"{base_url}/chat/completions",
+                f"{base_url}/v1/messages" if anthropic_api else f"{base_url}/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json={
                     "model": model,
                     "messages": [{"role": "user", "content": "Hi"}],
-                    "max_tokens": 5,
+                    "max_tokens": 16 if anthropic_api else 5,
                 },
             )
             resp.raise_for_status()
@@ -509,7 +524,7 @@ async def list_llm_models():
     stored = _read_settings()
     config = {**_DEFAULTS, **stored}
 
-    from subforge.core.llm.client import normalize_base_url
+    from subforge.core.llm.client import is_anthropic_base_url, normalize_base_url
 
     raw_base_url = (config.get("llm_base_url") or "").strip()
     base_url = normalize_base_url(raw_base_url).rstrip("/") if raw_base_url else ""
@@ -519,7 +534,7 @@ async def list_llm_models():
         return {"error": "未配置 Base URL", "models": []}
 
     # Most OpenAI-compatible APIs support GET /models
-    url = f"{base_url}/models"
+    url = f"{base_url}/v1/models" if is_anthropic_base_url(base_url) else f"{base_url}/models"
     headers = {}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"

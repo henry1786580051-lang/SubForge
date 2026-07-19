@@ -6,10 +6,9 @@ import threading
 from dataclasses import replace
 from typing import Any, Callable, Dict, List, Optional, Tuple, cast
 
-import json_repair
 import openai
 
-from subforge.core.llm import call_llm
+from subforge.core.llm import call_llm, get_response_text, parse_json_object
 from subforge.core.prompts import get_prompt
 from subforge.core.translate.base import (
     BaseTranslator,
@@ -26,6 +25,7 @@ class LLMTranslator(BaseTranslator):
     """LLM 翻译器（OpenAI兼容API）"""
 
     MAX_STEPS = 3
+    SINGLE_FALLBACK_MAX_ATTEMPTS = 3
     CONTEXT_BEFORE = 3
     CONTEXT_AFTER = 2
 
@@ -191,11 +191,27 @@ class LLMTranslator(BaseTranslator):
                 use_cache=self.use_cache,
                 client=self.llm_client,
             )
-            content = response.choices[0].message.content
-            if not content:
-                logger.warning(f"LLM returned empty content, step {step + 1}/{self.MAX_STEPS}")
+            try:
+                content = get_response_text(response)
+                response_dict = parse_json_object(content)
+            except ValueError as exc:
+                logger.warning(
+                    "LLM returned an invalid final answer, step %s/%s: %s",
+                    step + 1,
+                    self.MAX_STEPS,
+                    exc,
+                )
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Error: {exc}. Output ONLY one JSON object keyed by the "
+                            f"{len(subtitle_dict)} current_subtitles indices. Do not output "
+                            "reasoning, <think> tags, markdown, arrays, or context keys."
+                        ),
+                    }
+                )
                 continue
-            response_dict = json_repair.loads(content.strip())
             last_response_dict = response_dict
             is_valid, error_message = self._validate_llm_response(response_dict, subtitle_dict)
             if is_valid:
@@ -324,6 +340,12 @@ class LLMTranslator(BaseTranslator):
         if not placeholder_ok:
             return False, placeholder_error
 
+        boundary_ok, boundary_error = self._validate_cross_key_boundaries(
+            response_dict, subtitle_dict, _extract_text
+        )
+        if not boundary_ok:
+            return False, boundary_error
+
         # 如果是反思模式，检查嵌套结构
         if self.is_reflect:
             for key, value in response_dict.items():
@@ -340,6 +362,75 @@ class LLMTranslator(BaseTranslator):
                         f"Key '{key}': missing 'native_translation' field. Found keys: {available_keys}. Must include 'native_translation'.",
                     )
 
+        return True, ""
+
+    def _validate_cross_key_boundaries(
+        self,
+        response_dict: Dict[str, Any],
+        subtitle_dict: Dict[str, str],
+        extract_text,
+    ) -> Tuple[bool, str]:
+        """Catch explicit boundary edits and duplicated neighbor-owned numeric facts."""
+        boundary_edits: list[str] = []
+        if self.is_reflect:
+            boundary_pattern = re.compile(
+                r"(?:合并|并入|移到|挪到|放到|拆到).{0,20}(?:上|下|前|后|第).{0,8}(?:条|句|字幕)"
+                r"|(?:merge|combine|move|put).{0,30}(?:previous|next|another|subtitle|key)",
+                flags=re.IGNORECASE,
+            )
+            for key, value in response_dict.items():
+                if isinstance(value, dict) and boundary_pattern.search(
+                    str(value.get("reflection") or "")
+                ):
+                    boundary_edits.append(str(key))
+        if boundary_edits:
+            return (
+                False,
+                "Do not merge, move, or redistribute meaning between subtitle keys. "
+                f"Boundary-edit instructions were found in keys: {boundary_edits[:20]}",
+            )
+
+        def numeric_tokens(text: str) -> set[str]:
+            return {
+                match.group().lower()
+                for match in re.finditer(
+                    r"\b(?:[A-Za-z]+\d+[A-Za-z0-9.-]*|\d+[A-Za-z]+[A-Za-z0-9.-]*|\d{2,4})\b",
+                    text,
+                )
+            }
+
+        source_owners: dict[str, set[str]] = {}
+        for key, source in subtitle_dict.items():
+            for token in numeric_tokens(source):
+                source_owners.setdefault(token, set()).add(key)
+
+        translated_owners: dict[str, set[str]] = {}
+        for key, value in response_dict.items():
+            translated = extract_text(value)
+            compact = re.sub(r"[\s,，.。-]+", "", translated).lower()
+            for token in source_owners:
+                token_compact = re.sub(r"[\s,，.。-]+", "", token)
+                if token_compact.isdigit():
+                    token_pattern = rf"(?<!\d){re.escape(token_compact)}(?!\d)"
+                else:
+                    token_pattern = (
+                        rf"(?<![a-z0-9]){re.escape(token_compact)}(?![a-z0-9])"
+                    )
+                if re.search(token_pattern, compact, flags=re.IGNORECASE):
+                    translated_owners.setdefault(token, set()).add(str(key))
+
+        leaks = []
+        for token, owners in source_owners.items():
+            output_keys = translated_owners.get(token, set())
+            if len(owners) == 1 and owners.issubset(output_keys):
+                leaks.extend(f"{key}:{token}" for key in sorted(output_keys - owners))
+        if leaks:
+            return (
+                False,
+                "A number or model fact was duplicated into a different subtitle key. "
+                "Keep each fact in the key that contains it in current_subtitles. "
+                f"Cross-key duplicates: {leaks[:20]}",
+            )
         return True, ""
 
     @staticmethod
@@ -586,29 +677,64 @@ class LLMTranslator(BaseTranslator):
         for data in subtitle_chunk:
             if self._fatal_provider_error.is_set():
                 raise RuntimeError(self._fatal_provider_message or "LLM provider request rejected")
-            try:
-                response = call_llm(
-                    messages=[
-                        {"role": "system", "content": single_prompt},
-                        {"role": "user", "content": data.original_text},
-                    ],
-                    model=self.model,
-                    temperature=0.7,
-                    use_cache=self.use_cache,
-                    client=self.llm_client,
-                )
-                translated_text = response.choices[0].message.content.strip()
-                if _looks_untranslated(translated_text, data.original_text):
-                    raise RuntimeError(
-                        f"Single item translation did not produce {self.target_language.value}: {translated_text!r}"
+            current = {str(data.index): data.original_text}
+            messages = [
+                {"role": "system", "content": single_prompt},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "previous_context": self._neighbor_context(current, before=True),
+                            "current_subtitle": current,
+                            "next_context": self._neighbor_context(current, before=False),
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ]
+            last_error: Exception | None = None
+            for attempt in range(self.SINGLE_FALLBACK_MAX_ATTEMPTS):
+                try:
+                    response = call_llm(
+                        messages=messages,
+                        model=self.model,
+                        temperature=0.7,
+                        use_cache=self.use_cache,
+                        client=self.llm_client,
                     )
-                if self._looks_like_placeholder_translation(translated_text):
-                    raise RuntimeError(
-                        f"Single item translation returned a placeholder instead of a translation: {translated_text!r}"
-                    )
-                translated_items.append(replace(data, translated_text=translated_text))
-            except Exception as e:
-                logger.error(f"Single item translation failed {data.index}: {str(e)}")
+                    translated_text = get_response_text(response)
+                    if _looks_untranslated(translated_text, data.original_text):
+                        raise RuntimeError(
+                            f"Single item translation did not produce {self.target_language.value}: "
+                            f"{translated_text!r}"
+                        )
+                    if self._looks_like_placeholder_translation(translated_text):
+                        raise RuntimeError(
+                            "Single item translation returned a placeholder instead of a "
+                            f"translation: {translated_text!r}"
+                        )
+                    translated_items.append(replace(data, translated_text=translated_text))
+                    last_error = None
+                    break
+                except Exception as error:
+                    if self._is_fatal_provider_error(error):
+                        self._open_provider_circuit(error)
+                        raise RuntimeError(self._fatal_provider_message) from error
+                    last_error = error
+                    if attempt + 1 < self.SINGLE_FALLBACK_MAX_ATTEMPTS:
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"The previous answer was invalid: {error}. Translate ONLY "
+                                    f"current_subtitle into {self.target_language.value}. Return "
+                                    "only the translated subtitle text, without English source, "
+                                    "reasoning, labels, notes, or JSON."
+                                ),
+                            }
+                        )
+            if last_error is not None:
+                logger.error("Single item translation failed %s: %s", data.index, last_error)
                 failures.append(data.index)
 
         if failures:

@@ -418,10 +418,15 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
   const [models, setModels] = useState<AsrModelInfo[]>([]);
   const [downloadingModel, setDownloadingModel] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
+  const [huggingfaceToken, setHuggingfaceToken] = useState("");
 
   useEffect(() => {
     void transcribeApi.hardware().then(setHardware).catch(() => {});
     void transcribeApi.listModels().then(setModels).catch(() => {});
+    void configApi
+      .get()
+      .then((data) => setHuggingfaceToken(String(data.huggingface_token || "")))
+      .catch(() => {});
   }, []);
 
   const saveConfig = useCallback(
@@ -479,7 +484,9 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
     [models]
   );
   const diarizationReady =
-    config.speakerDiarization === "off" || diarizationModels.some((model) => model.downloaded);
+    config.transcribeModel !== "whisperx" ||
+    config.speakerDiarization === "off" ||
+    diarizationModels.some((model) => model.downloaded);
   const selectedModel = currentModels.find(
     (model) => (model.value || model.id) === config.whisperModelSize || model.selected
   );
@@ -492,6 +499,10 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
     setDownloadingModel(modelId);
     setDownloadProgress((prev) => ({ ...prev, [modelId]: 0 }));
     try {
+      const requestedModel = models.find((model) => model.id === modelId);
+      if (requestedModel?.type === "diarization" && huggingfaceToken.trim()) {
+        await configApi.update("huggingface_token", huggingfaceToken.trim());
+      }
       const result = await transcribeApi.downloadModel(modelId);
       if (result.status === "already_exists") {
         setModels((prev) => prev.map((m) => (m.id === modelId ? { ...m, downloaded: true } : m)));
@@ -524,7 +535,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
       setError(err instanceof Error ? err.message : "模型下载失败");
       setDownloadingModel(null);
     }
-  }, [setError]);
+  }, [huggingfaceToken, models, setError]);
 
   return (
     <WorkspaceFrame meta={STEP_META.transcribe}>
@@ -570,6 +581,89 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                   <p className="mt-2 min-h-8 text-[10px] leading-4 text-text-muted">{unsupported ? "仅支持 Apple Silicon" : engine.desc}</p>
                 </button>
               )})}
+            </div>
+          </Panel>
+
+          <Panel title="多人语音" icon="solar:users-group-rounded-bold-duotone">
+            <div className="space-y-3">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[12px] font-semibold text-text-primary">说话人识别</p>
+                  <p className="mt-1 text-[10px] leading-4 text-text-muted">
+                    区分双人或多人对话，并优先保护较弱说话人的语音覆盖率。
+                  </p>
+                </div>
+                <span className={`shrink-0 rounded-md px-2 py-1 text-[9px] font-semibold ${
+                  config.transcribeModel === "whisperx"
+                    ? config.speakerDiarization === "off"
+                      ? "bg-background text-text-muted"
+                      : diarizationReady
+                      ? "bg-emerald-50 text-emerald-700"
+                      : "bg-amber-50 text-amber-700"
+                    : "bg-background text-text-muted"
+                }`}>
+                  {config.transcribeModel !== "whisperx"
+                    ? "需要 WhisperX"
+                    : config.speakerDiarization === "off"
+                    ? "未启用"
+                    : diarizationReady
+                    ? "已就绪"
+                    : "需要模型"}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2" role="group" aria-label="多人语音识别模式">
+                {([["off", "关闭"], ["two", "双人"], ["auto", "自动人数"]] as const).map(([value, label]) => (
+                  <button
+                    key={value}
+                    disabled={config.transcribeModel !== "whisperx"}
+                    onClick={() => void saveConfig("speaker_diarization", value)}
+                    className={`h-9 rounded-md border text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
+                      config.speakerDiarization === value && config.transcribeModel === "whisperx"
+                        ? "border-accent bg-accent-dim text-accent"
+                        : "border-border bg-background text-text-secondary hover:border-border-active"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {config.transcribeModel === "whisperx" && config.speakerDiarization !== "off" && (
+                <div className="space-y-3 border-t border-border pt-3">
+                  {diarizationModels.map((model) => (
+                    <ModelRow
+                      key={model.id}
+                      model={model}
+                      active={Boolean(model.downloaded)}
+                      downloading={downloadingModel === model.id}
+                      progress={downloadProgress[model.id]}
+                      onSelect={() => undefined}
+                      onDownload={() => void downloadModel(model.id)}
+                    />
+                  ))}
+                  {!diarizationModels.length && (
+                    <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] leading-4 text-amber-800">
+                      未找到 Community-1 模型配置，请检查后端模型清单。
+                    </p>
+                  )}
+                  <label className="block space-y-1.5">
+                    <span className="text-[11px] font-medium text-text-muted">Hugging Face Token</span>
+                    <input
+                      type="password"
+                      value={huggingfaceToken}
+                      onChange={(event) => setHuggingfaceToken(event.target.value)}
+                      onBlur={(event) => void saveConfig("huggingface_token", event.target.value.trim())}
+                      placeholder="首次下载 Community-1 时填写 hf_..."
+                      autoComplete="off"
+                      className="input-field"
+                    />
+                  </label>
+                  <p className="text-[10px] leading-4 text-text-muted">
+                    转录前会比较原音、6 dB 与 12 dB 轻度降噪，仅在所有说话人覆盖率不下降时采用降噪结果。
+                  </p>
+                </div>
+              )}
             </div>
           </Panel>
 
@@ -625,47 +719,6 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                     </div>
                     </div>
 
-                    <div>
-                      <FieldLabel
-                        label="说话人识别"
-                        value={config.speakerDiarization === "off" ? "关闭" : config.speakerDiarization === "two" ? "双人" : "自动人数"}
-                      />
-                      <div className="mt-2 grid grid-cols-3 gap-2" role="group" aria-label="说话人识别模式">
-                        {([[
-                          "off", "关闭"
-                        ], ["two", "双人"], ["auto", "自动"]] as const).map(([value, label]) => (
-                          <button
-                            key={value}
-                            onClick={() => void saveConfig("speaker_diarization", value)}
-                            className={`h-9 rounded-md border text-[11px] font-medium transition-colors ${
-                              config.speakerDiarization === value
-                                ? "border-accent bg-accent-dim text-accent"
-                                : "border-border bg-background text-text-secondary hover:border-border-active"
-                            }`}
-                          >
-                            {label}
-                          </button>
-                        ))}
-                      </div>
-                      {config.speakerDiarization !== "off" && (
-                        <div className="mt-2 space-y-2">
-                          {diarizationModels.map((model) => (
-                            <ModelRow
-                              key={model.id}
-                              model={model}
-                              active={Boolean(model.downloaded)}
-                              downloading={downloadingModel === model.id}
-                              progress={downloadProgress[model.id]}
-                              onSelect={() => undefined}
-                              onDownload={() => void downloadModel(model.id)}
-                            />
-                          ))}
-                          <p className="text-[10px] leading-4 text-text-muted">
-                            多人模式会先比较原音、6 dB 与 12 dB 轻度降噪，仅在所有说话人覆盖率不下降时采用降噪结果。
-                          </p>
-                        </div>
-                      )}
-                    </div>
                   </div>
                 )}
 

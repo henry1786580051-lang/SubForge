@@ -59,7 +59,12 @@ def _write_log(entry: Dict[str, Any]) -> None:
 
 def _infer_stage(request_body: dict) -> str:
     messages = request_body.get("messages") or []
-    text = " ".join(str(item.get("content", "")) for item in messages if isinstance(item, dict)).lower()
+    system = request_body.get("system") or []
+    text = " ".join(
+        str(item.get("content", item.get("text", "")))
+        for item in [*system, *messages]
+        if isinstance(item, dict)
+    ).lower()
     if "correct the following subtitles" in text or "keep the original language" in text:
         return "optimize"
     if "current_subtitles" in text or "translate" in text or "target language" in text:
@@ -80,7 +85,7 @@ def _batch_label(request_body: dict) -> str:
 
 def _on_request(request: httpx.Request, log_context: Optional[dict[str, str]] = None) -> None:
     """请求发送前: 暂存请求信息"""
-    if "/chat/completions" not in str(request.url):
+    if not any(path in str(request.url) for path in ("/chat/completions", "/v1/messages")):
         return
 
     try:
@@ -162,6 +167,16 @@ def log_llm_response(response: Any) -> None:
     usage = response_data.get("usage") if isinstance(response_data, dict) else {}
     usage = usage if isinstance(usage, dict) else {}
     completion_details = usage.get("completion_tokens_details") or {}
+    prompt_details = usage.get("prompt_tokens_details") or {}
+    cache_creation_tokens = int(usage.get("cache_creation_input_tokens") or 0)
+    cache_read_tokens = int(usage.get("cache_read_input_tokens") or 0)
+    uncached_input_tokens = int(usage.get("input_tokens") or 0)
+    prompt_tokens = int(usage.get("prompt_tokens") or 0)
+    if not prompt_tokens:
+        prompt_tokens = cache_creation_tokens + cache_read_tokens + uncached_input_tokens
+    cached_tokens = int(prompt_details.get("cached_tokens") or cache_read_tokens)
+    completion_tokens = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+    total_tokens = int(usage.get("total_tokens") or prompt_tokens + completion_tokens)
     timestamp = datetime.now(timezone.utc).isoformat()
 
     log_entry = {
@@ -177,9 +192,12 @@ def log_llm_response(response: Any) -> None:
         "duration_ms": pending.get("duration_ms", 0),
         "request": pending.get("request", {}),
         "response": response_data,
-        "tokens": int(usage.get("total_tokens") or 0),
-        "prompt_tokens": int(usage.get("prompt_tokens") or 0),
-        "completion_tokens": int(usage.get("completion_tokens") or 0),
+        "tokens": total_tokens,
+        "prompt_tokens": prompt_tokens,
+        "cached_tokens": cached_tokens,
+        "cache_creation_tokens": cache_creation_tokens,
+        "cache_hit_rate": round(cached_tokens / prompt_tokens, 4) if prompt_tokens else 0.0,
+        "completion_tokens": completion_tokens,
         "reasoning_tokens": int(completion_details.get("reasoning_tokens") or 0),
     }
 

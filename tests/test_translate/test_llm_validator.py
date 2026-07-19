@@ -326,8 +326,74 @@ class TestValidateLLmResponse:
         # Should pass because keys match and CJK content is present
         assert ok is True
 
+    def test_rejects_reflection_that_moves_content_between_keys(self):
+        t = _make_translator(is_reflect=True)
+        resp = {
+            "1": {
+                "native_translation": "先说到这里",
+                "reflection": "把后半句合并到下一条字幕会更自然",
+            },
+            "2": {
+                "native_translation": "下一句",
+                "reflection": "保持原意",
+            },
+        }
+
+        ok, msg = t._validate_llm_response(resp, {"1": "first", "2": "second"})
+
+        assert ok is False
+        assert "redistribute meaning" in msg
+
+    def test_rejects_numeric_fact_duplicated_into_neighbor_key(self):
+        t = _make_translator()
+        resp = {"1": "还额外配了20英寸轮毂", "2": "配的是20英寸轮毂"}
+        source = {"1": "But anyway,", "2": "It has the 20-inch wheels."}
+
+        ok, msg = t._validate_llm_response(resp, source)
+
+        assert ok is False
+        assert "Cross-key duplicates" in msg
+
+    def test_numeric_boundary_check_does_not_match_larger_number_or_model(self):
+        t = _make_translator()
+        resp = {
+            "1": "综合油耗25 mpg",
+            "2": "动力是255马力",
+            "3": "这台是RS3",
+        }
+        source = {
+            "1": "It gets 25 mpg.",
+            "2": "It has 255 horsepower.",
+            "3": "This is the RS3.",
+        }
+
+        ok, msg = t._validate_llm_response(resp, source)
+
+        assert ok is True
+        assert msg == ""
+
+    def test_agent_loop_strips_minimax_thinking_and_normalizes_keys(self, monkeypatch):
+        t = _make_translator()
+
+        class _Message:
+            content = '<think>analysis</think>\n```json\n{1: "你好"}\n```'
+
+        class _Choice:
+            message = _Message()
+
+        class _Response:
+            choices = [_Choice()]
+
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm",
+            lambda **_kwargs: _Response(),
+        )
+
+        assert t._agent_loop("prompt", {"1": "hello"}) == {"1": "你好"}
+
     def test_single_fallback_rejects_untranslated_cjk_result(self, monkeypatch):
         t = _make_translator()
+        calls = []
 
         class _Message:
             content = "hello"
@@ -340,11 +406,74 @@ class TestValidateLLmResponse:
 
         monkeypatch.setattr(
             "subforge.core.translate.llm_translator.call_llm",
-            lambda **kwargs: _Response(),
+            lambda **kwargs: calls.append(kwargs) or _Response(),
         )
 
         with pytest.raises(RuntimeError, match="Single item translation failed"):
             t._translate_chunk_single([SubtitleProcessData(index=1, original_text="hello")])
+        assert len(calls) == t.SINGLE_FALLBACK_MAX_ATTEMPTS
+
+    def test_single_fallback_retries_invalid_output_and_keeps_valid_result(self, monkeypatch):
+        t = _make_translator()
+        contents = iter(["That's fine.", "没关系 这样其实更好"])
+        captured = []
+
+        class _Message:
+            content = ""
+
+        class _Choice:
+            message = _Message()
+
+        class _Response:
+            choices = [_Choice()]
+
+        def fake_call_llm(**kwargs):
+            captured.append(kwargs["messages"])
+            _Message.content = next(contents)
+            return _Response()
+
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm", fake_call_llm
+        )
+
+        result = t._translate_chunk_single(
+            [SubtitleProcessData(index=1, original_text="That's fine.")]
+        )
+
+        assert result[0].translated_text == "没关系 这样其实更好"
+        assert len(captured) == 2
+        assert "previous answer was invalid" in captured[1][-1]["content"]
+
+    def test_single_fallback_strips_reasoning_and_sends_neighbor_context(self, monkeypatch):
+        t = _make_translator()
+        t._all_source_by_index = {1: "before", 2: "in a Q3", 3: "after"}
+        captured = {}
+
+        class _Message:
+            content = "<think>Q3 is the Audi model</think>\n在Q3里"
+
+        class _Choice:
+            message = _Message()
+
+        class _Response:
+            choices = [_Choice()]
+
+        def fake_call_llm(**kwargs):
+            captured.update(kwargs)
+            return _Response()
+
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm", fake_call_llm
+        )
+
+        result = t._translate_chunk_single(
+            [SubtitleProcessData(index=2, original_text="in a Q3")]
+        )
+
+        assert result[0].translated_text == "在Q3里"
+        user_content = captured["messages"][1]["content"]
+        assert '"previous_context": [{"index": "1", "source": "before"}]' in user_content
+        assert '"next_context": [{"index": "3", "source": "after"}]' in user_content
 
     def test_rejects_dropped_alphanumeric_model_tokens(self):
         t = _make_translator()

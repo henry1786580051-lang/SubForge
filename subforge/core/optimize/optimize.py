@@ -9,11 +9,9 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
-import json_repair
-
 from ..asr.asr_data import ASRData, ASRDataSeg
 from ..entities import SubtitleProcessData
-from ..llm import call_llm
+from ..llm import call_llm, get_response_text, parse_json_object
 from ..prompts import get_prompt
 from ..split.alignment import SubtitleAligner
 from ..utils.logger import setup_logger
@@ -233,16 +231,8 @@ class SubtitleOptimizer:
                 client=self.llm_client,
             )
 
-            result_text = response.choices[0].message.content
-            if not result_text:
-                raise ValueError("LLM returned empty result")
-
-            # 解析结果
-            parsed_result = json_repair.loads(result_text)
-            if not isinstance(parsed_result, dict):
-                raise ValueError(
-                    f"LLM返回结果类型Error，期望dict，实际{type(parsed_result)}"
-                )
+            result_text = get_response_text(response)
+            parsed_result = parse_json_object(result_text)
 
             result_dict: Dict[str, str] = parsed_result
             last_result = result_dict

@@ -84,6 +84,7 @@ def test_log_extracts_context_model_stage_and_tokens(tmp_path, monkeypatch):
                     "prompt_tokens": 100,
                     "completion_tokens": 50,
                     "total_tokens": 150,
+                    "prompt_tokens_details": {"cached_tokens": 38},
                     "completion_tokens_details": {"reasoning_tokens": 20},
                 },
             }
@@ -96,6 +97,8 @@ def test_log_extracts_context_model_stage_and_tokens(tmp_path, monkeypatch):
     assert entry["model"] == "mimo-v2.5-pro"
     assert entry["batch"] == "12-12"
     assert entry["tokens"] == 150
+    assert entry["cached_tokens"] == 38
+    assert entry["cache_hit_rate"] == 0.38
     assert entry["reasoning_tokens"] == 20
     assert entry["timestamp"]
 
@@ -120,5 +123,50 @@ def test_retry_releases_superseded_pending_request():
 
     assert id(first) not in request_logger._pending_requests
     assert id(retry) in request_logger._pending_requests
+    request_logger._pending_requests.clear()
+    request_logger._current_request_key.set(None)
+
+
+def test_log_extracts_anthropic_cache_usage(tmp_path, monkeypatch):
+    log_file = tmp_path / "llm_requests.jsonl"
+    monkeypatch.setattr(request_logger, "LLM_LOG_FILE", log_file)
+    request_logger._pending_requests.clear()
+    request = httpx.Request(
+        "POST",
+        "https://api.minimaxi.com/anthropic/v1/messages",
+        content=json.dumps(
+            {
+                "model": "MiniMax-M3",
+                "system": [{"type": "text", "text": "Translate subtitles"}],
+                "messages": [
+                    {"role": "user", "content": '{"current_subtitles":{"1":"hello"}}'}
+                ],
+            }
+        ),
+    )
+    request_logger._on_request(request)
+    request_logger._on_response(httpx.Response(200, request=request))
+
+    class _AnthropicResponse:
+        def model_dump(self):
+            return {
+                "model": "MiniMax-M3",
+                "usage": {
+                    "input_tokens": 500,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 1500,
+                    "output_tokens": 200,
+                },
+            }
+
+    request_logger.log_llm_response(_AnthropicResponse())
+    entry = json.loads(log_file.read_text(encoding="utf-8"))
+    assert entry["stage"] == "translate"
+    assert entry["prompt_tokens"] == 2000
+    assert entry["cached_tokens"] == 1500
+    assert entry["cache_creation_tokens"] == 0
+    assert entry["cache_hit_rate"] == 0.75
+    assert entry["completion_tokens"] == 200
+    assert entry["tokens"] == 2200
     request_logger._pending_requests.clear()
     request_logger._current_request_key.set(None)

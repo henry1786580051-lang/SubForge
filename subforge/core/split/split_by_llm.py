@@ -2,7 +2,7 @@ import difflib
 import re
 from typing import Any, List, Tuple
 
-from ..llm import call_llm
+from ..llm import call_llm, get_response_text
 from ..prompts import get_prompt
 from ..utils.logger import setup_logger
 from ..utils.text_utils import count_words, is_mainly_cjk
@@ -71,7 +71,7 @@ def _split_with_agent_loop(
             client=llm_client,
         )
 
-        result_text = response.choices[0].message.content or ""
+        result_text = get_response_text(response)
 
         split_result = _parse_split_response(result_text)
 

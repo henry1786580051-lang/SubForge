@@ -184,3 +184,32 @@ def test_updating_active_llm_key_updates_only_active_profile(tmp_path, monkeypat
     stored = json.loads(settings_path.read_text(encoding="utf-8"))
     assert stored["llm_profiles"]["deepseek"]["api_key"] == "new-deepseek-key"
     assert stored["llm_profiles"]["mimo"]["api_key"] == "mimo-key"
+
+
+def test_detects_current_and_legacy_minimax_urls():
+    assert config_module._detect_llm_provider("https://api.minimaxi.com/anthropic") == "minimax"
+    assert config_module._detect_llm_provider("https://api.minimaxi.com/v1") == "minimax"
+    assert config_module._detect_llm_provider("https://api.minimax.chat/v1") == "minimax"
+
+
+def test_effective_config_migrates_legacy_minimax_profile_url():
+    config = config_module._effective_config(
+        {
+            "llm_provider": "minimax",
+            "llm_base_url": "https://api.minimax.chat/v1",
+            "llm_api_key": "minimax-key",
+            "llm_model": "MiniMax-M3",
+            "llm_profiles": {
+                "minimax": {
+                    "base_url": "https://api.minimax.chat/v1",
+                    "api_key": "minimax-key",
+                    "model": "MiniMax-M3",
+                }
+            },
+        }
+    )
+
+    assert config["llm_base_url"] == "https://api.minimaxi.com/anthropic"
+    assert config["llm_profiles"]["minimax"]["base_url"] == (
+        "https://api.minimaxi.com/anthropic"
+    )

@@ -7,10 +7,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-import json_repair
-
 from subforge.core.asr.asr_data import ASRData
-from subforge.core.llm import call_llm
+from subforge.core.llm import call_llm, get_response_text, parse_json_object
 from subforge.core.translate.types import TargetLanguage
 from subforge.core.utils.cache import generate_cache_key
 from subforge.core.utils.logger import setup_logger
@@ -128,8 +126,8 @@ def build_translation_context(
             use_cache=use_cache,
             client=llm_client,
         )
-        raw = response.choices[0].message.content or "{}"
-        parsed = json_repair.loads(raw)
+        raw = get_response_text(response)
+        parsed = parse_json_object(raw)
         if not isinstance(parsed, dict):
             raise ValueError(f"context response must be dict, got {type(parsed).__name__}")
         return TranslationContext(
