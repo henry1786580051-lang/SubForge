@@ -31,6 +31,14 @@ WHISPER_CPP_WINDOWS_URL = (
     "v1.9.1/whisper-bin-x64.zip"
 )
 WHISPER_CPP_WINDOWS_SHA256 = "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab6092594b0a063539"
+WINDOWS_CUDA_RUNTIME_DLLS = (
+    "cublas64_12.dll", "cublasLt64_12.dll", "cudart64_12.dll",
+    "cudnn64_9.dll", "cudnn_adv64_9.dll", "cudnn_cnn64_9.dll",
+    "cudnn_engines_precompiled64_9.dll",
+    "cudnn_engines_runtime_compiled64_9.dll", "cudnn_graph64_9.dll",
+    "cudnn_heuristic64_9.dll", "cudnn_ops64_9.dll",
+    "nvrtc64_120_0.dll", "nvrtc-builtins64_121.dll",
+)
 
 
 def _run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
@@ -225,6 +233,47 @@ def build_pyinstaller(version: str) -> None:
         "--workpath",
         str(BUILD_DIR / "pyinstaller"),
     ], env=env)
+
+
+def refresh_windows_vc_runtime() -> None:
+    """Replace VC++ DLLs discovered through PATH with the system runtime.
+
+    PyInstaller's dependency scan can otherwise pick up an older copy from a
+    Conda installation on the build machine.  Native ML libraries such as
+    CTranslate2 then load against that incompatible copy and terminate with an
+    access violation before Python can report a useful exception.
+    """
+    if platform.system() != "Windows":
+        return
+
+    system_root = Path(os.environ.get("SystemRoot", r"C:\Windows"))
+    system32 = system_root / "System32"
+    bundle_internal = DIST_DIR / "SubForge" / "_internal"
+    for name in ("msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll"):
+        source = system32 / name
+        destination = bundle_internal / name
+        if source.is_file() and destination.is_file():
+            shutil.copy2(source, destination)
+            print(f"Refreshed Windows VC++ runtime: {name}")
+
+
+def inject_windows_cuda_runtime() -> None:
+    """Optionally create a self-contained NVIDIA FasterWhisper bundle."""
+    configured = os.environ.get("SUBFORGE_CUDA_RUNTIME_DIR", "").strip()
+    if platform.system() != "Windows" or not configured:
+        return
+
+    source_dir = Path(configured).expanduser().resolve()
+    missing = [name for name in WINDOWS_CUDA_RUNTIME_DLLS if not (source_dir / name).is_file()]
+    if missing:
+        raise RuntimeError(
+            "Incomplete SUBFORGE_CUDA_RUNTIME_DIR; missing: " + ", ".join(missing)
+        )
+    destination = DIST_DIR / "SubForge" / "_internal" / "cuda"
+    destination.mkdir(parents=True, exist_ok=True)
+    for name in WINDOWS_CUDA_RUNTIME_DLLS:
+        shutil.copy2(source_dir / name, destination / name)
+    print(f"Bundled private CUDA runtime: {len(WINDOWS_CUDA_RUNTIME_DLLS)} DLLs")
 
 
 def inject_packaged_mlx_runtime() -> None:
@@ -510,6 +559,8 @@ def main() -> int:
         prepare_ffmpeg()
         prepare_whisper_cpp()
         build_pyinstaller(version)
+        refresh_windows_vc_runtime()
+        inject_windows_cuda_runtime()
         inject_packaged_mlx_runtime()
         patch_packaged_torch()
         dedupe_packaged_torch_libs()
