@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
 block_cipher = None
 ROOT = os.path.dirname(os.path.abspath(SPEC))
@@ -10,6 +10,18 @@ APP_VERSION = os.environ.get('SUBFORGE_BUILD_VERSION', '0.0.0-dev')
 # collecting submodules initializes Metal and can terminate headless builds.
 optional_hiddenimports = []
 optional_datas = []
+optional_binaries = []
+
+# FasterWhisper is the cross-platform CTranslate2 transcription runtime. It is
+# bundled directly so desktop users do not need an unrelated external
+# faster-whisper-xxl executable.
+for optional_pkg in ('faster_whisper', 'ctranslate2', 'av'):
+    try:
+        optional_hiddenimports += collect_submodules(optional_pkg)
+        optional_datas += collect_data_files(optional_pkg, include_py_files=False)
+        optional_binaries += collect_dynamic_libs(optional_pkg)
+    except Exception:
+        pass
 
 # DeepFilterNet is used only for local enhancement inference. Avoid collecting
 # training, evaluation, and visualization modules, which pull unnecessary
@@ -146,7 +158,7 @@ if os.path.isdir(runtime_bin):
 a = Analysis(
     [os.path.join(ROOT, 'launcher.py')],
     pathex=[ROOT, os.path.join(ROOT, 'backend')],
-    binaries=[],
+    binaries=optional_binaries,
     datas=frontend_datas + backend_datas + vc_datas + resource_datas + runtime_datas + optional_datas,
     hiddenimports=[
         'torch',

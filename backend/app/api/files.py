@@ -1,5 +1,6 @@
 import hashlib
 import shutil
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -13,7 +14,7 @@ router = APIRouter()
 
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024 * 1024  # 10 GB
 
-UPLOAD_ROOT = Path("/tmp/subforge/uploads")
+UPLOAD_ROOT = Path(tempfile.gettempdir()) / "subforge" / "uploads"
 UPLOAD_DIR = UPLOAD_ROOT / f"session-{uuid.uuid4().hex}"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 

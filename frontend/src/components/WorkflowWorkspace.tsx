@@ -472,6 +472,9 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
     if (config.transcribeModel === "whisperx") {
       return models.filter((model) => model.category === "whisperx" && model.type !== "alignment");
     }
+    if (config.transcribeModel === "faster_whisper") {
+      return models.filter((model) => model.category === "faster_whisper");
+    }
     return [];
   }, [config.transcribeModel, models]);
 
@@ -484,7 +487,6 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
     [models]
   );
   const diarizationReady =
-    config.transcribeModel !== "whisperx" ||
     config.speakerDiarization === "off" ||
     diarizationModels.some((model) => model.downloaded);
   const selectedModel = currentModels.find(
@@ -594,17 +596,13 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                   </p>
                 </div>
                 <span className={`shrink-0 rounded-md px-2 py-1 text-[9px] font-semibold ${
-                  config.transcribeModel === "whisperx"
-                    ? config.speakerDiarization === "off"
-                      ? "bg-background text-text-muted"
-                      : diarizationReady
-                      ? "bg-emerald-50 text-emerald-700"
-                      : "bg-amber-50 text-amber-700"
-                    : "bg-background text-text-muted"
+                  config.speakerDiarization === "off"
+                    ? "bg-background text-text-muted"
+                    : diarizationReady
+                    ? "bg-emerald-50 text-emerald-700"
+                    : "bg-amber-50 text-amber-700"
                 }`}>
-                  {config.transcribeModel !== "whisperx"
-                    ? "需要 WhisperX"
-                    : config.speakerDiarization === "off"
+                  {config.speakerDiarization === "off"
                     ? "未启用"
                     : diarizationReady
                     ? "已就绪"
@@ -616,10 +614,9 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                 {([["off", "关闭"], ["two", "双人"], ["auto", "自动人数"]] as const).map(([value, label]) => (
                   <button
                     key={value}
-                    disabled={config.transcribeModel !== "whisperx"}
                     onClick={() => void saveConfig("speaker_diarization", value)}
-                    className={`h-9 rounded-md border text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
-                      config.speakerDiarization === value && config.transcribeModel === "whisperx"
+                    className={`h-9 rounded-md border text-[11px] font-medium transition-colors ${
+                      config.speakerDiarization === value
                         ? "border-accent bg-accent-dim text-accent"
                         : "border-border bg-background text-text-secondary hover:border-border-active"
                     }`}
@@ -629,7 +626,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                 ))}
               </div>
 
-              {config.transcribeModel === "whisperx" && config.speakerDiarization !== "off" && (
+              {config.speakerDiarization !== "off" && (
                 <div className="space-y-3 border-t border-border pt-3">
                   {diarizationModels.map((model) => (
                     <ModelRow

@@ -8,6 +8,7 @@ import {
   subtitleApi,
   subtitlesApi,
   API_BASE,
+  type SubtitleSegment,
   type TaskInfo,
 } from "@/lib/api";
 
@@ -98,16 +99,20 @@ export function useTaskMonitor() {
       }
       if (task.type === "subtitle" && result?.subtitle_file) {
         setSubtitleFile(result.subtitle_file as string);
-        subtitlesApi
-          .load(result.subtitle_file as string)
-          .then((subFile) => {
-            if (task.id !== useAppStore.getState().currentTaskId) return;
-            setSubtitles(subFile.segments);
-          })
-          .catch((err) => {
-            if (task.id !== useAppStore.getState().currentTaskId) return;
-            setError(err instanceof Error ? err.message : "Failed to load translated subtitles");
-          });
+        if (Array.isArray(result.segments)) {
+          setSubtitles(result.segments as SubtitleSegment[]);
+        } else {
+          subtitlesApi
+            .load(result.subtitle_file as string)
+            .then((subFile) => {
+              if (task.id !== useAppStore.getState().currentTaskId) return;
+              setSubtitles(subFile.segments);
+            })
+            .catch((err) => {
+              if (task.id !== useAppStore.getState().currentTaskId) return;
+              setError(err instanceof Error ? err.message : "Failed to load translated subtitles");
+            });
+        }
       }
     }
 

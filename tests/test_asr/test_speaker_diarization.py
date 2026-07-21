@@ -12,6 +12,20 @@ from subforge.core.asr.speaker_diarization import (
 )
 
 
+def _write_complete_diarization_model(path: Path) -> None:
+    files = {
+        "config.yaml": b"pipeline: " + b"x" * 128,
+        "segmentation/pytorch_model.bin": b"x" * (1024 * 1024),
+        "embedding/pytorch_model.bin": b"x" * (1024 * 1024),
+        "plda/plda.npz": b"x" * 1024,
+        "plda/xvec_transform.npz": b"x" * 1024,
+    }
+    for relative, content in files.items():
+        target = path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+
+
 def test_assign_speakers_preserves_text_and_timestamps():
     data = ASRData(
         [
@@ -114,13 +128,20 @@ def test_smooth_speaker_assignments_fills_short_unlabeled_edge():
 
 def test_resolve_diarization_model_prefers_managed_snapshot(tmp_path: Path):
     local_model = tmp_path / "pyannote-speaker-diarization-community-1"
-    local_model.mkdir()
-    (local_model / "config.yaml").write_text("pipeline: {}", encoding="utf-8")
+    _write_complete_diarization_model(local_model)
 
     assert is_diarization_model_dir(local_model)
     assert resolve_diarization_model("pyannote/speaker-diarization-community-1", tmp_path) == str(
         local_model
     )
+
+
+def test_diarization_model_rejects_config_only_snapshot(tmp_path: Path):
+    local_model = tmp_path / "pyannote-speaker-diarization-community-1"
+    local_model.mkdir()
+    (local_model / "config.yaml").write_text("pipeline: " + "x" * 128, encoding="utf-8")
+
+    assert not is_diarization_model_dir(local_model)
 
 
 def test_require_local_diarization_model_fails_before_asr(tmp_path: Path):

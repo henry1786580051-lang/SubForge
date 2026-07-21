@@ -14,7 +14,7 @@ from pathlib import Path
 
 
 def _run(cmd: list[str], *, env: dict[str, str] | None = None, cwd: Path | None = None) -> subprocess.CompletedProcess:
-    print("+ " + " ".join(str(part) for part in cmd))
+    print("+ " + " ".join(str(part) for part in cmd), flush=True)
     return subprocess.run(cmd, cwd=str(cwd) if cwd else None, env=env, check=True, text=True)
 
 
@@ -138,8 +138,15 @@ def main() -> int:
 
         env = os.environ.copy()
         env["SUBFORGE_CHECK_BACKEND"] = "1"
-        _run([str(exe)], env=env)
-        print("Verified packaged FastAPI backend routes")
+        backend_error_log = tmp_path / "backend-check-error.log"
+        env["SUBFORGE_CHECK_ERROR_LOG"] = str(backend_error_log)
+        try:
+            _run([str(exe)], env=env)
+        except subprocess.CalledProcessError:
+            if backend_error_log.exists():
+                print(backend_error_log.read_text(encoding="utf-8"))
+            raise
+        print("Verified packaged FastAPI routes and Uvicorn startup")
 
         if platform.system() == "Windows":
             whisper_cli = _find_bundled_tool(bundle, "whisper-cli")
@@ -151,6 +158,18 @@ def main() -> int:
             _run([str(exe)], env=env)
             print("Verified packaged DeepFilterNet3 imports")
 
+        env = os.environ.copy()
+        env["SUBFORGE_CHECK_DIARIZATION"] = "1"
+        if platform.system() == "Darwin":
+            env.setdefault("TORCH_USE_RTLD_GLOBAL", "1")
+        _run([str(exe)], env=env)
+        print("Verified packaged pyannote speaker diarization imports")
+
+        env = os.environ.copy()
+        env["SUBFORGE_CHECK_FASTER_WHISPER"] = "1"
+        _run([str(exe)], env=env)
+        print("Verified packaged FasterWhisper/CTranslate2 imports")
+
         if platform.system() == "Darwin" and platform.machine() == "arm64":
             env = os.environ.copy()
             env["SUBFORGE_CHECK_ASR"] = "1"
@@ -158,11 +177,6 @@ def main() -> int:
             _run([str(exe)], env=env)
             print("Verified packaged MLX Whisper and WhisperX imports")
 
-            env = os.environ.copy()
-            env["SUBFORGE_CHECK_DIARIZATION"] = "1"
-            env.setdefault("TORCH_USE_RTLD_GLOBAL", "1")
-            _run([str(exe)], env=env)
-            print("Verified packaged pyannote speaker diarization imports")
 
     return 0
 

@@ -1893,28 +1893,37 @@ class ASRData:
             stripped = text.strip()
             if not stripped:
                 return "empty"
-            cjk_count = len(re.findall(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]", stripped))
+            han_count = len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", stripped))
+            kana_count = len(re.findall(r"[\u3040-\u30ff]", stripped))
+            hangul_count = len(re.findall(r"[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]", stripped))
             latin_count = len(re.findall(r"[A-Za-z]", stripped))
-            if cjk_count >= 2:
-                return "cjk"
-            if latin_count >= 2 and cjk_count == 0:
+            # SubForge's desktop audience overwhelmingly translates *into*
+            # Chinese. A Chinese line can legitimately contain model names,
+            # English acronyms, or quoted Korean/Japanese words, so Han text
+            # wins when it is the dominant East-Asian script.
+            if han_count and han_count >= max(kana_count, hangul_count):
+                return "chinese"
+            if kana_count >= 2:
+                return "japanese"
+            if hangul_count >= 2:
+                return "korean"
+            if han_count:
+                return "chinese"
+            if latin_count >= 2:
                 return "latin"
-            if cjk_count:
-                return "cjk"
             return "other"
 
         def _group_family(lines: list[str]) -> str:
             joined = " ".join(line.strip() for line in lines if line.strip())
             family = _line_family(joined)
-            if family in {"cjk", "latin"}:
+            language_families = {"chinese", "japanese", "korean", "latin"}
+            if family in language_families:
                 return family
             families = [_line_family(line) for line in lines if line.strip()]
-            cjk = families.count("cjk")
-            latin = families.count("latin")
-            if cjk > latin and cjk > 0:
-                return "cjk"
-            if latin > cjk and latin > 0:
-                return "latin"
+            counts = {name: families.count(name) for name in language_families}
+            dominant, count = max(counts.items(), key=lambda item: item[1])
+            if count > 0 and list(counts.values()).count(count) == 1:
+                return dominant
             return "other"
 
         def _fallback_different_language(left: str, right: str) -> bool:
@@ -1939,13 +1948,13 @@ class ASRData:
                 left_family = _line_family(non_empty[0])
                 right_family = _line_family(non_empty[1])
                 if (
-                    left_family == "cjk"
+                    left_family == "chinese"
                     and right_family == "other"
                     and re.search(r"\d", non_empty[1])
                 ):
                     return non_empty[1], non_empty[0]
                 if (
-                    right_family == "cjk"
+                    right_family == "chinese"
                     and left_family == "other"
                     and re.search(r"\d", non_empty[0])
                 ):
@@ -1967,7 +1976,12 @@ class ASRData:
                 right_family = _group_family(right)
 
                 score = 0
-                if {left_family, right_family} == {"cjk", "latin"}:
+                if "chinese" in {left_family, right_family} and left_family != right_family:
+                    score = 100
+                elif "latin" in {left_family, right_family} and (
+                    {left_family, right_family} & {"japanese", "korean"}
+                ):
+                    # Preserve the existing English + CJK behavior.
                     score = 100
                 elif (
                     left_family != right_family
@@ -1998,7 +2012,14 @@ class ASRData:
             left_text = "\n".join(non_empty[:split_index]).strip()
             right_text = "\n".join(non_empty[split_index:]).strip()
 
-            if {left_family, right_family} == {"cjk", "latin"}:
+            if "chinese" in {left_family, right_family} and left_family != right_family:
+                if left_family == "chinese":
+                    return right_text, left_text
+                return left_text, right_text
+
+            if "latin" in {left_family, right_family} and (
+                {left_family, right_family} & {"japanese", "korean"}
+            ):
                 if left_family == "latin":
                     return left_text, right_text
                 return right_text, left_text

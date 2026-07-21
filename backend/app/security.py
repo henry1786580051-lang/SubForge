@@ -1,3 +1,4 @@
+import tempfile
 from pathlib import Path
 
 
@@ -11,7 +12,7 @@ def _get_allowed_roots() -> list[Path]:
         p = home / subdir
         if p.exists():
             roots.append(p.resolve())
-    roots.append(Path("/tmp").resolve())
+    roots.append(Path(tempfile.gettempdir()).resolve())
     return roots
 
 

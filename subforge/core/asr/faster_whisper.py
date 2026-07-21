@@ -1,52 +1,157 @@
+"""Direct FasterWhisper/CTranslate2 ASR implementation."""
+
+from __future__ import annotations
+
+import ctypes
 import hashlib
+import logging
 import os
-import re
-import shutil
-import subprocess
+import platform
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Union
 
-try:
-    import GPUtil
-except ImportError:
-    GPUtil = None  # type: ignore[assignment]
-
-from ..utils.logger import setup_logger
-from ..utils.subprocess_helper import StreamReader
-from .asr_data import ASRData, ASRDataSeg
+from .asr_data import ASRDataSeg
 from .base import BaseASR
 from .status import ASRStatus
 
-logger = setup_logger("faster_whisper")
+logger = logging.getLogger(__name__)
+_CUDA_DLL_DIRECTORY_HANDLES: list[Any] = []
+
+
+def _candidate_cuda_runtime_dirs() -> list[Path]:
+    candidates: list[Path] = []
+    configured = os.environ.get("SUBFORGE_CUDA_RUNTIME_DIR", "").strip()
+    if configured:
+        candidates.append(Path(configured).expanduser())
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(getattr(sys, "_MEIPASS", "")) / "cuda")
+
+    if platform.system() == "Windows":
+        program_files = Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
+        toolkit_root = program_files / "NVIDIA GPU Computing Toolkit" / "CUDA"
+        if toolkit_root.is_dir():
+            candidates.extend(
+                path / "bin"
+                for path in sorted(toolkit_root.glob("v*"), reverse=True)
+            )
+        home = Path.home()
+        for distribution in ("anaconda3", "miniconda3", "miniforge3"):
+            envs = home / distribution / "envs"
+            if envs.is_dir():
+                candidates.extend(
+                    env / "Lib" / "site-packages" / "torch" / "lib"
+                    for env in envs.iterdir()
+                    if env.is_dir()
+                )
+    return candidates
+
+
+def _prepare_cuda_runtime() -> None:
+    if platform.system() != "Windows" or not hasattr(os, "add_dll_directory"):
+        return
+    if _CUDA_DLL_DIRECTORY_HANDLES:
+        return
+    for directory in _candidate_cuda_runtime_dirs():
+        if not all(
+            (directory / name).is_file()
+            for name in ("cublas64_12.dll", "cudnn64_9.dll")
+        ):
+            continue
+        try:
+            _CUDA_DLL_DIRECTORY_HANDLES.append(os.add_dll_directory(str(directory)))
+            logger.info("Using private FasterWhisper CUDA runtime from %s", directory)
+            return
+        except OSError:
+            continue
+
+
+def is_faster_whisper_cuda_available() -> bool:
+    """Return whether CTranslate2 can actually load its CUDA dependencies."""
+    if platform.system() == "Darwin":
+        return False
+
+    _prepare_cuda_runtime()
+    libraries = (
+        ("cublas64_12.dll", "cudnn64_9.dll")
+        if platform.system() == "Windows"
+        else ("libcublas.so.12", "libcudnn.so.9")
+    )
+    loader = ctypes.WinDLL if platform.system() == "Windows" else ctypes.CDLL
+    try:
+        handles = [loader(name) for name in libraries]
+        import ctranslate2
+
+        return ctranslate2.get_cuda_device_count() > 0
+    except (ImportError, OSError):
+        return False
+    finally:
+        # Keep explicit references until after CTranslate2 probes the device.
+        if "handles" in locals():
+            del handles
+
+
+def resolve_faster_whisper_runtime(
+    device: str | None, compute_type: str | None
+) -> tuple[str, str]:
+    """Choose a runnable CTranslate2 device and compatible compute type."""
+    requested_device = (device or "auto").strip().lower()
+    if requested_device not in {"auto", "cpu", "cuda"}:
+        requested_device = "auto"
+
+    cuda_available = is_faster_whisper_cuda_available()
+    resolved_device = (
+        "cuda"
+        if requested_device in {"auto", "cuda"} and cuda_available
+        else "cpu"
+    )
+    if requested_device == "cuda" and resolved_device == "cpu":
+        logger.warning(
+            "FasterWhisper CUDA runtime is incomplete; falling back to CPU"
+        )
+
+    resolved_compute = (compute_type or "default").strip().lower()
+    if resolved_compute == "default":
+        resolved_compute = "float16" if resolved_device == "cuda" else "int8"
+    elif resolved_device == "cpu" and resolved_compute == "float16":
+        resolved_compute = "int8"
+    return resolved_device, resolved_compute
+
+
+def is_faster_whisper_model_dir(path: str | Path) -> bool:
+    """Return whether a CTranslate2 Whisper model directory is complete."""
+    model_dir = Path(path).expanduser()
+    required = {
+        "config.json": 100,
+        "model.bin": 1024 * 1024,
+        "tokenizer.json": 1024,
+    }
+    return model_dir.is_dir() and all(
+        (model_dir / name).is_file() and (model_dir / name).stat().st_size >= minimum
+        for name, minimum in required.items()
+    )
 
 
 class FasterWhisperASR(BaseASR):
-    """Faster-Whisper local ASR implementation.
-
-    Runs whisper model locally using faster-whisper/faster-whisper-xxl binary.
-    Supports CPU/CUDA acceleration and various VAD methods.
-    """
+    """Run FasterWhisper directly through its packaged Python runtime."""
 
     def __init__(
         self,
         audio_input: Union[str, bytes],
-        faster_whisper_program: str,
-        whisper_model: str,
-        model_dir: str,
+        faster_whisper_program: str = "",
+        whisper_model: str = "base",
+        model_dir: str = "",
         language: str = "zh",
         device: str = "cpu",
         output_dir: Optional[str] = None,
         output_format: str = "srt",
         use_cache: bool = False,
         need_word_time_stamp: bool = False,
-        # VAD 相关参数
         vad_filter: bool = True,
         vad_threshold: float = 0.4,
-        vad_method: str = "",  # https://github.com/Purfview/whisper-standalone-win/discussions/231
-        # 音频处理
+        vad_method: str = "",
         ff_mdx_kim2: bool = False,
-        # 文本处理参数
         one_word: int = 0,
         sentence: bool = False,
         max_line_width: int = 100,
@@ -57,298 +162,138 @@ class FasterWhisperASR(BaseASR):
         compute_type: str = "default",
     ):
         super().__init__(audio_input, use_cache)
-
-        # 基本参数
-        self.model_path = whisper_model
+        self.model_path = self._resolve_model_path(whisper_model, model_dir)
         self.model_dir = model_dir
-        self.faster_whisper_program = faster_whisper_program
-        self.need_word_time_stamp = need_word_time_stamp
         self.language = language
-        self.device = device
-        self.output_dir = output_dir
-        self.output_format = output_format
-
-        # VAD 参数
+        self.device, self.compute_type = resolve_faster_whisper_runtime(
+            device, compute_type
+        )
+        self.need_word_time_stamp = need_word_time_stamp
         self.vad_filter = vad_filter
         self.vad_threshold = vad_threshold
-        self.vad_method = vad_method
-
-        # 音频处理参数
-        self.ff_mdx_kim2 = ff_mdx_kim2
-
-        # 文本处理参数
-        self.one_word = one_word
-        self.sentence = sentence
-        self.max_line_width = max_line_width
-        self.max_line_count = max_line_count
-        self.max_comma = max_comma
-        self.max_comma_cent = max_comma_cent
         self.prompt = prompt
+        self.ff_mdx_kim2 = ff_mdx_kim2
+        # Retained for backwards-compatible construction; the packaged app no
+        # longer depends on an external faster-whisper-xxl executable.
+        self.faster_whisper_program = faster_whisper_program
 
-        # Apple Silicon / 性能优化
-        self.compute_type = compute_type
-
-        self.process = None
-
-        # 断句宽度
-        if self.language in ["zh", "ja", "ko"]:
-            self.max_line_width = 30
+    @staticmethod
+    def _resolve_model_path(whisper_model: str, model_dir: str) -> Path:
+        configured = Path(whisper_model).expanduser()
+        if is_faster_whisper_model_dir(configured):
+            return configured
+        if model_dir:
+            models_root = Path(model_dir).expanduser()
         else:
-            self.max_line_width = 90
+            from subforge.config import MODEL_PATH
 
-        # 断句选项
-        if self.need_word_time_stamp:
-            self.one_word = 1
-        else:
-            self.one_word = 0
-            self.sentence = True
-
-        # 根据设备选择程序
-        if self.device == "cpu":
-            if shutil.which("faster-whisper-xxl"):
-                self.faster_whisper_program = "faster-whisper-xxl"
-            else:
-                if not shutil.which("faster-whisper"):
-                    raise EnvironmentError("faster-whisper program not found，请确保已经下载。")
-                self.faster_whisper_program = "faster-whisper"
-                self.vad_method = ""
-        elif self.device == "cuda":
-            if not shutil.which("faster-whisper-xxl"):
-                raise EnvironmentError(
-                    "faster-whisper-xxl 程序未找到，请确保已经下载。"
-                )
-            self.faster_whisper_program = "faster-whisper-xxl"
-
-    def _build_command(self, audio_input: str) -> List[str]:
-        """Build command line arguments for faster-whisper."""
-
-        cmd = [
-            str(self.faster_whisper_program),
-            "-m",
-            str(self.model_path),
-            # "--verbose", "true",
-            "--print_progress",
-        ]
-
-        # 添加模型目录参数
-        if self.model_dir:
-            cmd.extend(["--model_dir", str(self.model_dir)])
-
-        cmd.extend([str(audio_input), "-d", self.device, "--output_format", self.output_format])
-
-        # 有指定语言才传 -l，空字符串让 faster-whisper 自动检测
-        if self.language:
-            cmd.extend(["-l", self.language])
-
-        # 输出目录
-        if self.output_dir:
-            cmd.extend(["-o", str(self.output_dir)])
-        else:
-            cmd.extend(["-o", "source"])
-
-        # VAD 相关参数
-        if self.vad_filter:
-            cmd.extend(
-                [
-                    "--vad_filter",
-                    "true",
-                    "--vad_threshold",
-                    f"{self.vad_threshold:.2f}",
-                ]
-            )
-            if self.vad_method:
-                cmd.extend(["--vad_method", self.vad_method])
-        else:
-            cmd.extend(["--vad_filter", "false"])
-
-        # 人声分离
-        if self.ff_mdx_kim2 and self.faster_whisper_program.startswith(
-            "faster-whisper-xxl"
-        ):
-            cmd.append("--ff_mdx_kim2")
-
-        # 文本处理参数
-        if self.one_word:
-            self.one_word = 1
-        else:
-            self.one_word = 0
-        if self.one_word in [0, 1, 2]:
-            cmd.extend(["--one_word", str(self.one_word)])
-
-        if self.sentence:
-            cmd.extend(
-                [
-                    "--sentence",
-                    "--max_line_width",
-                    str(self.max_line_width),
-                    "--max_line_count",
-                    str(self.max_line_count),
-                    "--max_comma",
-                    str(self.max_comma),
-                    "--max_comma_cent",
-                    str(self.max_comma_cent),
-                ]
-            )
-
-        # 提示词
-        if self.prompt:
-            cmd.extend(["--initial_prompt", self.prompt])
-
-        # 完成的提示音
-        cmd.extend(["--beep_off"])
-
-        # Compute type: user config > auto-detect RTX 50
-        if self.compute_type and self.compute_type != "default":
-            cmd.extend(["--compute_type", self.compute_type])
-        elif is_rtx_50_series():
-            cmd.extend(["--compute_type", "float16"])
-
-        return cmd
-
-    def _make_segments(self, resp_data: str) -> List[ASRDataSeg]:
-        asr_data = ASRData.from_srt(resp_data)
-
-        # 幻觉文本关键词列表
-        hallucination_keywords = [
-            "请不吝点赞 订阅 转发",
-            "打赏支持明镜",
-        ]
-        # 过滤掉音乐标记和幻觉文本
-        filtered_segments = []
-        for seg in asr_data.segments:
-            text = seg.text.strip()
-
-            # 跳过音乐标记
-            if text.startswith(("【", "[", "(", "（")):
-                continue
-
-            # 跳过包含幻觉关键词的文本
-            if any(keyword in text for keyword in hallucination_keywords):
-                continue
-
-            filtered_segments.append(seg)
-
-        return filtered_segments
+            models_root = MODEL_PATH
+        managed = models_root / f"faster-whisper-{whisper_model}"
+        if is_faster_whisper_model_dir(managed):
+            return managed
+        raise RuntimeError(
+            f"FasterWhisper model '{whisper_model}' is not downloaded or is incomplete. "
+            "Download the CTranslate2 model in ASR settings; Whisper.cpp GGML .bin "
+            "files are not compatible with FasterWhisper."
+        )
 
     def _run(
         self, callback: Optional[Callable[[int, str], None]] = None, **kwargs: Any
-    ) -> str:
-        def _default_callback(x, y):
-            pass
+    ) -> list[dict[str, Any]]:
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError as exc:
+            raise RuntimeError(
+                "The FasterWhisper runtime is missing from this installation."
+            ) from exc
 
         if callback is None:
-            callback = _default_callback
-
-        with tempfile.TemporaryDirectory() as temp_path:
-            temp_dir = Path(temp_path)
-            wav_path = temp_dir / "audio.wav"
-            output_path = wav_path.with_suffix(".srt")
-
-            if isinstance(self.audio_input, str):
-                shutil.copy2(self.audio_input, wav_path)
-            else:
-                if self.file_binary:
-                    wav_path.write_bytes(self.file_binary)
-                else:
-                    raise ValueError("No audio data available")
-
-            cmd = self._build_command(str(wav_path))
-
-            logger.debug("Faster Whisper command: %s", " ".join(cmd))
-            callback(*ASRStatus.TRANSCRIBING.with_progress(5))
-
-            self.process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="ignore",
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            def callback(_progress: int, _message: str) -> None:
+                return None
+        if self.ff_mdx_kim2:
+            logger.warning(
+                "FF-MDX Kim2 is an external faster-whisper-xxl feature and is ignored "
+                "by the built-in FasterWhisper runtime"
             )
 
-            # 使用 StreamReader 处理输出
-            reader = StreamReader(self.process)
-            reader.start_reading()
+        callback(*ASRStatus.TRANSCRIBING.with_progress(5))
+        with tempfile.TemporaryDirectory() as temp_path:
+            if isinstance(self.audio_input, str):
+                audio_path = self.audio_input
+            else:
+                audio_file = Path(temp_path) / "audio.wav"
+                audio_file.write_bytes(self.file_binary or b"")
+                audio_path = str(audio_file)
 
-            is_finish = False
-            error_msg = ""
-            last_progress = 0
+            model = WhisperModel(
+                str(self.model_path),
+                device=self.device,
+                compute_type=self.compute_type,
+                local_files_only=True,
+            )
+            segments, info = model.transcribe(
+                audio_path,
+                language=self.language or None,
+                beam_size=5,
+                vad_filter=self.vad_filter,
+                vad_parameters={"threshold": self.vad_threshold},
+                word_timestamps=self.need_word_time_stamp,
+                initial_prompt=self.prompt or None,
+            )
+            duration = max(float(getattr(info, "duration", 0.0) or 0.0), 0.01)
+            output: list[dict[str, Any]] = []
+            for segment in segments:
+                words = list(getattr(segment, "words", None) or [])
+                if self.need_word_time_stamp and words:
+                    for word in words:
+                        text = str(getattr(word, "word", "")).strip()
+                        if text:
+                            output.append(
+                                {
+                                    "text": text,
+                                    "start": float(getattr(word, "start", segment.start)),
+                                    "end": float(getattr(word, "end", segment.end)),
+                                }
+                            )
+                else:
+                    text = str(getattr(segment, "text", "")).strip()
+                    if text:
+                        output.append(
+                            {
+                                "text": text,
+                                "start": float(segment.start),
+                                "end": float(segment.end),
+                            }
+                        )
+                progress = min(99, 5 + int(float(segment.end) / duration * 90))
+                callback(progress, f"{progress}%")
 
-            # 实时处理输出
-            while True:
-                # 检查进程状态
-                if self.process.poll() is not None:
-                    # 进程已ended，Reading剩余输出
-                    for stream_name, line in reader.get_remaining_output():
-                        line = line.strip()
-                        if line:
-                            if "error" in line:
-                                error_msg += line
-                            else:
-                                logger.debug(line)
-                    break
+        if not output:
+            raise RuntimeError("FasterWhisper returned no transcription segments")
+        callback(*ASRStatus.COMPLETED.callback_tuple())
+        return output
 
-                # Reading输出
-                output = reader.get_output(timeout=0.1)
-                if output:
-                    stream_name, line = output
-                    line = line.strip()
-                    if line:
-                        # 解析进度百分比
-                        if match := re.search(r"(\d+)%", line):
-                            progress = int(match.group(1))
-                            if progress == 100:
-                                is_finish = True
-                            mapped_progress = int(5 + (progress * 0.9))
-                            # 只允许进度单调递增
-                            if mapped_progress > last_progress:
-                                last_progress = mapped_progress
-                                callback(mapped_progress, f"{mapped_progress}%")
-                        if "Subtitles are written to" in line:
-                            is_finish = True
-                            callback(*ASRStatus.COMPLETED.callback_tuple())
-                        if "error" in line or "Error" in line:
-                            error_msg += line
-                            logger.error(line)
-                        else:
-                            logger.debug(line)
+    def _make_segments(self, resp_data: list[dict[str, Any]]) -> List[ASRDataSeg]:
+        return [
+            ASRDataSeg(
+                text=str(item["text"]).strip(),
+                start_time=max(0, round(float(item["start"]) * 1000)),
+                end_time=max(1, round(float(item["end"]) * 1000)),
+            )
+            for item in resp_data
+            if str(item.get("text", "")).strip()
+            and float(item.get("end", 0)) > float(item.get("start", 0))
+        ]
 
-            if not is_finish:
-                logger.error("Faster Whisper Error: %s", error_msg)
-                raise RuntimeError(error_msg)
-
-            # 判断是否识别成功
-            if not output_path.exists():
-                logger.debug("Faster Whisper 返回值: %s", self.process.returncode)
-                raise RuntimeError(f"Faster Whisper 输出文件不存在: {output_path}")
-
-            logger.debug("Faster Whisper ASR completed")
-
-            callback(*ASRStatus.COMPLETED.callback_tuple())
-
-            return output_path.read_text(encoding="utf-8")
-
-    def _get_key(self):
-        """获取缓存key"""
-        cmd = self._build_command("")
-        cmd_hash = hashlib.md5(str(cmd).encode()).hexdigest()
-        return f"{self.crc32_hex}-{cmd_hash}"
-
-
-def is_rtx_50_series() -> bool:
-    """检测是否为 RTX 50 系显卡"""
-    if GPUtil is None:
-        logger.debug("GPUtil 未安装，无法检测 GPU 型号")
-        return False
-    try:
-        gpus = GPUtil.getGPUs()
-        for gpu in gpus:
-            gpu_name = gpu.name.lower()
-            # 检测是否包含 50 系列标识，如 RTX 5090, RTX 5080 等
-            if re.search(r"rtx\s*50\d{2}", gpu_name):
-                logger.debug(f"Detected RTX 50 系显卡: {gpu.name}")
-                return True
-    except Exception as e:
-        logger.debug(f"无法检测 GPU 型号: {e}")
-    return False
+    def _get_key(self) -> str:
+        settings = (
+            str(self.model_path.resolve()),
+            self.language,
+            self.device,
+            self.compute_type,
+            self.vad_filter,
+            self.vad_threshold,
+            self.need_word_time_stamp,
+            self.prompt,
+        )
+        return f"{self.crc32_hex}-{hashlib.sha256(repr(settings).encode()).hexdigest()}"

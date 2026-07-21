@@ -155,7 +155,7 @@ uv sync --extra whisperx --extra denoise
 PYTHONPATH=backend uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Windows/Linux 或只使用云端 Whisper API 时，可将安装命令简化为 `uv sync`。
+Windows/Linux 或只使用云端 Whisper API 时，可将安装命令简化为 `uv sync`。如需本地 FasterWhisper，使用 `uv sync --extra faster-whisper`；如需多人语音识别，再加 `--extra diarization`。说话人分离可与 Whisper.cpp、FasterWhisper、Whisper API 或 Apple Silicon 上的 WhisperX/MLX 转录组合使用。Whisper.cpp 的单个 `ggml-*.bin` 与 FasterWhisper 的 CTranslate2 模型目录格式不同，不能混用。
 
 另开一个终端启动前端：
 
@@ -228,7 +228,7 @@ MiniMax 推荐 Base URL 为 `https://api.minimaxi.com/anthropic`。SubForge 会�
 | WhisperX Alignment | 独立管理 forced alignment 模型，用于英语等语言的词级对齐 |
 | Whisper.cpp | 备用本地转录通道，适合已有 ggml 模型的用户 |
 | Whisper API | 云端转录，配置简单 |
-| pyannote Community-1 | 多人模式；需先获得模型访问权限并在设置页下载到本地模型目录 |
+| pyannote Community-1 | 跨平台多人模式，可搭配任一 ASR 引擎；需先获得模型访问权限并在设置页下载到本地模型目录 |
 
 ## 项目结构
 

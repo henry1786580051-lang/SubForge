@@ -57,10 +57,18 @@ denoise = [
     "torch==2.8.0",
     "torchaudio==2.8.0",
 ]
+faster-whisper = [
+    "faster-whisper>=1.2,<2",
+]
 whisperx = [
     "mlx-whisper>=0.4.2; platform_system == 'Darwin' and platform_machine == 'arm64'",
     "whisperx>=3.8.6,<3.9.0",
     "pyannote.audio>=4.0,<5",
+    "transformers>=4.37,<5",
+]
+diarization = [
+    "pyannote.audio>=4.0,<5",
+    "soundfile>=0.12.1,<0.13",
     "transformers>=4.37,<5",
 ]
 
@@ -136,6 +144,7 @@ dev = [
     "psutil>=7.0.0",
     "GPUtil>=1.4.0",
     "pyinstaller>=6.20.0",
+    "static-ffmpeg>=3.0",
     "dmgbuild>=1.6.7",
 ]
 

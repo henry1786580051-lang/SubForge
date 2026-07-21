@@ -8,6 +8,7 @@ import functools
 import hashlib
 import json
 import sqlite3
+import tempfile
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
@@ -39,11 +40,11 @@ def is_cache_enabled() -> bool:
 
 def _open_cache(name: str, **kwargs: Any) -> Cache:
     cache_dir = Path(CACHE_PATH) / name
-    cache_dir.mkdir(parents=True, exist_ok=True)
     try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
         return Cache(str(cache_dir), **kwargs)
-    except sqlite3.OperationalError:
-        fallback_dir = Path("/private/tmp") / "SubForge" / "cache" / name
+    except (OSError, sqlite3.OperationalError):
+        fallback_dir = Path(tempfile.gettempdir()) / "SubForge" / "cache" / name
         fallback_dir.mkdir(parents=True, exist_ok=True)
         return Cache(str(fallback_dir), **kwargs)
 

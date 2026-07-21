@@ -4,7 +4,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 
 import app.api.config as config_module
-from app.api.subtitle import SubtitleRequest, _run_subtitle
+from app.api.subtitle import SubtitleRequest, _result_path, _run_subtitle
 from app.api.subtitles import parse_srt
 from app.core.task_manager import task_manager
 
@@ -18,6 +18,22 @@ def test_subtitle_request_does_not_default_to_stale_llm_model():
     req = SubtitleRequest(subtitle_file="/tmp/example.srt")
 
     assert req.llm_model == ""
+
+
+def test_uploaded_subtitle_result_uses_persistent_work_dir(tmp_path, monkeypatch):
+    import app.api.files as files_module
+    import subforge.config as subforge_config
+
+    upload_root = tmp_path / "uploads"
+    work_root = tmp_path / "work"
+    source = upload_root / "session-test" / "input.srt"
+    source.parent.mkdir(parents=True)
+    work_root.mkdir()
+    source.write_text("", encoding="utf-8")
+    monkeypatch.setattr(files_module, "UPLOAD_ROOT", upload_root)
+    monkeypatch.setattr(subforge_config, "WORK_PATH", work_root)
+
+    assert _result_path(str(source), "_processed") == work_root / "input_processed.srt"
 
 
 def test_backend_parse_srt_preserves_bilingual_fields():
@@ -157,9 +173,27 @@ def test_subtitle_pipeline_cleans_chinese_translation_punctuation(tmp_path, monk
         )
     )
 
-    output = subtitle_path.with_stem("input_processed").read_text(encoding="utf-8")
+    output = subtitle_path.with_stem("input_bilingual").read_text(encoding="utf-8")
     assert "你好 世界" in output
     assert "Hello, world." in output
+    original = subtitle_path.with_stem("input_original").read_text(encoding="utf-8")
+    translated = subtitle_path.with_stem("input_translated").read_text(encoding="utf-8")
+    assert "Hello, world." in original
+    assert "你好 世界" not in original
+    assert "你好 世界" in translated
+    assert "Hello, world." not in translated
+    completed = task_manager.get_task(task.id)
+    assert completed is not None
+    assert completed.result is not None
+    assert completed.result["segments"] == [
+        {
+            "id": 1,
+            "start": "00:00:00,000",
+            "end": "00:00:01,000",
+            "text": "Hello, world.",
+            "translated": "你好 世界",
+        }
+    ]
 
 
 def test_subtitle_pipeline_hides_speaker_markers_in_final_output(tmp_path, monkeypatch):
@@ -214,7 +248,7 @@ def test_subtitle_pipeline_hides_speaker_markers_in_final_output(tmp_path, monke
         )
     )
 
-    output = subtitle_path.with_stem("input_processed").read_text(encoding="utf-8")
+    output = subtitle_path.with_stem("input_bilingual").read_text(encoding="utf-8")
     assert "Speaker 1" not in output
     assert not any(line.startswith("- ") for line in output.splitlines())
     assert "你好世界" in output
@@ -281,7 +315,7 @@ def test_subtitle_pipeline_does_not_split_bilingual_cues_after_translation(
         )
     )
 
-    output_path = subtitle_path.with_stem("input_processed")
+    output_path = subtitle_path.with_stem("input_bilingual")
     output = output_path.read_text(encoding="utf-8")
     assert output.count(" --> ") == 1
     assert source in output

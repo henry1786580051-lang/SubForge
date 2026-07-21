@@ -18,6 +18,28 @@ logger = logging.getLogger(__name__)
 _background_tasks: set[asyncio.Task] = set()
 
 
+def _result_path(input_file: str, suffix: str, configured_work_dir: str = "") -> Path:
+    """Choose a durable destination for generated subtitles."""
+    source = Path(input_file).resolve()
+    output_dir = source.parent
+
+    if configured_work_dir.strip():
+        output_dir = validate_path(configured_work_dir.strip())
+        if not output_dir.is_dir():
+            raise RuntimeError("Configured output folder does not exist")
+    else:
+        from app.api.files import UPLOAD_ROOT
+
+        # Desktop uploads are session-scoped and deleted on application exit.
+        if source.is_relative_to(UPLOAD_ROOT.resolve()):
+            from subforge.config import WORK_PATH
+
+            output_dir = WORK_PATH.resolve()
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir / f"{source.stem}{suffix}.srt"
+
+
 def _preview_segments(data) -> list[dict]:
     from subforge.core.translate.base import BaseTranslator
 
@@ -383,26 +405,47 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
 
         # Save result
         task_manager.update_progress(task_id, 97, "Saving result...")
-        output_path = (
-            Path(req.subtitle_file)
-            .with_stem(Path(req.subtitle_file).stem + "_processed")
-            .with_suffix(".srt")
-        )
+        configured_work_dir = str(get_config_value("work_dir", "") or "")
+        output_paths = {
+            "original": _result_path(req.subtitle_file, "_original", configured_work_dir),
+            "translated": _result_path(req.subtitle_file, "_translated", configured_work_dir),
+            "bilingual": _result_path(req.subtitle_file, "_bilingual", configured_work_dir),
+        }
 
         from subforge.core.entities import SubtitleLayoutEnum
 
-        layout = SubtitleLayoutEnum.TRANSLATE_ON_TOP  # Chinese on top, English on bottom
         _raise_if_cancelled(task_id)
-        await run_blocking(
-            lambda: asr_data.save(
-                str(output_path),
-                layout=layout,
+
+        def _save_completed_outputs() -> None:
+            asr_data.save(
+                str(output_paths["original"]),
+                layout=SubtitleLayoutEnum.ONLY_ORIGINAL,
                 speaker_style="none",
             )
-        )
+            asr_data.save(
+                str(output_paths["translated"]),
+                layout=SubtitleLayoutEnum.ONLY_TRANSLATE,
+                speaker_style="none",
+            )
+            asr_data.save(
+                str(output_paths["bilingual"]),
+                layout=SubtitleLayoutEnum.TRANSLATE_ON_TOP,
+                speaker_style="none",
+            )
+
+        await run_blocking(_save_completed_outputs)
 
         task_manager.update_progress(task_id, 100, "Done")
-        task_manager.complete_task(task_id, {"subtitle_file": str(output_path)})
+        task_manager.complete_task(
+            task_id,
+            {
+                "subtitle_file": str(output_paths["bilingual"]),
+                "subtitle_files": {
+                    name: str(path) for name, path in output_paths.items()
+                },
+                "segments": _preview_segments(asr_data),
+            },
+        )
 
     except asyncio.CancelledError:
         logger.info("Subtitle task %s cancelled", task_id)
@@ -418,10 +461,10 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
                     get_config_value("replace_chinese_punctuation", True)
                 ):
                     asr_data.replace_chinese_translation_punctuation()
-                recovery_path = (
-                    Path(req.subtitle_file)
-                    .with_stem(Path(req.subtitle_file).stem + "_recovery")
-                    .with_suffix(".srt")
+                recovery_path = _result_path(
+                    req.subtitle_file,
+                    "_recovery",
+                    str(get_config_value("work_dir", "") or ""),
                 )
                 from subforge.core.entities import SubtitleLayoutEnum
 

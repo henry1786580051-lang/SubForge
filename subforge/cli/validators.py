@@ -4,6 +4,7 @@ Each validator checks that required config/dependencies are available
 BEFORE starting the actual task, so users get clear error messages upfront.
 """
 
+import importlib.util
 import shutil
 from pathlib import Path
 
@@ -128,11 +129,10 @@ def validate_ffmpeg() -> bool:
 
 
 def validate_faster_whisper() -> bool:
-    """Check that FasterWhisper executable is available."""
-    if not shutil.which("faster-whisper-xxl") and not shutil.which("faster-whisper") and not shutil.which("faster_whisper"):
-        output.error("FasterWhisper not found on PATH")
-        output.hint("Download from the GUI (Settings > FasterWhisper), or install manually.")
-        output.hint("See: https://github.com/Purfview/whisper-standalone-win")
+    """Check that the direct FasterWhisper Python runtime is available."""
+    if importlib.util.find_spec("faster_whisper") is None:
+        output.error("FasterWhisper Python runtime is not installed")
+        output.hint("Install SubForge with the 'faster-whisper' extra.")
         return False
     return True
 

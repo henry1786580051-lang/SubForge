@@ -2,7 +2,6 @@ import asyncio
 import importlib.util
 import logging
 import platform
-import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -14,6 +13,11 @@ from pydantic import BaseModel, Field
 from app.core.blocking import run_blocking
 from app.core.task_manager import task_manager
 from app.security import validate_path
+from subforge.core.asr.faster_whisper import (
+    is_faster_whisper_cuda_available,
+    is_faster_whisper_model_dir,
+)
+from subforge.core.asr.speaker_diarization import is_diarization_model_dir
 from subforge.core.asr.whisperx_asr import (
     MLX_WHISPER_MODELS,
     is_valid_mlx_model_dir,
@@ -92,7 +96,8 @@ def detect_hardware() -> dict:
             result["n_threads"] = 8
             result["compute_type"] = "int8"
     else:
-        # Check for NVIDIA GPU
+        # nvidia-smi only proves that a driver is installed. FasterWhisper also
+        # needs loadable CUDA 12 cuBLAS and cuDNN 9 libraries.
         try:
             out = subprocess.check_output(
                 ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
@@ -100,9 +105,15 @@ def detect_hardware() -> dict:
                 timeout=5,
             ).strip()
             result["gpu"] = out.split("\n")[0]
-            result["device"] = "cuda"
-            result["n_threads"] = 4
-            result["compute_type"] = "float16"
+            if is_faster_whisper_cuda_available():
+                result["device"] = "cuda"
+                result["n_threads"] = 4
+                result["compute_type"] = "float16"
+            else:
+                import os
+
+                result["n_threads"] = os.cpu_count() or 4
+                result["compute_type"] = "int8"
         except Exception:
             import os
 
@@ -151,6 +162,26 @@ WHISPER_CPP_MODELS = {
     },
 }
 
+FASTER_WHISPER_MODELS = {
+    model_id: {
+        "name": f"FasterWhisper {model_id}",
+        "category": "faster_whisper",
+        "type": "ctranslate2",
+        "dirname": f"faster-whisper-{model_id}",
+        "size": size,
+    }
+    for model_id, size in {
+        "tiny": "75MB",
+        "base": "148MB",
+        "small": "486MB",
+        "medium": "1.5GB",
+        "large-v1": "3.1GB",
+        "large-v2": "3.1GB",
+        "large-v3": "3.1GB",
+        "large-v3-turbo": "1.7GB",
+    }.items()
+}
+
 WHISPERX_MODELS = {
     "whisperx-align-en-large": {
         "name": "English Large LV60K Alignment",
@@ -170,9 +201,10 @@ DIARIZATION_MODELS = {
         "type": "diarization",
         "repo": "pyannote/speaker-diarization-community-1",
         "dirname": "pyannote-speaker-diarization-community-1",
-        "size": "约 1.2GB",
+        "size": "约 34MB",
     },
 }
+
 
 MLX_MODEL_SIZES = {
     "tiny": "75MB",
@@ -385,7 +417,15 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
                 if not work_dir.is_dir():
                     raise RuntimeError("Configured output folder does not exist")
             else:
-                work_dir = PathLib(req.file_path).parent
+                source_path = PathLib(req.file_path).resolve()
+                from app.api.files import UPLOAD_ROOT
+
+                if source_path.is_relative_to(UPLOAD_ROOT.resolve()):
+                    from subforge.config import WORK_PATH
+
+                    work_dir = WORK_PATH.resolve()
+                else:
+                    work_dir = source_path.parent
             subtitle_path = work_dir / f"{video_stem}.srt"
             _raise_if_cancelled(task_id)
             result.save(str(subtitle_path))
@@ -540,16 +580,27 @@ def _current_model_status() -> dict:
             }
         )
     elif engine == "faster_whisper":
-        program = shutil.which("faster-whisper-xxl") or shutil.which("faster-whisper") or ""
+        model_path = models_dir / FASTER_WHISPER_MODELS.get(
+            model_value, FASTER_WHISPER_MODELS["base"]
+        )["dirname"]
+        model_ready = is_faster_whisper_model_dir(model_path)
+        runtime_ready = importlib.util.find_spec("faster_whisper") is not None
+        ready = model_ready and runtime_ready
         status.update(
             {
+                "model_id": f"faster-whisper-{model_value}",
                 "model_name": f"FasterWhisper {model_value}",
-                "resolved_model": model_value,
-                "model_ready": bool(program),
-                "model_state": "ready" if program else "missing",
-                "model_message": "运行程序已就绪" if program else "未找到 faster-whisper 程序",
-                "runtime_ready": bool(program),
-                "testable": bool(program),
+                "resolved_model": str(model_path),
+                "model_path": str(model_path),
+                "model_ready": model_ready,
+                "model_state": "ready" if ready else "missing",
+                "model_message": (
+                    "CTranslate2 模型和 FasterWhisper 运行时均已就绪"
+                    if ready
+                    else "需要完整的 CTranslate2 模型目录和 FasterWhisper 运行时"
+                ),
+                "runtime_ready": runtime_ready,
+                "testable": ready,
             }
         )
     elif engine == "whisper_api":
@@ -659,6 +710,30 @@ async def list_whisper_models():
                 "state": "ready" if model_path.exists() else "missing",
             }
         )
+    for model_value, info in FASTER_WHISPER_MODELS.items():
+        model_path = models_dir / info["dirname"]
+        ready = is_faster_whisper_model_dir(model_path)
+        result.append(
+            {
+                "id": f"faster-whisper-{model_value}",
+                "name": info["name"],
+                "category": info["category"],
+                "type": info["type"],
+                "size": info["size"],
+                "downloaded": ready,
+                "downloadable": True,
+                "path": str(model_path),
+                "value": model_value,
+                "selected": selected_engine == "faster_whisper"
+                and selected_model == model_value,
+                "state": "ready" if ready else "missing",
+                "detail": (
+                    "本地 CTranslate2 模型已严格校验"
+                    if ready
+                    else "需要下载 FasterWhisper 专用模型；GGML .bin 不能使用"
+                ),
+            }
+        )
     for model_value, repo in MLX_WHISPER_MODELS.items():
         resolved = resolve_mlx_model(model_value)
         model_path = Path(resolved).expanduser()
@@ -710,7 +785,7 @@ async def list_whisper_models():
         )
     for model_id, info in DIARIZATION_MODELS.items():
         model_path = models_dir / info["dirname"]
-        ready = (model_path / "config.yaml").is_file()
+        ready = is_diarization_model_dir(model_path)
         result.append(
             {
                 "id": model_id,
@@ -740,6 +815,12 @@ async def download_whisper_model(req: DownloadModelRequest):
     if req.model_id in WHISPER_CPP_MODELS:
         models_dir = _get_models_dir()
         model_path = models_dir / f"ggml-{req.model_id}.bin"
+    elif req.model_id.startswith("faster-whisper-"):
+        model_value = req.model_id.removeprefix("faster-whisper-")
+        if model_value not in FASTER_WHISPER_MODELS:
+            raise HTTPException(status_code=400, detail=f"Unknown model: {req.model_id}")
+        models_dir = _get_models_dir()
+        model_path = models_dir / FASTER_WHISPER_MODELS[model_value]["dirname"]
     elif req.model_id in WHISPERX_MODELS:
         models_dir = _get_models_dir()
         model_path = models_dir / WHISPERX_MODELS[req.model_id]["filename"]
@@ -754,11 +835,12 @@ async def download_whisper_model(req: DownloadModelRequest):
     else:
         raise HTTPException(status_code=400, detail=f"Unknown model: {req.model_id}")
 
-    model_ready = (
-        (model_path / "config.yaml").is_file()
-        if req.model_id in DIARIZATION_MODELS
-        else model_path.exists()
-    )
+    if req.model_id in DIARIZATION_MODELS:
+        model_ready = is_diarization_model_dir(model_path)
+    elif req.model_id.startswith("faster-whisper-"):
+        model_ready = is_faster_whisper_model_dir(model_path)
+    else:
+        model_ready = model_path.exists()
     if model_ready:
         return {"status": "already_exists", "path": str(model_path)}
 
@@ -774,6 +856,9 @@ async def download_whisper_model(req: DownloadModelRequest):
 async def _download_model(task_id: str, model_id: str, dest: Path):
     if model_id in DIARIZATION_MODELS:
         await _download_diarization_model(task_id, model_id, dest)
+        return
+    if model_id.startswith("faster-whisper-"):
+        await _download_faster_whisper_model(task_id, model_id, dest)
         return
 
     import httpx
@@ -842,6 +927,41 @@ async def _download_model(task_id: str, model_id: str, dest: Path):
             _model_download_locks.pop(str(dest), None)
 
 
+async def _download_faster_whisper_model(task_id: str, model_id: str, dest: Path):
+    """Download the CTranslate2 snapshot required by FasterWhisper."""
+    model_value = model_id.removeprefix("faster-whisper-")
+    download_lock = _model_download_locks.setdefault(str(dest), asyncio.Lock())
+    try:
+        async with download_lock:
+            if is_faster_whisper_model_dir(dest):
+                task_manager.complete_task(task_id, {"path": str(dest)})
+                return
+            task_manager.update_progress(
+                task_id, 5, f"正在下载 FasterWhisper {model_value} CTranslate2 模型..."
+            )
+
+            def _download_snapshot():
+                from faster_whisper.utils import download_model
+
+                return download_model(model_value, output_dir=str(dest))
+
+            await run_blocking(_download_snapshot)
+            task_manager.update_progress(task_id, 95, "正在校验 CTranslate2 模型文件...")
+            if not is_faster_whisper_model_dir(dest):
+                raise RuntimeError(
+                    "下载结束，但 CTranslate2 模型不完整（需要 config.json、model.bin、tokenizer.json）"
+                )
+            task_manager.complete_task(task_id, {"path": str(dest)})
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.exception("FasterWhisper model download failed for %s", model_value)
+        task_manager.fail_task(task_id, f"FasterWhisper 模型下载失败：{exc}")
+    finally:
+        if not download_lock.locked():
+            _model_download_locks.pop(str(dest), None)
+
+
 async def _download_diarization_model(task_id: str, model_id: str, dest: Path):
     """Download a gated pyannote snapshot into the managed model folder."""
     from app.api.config import get_config_value
@@ -857,7 +977,7 @@ async def _download_diarization_model(task_id: str, model_id: str, dest: Path):
     download_lock = _model_download_locks.setdefault(str(dest), asyncio.Lock())
     try:
         async with download_lock:
-            if (dest / "config.yaml").is_file():
+            if is_diarization_model_dir(dest):
                 task_manager.complete_task(task_id, {"path": str(dest)})
                 return
             task_manager.update_progress(task_id, 5, "正在验证 Hugging Face 授权...")
@@ -872,8 +992,8 @@ async def _download_diarization_model(task_id: str, model_id: str, dest: Path):
                 )
 
             await run_blocking(_snapshot_download)
-            if not (dest / "config.yaml").is_file():
-                raise RuntimeError("下载完成但模型配置文件缺失")
+            if not is_diarization_model_dir(dest):
+                raise RuntimeError("下载完成但 Community-1 核心配置或权重文件缺失")
             task_manager.complete_task(task_id, {"path": str(dest)})
     except asyncio.CancelledError:
         raise

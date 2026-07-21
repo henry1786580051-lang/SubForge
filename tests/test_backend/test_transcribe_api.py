@@ -28,6 +28,45 @@ def test_whisper_cpp_download_urls_are_pinned_to_an_immutable_revision():
         assert transcribe_api.WHISPER_CPP_REVISION in model["url"]
 
 
+def test_faster_whisper_models_use_distinct_download_ids(tmp_path, monkeypatch):
+    values = _config_values(tmp_path)
+    values["transcribe_model"] = "faster_whisper"
+    values["whisper_model_size"] = "small"
+    monkeypatch.setattr(
+        config_module,
+        "get_config_value",
+        lambda key, default=None: values.get(key, default),
+    )
+
+    models = asyncio.run(transcribe_api.list_whisper_models())
+    model = next(item for item in models if item["id"] == "faster-whisper-small")
+
+    assert model["category"] == "faster_whisper"
+    assert model["type"] == "ctranslate2"
+    assert model["value"] == "small"
+    assert model["selected"] is True
+    assert model["downloaded"] is False
+
+
+def test_hardware_detection_requires_complete_cuda_runtime(monkeypatch):
+    monkeypatch.setattr(transcribe_api.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(transcribe_api.platform, "machine", lambda: "AMD64")
+    monkeypatch.setattr(
+        transcribe_api.subprocess,
+        "check_output",
+        lambda *_args, **_kwargs: "NVIDIA GeForce RTX\n",
+    )
+    monkeypatch.setattr(
+        transcribe_api, "is_faster_whisper_cuda_available", lambda: False
+    )
+
+    hardware = transcribe_api.detect_hardware()
+
+    assert hardware["gpu"] == "NVIDIA GeForce RTX"
+    assert hardware["device"] == "cpu"
+    assert hardware["compute_type"] == "int8"
+
+
 def test_model_status_reports_detected_local_mlx_model(tmp_path, monkeypatch):
     values = _config_values(tmp_path)
     local_model = tmp_path / "whisper-large-v3-fp16"

@@ -561,7 +561,7 @@ export function SettingsPanel() {
               )})}
             </div>
             {(settings.transcribe_model as string) === "faster_whisper" && (
-              <p className="text-[10px] text-amber-600 mt-1.5">需要 NVIDIA GPU 和 faster-whisper-xxl，macOS 上仅支持 CPU 模式（无 GPU 加速）</p>
+              <p className="text-[10px] text-amber-600 mt-1.5">已内置 FasterWhisper/CTranslate2；NVIDIA GPU 可使用 CUDA，其他设备自动使用 CPU</p>
             )}
             {(settings.transcribe_model as string) === "whisperx" && (
               <p className="text-[10px] text-emerald-600 mt-1.5">WhisperX 使用 Apple Silicon 专门优化的 MLX Whisper 转录，并通过 forced alignment 生成词级时间轴</p>
@@ -707,6 +707,7 @@ export function SettingsPanel() {
                   const isSelected = effectiveWhisperModel === m.id || Boolean(apiModel?.selected);
                   const isReady = Boolean(apiModel?.downloaded);
                   const isOnDemand = apiModel?.state === "on_demand" || Boolean((m as { onDemand?: boolean }).onDemand);
+                  const downloadId = apiModel?.id || m.id;
                   return (
                   <div key={m.id} className={`flex items-center justify-between gap-3 rounded-lg border p-3 ${isSelected ? "border-accent/40 bg-accent-dim/40" : "border-border bg-[rgba(0,0,0,0.01)]"}`}>
                     <div className="flex-1">
@@ -726,10 +727,10 @@ export function SettingsPanel() {
                         if (settings.transcribe_model === "whisperx" || isReady) {
                           void handleSave("whisper_model_size", m.id);
                         } else {
-                          void handleDownloadModel(m.id);
+                          void handleDownloadModel(downloadId);
                         }
                       }}
-                      disabled={downloadingModel === m.id || isSelected}
+                      disabled={downloadingModel === downloadId || isSelected}
                       className={`px-3 py-1.5 text-[11px] rounded-md transition-all font-medium disabled:opacity-50 ${
                         isSelected
                           ? "bg-accent text-white cursor-default"
@@ -737,10 +738,10 @@ export function SettingsPanel() {
                           ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
                           : "bg-accent-dim text-accent hover:bg-accent/15"
                       }`}>
-                      {isSelected ? "当前使用" : isReady ? "使用" : downloadingModel === m.id ? (
+                      {isSelected ? "当前使用" : isReady ? "使用" : downloadingModel === downloadId ? (
                         <span className="flex items-center gap-1.5">
                           <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" strokeDasharray="42 21" strokeLinecap="round" /></svg>
-                          {downloadProgress[m.id] != null ? `${downloadProgress[m.id]}%` : "下载中"}
+                          {downloadProgress[downloadId] != null ? `${downloadProgress[downloadId]}%` : "下载中"}
                         </span>
                       ) : settings.transcribe_model === "whisperx" ? "选择" : "下载"}
                     </button>
@@ -796,22 +797,6 @@ export function SettingsPanel() {
                 )}
             </SettingsField>
             </>
-          )}
-
-          {(settings.transcribe_model as string) === "faster_whisper" && (
-            <SettingsField label="人声分离" description="转录前使用 MDX-Net 分离人声和背景音乐，提升嘈杂环境识别准确率">
-              <div className="flex items-center gap-3">
-                <button onClick={() => handleSave("ff_mdx_kim2", !(settings.ff_mdx_kim2))}
-                  className={`relative w-10 h-[22px] rounded-full transition-all duration-200 ${
-                    settings.ff_mdx_kim2 ? "bg-accent" : "bg-[rgba(0,0,0,0.1)]"
-                  }`}>
-                  <div className={`absolute top-[3px] w-4 h-4 rounded-full bg-white shadow-sm transition-all duration-200 ${
-                    settings.ff_mdx_kim2 ? "left-[22px]" : "left-[3px]"
-                  }`} />
-                </button>
-                <span className="text-[11px] text-text-muted">{settings.ff_mdx_kim2 ? "已开启" : "关闭"}</span>
-              </div>
-            </SettingsField>
           )}
 
           <SettingsField label="默认源语言">

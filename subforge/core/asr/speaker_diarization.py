@@ -30,7 +30,17 @@ class SpeakerTurn:
 def is_diarization_model_dir(path: str | Path) -> bool:
     """Return whether a local pyannote pipeline snapshot is usable."""
     model_dir = Path(path).expanduser()
-    return model_dir.is_dir() and (model_dir / "config.yaml").is_file()
+    required = {
+        "config.yaml": 100,
+        "segmentation/pytorch_model.bin": 1024 * 1024,
+        "embedding/pytorch_model.bin": 1024 * 1024,
+        "plda/plda.npz": 1024,
+        "plda/xvec_transform.npz": 1024,
+    }
+    return model_dir.is_dir() and all(
+        (model_dir / name).is_file() and (model_dir / name).stat().st_size >= minimum
+        for name, minimum in required.items()
+    )
 
 
 def resolve_diarization_model(model: str, model_dir: str | Path | None = None) -> str:
@@ -52,7 +62,7 @@ def require_local_diarization_model(model: str, model_dir: str | Path | None = N
     if not is_diarization_model_dir(resolved):
         raise RuntimeError(
             "Speaker diarization is enabled but Community-1 is not downloaded. "
-            "Download the speaker model in WhisperX settings before transcription."
+            "Download the speaker model in ASR settings before transcription."
         )
     return resolved
 
@@ -170,7 +180,7 @@ def diarize_audio(
         from pyannote.audio import Pipeline
     except ImportError as exc:
         raise RuntimeError(
-            "Speaker diarization runtime is unavailable. Install the WhisperX "
+            "Speaker diarization runtime is unavailable. Install the diarization "
             "dependencies that include pyannote.audio."
         ) from exc
 

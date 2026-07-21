@@ -12,6 +12,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 
 def _configure_frozen_runtime_paths() -> None:
@@ -43,6 +44,8 @@ _configure_frozen_runtime_paths()
 
 HOST = "127.0.0.1"
 PREFERRED_PORT = 8000
+SOURCE_STARTUP_TIMEOUT_SECONDS = 30.0
+FROZEN_STARTUP_TIMEOUT_SECONDS = 120.0
 
 
 def find_available_port(preferred_port: int = PREFERRED_PORT) -> int:
@@ -67,6 +70,12 @@ def start_server(port: int, server_errors: list[str], server_holder: list | None
             host=HOST,
             port=port,
             log_level="warning",
+            # Uvicorn's default logging dictionary resolves formatter classes
+            # by import path. Those imports can fail in a frozen PyInstaller
+            # application even though Uvicorn itself is bundled, preventing
+            # the backend from starting. SubForge configures its own logging,
+            # so the desktop launcher does not need Uvicorn to reconfigure it.
+            log_config=None,
         )
         server = uvicorn.Server(config)
         if server_holder is not None:
@@ -103,6 +112,27 @@ def wait_for_server(url: str, server_errors: list[str], timeout_seconds: float =
         except (OSError, urllib.error.URLError):
             time.sleep(0.1)
     return False
+
+
+def backend_startup_timeout_seconds() -> float:
+    """Return a startup timeout suitable for source and packaged runs.
+
+    A freshly installed PyInstaller bundle can require substantially longer on
+    Windows while Defender scans its Python, Torch, and pyannote runtime files.
+    Subsequent launches are faster because those files are already cached.
+    """
+    configured = os.environ.get("SUBFORGE_BACKEND_STARTUP_TIMEOUT", "").strip()
+    if configured:
+        try:
+            seconds = float(configured)
+        except ValueError:
+            pass
+        else:
+            if seconds > 0:
+                return seconds
+    if getattr(sys, "frozen", False):
+        return FROZEN_STARTUP_TIMEOUT_SECONDS
+    return SOURCE_STARTUP_TIMEOUT_SECONDS
 
 
 class Api:
@@ -151,8 +181,13 @@ def main():
     )
     server_thread.start()
 
-    if not wait_for_server(url, server_errors):
-        detail = server_errors[-1] if server_errors else f"Timed out waiting for backend at {url}"
+    startup_timeout = backend_startup_timeout_seconds()
+    if not wait_for_server(url, server_errors, timeout_seconds=startup_timeout):
+        detail = (
+            server_errors[-1]
+            if server_errors
+            else f"Timed out after {startup_timeout:g}s waiting for backend at {url}"
+        )
         raise RuntimeError(f"SubForge backend failed to start: {detail}")
 
     # Open native window with JS API
@@ -200,6 +235,16 @@ def main():
 if __name__ == "__main__":
     multiprocessing.freeze_support()
 
+    def finish_packaged_check(exit_code: int) -> None:
+        """Exit self-checks without waiting on third-party worker threads."""
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                if stream:
+                    stream.flush()
+            except Exception:
+                pass
+        os._exit(exit_code)
+
     if os.environ.get("SUBFORGE_CHECK_DENOISE") == "1":
         import traceback
 
@@ -215,7 +260,29 @@ if __name__ == "__main__":
                 from df.enhance import init_df as _init_df  # noqa: F401
             except Exception:
                 traceback.print_exc()
-        raise SystemExit(0 if available else 1)
+        finish_packaged_check(0 if available else 1)
+    if os.environ.get("SUBFORGE_CHECK_FASTER_WHISPER") == "1":
+        import traceback
+
+        try:
+            import av  # noqa: F401
+            import ctranslate2  # noqa: F401
+            from faster_whisper import WhisperModel
+
+            print("FasterWhisper/CTranslate2 runtime import: ok")
+            model_path = os.environ.get("SUBFORGE_FASTER_WHISPER_MODEL_PATH", "")
+            if model_path:
+                WhisperModel(
+                    model_path,
+                    device="cpu",
+                    compute_type="int8",
+                    local_files_only=True,
+                )
+                print("FasterWhisper local model initialization: ok")
+            finish_packaged_check(0)
+        except Exception:
+            traceback.print_exc()
+            finish_packaged_check(1)
     if os.environ.get("SUBFORGE_CHECK_ASR") == "1":
         import traceback
 
@@ -241,17 +308,17 @@ if __name__ == "__main__":
             print(f"Default MLX model: {default_mlx_model()}")
             print(f"Default align model: {DEFAULT_EN_ALIGN_MODEL}")
             print(f"Align model file: {align_file} ({'found' if align_file.exists() else 'missing'})")
-            raise SystemExit(0)
+            finish_packaged_check(0)
         except RuntimeError as exc:
             if "No Metal device available" in str(exc):
                 print("MLX Whisper package import reached Metal initialization.")
                 print("Metal device is not available in this execution environment.")
-                raise SystemExit(0)
+                finish_packaged_check(0)
             traceback.print_exc()
-            raise SystemExit(1)
+            finish_packaged_check(1)
         except Exception:
             traceback.print_exc()
-            raise SystemExit(1)
+            finish_packaged_check(1)
     if os.environ.get("SUBFORGE_CHECK_DIARIZATION") == "1":
         import traceback
 
@@ -281,11 +348,12 @@ if __name__ == "__main__":
                     model_dir=os.path.dirname(model_path),
                 )
                 print(f"Speaker diarization inference: {len(inferred_turns)} turns")
-            raise SystemExit(0)
+            finish_packaged_check(0)
         except Exception:
             traceback.print_exc()
-            raise SystemExit(1)
+            finish_packaged_check(1)
     if os.environ.get("SUBFORGE_CHECK_BACKEND") == "1":
+        server_holder: list = []
         try:
             from app.main import app
 
@@ -300,10 +368,47 @@ if __name__ == "__main__":
             if missing:
                 raise RuntimeError(f"Packaged backend routes are missing: {sorted(missing)}")
             print("Packaged FastAPI routes: ok")
-            raise SystemExit(0)
+
+            # Exercise the same Uvicorn startup path used by the real desktop
+            # application. Importing routes alone cannot detect frozen-runtime
+            # failures in Uvicorn's configuration or server lifecycle.
+            port = find_available_port()
+            url = f"http://{HOST}:{port}"
+            server_errors: list[str] = []
+            server_thread = threading.Thread(
+                target=start_server,
+                args=(port, server_errors, server_holder),
+                daemon=True,
+            )
+            server_thread.start()
+            startup_timeout = backend_startup_timeout_seconds()
+            if not wait_for_server(url, server_errors, timeout_seconds=startup_timeout):
+                detail = (
+                    server_errors[-1]
+                    if server_errors
+                    else f"Timed out after {startup_timeout:g}s waiting for backend at {url}"
+                )
+                raise RuntimeError(f"Packaged Uvicorn server failed to start: {detail}")
+            with urllib.request.urlopen(f"{url}/api/health", timeout=2) as response:
+                if response.status != 200:
+                    raise RuntimeError(f"Packaged backend health check returned HTTP {response.status}")
+            print("Packaged Uvicorn server startup: ok")
+            server_holder[0].should_exit = True
+            server_thread.join(timeout=5)
+            finish_packaged_check(0)
         except Exception:
             import traceback
 
+            if server_holder:
+                server_holder[0].should_exit = True
+
+            error_log = os.environ.get("SUBFORGE_CHECK_ERROR_LOG", "")
+            if error_log:
+                try:
+                    Path(error_log).write_text(traceback.format_exc(), encoding="utf-8")
+                except OSError:
+                    pass
+
             traceback.print_exc()
-            raise SystemExit(1)
+            finish_packaged_check(1)
     main()

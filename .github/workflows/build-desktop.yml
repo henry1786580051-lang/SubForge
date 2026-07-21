@@ -41,10 +41,10 @@ jobs:
         include:
           - name: Windows x64
             os: windows-latest
-            uv-extra: "--extra denoise"
+            uv-extra: "--extra denoise --extra diarization --extra faster-whisper"
           - name: macOS Intel
             os: macos-15-intel
-            uv-extra: ""
+            uv-extra: "--extra diarization --extra faster-whisper"
 
     steps:
       - uses: actions/checkout@v6
@@ -57,7 +57,10 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          # DeepFilterNet ships a Windows wheel for 3.11, and using a clean
+          # standalone interpreter avoids Anaconda OpenMP DLL collisions with
+          # CTranslate2 during FasterWhisper model initialization.
+          python-version: "3.11"
 
       - uses: actions/setup-node@v6
         with:
@@ -83,6 +86,13 @@ jobs:
         shell: pwsh
         run: |
           choco install innosetup --no-progress -y
+          $languageUrl = "https://raw.githubusercontent.com/kira-96/Inno-Setup-Chinese-Simplified-Translation/6da09d23e14443d4cf8f07b1c5fd821bfe459788/ChineseSimplified.isl"
+          $languagePath = "${env:ProgramFiles(x86)}\Inno Setup 6\Languages\ChineseSimplified.isl"
+          Invoke-WebRequest -Uri $languageUrl -OutFile $languagePath
+          $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $languagePath).Hash
+          if ($actualHash -ne "869E43E7C7B8D20C7E4397C8E98F7D1B7CF0528803ACDF019AD350143EC85469") {
+            throw "ChineseSimplified.isl checksum mismatch: $actualHash"
+          }
           $version = (uv run python -c "from subforge.config import VERSION; print(VERSION)").Trim()
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" "scripts\windows_installer.iss"
 

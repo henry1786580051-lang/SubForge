@@ -1100,6 +1100,46 @@ It's time to sell my dirt cheap W126.
         assert asr_data.segments[0].text == "It's time to sell my dirt cheap W126."
         assert asr_data.segments[0].translated_text == "是时候卖掉我这辆便宜的 W126 了。"
 
+    def test_parse_chinese_translation_above_korean_source(self):
+        srt = """1
+00:00:00,000 --> 00:00:02,000
+大家好
+안녕하십니까
+"""
+        asr_data = ASRData.from_srt(srt)
+        assert asr_data.segments[0].text == "안녕하십니까"
+        assert asr_data.segments[0].translated_text == "大家好"
+
+    def test_parse_chinese_translation_below_korean_source(self):
+        srt = """1
+00:00:00,000 --> 00:00:02,000
+안녕하십니까
+大家好
+"""
+        asr_data = ASRData.from_srt(srt)
+        assert asr_data.segments[0].text == "안녕하십니까"
+        assert asr_data.segments[0].translated_text == "大家好"
+
+    def test_chinese_translation_allows_embedded_english_and_korean(self):
+        srt = """1
+00:00:00,000 --> 00:00:02,000
+这个 W126 和 아이구 型号不一样
+이거는 모델이 다르잖아
+"""
+        asr_data = ASRData.from_srt(srt)
+        assert asr_data.segments[0].text == "이거는 모델이 다르잖아"
+        assert asr_data.segments[0].translated_text == "这个 W126 和 아이구 型号不一样"
+
+    def test_english_remains_source_for_japanese_translation(self):
+        srt = """1
+00:00:00,000 --> 00:00:02,000
+こんにちは、皆さん
+Hello, everyone
+"""
+        asr_data = ASRData.from_srt(srt)
+        assert asr_data.segments[0].text == "Hello, everyone"
+        assert asr_data.segments[0].translated_text == "こんにちは、皆さん"
+
     def test_parse_multiline_bilingual_groups(self):
         """测试多行原文和多行译文可以按语言组拆分"""
         srt = """1

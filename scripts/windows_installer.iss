@@ -22,8 +22,13 @@ PrivilegesRequiredOverridesAllowed=dialog
 WizardStyle=modern
 UninstallDisplayIcon={app}\SubForge.exe
 SetupLogging=yes
+CloseApplications=yes
+RestartApplications=no
+UsePreviousAppDir=yes
+UsePreviousTasks=yes
 
 [Languages]
+Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]

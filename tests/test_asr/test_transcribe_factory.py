@@ -1,5 +1,7 @@
 import importlib
 
+import pytest
+
 from subforge.core.asr.asr_data import ASRData, ASRDataSeg
 from subforge.core.entities import (
     FasterWhisperModelEnum,
@@ -169,7 +171,16 @@ def test_transcribe_keeps_word_results_when_vad_refinement_fails(monkeypatch):
     assert result.segments[1].end_time == 1_700
 
 
-def test_transcribe_diarization_uses_original_audio_and_preserves_timing(monkeypatch):
+@pytest.mark.parametrize(
+    "engine",
+    [
+        TranscribeModelEnum.WHISPER_CPP,
+        TranscribeModelEnum.FASTER_WHISPER,
+        TranscribeModelEnum.WHISPER_API,
+        TranscribeModelEnum.WHISPERX,
+    ],
+)
+def test_transcribe_diarization_uses_original_audio_with_every_engine(monkeypatch, engine):
     enhancer = importlib.import_module("subforge.core.asr.audio_enhancer")
     diarization = importlib.import_module("subforge.core.asr.speaker_diarization")
     speech_vad = importlib.import_module("subforge.core.asr.speech_vad")
@@ -194,7 +205,7 @@ def test_transcribe_diarization_uses_original_audio_and_preserves_timing(monkeyp
     monkeypatch.setattr(speech_vad, "is_available", lambda: False)
     monkeypatch.setattr(enhancer, "is_available", lambda: False)
     config = TranscribeConfig(
-        transcribe_model=TranscribeModelEnum.WHISPERX,
+        transcribe_model=engine,
         need_word_time_stamp=True,
         enable_audio_enhancement=True,
         speaker_diarization="two",

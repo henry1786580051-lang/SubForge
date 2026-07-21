@@ -9,7 +9,19 @@
 | **FasterWhisper** | 准确度高，支持GPU | 推荐使用 |
 | **WhisperCpp** | 轻量级 | CPU环境 |
 | **Whisper API** | 云端服务 | 无需本地模型 |
+
+FasterWhisper 使用 CTranslate2 模型目录（包含 `config.json`、`model.bin` 和 `tokenizer.json`）。WhisperCpp 使用单个 `ggml-*.bin` 文件；两个格式不能互换。源码运行时请安装 `faster-whisper` 可选依赖：`uv sync --extra faster-whisper`。
 | **B接口/J接口** | 免费在线 | 快速测试 |
+
+## 多人语音识别
+
+说话人分离由 pyannote Community-1 独立完成，可与 Whisper.cpp、FasterWhisper、Whisper API 以及 Apple Silicon 上的 WhisperX/MLX 组合使用。源码运行时请安装 `diarization` 可选依赖：
+
+```bash
+uv sync --extra diarization
+```
+
+在界面中选择“双人”或“自动人数”，填写具有读取权限的 Hugging Face Token，并先下载 Community-1 模型。说话人标签只作为内部元数据参与断句、翻译和配音，不会自动写入最终字幕文本。
 
 ## 模型下载
 

@@ -144,10 +144,7 @@ export function SubtitlePanel({
         reader.readAsDataURL(blob);
       } else {
         // Browser: use blob download
-        const url = subtitlesApi.exportUrl(subtitleFile, f, m);
-        const resp = await fetch(url);
-        if (!resp.ok) throw new Error(`Export failed: ${resp.status}`);
-        const blob = await resp.blob();
+        const blob = await subtitlesApi.exportPost(subtitles, f, m, defaultName);
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
         a.download = defaultName;
@@ -202,10 +199,15 @@ export function SubtitlePanel({
             className="px-2.5 py-1.5 text-[12px] rounded-md text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-all border border-border disabled:opacity-30 disabled:cursor-not-allowed btn-press">
             保存
           </button>
-          <div className="relative">
-            <button disabled={!subtitleFile} onClick={(e) => { e.stopPropagation(); setShowExportMenu(!showExportMenu); }}
-              className="px-2.5 py-1.5 text-[12px] rounded-md bg-accent-dim text-accent hover:bg-accent/15 transition-all font-medium disabled:opacity-30 disabled:cursor-not-allowed btn-press">
+          <div className="relative flex items-stretch">
+            <button disabled={!subtitleFile || subtitles.length === 0} onClick={() => handleExport()}
+              className="px-2.5 py-1.5 text-[12px] rounded-l-md bg-accent-dim text-accent hover:bg-accent/15 transition-all font-medium disabled:opacity-30 disabled:cursor-not-allowed btn-press">
               导出
+            </button>
+            <button disabled={!subtitleFile || subtitles.length === 0} onClick={(e) => { e.stopPropagation(); setShowExportMenu(!showExportMenu); }}
+              className="px-1.5 py-1.5 text-[11px] rounded-r-md border-l border-accent/15 bg-accent-dim text-accent hover:bg-accent/15 transition-all disabled:opacity-30 disabled:cursor-not-allowed btn-press"
+              title="选择导出格式">
+              ▾
             </button>
             {showExportMenu && (
               <div onClick={(e) => e.stopPropagation()} className="absolute right-0 top-full mt-1 bg-surface border border-border rounded-xl z-50 p-3 w-56 space-y-3 shadow-md">
