@@ -4,8 +4,16 @@ import ast
 import json
 import os
 import re
+import sys
 from types import SimpleNamespace
 from typing import Dict, List
+
+# Qt aborts during QApplication construction on headless Linux unless a
+# platform backend is selected before any PyQt module is imported.
+if sys.platform.startswith("linux") and not (
+    os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 
