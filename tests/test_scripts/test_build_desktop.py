@@ -87,3 +87,33 @@ def test_frontend_build_requires_explicit_skip_when_dependencies_are_missing(tmp
         build_desktop.build_frontend("1.2.3")
 
     build_desktop.build_frontend("1.2.3", skip=True)
+
+
+def test_windows_cuda_runtime_is_copied_into_private_bundle(tmp_path, monkeypatch):
+    runtime_dir = tmp_path / "cuda-source"
+    runtime_dir.mkdir()
+    for name in build_desktop.WINDOWS_CUDA_RUNTIME_DLLS:
+        (runtime_dir / name).write_bytes(name.encode("ascii"))
+
+    dist_dir = tmp_path / "dist"
+    (dist_dir / "SubForge" / "_internal").mkdir(parents=True)
+    monkeypatch.setattr(build_desktop, "DIST_DIR", dist_dir)
+    monkeypatch.setattr(build_desktop.platform, "system", lambda: "Windows")
+    monkeypatch.setenv("SUBFORGE_CUDA_RUNTIME_DIR", str(runtime_dir))
+
+    build_desktop.inject_windows_cuda_runtime()
+
+    bundled = dist_dir / "SubForge" / "_internal" / "cuda"
+    assert {
+        path.name for path in bundled.iterdir()
+    } == set(build_desktop.WINDOWS_CUDA_RUNTIME_DLLS)
+
+
+def test_windows_cuda_runtime_rejects_incomplete_source(tmp_path, monkeypatch):
+    runtime_dir = tmp_path / "cuda-source"
+    runtime_dir.mkdir()
+    monkeypatch.setattr(build_desktop.platform, "system", lambda: "Windows")
+    monkeypatch.setenv("SUBFORGE_CUDA_RUNTIME_DIR", str(runtime_dir))
+
+    with pytest.raises(RuntimeError, match="Incomplete SUBFORGE_CUDA_RUNTIME_DIR"):
+        build_desktop.inject_windows_cuda_runtime()

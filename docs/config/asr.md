@@ -15,13 +15,13 @@ FasterWhisper 使用 CTranslate2 模型目录（包含 `config.json`、`model.bi
 
 ## 多人语音识别
 
-说话人分离由 pyannote Community-1 独立完成，可与 Whisper.cpp、FasterWhisper、Whisper API 以及 Apple Silicon 上的 WhisperX/MLX 组合使用。源码运行时请安装 `diarization` 可选依赖：
+说话人分离由 pyannote Community-1 独立完成，可与 Whisper.cpp、FasterWhisper、Whisper API 以及跨平台 WhisperX 组合使用。源码运行时请安装 `diarization` 可选依赖：
 
 ```bash
 uv sync --extra diarization
 ```
 
-在界面中选择“双人”或“自动人数”，填写具有读取权限的 Hugging Face Token，并先下载 Community-1 模型。说话人标签只作为内部元数据参与断句、翻译和配音，不会自动写入最终字幕文本。
+在界面中选择“双人”“自动人数”或固定 2–10 人，填写具有读取权限的 Hugging Face Token，并先下载 Community-1 模型。说话人标签只作为内部元数据参与断句、翻译和配音，不会自动写入最终字幕文本。
 
 ## 模型下载
 

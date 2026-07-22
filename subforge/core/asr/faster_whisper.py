@@ -203,10 +203,6 @@ class FasterWhisperASR(BaseASR):
             ) from exc
 
         effective_callback = callback or (lambda _progress, _message: None)
-        if self.need_word_time_stamp:
-            logger.info(
-                "FasterWhisper word timestamps are deferred; returning segment timestamps"
-            )
         if self.ff_mdx_kim2:
             logger.info(
                 "FF-MDX Kim2 is unavailable in the built-in FasterWhisper runtime; "
@@ -234,17 +230,31 @@ class FasterWhisperASR(BaseASR):
                 beam_size=5,
                 vad_filter=self.vad_filter,
                 vad_parameters={"threshold": self.vad_threshold},
-                word_timestamps=False,
+                word_timestamps=self.need_word_time_stamp,
                 initial_prompt=self.prompt or None,
             )
             duration = max(float(getattr(info, "duration", 0.0) or 0.0), 0.01)
             output: list[dict[str, Any]] = []
             for segment in segments:
-                text = str(getattr(segment, "text", "")).strip()
-                start = float(getattr(segment, "start", 0.0))
-                end = float(getattr(segment, "end", start))
-                if text and end > start:
-                    output.append({"text": text, "start": start, "end": end})
+                words = list(getattr(segment, "words", None) or [])
+                if self.need_word_time_stamp and words:
+                    for word in words:
+                        text = str(getattr(word, "word", "")).strip()
+                        start = float(
+                            getattr(word, "start", getattr(segment, "start", 0.0))
+                        )
+                        end = float(
+                            getattr(word, "end", getattr(segment, "end", start))
+                        )
+                        if text and end > start:
+                            output.append({"text": text, "start": start, "end": end})
+                else:
+                    text = str(getattr(segment, "text", "")).strip()
+                    start = float(getattr(segment, "start", 0.0))
+                    end = float(getattr(segment, "end", start))
+                    if text and end > start:
+                        output.append({"text": text, "start": start, "end": end})
+                end = float(getattr(segment, "end", 0.0))
                 progress = min(99, 5 + int(end / duration * 90))
                 effective_callback(progress, f"{progress}%")
 
@@ -259,7 +269,9 @@ class FasterWhisperASR(BaseASR):
                 text=str(item["text"]).strip(),
                 start_time=max(0, round(float(item["start"]) * 1000)),
                 end_time=max(1, round(float(item["end"]) * 1000)),
-                timestamp_granularity="sentence",
+                timestamp_granularity=(
+                    "word" if self.need_word_time_stamp else "sentence"
+                ),
                 timing_source="native",
             )
             for item in resp_data
@@ -275,6 +287,7 @@ class FasterWhisperASR(BaseASR):
             self.compute_type,
             self.vad_filter,
             self.vad_threshold,
+            self.need_word_time_stamp,
             self.prompt,
         )
         digest = hashlib.sha256(repr(settings).encode()).hexdigest()

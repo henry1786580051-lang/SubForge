@@ -83,6 +83,13 @@ jobs:
         shell: pwsh
         run: |
           choco install innosetup --no-progress -y
+          $languageUrl = "https://raw.githubusercontent.com/kira-96/Inno-Setup-Chinese-Simplified-Translation/6da09d23e14443d4cf8f07b1c5fd821bfe459788/ChineseSimplified.isl"
+          $languagePath = "${env:ProgramFiles(x86)}\Inno Setup 6\Languages\ChineseSimplified.isl"
+          Invoke-WebRequest -Uri $languageUrl -OutFile $languagePath
+          $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $languagePath).Hash
+          if ($actualHash -ne "869E43E7C7B8D20C7E4397C8E98F7D1B7CF0528803ACDF019AD350143EC85469") {
+            throw "ChineseSimplified.isl checksum mismatch: $actualHash"
+          }
           $version = (uv run python -c "from subforge.config import VERSION; print(VERSION)").Trim()
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" "scripts\windows_installer.iss"
 

@@ -54,9 +54,7 @@ def test_runtime_resolution_falls_back_safely(
     assert module.resolve_faster_whisper_runtime(requested, compute) == expected
 
 
-def test_direct_runtime_keeps_segment_timestamps_when_word_mode_requested(
-    tmp_path, monkeypatch
-):
+def test_direct_runtime_returns_requested_word_timestamps(tmp_path, monkeypatch):
     model_dir = tmp_path / "faster-whisper-base"
     _write_model(model_dir)
     audio_path = tmp_path / "audio.wav"
@@ -72,8 +70,24 @@ def test_direct_runtime_keeps_segment_timestamps_when_word_mode_requested(
             calls["audio"] = path
             calls["transcribe"] = kwargs
             segments = [
-                SimpleNamespace(start=0.1, end=1.4, text=" Hello world "),
-                SimpleNamespace(start=1.5, end=2.2, text=" Second sentence. "),
+                SimpleNamespace(
+                    start=0.1,
+                    end=1.4,
+                    text=" Hello world ",
+                    words=[
+                        SimpleNamespace(start=0.1, end=0.5, word=" Hello"),
+                        SimpleNamespace(start=0.6, end=1.4, word=" world"),
+                    ],
+                ),
+                SimpleNamespace(
+                    start=1.5,
+                    end=2.2,
+                    text=" Second sentence. ",
+                    words=[
+                        SimpleNamespace(start=1.5, end=1.8, word=" Second"),
+                        SimpleNamespace(start=1.9, end=2.2, word=" sentence."),
+                    ],
+                ),
             ]
             return iter(segments), SimpleNamespace(duration=2.2)
 
@@ -93,11 +107,13 @@ def test_direct_runtime_keeps_segment_timestamps_when_word_mode_requested(
     result = asr.run()
 
     assert [(seg.start_time, seg.end_time, seg.text) for seg in result.segments] == [
-        (100, 1400, "Hello world"),
-        (1500, 2200, "Second sentence."),
+        (100, 500, "Hello"),
+        (600, 1400, "world"),
+        (1500, 1800, "Second"),
+        (1900, 2200, "sentence."),
     ]
-    assert result.granularity == "sentence"
+    assert result.granularity == "word"
     assert result.timing_source == "native"
-    assert not result.is_word_timestamp()
-    assert calls["transcribe"]["word_timestamps"] is False
+    assert result.is_word_timestamp()
+    assert calls["transcribe"]["word_timestamps"] is True
     assert calls["init"]["local_files_only"] is True

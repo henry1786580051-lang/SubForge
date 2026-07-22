@@ -410,29 +410,50 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
 
         # Save result
         task_manager.update_progress(task_id, 97, "Saving result...")
-        output_path = _result_path(
-            req.subtitle_file,
-            "_processed",
-            str(get_config_value("work_dir", "") or ""),
-        )
+        configured_work_dir = str(get_config_value("work_dir", "") or "")
+        output_paths = {
+            "original": _result_path(
+                req.subtitle_file, "_original", configured_work_dir
+            ),
+            "translated": _result_path(
+                req.subtitle_file, "_translated", configured_work_dir
+            ),
+            "bilingual": _result_path(
+                req.subtitle_file, "_bilingual", configured_work_dir
+            ),
+        }
 
         from subforge.core.entities import SubtitleLayoutEnum
 
-        layout = SubtitleLayoutEnum.TRANSLATE_ON_TOP  # Chinese on top, English on bottom
         _raise_if_cancelled(task_id)
-        await run_blocking(
-            lambda: asr_data.save(
-                str(output_path),
-                layout=layout,
+
+        def _save_completed_outputs() -> None:
+            asr_data.save(
+                str(output_paths["original"]),
+                layout=SubtitleLayoutEnum.ONLY_ORIGINAL,
                 speaker_style="none",
             )
-        )
+            asr_data.save(
+                str(output_paths["translated"]),
+                layout=SubtitleLayoutEnum.ONLY_TRANSLATE,
+                speaker_style="none",
+            )
+            asr_data.save(
+                str(output_paths["bilingual"]),
+                layout=SubtitleLayoutEnum.TRANSLATE_ON_TOP,
+                speaker_style="none",
+            )
+
+        await run_blocking(_save_completed_outputs)
 
         task_manager.update_progress(task_id, 100, "Done")
         task_manager.complete_task(
             task_id,
             {
-                "subtitle_file": str(output_path),
+                "subtitle_file": str(output_paths["bilingual"]),
+                "subtitle_files": {
+                    name: str(path) for name, path in output_paths.items()
+                },
                 "segments": _preview_segments(asr_data),
             },
         )

@@ -5909,6 +5909,11 @@ denoise = [
     { name = "torch", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "torchaudio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
+diarization = [
+    { name = "pyannote-audio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "soundfile", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "transformers", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
 faster-whisper = [
     { name = "faster-whisper", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
@@ -5956,6 +5961,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=12.0.0" },
     { name = "platformdirs", specifier = ">=4.0.0" },
     { name = "psutil", specifier = ">=7.0.0" },
+    { name = "pyannote-audio", marker = "extra == 'diarization'", specifier = ">=4.0,<5" },
     { name = "pyannote-audio", marker = "extra == 'whisperx'", specifier = ">=4.0,<5" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pydub", specifier = ">=0.25.1" },
@@ -5965,17 +5971,19 @@ requires-dist = [
     { name = "pywebview", specifier = ">=6.2.1" },
     { name = "requests", specifier = ">=2.32.4" },
     { name = "soundfile", marker = "extra == 'denoise'", specifier = ">=0.12.1,<0.13" },
+    { name = "soundfile", marker = "extra == 'diarization'", specifier = ">=0.12.1,<0.13" },
     { name = "tenacity", specifier = ">=8.2.0" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0.0" },
     { name = "torch", marker = "extra == 'denoise'", specifier = "==2.8.0" },
     { name = "torchaudio", marker = "extra == 'denoise'", specifier = "==2.8.0" },
+    { name = "transformers", marker = "extra == 'diarization'", specifier = ">=4.37,<5" },
     { name = "transformers", marker = "extra == 'whisperx'", specifier = ">=4.37,<5" },
     { name = "uvicorn", specifier = ">=0.48.0" },
     { name = "websockets", specifier = ">=16.0" },
     { name = "whisperx", marker = "extra == 'whisperx'", specifier = ">=3.8.6,<3.9.0" },
     { name = "yt-dlp", specifier = ">=2025.7.21" },
 ]
-provides-extras = ["denoise", "faster-whisper", "gui", "whisperx"]
+provides-extras = ["denoise", "diarization", "faster-whisper", "gui", "whisperx"]
 
 [package.metadata.requires-dev]
 dev = [

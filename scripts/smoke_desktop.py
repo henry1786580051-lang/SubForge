@@ -138,7 +138,14 @@ def main() -> int:
 
         env = os.environ.copy()
         env["SUBFORGE_CHECK_BACKEND"] = "1"
-        _run([str(exe)], env=env)
+        backend_error_log = tmp_path / "backend-check-error.log"
+        env["SUBFORGE_CHECK_ERROR_LOG"] = str(backend_error_log)
+        try:
+            _run([str(exe)], env=env)
+        except subprocess.CalledProcessError:
+            if backend_error_log.exists():
+                print(backend_error_log.read_text(encoding="utf-8"))
+            raise
         print("Verified packaged FastAPI routes and HTTP runtime")
 
         if platform.system() == "Windows":
