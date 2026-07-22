@@ -68,6 +68,20 @@ const WHISPERX_ALIGNMENT_MODELS = [
     desc: "英文 forced alignment 模型，用于 WhisperX 词级时间轴",
     alignModel: "WAV2VEC2_ASR_LARGE_LV60K_960H",
   },
+  {
+    id: "whisperx-align-ja-large",
+    name: "Japanese XLSR-53",
+    size: "1.19GB",
+    desc: "日语 forced alignment 模型，来自 WhisperX 默认日语映射",
+    alignModel: "jonatasgrosman/wav2vec2-large-xlsr-53-japanese",
+  },
+  {
+    id: "whisperx-align-ko-large",
+    name: "Korean XLSR",
+    size: "1.18GB",
+    desc: "韩语 forced alignment 模型，来自 WhisperX 默认韩语映射",
+    alignModel: "kresnik/wav2vec2-large-xlsr-korean",
+  },
 ];
 
 export function SettingsPanel() {
@@ -79,6 +93,7 @@ export function SettingsPanel() {
   const [selectedProvider, setSelectedProvider] = useState("deepseek");
   const [activeSettingsView, setActiveSettingsView] = useState<SettingsView>("llm");
   const [downloadingModel, setDownloadingModel] = useState<string | null>(null);
+  const [deletingModel, setDeletingModel] = useState<string | null>(null);
   const [downloadedModels, setDownloadedModels] = useState<Set<string>>(new Set());
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
   const [asrModels, setAsrModels] = useState<AsrModelInfo[]>([]);
@@ -290,6 +305,25 @@ export function SettingsPanel() {
     } catch (err) {
       useAppStore.getState().setError(err instanceof Error ? err.message : "下载失败");
       setDownloadingModel(null);
+    }
+  };
+
+  const handleDeleteModel = async (modelId: string, modelName: string) => {
+    if (!window.confirm(`确定删除本地模型“${modelName}”吗？删除后需要重新下载才能使用。`)) return;
+    setDeletingModel(modelId);
+    try {
+      await transcribeApi.deleteModel(modelId);
+      setDownloadedModels((prev) => {
+        const next = new Set(prev);
+        next.delete(modelId);
+        return next;
+      });
+      setAsrTestResult(null);
+      await refreshAsrState();
+    } catch (err) {
+      useAppStore.getState().setError(err instanceof Error ? err.message : "删除模型失败");
+    } finally {
+      setDeletingModel(null);
     }
   };
 
@@ -748,30 +782,41 @@ export function SettingsPanel() {
                       <span className="text-[10px] text-text-muted">{m.desc}</span>
                       {apiModel?.path && <p className="mt-1 max-w-[360px] truncate font-mono text-[9px] text-text-muted" title={apiModel.path}>{apiModel.path}</p>}
                     </div>
-                    <button
-                      onClick={() => {
-                        if (isSelected) return;
-                        if (settings.transcribe_model === "whisperx" || isReady) {
-                          void handleSave("whisper_model_size", m.id);
-                        } else {
-                          void handleDownloadModel(downloadKey);
-                        }
-                      }}
-                      disabled={downloadingModel === downloadKey || isSelected}
-                      className={`px-3 py-1.5 text-[11px] rounded-md transition-all font-medium disabled:opacity-50 ${
-                        isSelected
-                          ? "bg-accent text-white cursor-default"
-                          : isReady
-                          ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                          : "bg-accent-dim text-accent hover:bg-accent/15"
-                      }`}>
-                      {isSelected ? "当前使用" : isReady ? "使用" : downloadingModel === downloadKey ? (
-                        <span className="flex items-center gap-1.5">
-                          <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" strokeDasharray="42 21" strokeLinecap="round" /></svg>
-                          {downloadProgress[downloadKey] != null ? `${downloadProgress[downloadKey]}%` : "下载中"}
-                        </span>
-                      ) : settings.transcribe_model === "whisperx" ? "选择" : "下载"}
-                    </button>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        onClick={() => {
+                          if (isSelected) return;
+                          if (settings.transcribe_model === "whisperx" || isReady) {
+                            void handleSave("whisper_model_size", m.id);
+                          } else {
+                            void handleDownloadModel(downloadKey);
+                          }
+                        }}
+                        disabled={downloadingModel === downloadKey || deletingModel === downloadKey || isSelected}
+                        className={`px-3 py-1.5 text-[11px] rounded-md transition-all font-medium disabled:opacity-50 ${
+                          isSelected
+                            ? "bg-accent text-white cursor-default"
+                            : isReady
+                            ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                            : "bg-accent-dim text-accent hover:bg-accent/15"
+                        }`}>
+                        {isSelected ? "当前使用" : isReady ? "使用" : downloadingModel === downloadKey ? (
+                          <span className="flex items-center gap-1.5">
+                            <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" strokeDasharray="42 21" strokeLinecap="round" /></svg>
+                            {downloadProgress[downloadKey] != null ? `${downloadProgress[downloadKey]}%` : "下载中"}
+                          </span>
+                        ) : settings.transcribe_model === "whisperx" ? "选择" : "下载"}
+                      </button>
+                      {isReady && apiModel?.deletable && (
+                        <button
+                          onClick={() => void handleDeleteModel(downloadKey, m.name)}
+                          disabled={deletingModel === downloadKey || downloadingModel === downloadKey}
+                          className="rounded-md border border-red-200 px-2.5 py-1.5 text-[11px] font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
+                        >
+                          {deletingModel === downloadKey ? "删除中" : "删除"}
+                        </button>
+                      )}
+                    </div>
                   </div>
                   );
                 })}
@@ -785,8 +830,14 @@ export function SettingsPanel() {
                       <p className="mt-0.5 text-[10px] text-text-muted">使用独立对齐模型，提高单词起止时间精度</p>
                     </div>
                     {WHISPERX_ALIGNMENT_MODELS.map((m) => {
-                      const alignmentSelected = (settings.whisperx_align_model as string) === m.alignModel;
-                      const alignmentReady = downloadedModels.has(m.id);
+                      const apiAlignmentModel = asrModels.find((model) => model.id === m.id);
+                      const effectiveAlignmentModel = asrModels.find(
+                        (model) => model.type === "alignment" && model.selected
+                      );
+                      const alignmentSelected = effectiveAlignmentModel
+                        ? effectiveAlignmentModel.id === m.id
+                        : (settings.whisperx_align_model as string) === m.alignModel;
+                      const alignmentReady = Boolean(apiAlignmentModel?.downloaded) || downloadedModels.has(m.id);
                       return (
                       <div key={m.id} className={`flex items-center justify-between p-3 rounded-lg border ${alignmentSelected ? "border-accent/40 bg-accent-dim/40" : "border-border bg-[rgba(0,0,0,0.01)]"}`}>
                         <div className="flex-1">
@@ -796,26 +847,37 @@ export function SettingsPanel() {
                           </div>
                           <span className="text-[10px] text-text-muted">{m.desc}</span>
                         </div>
-                        <button onClick={async () => {
-                          if (alignmentSelected) return;
-                          await handleSave("whisperx_align_model", m.alignModel);
-                          if (!alignmentReady) await handleDownloadModel(m.id);
-                        }}
-                          disabled={downloadingModel === m.id || alignmentSelected}
-                          className={`px-3 py-1.5 text-[11px] rounded-md transition-all font-medium disabled:opacity-50 ${
-                            alignmentSelected
-                              ? "bg-accent text-white cursor-default"
-                              : alignmentReady
-                              ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                              : "bg-accent-dim text-accent hover:bg-accent/15"
-                          }`}>
-                          {alignmentSelected ? "当前使用" : alignmentReady ? "使用" : downloadingModel === m.id ? (
-                            <span className="flex items-center gap-1.5">
-                              <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" strokeDasharray="42 21" strokeLinecap="round" /></svg>
-                              {downloadProgress[m.id] != null ? `${downloadProgress[m.id]}%` : "下载中"}
-                            </span>
-                          ) : "下载并使用"}
-                        </button>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <button onClick={async () => {
+                            if (alignmentSelected) return;
+                            await handleSave("whisperx_align_model", m.alignModel);
+                            if (!alignmentReady) await handleDownloadModel(m.id);
+                          }}
+                            disabled={downloadingModel === m.id || deletingModel === m.id || alignmentSelected}
+                            className={`px-3 py-1.5 text-[11px] rounded-md transition-all font-medium disabled:opacity-50 ${
+                              alignmentSelected
+                                ? "bg-accent text-white cursor-default"
+                                : alignmentReady
+                                ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                                : "bg-accent-dim text-accent hover:bg-accent/15"
+                            }`}>
+                            {alignmentSelected ? "当前使用" : alignmentReady ? "使用" : downloadingModel === m.id ? (
+                              <span className="flex items-center gap-1.5">
+                                <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" strokeDasharray="42 21" strokeLinecap="round" /></svg>
+                                {downloadProgress[m.id] != null ? `${downloadProgress[m.id]}%` : "下载中"}
+                              </span>
+                            ) : "下载并使用"}
+                          </button>
+                          {alignmentReady && apiAlignmentModel?.deletable && (
+                            <button
+                              onClick={() => void handleDeleteModel(m.id, m.name)}
+                              disabled={deletingModel === m.id || downloadingModel === m.id}
+                              className="rounded-md border border-red-200 px-2.5 py-1.5 text-[11px] font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
+                            >
+                              {deletingModel === m.id ? "删除中" : "删除"}
+                            </button>
+                          )}
+                        </div>
                       </div>
                     )})}
                     </div>

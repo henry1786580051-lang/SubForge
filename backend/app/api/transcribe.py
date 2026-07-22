@@ -20,7 +20,10 @@ from subforge.core.asr.faster_whisper import (
 )
 from subforge.core.asr.whisperx_asr import (
     MLX_WHISPER_MODELS,
+    clear_alignment_model_cache,
+    is_hf_alignment_model_dir,
     is_valid_mlx_model_dir,
+    managed_hf_alignment_dir,
     resolve_mlx_model,
 )
 
@@ -188,8 +191,62 @@ WHISPERX_MODELS = {
         "filename": "wav2vec2_fairseq_large_lv60k_asr_ls960.pth",
         "size": "1.18GB",
         "align_model": "WAV2VEC2_ASR_LARGE_LV60K_960H",
+        "language": "en",
+    },
+    "whisperx-align-ja-large": {
+        "name": "Japanese XLSR-53 Alignment",
+        "category": "whisperx",
+        "type": "alignment",
+        "repo": "jonatasgrosman/wav2vec2-large-xlsr-53-japanese",
+        "revision": "cf031e020336460d15a417eba710bbc5bb43be9a",
+        "allow_patterns": [
+            "config.json",
+            "preprocessor_config.json",
+            "pytorch_model.bin",
+            "special_tokens_map.json",
+            "vocab.json",
+        ],
+        "size": "1.19GB",
+        "align_model": "jonatasgrosman/wav2vec2-large-xlsr-53-japanese",
+        "language": "ja",
+    },
+    "whisperx-align-ko-large": {
+        "name": "Korean XLSR Alignment",
+        "category": "whisperx",
+        "type": "alignment",
+        "repo": "kresnik/wav2vec2-large-xlsr-korean",
+        "revision": "629c9a3501c10ba128bf3fa1eebb12af3be03f61",
+        "allow_patterns": [
+            "config.json",
+            "model.safetensors",
+            "preprocessor_config.json",
+            "special_tokens_map.config",
+            "tokenizer_config.json",
+            "vocab.json",
+        ],
+        "size": "1.18GB",
+        "align_model": "kresnik/wav2vec2-large-xlsr-korean",
+        "language": "ko",
     },
 }
+
+
+def _effective_alignment_model(configured: str, language: str) -> str:
+    """Use the matching managed default when English was only the old default."""
+    normalized_language = str(language or "").strip().lower()
+    configured = str(configured or "").strip()
+    if configured and configured != "WAV2VEC2_ASR_LARGE_LV60K_960H":
+        return configured
+    match = next(
+        (
+            info["align_model"]
+            for info in WHISPERX_MODELS.values()
+            if info["language"] == normalized_language
+        ),
+        "",
+    )
+    return match or configured
+
 
 DIARIZATION_MODELS = {
     "whisperx-diarization-community-1": {
@@ -217,9 +274,7 @@ MLX_MODEL_SIZES = {
 
 class TranscribeRequest(BaseModel):
     file_path: str = Field(max_length=4096)
-    model: Literal["whisper_cpp", "whisperx", "faster_whisper", "whisper_api"] = (
-        "whisper_cpp"
-    )
+    model: Literal["whisper_cpp", "whisperx", "faster_whisper", "whisper_api"] = "whisper_cpp"
     language: str = Field(default="auto", min_length=1, max_length=32)
     device: str = Field(default="auto", max_length=32)
     n_threads: int = Field(default=4, ge=1, le=128)
@@ -271,13 +326,17 @@ def _build_transcribe_config(
     config.whisper_cpp_path = get_config_value("whisper_cpp_path", "")
     configured_enhancement = bool(get_config_value("enable_audio_enhancement", True))
     config.enable_audio_enhancement = (
-        configured_enhancement
-        if enable_audio_enhancement is None
-        else enable_audio_enhancement
+        configured_enhancement if enable_audio_enhancement is None else enable_audio_enhancement
     )
-    config.whisperx_align_model = get_config_value(
-        "whisperx_align_model",
-        "WAV2VEC2_ASR_LARGE_LV60K_960H",
+    config.whisperx_align_model = _effective_alignment_model(
+        str(
+            get_config_value(
+                "whisperx_align_model",
+                "WAV2VEC2_ASR_LARGE_LV60K_960H",
+            )
+            or ""
+        ),
+        language,
     )
     config.whisperx_batch_size = int(get_config_value("whisperx_batch_size", 8) or 8)
     config.speaker_diarization = get_config_value("speaker_diarization", "off")
@@ -289,9 +348,7 @@ def _build_transcribe_config(
     config.diarization_model_dir = str(_get_models_dir())
     config.faster_whisper_ff_mdx_kim2 = bool(get_config_value("ff_mdx_kim2", False))
 
-    model_dir = str(get_config_value("whisper_model_dir", "") or "").strip()
-    if model_dir:
-        config.faster_whisper_model_dir = str(Path(model_dir).expanduser())
+    config.faster_whisper_model_dir = str(_get_models_dir())
 
     model_size = str(get_config_value("whisper_model_size", "large-v3") or "large-v3")
     if model_id == "whisper_cpp":
@@ -399,9 +456,7 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
                 logger.warning(f"Failed to save partial segment: {e}")
 
         # Run transcription on the extracted audio
-        result = await run_blocking(
-            transcribe, temp_audio_path, config, _on_progress, _on_segment
-        )
+        result = await run_blocking(transcribe, temp_audio_path, config, _on_progress, _on_segment)
         _raise_if_cancelled(task_id)
 
         # Save subtitle file
@@ -460,7 +515,7 @@ def _get_models_dir() -> Path:
 
     custom_dir = get_config_value("whisper_model_dir", "")
     if custom_dir:
-        models_dir = Path(custom_dir)
+        models_dir = Path(custom_dir).expanduser()
     else:
         from subforge.config import APPDATA_PATH
 
@@ -469,11 +524,35 @@ def _get_models_dir() -> Path:
     return models_dir
 
 
+def _alignment_model_path(models_dir: Path, info: dict) -> Path:
+    filename = str(info.get("filename", "") or "")
+    if filename:
+        return models_dir / filename
+    return managed_hf_alignment_dir(models_dir, str(info["repo"]))
+
+
+def _alignment_model_ready(path: Path, info: dict) -> bool:
+    return path.is_file() if info.get("filename") else is_hf_alignment_model_dir(path)
+
+
+def _ensure_managed_model_path(path: Path, models_dir: Path) -> Path:
+    """Reject deletion targets outside the configured model root or the root itself."""
+    root = models_dir.expanduser().resolve()
+    target = path.expanduser().resolve()
+    if target == root or root not in target.parents:
+        raise ValueError(f"Refusing to modify unmanaged model path: {target}")
+    return target
+
+
 def _current_model_status() -> dict:
     """Describe the effective ASR engine and model selected in settings."""
     from app.api.config import get_config_value
 
-    default_engine = "whisperx" if platform.system() == "Darwin" and platform.machine() == "arm64" else "whisper_cpp"
+    default_engine = (
+        "whisperx"
+        if platform.system() == "Darwin" and platform.machine() == "arm64"
+        else "whisper_cpp"
+    )
     default_model = "large-v3" if default_engine == "whisperx" else "base"
     engine = str(get_config_value("transcribe_model", default_engine) or default_engine)
     model_value = str(get_config_value("whisper_model_size", default_model) or default_model)
@@ -530,14 +609,15 @@ def _current_model_status() -> dict:
                 and importlib.util.find_spec("faster_whisper") is not None
             )
         platform_supported = uses_mlx or platform.system() in {"Windows", "Linux"}
-        align_model = str(
-            get_config_value("whisperx_align_model", "WAV2VEC2_ASR_LARGE_LV60K_960H") or ""
+        align_model = _effective_alignment_model(
+            str(get_config_value("whisperx_align_model", "WAV2VEC2_ASR_LARGE_LV60K_960H") or ""),
+            str(get_config_value("source_language", "auto") or "auto"),
         )
         align_info = next(
             (info for info in WHISPERX_MODELS.values() if info["align_model"] == align_model),
             None,
         )
-        align_path = models_dir / align_info["filename"] if align_info else Path()
+        align_path = _alignment_model_path(models_dir, align_info) if align_info else Path()
         status.update(
             {
                 "model_value": model_value,
@@ -560,7 +640,9 @@ def _current_model_status() -> dict:
                 ),
                 "alignment_model": align_model or "按语言自动选择",
                 "alignment_path": str(align_path) if align_info else "",
-                "alignment_ready": bool(align_info and align_path.is_file()),
+                "alignment_ready": bool(
+                    align_info and _alignment_model_ready(align_path, align_info)
+                ),
                 "platform_supported": platform_supported,
                 "runtime_ready": runtime_ready,
                 "testable": platform_supported and runtime_ready,
@@ -696,7 +778,11 @@ async def list_whisper_models():
 
     from app.api.config import get_config_value
 
-    default_engine = "whisperx" if platform.system() == "Darwin" and platform.machine() == "arm64" else "whisper_cpp"
+    default_engine = (
+        "whisperx"
+        if platform.system() == "Darwin" and platform.machine() == "arm64"
+        else "whisper_cpp"
+    )
     selected_engine = str(get_config_value("transcribe_model", default_engine) or default_engine)
     selected_model = str(get_config_value("whisper_model_size", "large-v3") or "large-v3")
     if selected_model == "mlx-large-v3":
@@ -707,7 +793,10 @@ async def list_whisper_models():
         if selected_engine == "whisperx" and uses_mlx
         else selected_model
     )
-    selected_align = str(get_config_value("whisperx_align_model", "") or "")
+    selected_align = _effective_alignment_model(
+        str(get_config_value("whisperx_align_model", "") or ""),
+        str(get_config_value("source_language", "auto") or "auto"),
+    )
     selected_diarization = str(get_config_value("speaker_diarization", "off") or "off")
     result = []
     for model_id, info in WHISPER_CPP_MODELS.items():
@@ -721,6 +810,7 @@ async def list_whisper_models():
                 "size": info["size"],
                 "downloaded": model_path.exists(),
                 "downloadable": True,
+                "deletable": True,
                 "path": str(model_path),
                 "value": model_id,
                 "selected": selected_engine == "whisper_cpp" and selected_model == model_id,
@@ -747,17 +837,17 @@ async def list_whisper_models():
                 "size": MLX_MODEL_SIZES.get(model_value, ""),
                 "downloaded": local_ready,
                 "downloadable": False,
+                "deletable": False,
                 "path": str(model_path) if local_ready else "",
-                "resolved_model": resolved if uses_mlx and local_ready else repo if uses_mlx else model_value,
-                "selected": selected_engine == "whisperx" and (
-                    selected_model == model_value or selected_resolved == resolved
-                ),
+                "resolved_model": resolved
+                if uses_mlx and local_ready
+                else repo
+                if uses_mlx
+                else model_value,
+                "selected": selected_engine == "whisperx"
+                and (selected_model == model_value or selected_resolved == resolved),
                 "state": "ready" if local_ready else "on_demand",
-                "detail": (
-                    "本地模型已验证"
-                    if local_ready
-                    else "首次测试或转录时自动下载"
-                ),
+                "detail": ("本地模型已验证" if local_ready else "首次测试或转录时自动下载"),
             }
         )
     for model_id, info in FASTER_WHISPER_MODELS.items():
@@ -773,16 +863,17 @@ async def list_whisper_models():
                 "size": info["size"],
                 "downloaded": ready,
                 "downloadable": True,
+                "deletable": True,
                 "path": str(model_path),
                 "value": model_value,
-                "selected": selected_engine == "faster_whisper"
-                and selected_model == model_value,
+                "selected": selected_engine == "faster_whisper" and selected_model == model_value,
                 "state": "ready" if ready else "missing",
                 "detail": "本地 CTranslate2 模型" if ready else "需要下载",
             }
         )
     for model_id, info in WHISPERX_MODELS.items():
-        model_path = models_dir / info["filename"]
+        model_path = _alignment_model_path(models_dir, info)
+        ready = _alignment_model_ready(model_path, info)
         result.append(
             {
                 "id": model_id,
@@ -790,13 +881,15 @@ async def list_whisper_models():
                 "category": info["category"],
                 "type": info["type"],
                 "size": info["size"],
-                "downloaded": model_path.exists(),
+                "downloaded": ready,
                 "downloadable": True,
+                "deletable": True,
                 "path": str(model_path),
                 "align_model": info["align_model"],
+                "language": info["language"],
                 "value": info["align_model"],
                 "selected": selected_engine == "whisperx" and selected_align == info["align_model"],
-                "state": "ready" if model_path.exists() else "missing",
+                "state": "ready" if ready else "missing",
             }
         )
     for model_id, info in DIARIZATION_MODELS.items():
@@ -813,6 +906,7 @@ async def list_whisper_models():
                 "size": info["size"],
                 "downloaded": ready,
                 "downloadable": True,
+                "deletable": True,
                 "path": str(model_path),
                 "value": info["repo"],
                 "selected": selected_diarization != "off",
@@ -835,7 +929,7 @@ async def download_whisper_model(req: DownloadModelRequest):
         model_path = models_dir / f"ggml-{req.model_id}.bin"
     elif req.model_id in WHISPERX_MODELS:
         models_dir = _get_models_dir()
-        model_path = models_dir / WHISPERX_MODELS[req.model_id]["filename"]
+        model_path = _alignment_model_path(models_dir, WHISPERX_MODELS[req.model_id])
     elif req.model_id in DIARIZATION_MODELS:
         models_dir = _get_models_dir()
         model_path = models_dir / DIARIZATION_MODELS[req.model_id]["dirname"]
@@ -856,6 +950,8 @@ async def download_whisper_model(req: DownloadModelRequest):
         model_ready = is_diarization_model_dir(model_path)
     elif req.model_id in FASTER_WHISPER_MODELS:
         model_ready = is_faster_whisper_model_dir(model_path)
+    elif req.model_id in WHISPERX_MODELS:
+        model_ready = _alignment_model_ready(model_path, WHISPERX_MODELS[req.model_id])
     else:
         model_ready = model_path.exists()
     if model_ready:
@@ -870,12 +966,79 @@ async def download_whisper_model(req: DownloadModelRequest):
     return {"task_id": task.id, "status": "started"}
 
 
+@router.post("/delete-model")
+async def delete_whisper_model(req: DownloadModelRequest):
+    """Delete one managed model without allowing arbitrary filesystem paths."""
+    models_dir = _get_models_dir()
+    if req.model_id in WHISPER_CPP_MODELS:
+        model_path = models_dir / f"ggml-{req.model_id}.bin"
+        model_kind = "file"
+    elif req.model_id in WHISPERX_MODELS:
+        model_path = _alignment_model_path(models_dir, WHISPERX_MODELS[req.model_id])
+        model_kind = "alignment"
+    elif req.model_id in DIARIZATION_MODELS:
+        model_path = models_dir / DIARIZATION_MODELS[req.model_id]["dirname"]
+        model_kind = "diarization"
+    elif req.model_id in FASTER_WHISPER_MODELS:
+        model_path = models_dir / req.model_id
+        model_kind = "directory"
+    elif req.model_id.startswith("mlx-") or req.model_id.startswith("whisperx-"):
+        raise HTTPException(
+            status_code=400,
+            detail="该模型由外部缓存按需管理，不能从这里安全删除。",
+        )
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown model: {req.model_id}")
+
+    try:
+        model_path = _ensure_managed_model_path(model_path, models_dir)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    lock = _model_download_locks.get(str(model_path))
+    if lock and lock.locked():
+        raise HTTPException(status_code=409, detail="模型仍在下载中，请稍后再删除。")
+
+    if not model_path.exists():
+        return {"status": "not_found", "model_id": req.model_id}
+
+    try:
+        if model_kind == "alignment":
+            clear_alignment_model_cache()
+        elif model_kind == "diarization":
+            from subforge.core.asr.speaker_diarization import (
+                clear_diarization_model_cache,
+            )
+
+            clear_diarization_model_cache()
+
+        if model_path.is_dir():
+            await run_blocking(shutil.rmtree, model_path)
+        else:
+            await run_blocking(model_path.unlink)
+    except OSError as exc:
+        logger.exception("Failed to delete model %s", req.model_id)
+        raise HTTPException(
+            status_code=409,
+            detail=f"模型文件正在使用或无法删除：{exc}",
+        ) from exc
+
+    return {
+        "status": "deleted",
+        "model_id": req.model_id,
+        "path": str(model_path),
+    }
+
+
 async def _download_model(task_id: str, model_id: str, dest: Path):
     if model_id in DIARIZATION_MODELS:
         await _download_diarization_model(task_id, model_id, dest)
         return
     if model_id in FASTER_WHISPER_MODELS:
         await _download_faster_whisper_model(task_id, model_id, dest)
+        return
+    if model_id in WHISPERX_MODELS and WHISPERX_MODELS[model_id].get("repo"):
+        await _download_hf_alignment_model(task_id, model_id, dest)
         return
 
     import httpx
@@ -923,9 +1086,7 @@ async def _download_model(task_id: str, model_id: str, dest: Path):
                                 pct = min(99, int(downloaded / total * 100))
                                 if pct > last_pct:
                                     last_pct = pct
-                                    task_manager.update_progress(
-                                        task_id, pct, f"下载中... {pct}%"
-                                    )
+                                    task_manager.update_progress(task_id, pct, f"下载中... {pct}%")
 
             if downloaded == 0 or (total > 0 and downloaded != total):
                 raise RuntimeError("Model download was empty or incomplete")
@@ -939,6 +1100,51 @@ async def _download_model(task_id: str, model_id: str, dest: Path):
         tmp_dest.unlink(missing_ok=True)
         logger.exception("Model download failed for %s", model_id)
         task_manager.fail_task(task_id, str(e))
+    finally:
+        if not download_lock.locked():
+            _model_download_locks.pop(str(dest), None)
+
+
+async def _download_hf_alignment_model(task_id: str, model_id: str, dest: Path):
+    """Download and atomically publish a pinned Hugging Face CTC aligner."""
+    info = WHISPERX_MODELS[model_id]
+    staging = dest.with_name(f".{dest.name}.{task_id}.part")
+    download_lock = _model_download_locks.setdefault(str(dest), asyncio.Lock())
+    try:
+        async with download_lock:
+            if _alignment_model_ready(dest, info):
+                task_manager.complete_task(task_id, {"path": str(dest)})
+                return
+            if staging.exists():
+                shutil.rmtree(staging, ignore_errors=True)
+            staging.parent.mkdir(parents=True, exist_ok=True)
+            task_manager.update_progress(task_id, 5, f"正在下载 {info['name']}...")
+
+            def _snapshot_download():
+                from huggingface_hub import snapshot_download
+
+                return snapshot_download(
+                    repo_id=info["repo"],
+                    revision=info["revision"],
+                    allow_patterns=info["allow_patterns"],
+                    local_dir=str(staging),
+                )
+
+            await run_blocking(_snapshot_download)
+            task_manager.update_progress(task_id, 95, "正在校验对齐模型...")
+            if not _alignment_model_ready(staging, info):
+                raise RuntimeError("下载完成但对齐模型的配置、词表或权重不完整")
+            if dest.exists():
+                shutil.rmtree(dest)
+            staging.replace(dest)
+            task_manager.complete_task(task_id, {"path": str(dest)})
+    except asyncio.CancelledError:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    except Exception as exc:
+        shutil.rmtree(staging, ignore_errors=True)
+        logger.exception("Alignment model download failed for %s", model_id)
+        task_manager.fail_task(task_id, f"对齐模型下载失败：{exc}")
     finally:
         if not download_lock.locked():
             _model_download_locks.pop(str(dest), None)
@@ -1037,8 +1243,7 @@ async def _download_diarization_model(task_id: str, model_id: str, dest: Path):
         logger.exception("Diarization model download failed")
         task_manager.fail_task(
             task_id,
-            "说话人模型下载失败。请确认已接受 Community-1 条款且 Token 具有读取权限："
-            + str(exc),
+            "说话人模型下载失败。请确认已接受 Community-1 条款且 Token 具有读取权限：" + str(exc),
         )
     finally:
         if not download_lock.locked():

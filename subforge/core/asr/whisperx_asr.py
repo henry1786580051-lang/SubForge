@@ -22,6 +22,17 @@ _ALIGNMENT_MODEL_CACHE = SingleEntryModelCache()
 
 DEFAULT_EN_ALIGN_MODEL = "WAV2VEC2_ASR_LARGE_LV60K_960H"
 DEFAULT_EN_ALIGN_FILENAME = "wav2vec2_fairseq_large_lv60k_asr_ls960.pth"
+DEFAULT_HF_ALIGN_MODELS = {
+    "ja": "jonatasgrosman/wav2vec2-large-xlsr-53-japanese",
+    "ko": "kresnik/wav2vec2-large-xlsr-korean",
+}
+
+
+def clear_alignment_model_cache() -> None:
+    """Release the process-local forced-alignment model, if any."""
+    _ALIGNMENT_MODEL_CACHE.clear()
+
+
 LOCAL_MLX_MODEL_NAMES = (
     "whisper-large-v3-fp16",
     "mlx-whisper-large-v3-fp16",
@@ -100,6 +111,31 @@ def resolve_mlx_model(model: str = "") -> str:
 def is_valid_mlx_model_dir(path: str | Path) -> bool:
     """Return whether a directory contains a usable MLX Whisper model."""
     return _is_valid_mlx_model_dir(Path(path).expanduser())
+
+
+def managed_hf_alignment_dir(model_dir: str | Path, repo_id: str) -> Path:
+    """Return the managed local snapshot path for a Hugging Face aligner."""
+    owner, separator, name = repo_id.partition("/")
+    if not separator or not owner or not name:
+        raise ValueError(f"Invalid Hugging Face alignment model id: {repo_id}")
+    safe_owner = re.sub(r"[^A-Za-z0-9._-]+", "-", owner)
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", name)
+    return Path(model_dir).expanduser() / f"alignment--{safe_owner}--{safe_name}"
+
+
+def is_hf_alignment_model_dir(path: str | Path) -> bool:
+    """Return whether a local Hugging Face CTC aligner snapshot is usable."""
+    model_path = Path(path).expanduser()
+    has_weights = any(
+        (model_path / name).is_file() for name in ("model.safetensors", "pytorch_model.bin")
+    )
+    return (
+        model_path.is_dir()
+        and (model_path / "config.json").is_file()
+        and (model_path / "preprocessor_config.json").is_file()
+        and (model_path / "vocab.json").is_file()
+        and has_weights
+    )
 
 
 def _normalize_language(language: str | None) -> str | None:
@@ -206,9 +242,26 @@ def _segments_for_alignment(result: dict) -> list[dict]:
 
 
 _SMALL_NUMBERS = (
-    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
-    "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
-    "sixteen", "seventeen", "eighteen", "nineteen",
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
 )
 _TENS = ("", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
 _UNIT_NAMES = {
@@ -285,7 +338,7 @@ def _spoken_token(token: str) -> str:
     trailing_match = re.search(r"[\)\]\}\"',.!?;:]*$", token)
     trailing = trailing_match.group(0) if trailing_match else ""
     core_end = len(token) - len(trailing) if trailing else len(token)
-    core = token[len(leading):core_end]
+    core = token[len(leading) : core_end]
     if not core:
         return token
 
@@ -369,9 +422,7 @@ def _prepare_spoken_alignment(
     return (normalized, plans) if changed else (segments, None)
 
 
-def _restore_display_alignment(
-    aligned: dict, plans: list[_AlignmentSegmentPlan]
-) -> dict | None:
+def _restore_display_alignment(aligned: dict, plans: list[_AlignmentSegmentPlan]) -> dict | None:
     spoken_words = [
         word
         for segment in aligned.get("segments") or []
@@ -490,9 +541,7 @@ def _install_offline_sentence_tokenizer(alignment_module: Any) -> None:
         except LookupError:
             unavailable_resources.add(resource)
             if not fallback_logged:
-                logger.warning(
-                    "NLTK Punkt data is unavailable; using offline sentence boundaries"
-                )
+                logger.warning("NLTK Punkt data is unavailable; using offline sentence boundaries")
                 fallback_logged = True
             if fallback_tokenizer is None:
                 fallback_tokenizer = _OfflineSentenceTokenizer()
@@ -513,7 +562,10 @@ def _word_text(word: dict) -> str:
 
 
 def _word_has_timing(word: dict) -> bool:
-    return _float_seconds(word.get("start")) is not None and _float_seconds(word.get("end")) is not None
+    return (
+        _float_seconds(word.get("start")) is not None
+        and _float_seconds(word.get("end")) is not None
+    )
 
 
 def _word_duration_weight(text: str) -> int:
@@ -521,9 +573,7 @@ def _word_duration_weight(text: str) -> int:
     return max(1, alnum)
 
 
-def _refine_words_with_char_alignments(
-    words: list[dict], chars: list[dict] | None
-) -> list[dict]:
+def _refine_words_with_char_alignments(words: list[dict], chars: list[dict] | None) -> list[dict]:
     """Use WhisperX character timings to tighten aligned word boundaries.
 
     WhisperX already derives words from characters, but older releases can
@@ -535,14 +585,8 @@ def _refine_words_with_char_alignments(
     if not chars:
         return words
 
-    timed_chars = [
-        char
-        for char in chars
-        if isinstance(char, dict) and str(char.get("char") or "")
-    ]
-    uses_space_delimiters = any(
-        str(char.get("char") or "").isspace() for char in timed_chars
-    )
+    timed_chars = [char for char in chars if isinstance(char, dict) and str(char.get("char") or "")]
+    uses_space_delimiters = any(str(char.get("char") or "").isspace() for char in timed_chars)
     char_index = 0
     refined: list[dict] = []
 
@@ -570,9 +614,7 @@ def _refine_words_with_char_alignments(
                     break
                 matched.append(item)
                 scan_index += 1
-            candidate = "".join(
-                str(item.get("char") or "").lower() for item in matched
-            )
+            candidate = "".join(str(item.get("char") or "").lower() for item in matched)
             target_index = len(target) if candidate == target else 0
             char_index = scan_index
         else:
@@ -768,10 +810,19 @@ class WhisperXASR(BaseASR):
 
     def _resolve_align_model_name(self, language_code: str) -> str | None:
         normalized_language = _normalize_language(language_code)
-        if self.align_model and (
-            self.align_model != DEFAULT_EN_ALIGN_MODEL or normalized_language == "en"
-        ):
-            return self.align_model
+        requested_model = self.align_model
+        if requested_model == DEFAULT_EN_ALIGN_MODEL and normalized_language != "en":
+            requested_model = DEFAULT_HF_ALIGN_MODELS.get(normalized_language or "", "")
+        elif not requested_model:
+            requested_model = DEFAULT_HF_ALIGN_MODELS.get(normalized_language or "", "")
+
+        if requested_model:
+            model_dir = getattr(self, "model_dir", "")
+            if model_dir and "/" in requested_model:
+                local_model = managed_hf_alignment_dir(model_dir, requested_model)
+                if is_hf_alignment_model_dir(local_model):
+                    return str(local_model)
+            return requested_model
         if normalized_language == "en":
             return DEFAULT_EN_ALIGN_MODEL
         if self.align_model == DEFAULT_EN_ALIGN_MODEL:
@@ -896,6 +947,7 @@ class WhisperXASR(BaseASR):
             align_kwargs["model_name"] = align_model_name
         if self.model_dir:
             align_kwargs["model_dir"] = self.model_dir
+
         def _load_alignment_model():
             try:
                 return whisperx_alignment.load_align_model(**align_kwargs)
@@ -966,6 +1018,7 @@ class WhisperXASR(BaseASR):
 
         try:
             import mlx_whisper
+
             install_whisperx_runtime_stubs()
             import whisperx.alignment as whisperx_alignment
             from whisperx.audio import load_audio

@@ -417,6 +417,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
   } | null>(null);
   const [models, setModels] = useState<AsrModelInfo[]>([]);
   const [downloadingModel, setDownloadingModel] = useState<string | null>(null);
+  const [deletingModel, setDeletingModel] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
   const [huggingfaceToken, setHuggingfaceToken] = useState("");
   const [huggingfaceTokenConfigured, setHuggingfaceTokenConfigured] = useState(false);
@@ -481,6 +482,9 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
         (model) => model.category === "whisperx" && ["mlx", "ctranslate2"].includes(model.type)
       );
     }
+    if (config.transcribeModel === "faster_whisper") {
+      return models.filter((model) => model.category === "faster_whisper");
+    }
     return [];
   }, [config.transcribeModel, models]);
 
@@ -498,9 +502,14 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
   const selectedModel = currentModels.find(
     (model) => (model.value || model.id) === config.whisperModelSize || model.selected
   );
-  const selectedAlignModel = alignmentModels.find(
-    (model) => model.align_model === config.whisperxAlignModel || model.id === config.whisperxAlignModel
-  );
+  const selectedAlignModel =
+    alignmentModels.find((model) => model.selected) ||
+    alignmentModels.find(
+      (model) =>
+        model.align_model === config.whisperxAlignModel ||
+        model.id === config.whisperxAlignModel
+    );
+  const hasEffectiveAlignmentSelection = alignmentModels.some((model) => model.selected);
   const quality = useMemo(() => analyzeSubtitleQuality(subtitles), [subtitles]);
 
   const downloadModel = useCallback(async (modelId: string) => {
@@ -546,6 +555,21 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
       setDownloadingModel(null);
     }
   }, [huggingfaceToken, models, setError]);
+
+  const deleteModel = useCallback(async (model: AsrModelInfo) => {
+    const name = model.name || model.id;
+    if (!window.confirm(`确定删除本地模型“${name}”吗？删除后需要重新下载才能使用。`)) return;
+    setDeletingModel(model.id);
+    try {
+      await transcribeApi.deleteModel(model.id);
+      const refreshed = await transcribeApi.listModels();
+      setModels(refreshed);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "删除模型失败");
+    } finally {
+      setDeletingModel(null);
+    }
+  }, [setError]);
 
   return (
     <WorkspaceFrame meta={STEP_META.transcribe}>
@@ -664,9 +688,11 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                       model={model}
                       active={Boolean(model.downloaded)}
                       downloading={downloadingModel === model.id}
+                      deleting={deletingModel === model.id}
                       progress={downloadProgress[model.id]}
                       onSelect={() => undefined}
                       onDownload={() => void downloadModel(model.id)}
+                      onDelete={() => void deleteModel(model)}
                     />
                   ))}
                   {!diarizationModels.length && (
@@ -721,9 +747,11 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                         model={model}
                         active={config.whisperModelSize === (model.value || model.id) || Boolean(model.selected)}
                         downloading={downloadingModel === model.id}
+                        deleting={deletingModel === model.id}
                         progress={downloadProgress[model.id]}
                         onSelect={() => void saveConfig("whisper_model_size", model.value || model.id)}
                         onDownload={() => void downloadModel(model.id)}
+                        onDelete={() => void deleteModel(model)}
                       />
                     ))}
                   </div>
@@ -742,15 +770,19 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                           key={model.id}
                           model={model}
                           active={
-                            config.whisperxAlignModel === model.align_model ||
-                            config.whisperxAlignModel === model.id
+                            hasEffectiveAlignmentSelection
+                              ? Boolean(model.selected)
+                              : config.whisperxAlignModel === model.align_model ||
+                                config.whisperxAlignModel === model.id
                           }
                           downloading={downloadingModel === model.id}
+                          deleting={deletingModel === model.id}
                           progress={downloadProgress[model.id]}
                           onSelect={() =>
                             void saveConfig("whisperx_align_model", model.align_model || model.id)
                           }
                           onDownload={() => void downloadModel(model.id)}
+                          onDelete={() => void deleteModel(model)}
                         />
                       ))}
                     </div>
@@ -1215,62 +1247,86 @@ function FieldLabel({ label, value }: { label: string; value: string }) {
 
 function ModelChip({
   active,
+  deleting,
   downloading,
   model,
+  onDelete,
   onDownload,
   onSelect,
   progress,
 }: {
   active: boolean;
+  deleting: boolean;
   downloading: boolean;
   model: AsrModelInfo;
+  onDelete: () => void;
   onDownload: () => void;
   onSelect: () => void;
   progress?: number;
 }) {
   const downloadable = model.downloadable !== false;
   return (
-    <button
-      onClick={model.downloaded || !downloadable ? onSelect : onDownload}
-      className={`group flex min-h-10 min-w-0 items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left text-[11px] transition-[border-color,background-color,transform] duration-200 active:translate-y-px ${
+    <div
+      className={`group flex min-h-10 min-w-0 items-center gap-2 rounded-lg border px-3 py-2 text-[11px] transition-[border-color,background-color] duration-200 ${
         active
           ? "border-accent bg-accent-dim text-accent"
           : "border-border bg-background text-text-secondary hover:border-border-active"
       }`}
     >
-      <span className="flex min-w-0 items-baseline gap-2">
-        <span className="truncate font-semibold">{model.name || model.id.split("/").pop() || model.id}</span>
-        <span className="shrink-0 text-[10px] text-text-muted">{model.size}</span>
-      </span>
-      <span className="flex shrink-0 items-center gap-1 text-[10px] font-medium">
-        {model.downloaded ? (
-          <>
-            <span className="text-emerald-700">可用</span>
-            <Icon icon="solar:check-circle-bold" width={14} className="text-emerald-600" />
-          </>
-        ) : downloading ? (
-          <span className="font-mono text-accent">{progress ?? 0}%</span>
-        ) : !downloadable ? (
-          <span className="text-text-muted">{model.state === "on_demand" ? "首次使用下载" : "不可下载"}</span>
-        ) : (
-          <span className="text-accent opacity-80 group-hover:opacity-100">下载</span>
-        )}
-      </span>
-    </button>
+      <button
+        onClick={model.downloaded || !downloadable ? onSelect : onDownload}
+        disabled={downloading || deleting}
+        className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left active:translate-y-px disabled:opacity-60"
+      >
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span className="truncate font-semibold">{model.name || model.id.split("/").pop() || model.id}</span>
+          <span className="shrink-0 text-[10px] text-text-muted">{model.size}</span>
+        </span>
+        <span className="flex shrink-0 items-center gap-1 text-[10px] font-medium">
+          {model.downloaded ? (
+            <>
+              <span className="text-emerald-700">可用</span>
+              <Icon icon="solar:check-circle-bold" width={14} className="text-emerald-600" />
+            </>
+          ) : downloading ? (
+            <span className="font-mono text-accent">{progress ?? 0}%</span>
+          ) : !downloadable ? (
+            <span className="text-text-muted">{model.state === "on_demand" ? "首次使用下载" : "不可下载"}</span>
+          ) : (
+            <span className="text-accent opacity-80 group-hover:opacity-100">下载</span>
+          )}
+        </span>
+      </button>
+      {model.downloaded && model.deletable && (
+        <button
+          onClick={onDelete}
+          disabled={downloading || deleting}
+          aria-label={`删除 ${model.name || model.id}`}
+          title="删除本地模型"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-red-500 transition-colors hover:bg-red-50 disabled:opacity-50"
+        >
+          <Icon icon={deleting ? "solar:refresh-linear" : "solar:trash-bin-trash-linear"} width={15} className={deleting ? "animate-spin" : ""} />
+        </button>
+      )}
+    </div>
   );
 }
 
 function ModelRow({
   active,
+  deleting,
   downloading,
   model,
+  onDelete,
   onDownload,
   onSelect,
   progress,
 }: {
   active: boolean;
+  deleting: boolean;
   downloading: boolean;
   model: AsrModelInfo;
+  onDelete: () => void;
   onDownload: () => void;
   onSelect: () => void;
   progress?: number;
@@ -1282,14 +1338,28 @@ function ModelRow({
           <p className="truncate text-[13px] font-semibold text-text-primary">{model.name || model.id}</p>
           <p className="mt-0.5 text-[11px] text-text-muted">{model.size} · {model.type}</p>
         </button>
-        <button
-          onClick={model.downloaded ? onSelect : onDownload}
-          className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${
-            model.downloaded ? "bg-emerald-50 text-emerald-700" : "bg-accent text-white"
-          }`}
-        >
-          {model.downloaded ? "可用" : downloading ? `${progress ?? 0}%` : "下载"}
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            onClick={model.downloaded ? onSelect : onDownload}
+            disabled={downloading || deleting}
+            className={`rounded-full px-2.5 py-1 text-[11px] font-medium disabled:opacity-50 ${
+              model.downloaded ? "bg-emerald-50 text-emerald-700" : "bg-accent text-white"
+            }`}
+          >
+            {model.downloaded ? "可用" : downloading ? `${progress ?? 0}%` : "下载"}
+          </button>
+          {model.downloaded && model.deletable && (
+            <button
+              onClick={onDelete}
+              disabled={downloading || deleting}
+              aria-label={`删除 ${model.name || model.id}`}
+              title="删除本地模型"
+              className="flex h-7 w-7 items-center justify-center rounded-md border border-red-200 text-red-500 transition-colors hover:bg-red-50 disabled:opacity-50"
+            >
+              <Icon icon={deleting ? "solar:refresh-linear" : "solar:trash-bin-trash-linear"} width={15} className={deleting ? "animate-spin" : ""} />
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

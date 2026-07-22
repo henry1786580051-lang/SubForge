@@ -88,6 +88,11 @@ export const transcribeApi = {
       method: "POST",
       body: JSON.stringify({ model_id }),
     }),
+  deleteModel: (model_id: string) =>
+    request<{ status: string; model_id: string; path?: string }>("/api/transcribe/delete-model", {
+      method: "POST",
+      body: JSON.stringify({ model_id }),
+    }),
 };
 
 // Subtitle processing
@@ -218,8 +223,10 @@ export interface AsrModelInfo {
   size: string;
   downloaded: boolean;
   downloadable?: boolean;
+  deletable?: boolean;
   path: string;
   align_model?: string;
+  language?: string;
   value?: string;
   selected?: boolean;
   state?: "ready" | "missing" | "on_demand" | string;

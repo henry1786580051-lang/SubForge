@@ -21,6 +21,12 @@ LOCAL_DIARIZATION_DIR = "pyannote-speaker-diarization-community-1"
 DIARIZATION_CACHE_VERSION = 1
 _DIARIZATION_MODEL_CACHE = SingleEntryModelCache()
 
+
+def clear_diarization_model_cache() -> None:
+    """Release the process-local diarization model, if any."""
+    _DIARIZATION_MODEL_CACHE.clear()
+
+
 if platform.system() == "Darwin" and platform.machine() == "arm64":
     os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 

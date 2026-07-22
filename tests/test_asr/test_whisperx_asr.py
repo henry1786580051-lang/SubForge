@@ -14,6 +14,7 @@ from subforge.core.asr.whisperx_asr import (
     _segments_for_alignment,
     _spoken_token,
     default_mlx_model,
+    managed_hf_alignment_dir,
 )
 
 
@@ -345,9 +346,7 @@ def test_whisperx_word_segments_keep_forced_alignment_metadata():
                     "text": "Today,",
                     "start": 1.0,
                     "end": 1.4,
-                    "words": [
-                        {"word": "Today,", "start": 1.02, "end": 1.38, "score": 0.93}
-                    ],
+                    "words": [{"word": "Today,", "start": 1.02, "end": 1.38, "score": 0.93}],
                 }
             ]
         }
@@ -359,11 +358,25 @@ def test_whisperx_word_segments_keep_forced_alignment_metadata():
     assert segments[0].words[0].alignment_score == pytest.approx(0.93)
 
 
-def test_whisperx_ignores_default_english_alignment_model_for_korean():
+def test_whisperx_replaces_default_english_alignment_model_for_korean():
     asr = WhisperXASR.__new__(WhisperXASR)
     asr.align_model = "WAV2VEC2_ASR_LARGE_LV60K_960H"
 
-    assert asr._resolve_align_model_name("ko") is None
+    assert asr._resolve_align_model_name("ko") == "kresnik/wav2vec2-large-xlsr-korean"
+
+
+def test_whisperx_prefers_downloaded_managed_korean_alignment_model(tmp_path):
+    model_dir = managed_hf_alignment_dir(tmp_path, "kresnik/wav2vec2-large-xlsr-korean")
+    model_dir.mkdir()
+    for name in ("config.json", "preprocessor_config.json", "vocab.json"):
+        (model_dir / name).write_text("{}", encoding="utf-8")
+    (model_dir / "model.safetensors").write_bytes(b"weights")
+
+    asr = WhisperXASR.__new__(WhisperXASR)
+    asr.align_model = "WAV2VEC2_ASR_LARGE_LV60K_960H"
+    asr.model_dir = str(tmp_path)
+
+    assert asr._resolve_align_model_name("ko") == str(model_dir)
 
 
 def test_whisperx_keeps_default_english_alignment_model_for_english():
