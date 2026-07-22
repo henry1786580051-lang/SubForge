@@ -601,9 +601,9 @@ def _current_model_status() -> dict:
                 and importlib.util.find_spec("whisperx") is not None
             )
         else:
-            resolved = model_value
-            resolved_path = Path()
-            local_ready = False
+            resolved_path = models_dir / f"faster-whisper-{model_value}"
+            local_ready = is_faster_whisper_model_dir(resolved_path)
+            resolved = str(resolved_path) if local_ready else model_value
             runtime_ready = (
                 importlib.util.find_spec("whisperx") is not None
                 and importlib.util.find_spec("faster_whisper") is not None
@@ -621,7 +621,7 @@ def _current_model_status() -> dict:
         status.update(
             {
                 "model_value": model_value,
-                "model_id": f"mlx-{model_value}" if uses_mlx else f"whisperx-{model_value}",
+                "model_id": f"mlx-{model_value}" if uses_mlx else f"faster-whisper-{model_value}",
                 "model_name": (
                     "MLX Whisper Large V3 FP16"
                     if uses_mlx and local_ready and model_value == "large-v3"
@@ -632,11 +632,13 @@ def _current_model_status() -> dict:
                 "resolved_model": resolved,
                 "model_path": str(resolved_path) if local_ready else "",
                 "model_ready": local_ready,
-                "model_state": "ready" if local_ready else "on_demand",
+                "model_state": "ready" if local_ready else "on_demand" if uses_mlx else "missing",
                 "model_message": (
                     "本地模型已验证，转录时直接使用"
                     if local_ready
                     else "首次测试或转录时将自动下载"
+                    if uses_mlx
+                    else "需要下载共享的 FasterWhisper CTranslate2 模型"
                 ),
                 "alignment_model": align_model or "按语言自动选择",
                 "alignment_path": str(align_path) if align_info else "",
@@ -818,6 +820,8 @@ async def list_whisper_models():
             }
         )
     for model_value, repo in MLX_WHISPER_MODELS.items():
+        if not uses_mlx:
+            continue
         resolved = resolve_mlx_model(model_value) if uses_mlx else model_value
         model_path = Path(resolved).expanduser() if uses_mlx else Path()
         local_ready = uses_mlx and is_valid_mlx_model_dir(model_path)
@@ -866,7 +870,11 @@ async def list_whisper_models():
                 "deletable": True,
                 "path": str(model_path),
                 "value": model_value,
-                "selected": selected_engine == "faster_whisper" and selected_model == model_value,
+                "selected": selected_model == model_value
+                and (
+                    selected_engine == "faster_whisper"
+                    or (selected_engine == "whisperx" and not uses_mlx)
+                ),
                 "state": "ready" if ready else "missing",
                 "detail": "本地 CTranslate2 模型" if ready else "需要下载",
             }

@@ -478,9 +478,12 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
       return models.filter((model) => model.category === "whisper_cpp");
     }
     if (config.transcribeModel === "whisperx") {
-      return models.filter(
-        (model) => model.category === "whisperx" && ["mlx", "ctranslate2"].includes(model.type)
+      const mlxModels = models.filter(
+        (model) => model.category === "whisperx" && model.type === "mlx"
       );
+      return mlxModels.length
+        ? mlxModels
+        : models.filter((model) => model.category === "faster_whisper");
     }
     if (config.transcribeModel === "faster_whisper") {
       return models.filter((model) => model.category === "faster_whisper");

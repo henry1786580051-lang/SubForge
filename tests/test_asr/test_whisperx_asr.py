@@ -404,6 +404,22 @@ def test_whisperx_keeps_explicit_non_english_alignment_model():
     assert asr._resolve_align_model_name("ko") == "example/korean-alignment-model"
 
 
+def test_windows_whisperx_prefers_managed_faster_whisper_model(monkeypatch, tmp_path):
+    model_dir = tmp_path / "faster-whisper-large-v3"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text("{}" * 50, encoding="utf-8")
+    (model_dir / "model.bin").write_bytes(b"x" * (1024 * 1024))
+    (model_dir / "tokenizer.json").write_text("{}" * 512, encoding="utf-8")
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"audio")
+    monkeypatch.setattr("subforge.core.asr.whisperx_asr.platform.system", lambda: "Windows")
+    monkeypatch.setattr("subforge.core.asr.whisperx_asr.platform.machine", lambda: "AMD64")
+
+    asr = WhisperXASR(str(audio_path), whisper_model="large-v3", model_dir=str(tmp_path))
+
+    assert asr.whisper_model == str(model_dir)
+
+
 @pytest.mark.parametrize(("uses_mlx", "method_name"), [(True, "mlx"), (False, "standard")])
 def test_whisperx_routes_to_platform_backend(monkeypatch, uses_mlx, method_name):
     asr = WhisperXASR.__new__(WhisperXASR)

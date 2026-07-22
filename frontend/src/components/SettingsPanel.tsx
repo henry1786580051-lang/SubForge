@@ -761,9 +761,10 @@ export function SettingsPanel() {
                   <span className="shrink-0 text-[10px] font-medium text-accent">更换模型</span>
                 </summary>
                 <div className="space-y-2 border-t border-border p-3">
-                {(settings.transcribe_model === "whisper_cpp" ? WHISPER_CPP_MODELS : settings.transcribe_model === "whisperx" ? MLX_WHISPER_MODELS : FASTER_WHISPER_MODELS).map((m) => {
+                {(settings.transcribe_model === "whisper_cpp" ? WHISPER_CPP_MODELS : settings.transcribe_model === "whisperx" && settings.whisperx_backend === "mlx" ? MLX_WHISPER_MODELS : FASTER_WHISPER_MODELS).map((m) => {
+                  const sharedFasterWhisper = settings.transcribe_model === "whisperx" && settings.whisperx_backend !== "mlx";
                   const apiModel = asrModels.find((item) =>
-                    item.category === settings.transcribe_model && (item.value || item.id) === m.id
+                    item.category === (sharedFasterWhisper ? "faster_whisper" : settings.transcribe_model) && (item.value || item.id) === m.id
                   );
                   const isSelected = effectiveWhisperModel === m.id || Boolean(apiModel?.selected);
                   const isReady = Boolean(apiModel?.downloaded);
@@ -785,27 +786,27 @@ export function SettingsPanel() {
                     <div className="flex shrink-0 items-center gap-2">
                       <button
                         onClick={() => {
-                          if (isSelected) return;
-                          if (settings.transcribe_model === "whisperx" || isReady) {
+                          if (isSelected && isReady) return;
+                          if ((settings.transcribe_model === "whisperx" && settings.whisperx_backend === "mlx") || isReady) {
                             void handleSave("whisper_model_size", m.id);
                           } else {
                             void handleDownloadModel(downloadKey);
                           }
                         }}
-                        disabled={downloadingModel === downloadKey || deletingModel === downloadKey || isSelected}
+                        disabled={downloadingModel === downloadKey || deletingModel === downloadKey || (isSelected && isReady)}
                         className={`px-3 py-1.5 text-[11px] rounded-md transition-all font-medium disabled:opacity-50 ${
-                          isSelected
+                          isSelected && isReady
                             ? "bg-accent text-white cursor-default"
                             : isReady
                             ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
                             : "bg-accent-dim text-accent hover:bg-accent/15"
                         }`}>
-                        {isSelected ? "当前使用" : isReady ? "使用" : downloadingModel === downloadKey ? (
+                        {isSelected && isReady ? "当前使用" : isReady ? "使用" : downloadingModel === downloadKey ? (
                           <span className="flex items-center gap-1.5">
                             <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" strokeDasharray="42 21" strokeLinecap="round" /></svg>
                             {downloadProgress[downloadKey] != null ? `${downloadProgress[downloadKey]}%` : "下载中"}
                           </span>
-                        ) : settings.transcribe_model === "whisperx" ? "选择" : "下载"}
+                        ) : settings.transcribe_model === "whisperx" && settings.whisperx_backend === "mlx" ? "选择" : "下载"}
                       </button>
                       {isReady && apiModel?.deletable && (
                         <button

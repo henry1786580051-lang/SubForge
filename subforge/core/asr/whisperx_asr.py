@@ -13,6 +13,7 @@ from ...config import MODEL_PATH
 from ..utils.logger import setup_logger
 from .asr_data import ASRData, ASRDataSeg, ASRWord, TimestampSource
 from .base import BaseASR
+from .faster_whisper import is_faster_whisper_model_dir
 from .model_cache import SingleEntryModelCache
 from .status import ASRStatus
 
@@ -788,9 +789,16 @@ class WhisperXASR(BaseASR):
     ):
         super().__init__(audio_input, use_cache, need_word_time_stamp)
         self.uses_mlx = platform.system() == "Darwin" and platform.machine() == "arm64"
-        self.whisper_model = whisper_model or (default_mlx_model() if self.uses_mlx else "large-v3")
-        self.mlx_model = _mlx_model_repo(self.whisper_model) if self.uses_mlx else ""
         self.model_dir = model_dir or str(MODEL_PATH)
+        requested_model = whisper_model or (default_mlx_model() if self.uses_mlx else "large-v3")
+        if not self.uses_mlx:
+            managed_model = Path(self.model_dir) / f"faster-whisper-{requested_model}"
+            if is_faster_whisper_model_dir(requested_model):
+                requested_model = str(Path(requested_model).expanduser())
+            elif is_faster_whisper_model_dir(managed_model):
+                requested_model = str(managed_model)
+        self.whisper_model = requested_model
+        self.mlx_model = _mlx_model_repo(self.whisper_model) if self.uses_mlx else ""
         self.language = _normalize_language(language)
         self.align_device = _normalize_align_device(device)
         self.compute_type = _normalize_compute_type(self.align_device, compute_type)
@@ -857,7 +865,7 @@ class WhisperXASR(BaseASR):
             from whisperx.audio import load_audio
         except ImportError as exc:
             raise RuntimeError(
-                "WhisperX is not installed in this desktop build. Reinstall SubForge with "
+                f"WhisperX runtime import failed: {exc}. Reinstall SubForge with "
                 "the WhisperX desktop runtime included."
             ) from exc
 

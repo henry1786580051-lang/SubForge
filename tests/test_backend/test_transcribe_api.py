@@ -137,7 +137,7 @@ def test_model_list_uses_stable_mlx_ids_and_selection(tmp_path, monkeypatch):
     assert large_v3["path"] == str(local_model)
 
 
-def test_windows_lists_standard_whisperx_and_downloadable_tool_models(tmp_path, monkeypatch):
+def test_windows_whisperx_reuses_downloadable_faster_whisper_models(tmp_path, monkeypatch):
     values = _config_values(tmp_path)
     monkeypatch.setattr(
         config_module,
@@ -148,15 +148,28 @@ def test_windows_lists_standard_whisperx_and_downloadable_tool_models(tmp_path, 
     monkeypatch.setattr(transcribe_api.platform, "machine", lambda: "AMD64")
 
     models = asyncio.run(transcribe_api.list_whisper_models())
-    whisperx_model = next(model for model in models if model["id"] == "whisperx-large-v3")
+    whisperx_model = next(model for model in models if model["id"] == "faster-whisper-large-v3")
     alignment = next(model for model in models if model["type"] == "alignment")
     diarization = next(model for model in models if model["type"] == "diarization")
 
     assert whisperx_model["type"] == "ctranslate2"
     assert whisperx_model["selected"] is True
-    assert whisperx_model["state"] == "on_demand"
+    assert whisperx_model["state"] == "missing"
+    assert whisperx_model["downloadable"] is True
+    assert not any(model["id"] == "whisperx-large-v3" for model in models)
     assert alignment["downloadable"] is True
     assert diarization["downloadable"] is True
+
+    shared_model = tmp_path / "models" / "faster-whisper-large-v3"
+    shared_model.mkdir(parents=True)
+    (shared_model / "config.json").write_text("{}" * 50, encoding="utf-8")
+    (shared_model / "model.bin").write_bytes(b"x" * (1024 * 1024))
+    (shared_model / "tokenizer.json").write_text("{}" * 512, encoding="utf-8")
+
+    status = transcribe_api._current_model_status()
+    assert status["model_id"] == "faster-whisper-large-v3"
+    assert status["model_path"] == str(shared_model)
+    assert status["model_ready"] is True
 
 
 def test_alignment_model_list_includes_pinned_english_japanese_and_korean(tmp_path, monkeypatch):

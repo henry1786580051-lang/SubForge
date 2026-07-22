@@ -163,6 +163,11 @@ def main() -> int:
             _run([str(exe)], env=env)
             print("Verified packaged FasterWhisper/CTranslate2/PyAV imports")
 
+            env = os.environ.copy()
+            env["SUBFORGE_CHECK_WHISPERX"] = "1"
+            _run([str(exe)], env=env)
+            print("Verified packaged WhisperX Windows runtime imports")
+
         if platform.system() == "Darwin" and platform.machine() == "arm64":
             env = os.environ.copy()
             env["SUBFORGE_CHECK_ASR"] = "1"

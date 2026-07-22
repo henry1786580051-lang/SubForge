@@ -314,6 +314,19 @@ if __name__ == "__main__":
         except Exception:
             traceback.print_exc()
             finish_packaged_check(1)
+    if os.environ.get("SUBFORGE_CHECK_WHISPERX") == "1":
+        import traceback
+
+        try:
+            from whisperx.alignment import align as _align  # noqa: F401
+            from whisperx.asr import load_model as _load_model  # noqa: F401
+            from whisperx.audio import load_audio as _load_audio  # noqa: F401
+
+            print("WhisperX Windows runtime imports: ok")
+            finish_packaged_check(0)
+        except Exception:
+            traceback.print_exc()
+            finish_packaged_check(1)
     if os.environ.get("SUBFORGE_CHECK_ASR") == "1":
         import traceback
 
