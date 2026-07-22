@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import importlib
 import logging
 import os
 import platform
@@ -194,8 +195,9 @@ class FasterWhisperASR(BaseASR):
         self, callback: Optional[Callable[[int, str], None]] = None, **kwargs: Any
     ) -> list[dict[str, Any]]:
         try:
-            from faster_whisper import WhisperModel
-        except ImportError as exc:
+            faster_whisper = importlib.import_module("faster_whisper")
+            whisper_model_class = getattr(faster_whisper, "WhisperModel")
+        except (AttributeError, ImportError) as exc:
             raise RuntimeError(
                 "The FasterWhisper runtime is missing from this installation."
             ) from exc
@@ -220,7 +222,7 @@ class FasterWhisperASR(BaseASR):
                 audio_file.write_bytes(self.file_binary or b"")
                 audio_path = str(audio_file)
 
-            model = WhisperModel(
+            model = whisper_model_class(
                 str(self.model_path),
                 device=self.device,
                 compute_type=self.compute_type,
