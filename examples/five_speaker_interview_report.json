@@ -1,0 +1,17 @@
+{
+  "output": "five_speaker_interview_word_timestamps.srt",
+  "result": {
+    "entries": 3777,
+    "words": 3785,
+    "first_start": "00:00:00,030",
+    "last_end": "00:18:03,360"
+  },
+  "speaker_words": {
+    "Speaker 1": 1044,
+    "unassigned": 18,
+    "Speaker 2": 1004,
+    "Speaker 3": 542,
+    "Speaker 4": 490,
+    "Speaker 5": 687
+  }
+}
