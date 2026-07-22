@@ -3,11 +3,11 @@
 ## 安装
 
 ```bash
-pip install subforge          # CLI + GUI 桌面版
+pip install subforge          # CLI 与兼容 GUI 入口
 ```
 
 免费功能（转录、必应/谷歌翻译）无需任何配置，安装后直接使用。
-需要桌面版时运行 `subforge-gui`、`subforge gui`，或直接运行无参数的 `subforge`。
+`subforge-gui`、`subforge gui` 和无参数的 `subforge` 保留兼容 GUI 入口；发布版桌面应用使用 Next.js + FastAPI + pywebview，并通过 Windows/macOS 安装包分发。
 
 ---
 

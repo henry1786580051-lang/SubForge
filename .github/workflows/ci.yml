@@ -33,14 +33,15 @@ jobs:
       - name: Lint
         run: uv run ruff check subforge backend launcher.py scripts
 
-      - name: Type check CLI
-        run: uv run pyright subforge/cli/
+      - name: Type check
+        run: uv run pyright subforge backend launcher.py scripts
 
       - name: Unit tests
         run: >-
           uv run pytest
           tests/test_cli tests/test_dubbing tests/test_backend tests/test_asr
-          tests/test_translate tests/test_llm tests/test_split tests/test_scripts
+          tests/test_translate tests/test_llm tests/test_split tests/test_optimize
+          tests/test_subtitle tests/test_thread tests/test_tts tests/test_scripts
           tests/test_launcher.py -m "not integration" -q
 
       - name: Build package

@@ -8,6 +8,14 @@ import httpx
 import subforge.core.llm.request_logger as request_logger
 
 
+def setup_function():
+    request_logger.set_llm_log_level("debug")
+
+
+def teardown_function():
+    request_logger.set_llm_log_level("summary")
+
+
 class _FakeResponse:
     def __init__(self, marker: str):
         self.marker = marker
@@ -170,3 +178,34 @@ def test_log_extracts_anthropic_cache_usage(tmp_path, monkeypatch):
     assert entry["tokens"] == 2200
     request_logger._pending_requests.clear()
     request_logger._current_request_key.set(None)
+
+
+def test_summary_log_omits_prompt_and_response_content(tmp_path, monkeypatch):
+    log_file = tmp_path / "llm_requests.jsonl"
+    monkeypatch.setattr(request_logger, "LLM_LOG_FILE", log_file)
+    request_logger._pending_requests.clear()
+    request_logger.set_llm_log_level("summary")
+    request = httpx.Request(
+        "POST",
+        "https://example.test/v1/chat/completions",
+        content=json.dumps(
+            {
+                "model": "MiniMax-M3",
+                "messages": [{"role": "user", "content": "private subtitle content"}],
+            }
+        ),
+    )
+    request_logger._on_request(request)
+    request_logger._on_response(httpx.Response(200, request=request))
+
+    class _SummaryResponse:
+        model = "MiniMax-M3"
+        usage = {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+
+    request_logger.log_llm_response(_SummaryResponse())
+    entry = json.loads(log_file.read_text(encoding="utf-8"))
+    assert entry["log_level"] == "summary"
+    assert entry["tokens"] == 15
+    assert "request" not in entry
+    assert "response" not in entry
+    assert "private subtitle content" not in log_file.read_text(encoding="utf-8")

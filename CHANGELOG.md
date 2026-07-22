@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.0.9 - 2026-07-22
+
+### Added
+
+- Added incremental subtitle preview events so transcription, splitting, optimization, and translation results appear while a task is still running without repeatedly transferring the complete timeline.
+- Added task-scoped resource locks and terminal-state guards to prevent duplicate jobs, cancellation races, and late worker results from overwriting completed or cancelled tasks.
+- Added shared audio-analysis contexts that reuse decoded waveforms, energy windows, and TEN-VAD inference across timing refinement and hallucination checks.
+- Added thread-safe in-process caches for WhisperX forced-alignment models and Community-1 speaker-diarization pipelines.
+- Added configurable LLM log detail levels. The recommended summary mode records task, latency, token, cache, and status metrics without persisting full prompts or responses.
+- Added atomic file writes for settings, subtitle exports, native save-dialog output, and log clearing.
+
+### Fixed
+
+- Fixed live subtitle previews being delayed until the complete transcription or translation task finished.
+- Fixed large preview snapshots and frequent partial-SRT writes causing avoidable serialization, WebSocket, and disk-I/O overhead.
+- Fixed concurrent LLM requests being paired with the wrong response or leaving superseded retry entries in memory.
+- Fixed API keys and Hugging Face tokens being returned to the frontend after they had been saved; settings now expose only configured-state metadata.
+- Fixed switching LLM providers with a blank password field erasing the provider's previously stored API key.
+- Fixed overlapping jobs operating on the same media or subtitle file and producing ambiguous completion state.
+- Fixed packaged desktop builds silently reusing stale frontend output when a fresh frontend build failed.
+
+### Changed
+
+- LLM logs are grouped by task and load batch details only when selected, substantially reducing the default log view and response payload.
+- Multi-speaker denoise calibration now keeps reusable ASR/alignment resources warm while comparing candidates and retains the original audio when enhancement risks weaker-speaker coverage.
+- Removed unused legacy LLM diarization and duplicate ASR content-integrity modules from the runtime and desktop bundle.
+- Expanded CI type checking and regression coverage across backend, ASR, translation, optimization, subtitle, thread, TTS, launcher, and packaging code.
+
 ## v1.0.8 - 2026-07-22
 
 ### Added

@@ -45,6 +45,7 @@ export function useTaskMonitor() {
   // Track task update signature. Partial SRT files are updated in-place, and
   // optimization/translation often changes text without changing segment count.
   const lastPartialKeyRef = useRef<string | null>(null);
+  const previewRevisionRef = useRef(0);
 
   function handleTaskUpdate(task: TaskInfo) {
     // Guard against stale task updates (e.g., after cancel)
@@ -60,8 +61,23 @@ export function useTaskMonitor() {
 
     // Prefer the WebSocket snapshot. Reading an SRT while a worker is replacing
     // it can return stale or partially written content in packaged builds.
-    if (task.status === "running" && task.preview_segments) {
+    const previewRevision = task.preview_revision || 0;
+    const hasNewPreview = previewRevision > previewRevisionRef.current;
+    if (task.status === "running" && task.preview_segments && hasNewPreview) {
       setSubtitles(task.preview_segments);
+      previewRevisionRef.current = previewRevision;
+    } else if (task.status === "running" && task.preview_delta && hasNewPreview) {
+      const delta = task.preview_delta;
+      const current = useAppStore.getState().subtitles;
+      if (delta.mode === "replace") {
+        setSubtitles(delta.segments);
+      } else if (delta.mode === "append") {
+        setSubtitles([...current, ...delta.segments]);
+      } else {
+        const changed = new Map(delta.segments.map((segment) => [segment.id, segment]));
+        setSubtitles(current.map((segment) => changed.get(segment.id) || segment));
+      }
+      previewRevisionRef.current = previewRevision;
     }
 
     // Compatibility fallback for older backends that only expose a partial file.
@@ -219,6 +235,7 @@ export function useTaskMonitor() {
       setError(null);
       setTaskState(0, "Starting...", "running");
       lastPartialKeyRef.current = null;
+      previewRevisionRef.current = 0;
 
       try {
         let result: { task_id: string };

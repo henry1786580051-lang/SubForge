@@ -1,6 +1,7 @@
 import contextvars
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -15,6 +16,7 @@ from subforge.core.llm.context import get_task_context
 LLM_LOG_FILE = LOG_PATH / "llm_requests.jsonl"
 MAX_LOG_SIZE = 10 * 1024 * 1024  # 10MB
 MAX_PENDING_REQUESTS = 1000
+LOG_LEVELS = {"summary", "standard", "debug"}
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,9 @@ _current_request_key: contextvars.ContextVar[int | None] = contextvars.ContextVa
     "subforge_llm_request_key",
     default=None,
 )
+_log_level = os.getenv("SUBFORGE_LLM_LOG_LEVEL", "summary").strip().lower()
+if _log_level not in LOG_LEVELS:
+    _log_level = "summary"
 
 
 # ==================== 日志写入 ====================
@@ -52,6 +57,67 @@ def _write_log(entry: Dict[str, Any]) -> None:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except Exception as e:
         logger.debug("Failed to write LLM log: %s", e)
+
+
+def set_llm_log_level(level: str) -> None:
+    """Set process-wide LLM log detail without exposing request content by default."""
+    normalized = str(level or "summary").strip().lower()
+    if normalized not in LOG_LEVELS:
+        raise ValueError(f"Unsupported LLM log level: {level}")
+    global _log_level
+    with _log_lock:
+        _log_level = normalized
+
+
+def _compact_payload(value: Any, *, depth: int = 0) -> Any:
+    """Bound diagnostic payload size while preserving its useful structure."""
+    if depth >= 5:
+        return "<truncated>"
+    if isinstance(value, str):
+        return value if len(value) <= 2000 else f"{value[:2000]}...<truncated>"
+    if isinstance(value, dict):
+        items = list(value.items())
+        compact = {str(key): _compact_payload(item, depth=depth + 1) for key, item in items[:30]}
+        if len(items) > 30:
+            compact["<truncated>"] = f"{len(items) - 30} more fields"
+        return compact
+    if isinstance(value, (list, tuple)):
+        compact = [_compact_payload(item, depth=depth + 1) for item in value[:30]]
+        if len(value) > 30:
+            compact.append(f"<{len(value) - 30} more items>")
+        return compact
+    return value
+
+
+def _response_metadata(response: Any, level: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    """Extract token metadata without serializing the full SDK response in summary mode."""
+    model = str(getattr(response, "model", "") or "")
+    usage_obj = getattr(response, "usage", None)
+    usage: dict[str, Any] = {}
+    if usage_obj is not None:
+        if hasattr(usage_obj, "model_dump"):
+            dumped_usage = usage_obj.model_dump()
+            usage = dumped_usage if isinstance(dumped_usage, dict) else {}
+        elif isinstance(usage_obj, dict):
+            usage = usage_obj
+
+    response_data: dict[str, Any] = {}
+    if level != "summary" and response and hasattr(response, "model_dump"):
+        dumped = response.model_dump()
+        if isinstance(dumped, dict):
+            response_data = dumped if level == "debug" else _compact_payload(dumped)
+            model = model or str(dumped.get("model") or "")
+            dumped_usage = dumped.get("usage")
+            if not usage and isinstance(dumped_usage, dict):
+                usage = dumped_usage
+    elif (not model or not usage) and response and hasattr(response, "model_dump"):
+        dumped = response.model_dump()
+        if isinstance(dumped, dict):
+            model = model or str(dumped.get("model") or "")
+            dumped_usage = dumped.get("usage")
+            if not usage and isinstance(dumped_usage, dict):
+                usage = dumped_usage
+    return model, usage, response_data
 
 
 # ==================== HTTPX Hooks ====================
@@ -97,6 +163,7 @@ def _on_request(request: httpx.Request, log_context: Optional[dict[str, str]] = 
     previous_key = _current_request_key.get()
     _current_request_key.set(request_key)
     with _log_lock:
+        log_level = _log_level
         # OpenAI-compatible clients can retry in the same execution context.
         # Only the last request is paired with the SDK response, so release the
         # superseded attempt instead of retaining it for the process lifetime.
@@ -108,7 +175,14 @@ def _on_request(request: httpx.Request, log_context: Optional[dict[str, str]] = 
         _pending_requests[request_key] = {
             "start_time": time.time(),
             "url": str(request.url),
-            "request": request_body,
+            "request": (
+                request_body
+                if log_level == "debug"
+                else _compact_payload(request_body)
+                if log_level == "standard"
+                else None
+            ),
+            "log_level": log_level,
             "context": dict(log_context or {}),
             "stage": _infer_stage(request_body),
             "model": str(request_body.get("model", "")),
@@ -156,16 +230,12 @@ def log_llm_response(response: Any) -> None:
     if pending is None:
         return
 
-    # 序列化完整响应体
-    response_data = {}
-    if response and hasattr(response, "model_dump"):
-        response_data = response.model_dump()
+    log_level = pending.get("log_level", "summary")
+    response_model, usage, response_data = _response_metadata(response, log_level)
 
     # 获取任务上下文
     ctx = get_task_context()
     explicit_ctx = pending.get("context", {})
-    usage = response_data.get("usage") if isinstance(response_data, dict) else {}
-    usage = usage if isinstance(usage, dict) else {}
     completion_details = usage.get("completion_tokens_details") or {}
     prompt_details = usage.get("prompt_tokens_details") or {}
     cache_creation_tokens = int(usage.get("cache_creation_input_tokens") or 0)
@@ -185,13 +255,12 @@ def log_llm_response(response: Any) -> None:
         "task_id": explicit_ctx.get("task_id") or (ctx.task_id if ctx else ""),
         "file_name": explicit_ctx.get("file_name") or (ctx.file_name if ctx else ""),
         "stage": pending.get("stage") or (ctx.stage if ctx else ""),
-        "model": response_data.get("model") or pending.get("model", ""),
+        "model": response_model or pending.get("model", ""),
         "batch": pending.get("batch", ""),
         "url": pending.get("url", ""),
         "status": pending.get("status", 0),
         "duration_ms": pending.get("duration_ms", 0),
-        "request": pending.get("request", {}),
-        "response": response_data,
+        "log_level": log_level,
         "tokens": total_tokens,
         "prompt_tokens": prompt_tokens,
         "cached_tokens": cached_tokens,
@@ -200,6 +269,9 @@ def log_llm_response(response: Any) -> None:
         "completion_tokens": completion_tokens,
         "reasoning_tokens": int(completion_details.get("reasoning_tokens") or 0),
     }
+    if log_level != "summary":
+        log_entry["request"] = pending.get("request", {})
+        log_entry["response"] = response_data
 
     _write_log(log_entry)
 
@@ -218,22 +290,23 @@ def log_llm_error(error: Exception) -> None:
     ctx = get_task_context()
     explicit_ctx = pending.get("context", {})
     timestamp = datetime.now(timezone.utc).isoformat()
-    _write_log(
-        {
-            "timestamp": timestamp,
-            "time": timestamp,
-            "task_id": explicit_ctx.get("task_id") or (ctx.task_id if ctx else ""),
-            "file_name": explicit_ctx.get("file_name") or (ctx.file_name if ctx else ""),
-            "stage": pending.get("stage") or (ctx.stage if ctx else ""),
-            "model": pending.get("model", ""),
-            "batch": pending.get("batch", ""),
-            "url": pending.get("url", ""),
-            "status": pending.get("status", 0),
-            "duration_ms": pending.get(
-                "duration_ms",
-                int((time.time() - pending.get("start_time", time.time())) * 1000),
-            ),
-            "request": pending.get("request", {}),
-            "error": f"{type(error).__name__}: {error}",
-        }
-    )
+    log_entry = {
+        "timestamp": timestamp,
+        "time": timestamp,
+        "task_id": explicit_ctx.get("task_id") or (ctx.task_id if ctx else ""),
+        "file_name": explicit_ctx.get("file_name") or (ctx.file_name if ctx else ""),
+        "stage": pending.get("stage") or (ctx.stage if ctx else ""),
+        "model": pending.get("model", ""),
+        "batch": pending.get("batch", ""),
+        "url": pending.get("url", ""),
+        "status": pending.get("status", 0),
+        "duration_ms": pending.get(
+            "duration_ms",
+            int((time.time() - pending.get("start_time", time.time())) * 1000),
+        ),
+        "log_level": pending.get("log_level", "summary"),
+        "error": f"{type(error).__name__}: {error}",
+    }
+    if pending.get("log_level") != "summary":
+        log_entry["request"] = pending.get("request", {})
+    _write_log(log_entry)

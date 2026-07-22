@@ -126,7 +126,7 @@ export const configApi = {
       status: string;
       provider: string;
       base_url: string;
-      api_key: string;
+      api_key_configured: boolean;
       model: string;
     }>("/api/config/llm-provider", {
       method: "POST",
@@ -144,6 +144,8 @@ export const llmLogsApi = {
     request<{ groups: LlmLogGroup[]; total: number; page: number; pages: number }>(
       `/api/llm-logs/?page=${page}&search=${encodeURIComponent(search)}`
     ),
+  detail: (id: string) =>
+    request<LlmLogGroup>(`/api/llm-logs/${encodeURIComponent(id)}`),
   clear: () => request("/api/llm-logs/", { method: "DELETE" }),
 };
 
@@ -163,6 +165,12 @@ export interface TaskInfo {
   error?: string | null;
   subtitle_file?: string | null;
   preview_segments?: SubtitleSegment[] | null;
+  preview_revision?: number;
+  preview_delta?: {
+    mode: "append" | "patch" | "replace";
+    segments: SubtitleSegment[];
+    total: number;
+  } | null;
 }
 
 export interface FileInfo {

@@ -7,7 +7,7 @@ from openai import OpenAI
 from subforge.core.llm.client import normalize_base_url
 
 from ..utils.logger import setup_logger
-from .asr_data import ASRDataSeg
+from .asr_data import ASRDataSeg, ASRWord
 from .base import BaseASR
 
 logger = setup_logger("whisper_api")
@@ -82,7 +82,15 @@ class WhisperAPI(BaseASR):
                 return []
             # Use audio duration as end_time (model doesn't provide timestamps)
             duration_ms = int(self._get_audio_duration() * 1000)
-            return [ASRDataSeg(text=text, start_time=0, end_time=max(duration_ms, 1))]
+            return [
+                ASRDataSeg(
+                    text=text,
+                    start_time=0,
+                    end_time=max(duration_ms, 1),
+                    timestamp_granularity="sentence",
+                    timing_source="estimated",
+                )
+            ]
 
         if self.need_word_time_stamp and "words" in resp_data:
             return [
@@ -90,6 +98,21 @@ class WhisperAPI(BaseASR):
                     text=word["word"],
                     start_time=int(float(word["start"]) * 1000),
                     end_time=int(float(word["end"]) * 1000),
+                    words=[
+                        ASRWord(
+                            text=word["word"],
+                            start_time=int(float(word["start"]) * 1000),
+                            end_time=int(float(word["end"]) * 1000),
+                            confidence=(
+                                float(word["confidence"])
+                                if isinstance(word.get("confidence"), (int, float))
+                                else None
+                            ),
+                            timing_source="native",
+                        )
+                    ],
+                    timestamp_granularity="word",
+                    timing_source="native",
                 )
                 for word in resp_data["words"]
             ]
@@ -99,6 +122,8 @@ class WhisperAPI(BaseASR):
                     text=seg["text"].strip(),
                     start_time=int(float(seg["start"]) * 1000),
                     end_time=int(float(seg["end"]) * 1000),
+                    timestamp_granularity="sentence",
+                    timing_source="native",
                 )
                 for seg in resp_data["segments"]
             ]

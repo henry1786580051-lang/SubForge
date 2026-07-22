@@ -11,14 +11,17 @@ from typing import Any, Callable, List, Optional, Union
 
 from ...config import MODEL_PATH
 from ..utils.logger import setup_logger
-from .asr_data import ASRData, ASRDataSeg
+from .asr_data import ASRData, ASRDataSeg, ASRWord, TimestampSource
 from .base import BaseASR
+from .model_cache import SingleEntryModelCache
 from .status import ASRStatus
 
 logger = setup_logger("whisperx_asr")
+_ALIGNMENT_MODEL_CACHE = SingleEntryModelCache()
 
 
 DEFAULT_EN_ALIGN_MODEL = "WAV2VEC2_ASR_LARGE_LV60K_960H"
+DEFAULT_EN_ALIGN_FILENAME = "wav2vec2_fairseq_large_lv60k_asr_ls960.pth"
 LOCAL_MLX_MODEL_NAMES = (
     "whisper-large-v3-fp16",
     "mlx-whisper-large-v3-fp16",
@@ -123,6 +126,14 @@ def _normalize_align_device(device: str | None) -> str:
     if value in {"cuda", "cpu"}:
         return value
     return "cpu"
+
+
+def _normalize_align_model(model: str | None) -> str:
+    """Map the downloaded torchaudio weight file to its pipeline identifier."""
+    value = (model or "").strip()
+    if value and Path(value).name.lower() == DEFAULT_EN_ALIGN_FILENAME:
+        return DEFAULT_EN_ALIGN_MODEL
+    return value
 
 
 def _normalize_compute_type(device: str, compute_type: str | None) -> str:
@@ -628,8 +639,41 @@ def _append_word_run(
             end = current + (right_bound - left_bound) * weight / total_weight
         start_ms = max(0, int(round(current * 1000)))
         end_ms = max(start_ms, int(round(end * 1000)))
-        output.append(ASRDataSeg(text, start_ms, end_ms))
+        output.append(
+            _make_word_segment(
+                text,
+                start_ms,
+                end_ms,
+                timing_source="estimated",
+            )
+        )
         current = end
+
+
+def _make_word_segment(
+    text: str,
+    start_ms: int,
+    end_ms: int,
+    *,
+    timing_source: TimestampSource,
+    confidence: float | None = None,
+) -> ASRDataSeg:
+    word = ASRWord(
+        text=text,
+        start_time=start_ms,
+        end_time=end_ms,
+        confidence=confidence,
+        alignment_score=confidence if timing_source == "forced_alignment" else None,
+        timing_source=timing_source,
+    )
+    return ASRDataSeg(
+        text,
+        start_ms,
+        end_ms,
+        words=[word],
+        timestamp_granularity="word",
+        timing_source=timing_source,
+    )
 
 
 def _words_to_segments(
@@ -657,7 +701,17 @@ def _words_to_segments(
                 pending = []
             start_ms = max(0, int(round(start * 1000)))
             end_ms = max(start_ms, int(round(end * 1000)))
-            output.append(ASRDataSeg(text, start_ms, end_ms))
+            score = word.get("score")
+            confidence = float(score) if isinstance(score, (int, float)) else None
+            output.append(
+                _make_word_segment(
+                    text,
+                    start_ms,
+                    end_ms,
+                    timing_source="forced_alignment",
+                    confidence=confidence,
+                )
+            )
             last_known_end = end
         else:
             pending.append(word)
@@ -698,7 +752,7 @@ class WhisperXASR(BaseASR):
         self.language = _normalize_language(language)
         self.align_device = _normalize_align_device(device)
         self.compute_type = _normalize_compute_type(self.align_device, compute_type)
-        self.align_model = (align_model or "").strip()
+        self.align_model = _normalize_align_model(align_model)
         self.batch_size = max(1, int(batch_size or 4))
         self.segment_callback = segment_callback
         self.need_word_time_stamp = need_word_time_stamp
@@ -842,45 +896,58 @@ class WhisperXASR(BaseASR):
             align_kwargs["model_name"] = align_model_name
         if self.model_dir:
             align_kwargs["model_dir"] = self.model_dir
-        try:
-            model_a, metadata = whisperx_alignment.load_align_model(**align_kwargs)
-        except TypeError:
-            align_kwargs.pop("model_dir", None)
-            model_a, metadata = whisperx_alignment.load_align_model(**align_kwargs)
-
-        callback(78, "Running forced alignment...")
-
-        def _align(segments_to_align: list[dict]) -> dict:
+        def _load_alignment_model():
             try:
-                return dict(
-                    whisperx_alignment.align(
-                        segments_to_align,
-                        model_a,
-                        metadata,
-                        audio,
-                        self.align_device,
-                        return_char_alignments=True,
-                    )
-                )
+                return whisperx_alignment.load_align_model(**align_kwargs)
             except TypeError:
-                return dict(
-                    whisperx_alignment.align(
-                        segments_to_align,
-                        model_a,
-                        metadata,
-                        audio,
-                        self.align_device,
-                    )
-                )
+                fallback_kwargs = dict(align_kwargs)
+                fallback_kwargs.pop("model_dir", None)
+                return whisperx_alignment.load_align_model(**fallback_kwargs)
 
-        aligned = _align(spoken_align_segments)
-        if alignment_plans:
-            restored = _restore_display_alignment(aligned, alignment_plans)
-            if restored is None:
-                logger.warning("Spoken alignment mapping was incomplete; retrying original text")
-                aligned = _align(align_segments)
-            else:
-                aligned = restored
+        cache_key = (
+            language_code,
+            align_model_name or "",
+            self.align_device,
+            str(self.model_dir or ""),
+            id(whisperx_alignment.load_align_model),
+        )
+        with _ALIGNMENT_MODEL_CACHE.acquire(cache_key, _load_alignment_model) as loaded:
+            model_a, metadata = loaded
+            callback(78, "Running forced alignment...")
+
+            def _align(segments_to_align: list[dict]) -> dict:
+                try:
+                    return dict(
+                        whisperx_alignment.align(
+                            segments_to_align,
+                            model_a,
+                            metadata,
+                            audio,
+                            self.align_device,
+                            return_char_alignments=True,
+                        )
+                    )
+                except TypeError:
+                    return dict(
+                        whisperx_alignment.align(
+                            segments_to_align,
+                            model_a,
+                            metadata,
+                            audio,
+                            self.align_device,
+                        )
+                    )
+
+            aligned = _align(spoken_align_segments)
+            if alignment_plans:
+                restored = _restore_display_alignment(aligned, alignment_plans)
+                if restored is None:
+                    logger.warning(
+                        "Spoken alignment mapping was incomplete; retrying original text"
+                    )
+                    aligned = _align(align_segments)
+                else:
+                    aligned = restored
         aligned["language"] = language_code
         aligned["align_model"] = align_model_name or ""
 
@@ -1028,7 +1095,15 @@ class WhisperXASR(BaseASR):
                 continue
             start_ms = max(0, int(round(float(start) * 1000)))
             end_ms = max(start_ms, int(round(float(end) * 1000)))
-            segments.append(ASRDataSeg(text, start_ms, end_ms))
+            segments.append(
+                ASRDataSeg(
+                    text,
+                    start_ms,
+                    end_ms,
+                    timestamp_granularity="sentence",
+                    timing_source="native",
+                )
+            )
 
         return segments
 

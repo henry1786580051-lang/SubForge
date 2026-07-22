@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from subforge.core.asr.asr_data import ASRData, ASRDataSeg, handle_long_path
+from subforge.core.asr.asr_data import ASRData, ASRDataSeg, ASRWord, handle_long_path
 
 
 class TestASRDataSegEdgeCases:
@@ -169,6 +169,82 @@ class TestWordTimestampEdgeCases:
         asr_data = ASRData(segments)
         assert not asr_data.is_word_timestamp()
 
+    def test_explicit_sentence_granularity_overrides_single_word_heuristic(self):
+        segments = [
+            ASRDataSeg(
+                "Yes.",
+                0,
+                500,
+                timestamp_granularity="sentence",
+                timing_source="native",
+            ),
+            ASRDataSeg(
+                "No.",
+                700,
+                1100,
+                timestamp_granularity="sentence",
+                timing_source="native",
+            ),
+        ]
+
+        asr_data = ASRData(segments)
+
+        assert asr_data.granularity == "sentence"
+        assert asr_data.timing_source == "native"
+        assert not asr_data.is_word_timestamp()
+
+    def test_explicit_word_granularity_retains_atomic_timing(self):
+        segment = ASRDataSeg(
+            "New York",
+            100,
+            700,
+            words=[ASRWord("New York", 100, 700, timing_source="forced_alignment")],
+            timestamp_granularity="word",
+            timing_source="forced_alignment",
+        )
+
+        asr_data = ASRData([segment])
+
+        assert asr_data.is_word_timestamp()
+        assert asr_data.granularity == "word"
+        assert asr_data.timing_source == "forced_alignment"
+        assert asr_data.segments[0].words[0].start_time == 100
+
+    def test_imported_word_srt_rebuilds_atomic_metadata(self):
+        source = """1
+00:00:00,100 --> 00:00:00,300
+Hello
+
+2
+00:00:00,350 --> 00:00:00,700
+world
+"""
+
+        asr_data = ASRData.from_srt(source)
+
+        assert asr_data.granularity == "word"
+        assert asr_data.timing_source == "imported"
+        assert [word.text for seg in asr_data.segments for word in seg.words] == [
+            "Hello",
+            "world",
+        ]
+
+    def test_imported_sentence_srt_is_explicitly_sentence_level(self):
+        source = """1
+00:00:00,100 --> 00:00:01,300
+Hello world from SubForge.
+
+2
+00:00:01,500 --> 00:00:02,700
+This remains a sentence.
+"""
+
+        asr_data = ASRData.from_srt(source)
+
+        assert asr_data.granularity == "sentence"
+        assert asr_data.timing_source == "imported"
+        assert not any(seg.words for seg in asr_data.segments)
+
 
 class TestSplitToWordsEdgeCases:
     """测试分词边缘情况"""
@@ -233,6 +309,11 @@ class TestSplitToWordsEdgeCases:
         segments = [ASRDataSeg("Hello world", 1000, 1000)]
         asr_data = ASRData(segments)
         asr_data.split_to_word_segments()
+
+        assert asr_data.granularity == "word"
+        assert asr_data.timing_source == "estimated"
+        assert all(seg.words for seg in asr_data.segments)
+        assert all(seg.words[0].timing_source == "estimated" for seg in asr_data.segments)
         # 零时长应该不崩溃
         assert all(seg.start_time == 1000 for seg in asr_data.segments)
         assert all(seg.end_time == 1000 for seg in asr_data.segments)

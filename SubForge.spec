@@ -223,7 +223,6 @@ a = Analysis(
         'subforge.core.asr.transcribe',
         'subforge.core.asr.base',
         'subforge.core.asr.asr_data',
-        'subforge.core.asr.content_integrity',
         'subforge.core.translate',
         'subforge.core.split',
         'subforge.core.optimize',

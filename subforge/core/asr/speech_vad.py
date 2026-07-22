@@ -14,12 +14,17 @@ def is_available() -> bool:
     return ten_vad.is_available() or silero_vad.is_available()
 
 
-def detect_speech_segments(audio_path: str, **kwargs) -> List[Tuple[int, int]]:
+def detect_speech_segments(
+    audio_path: str, *, analysis_context=None, **kwargs
+) -> List[Tuple[int, int]]:
     """Prefer TEN-VAD and fall back to Silero only on backend failure.
 
     An empty TEN-VAD result is valid for silent audio and must not trigger a
     second detector with different semantics.
     """
+    if analysis_context is not None:
+        return analysis_context.speech_segments(**kwargs)
+
     from subforge.core.asr import silero_vad, ten_vad
 
     if ten_vad.is_available():

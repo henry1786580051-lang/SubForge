@@ -41,3 +41,24 @@ def test_llm_logs_group_requests_by_task(tmp_path, monkeypatch):
     assert group["duration_ms"] == 3000
     assert group["tokens"] == 300
     assert group["cache_creation_tokens"] == 64
+    assert group["entries"] == []
+
+    detail = asyncio.run(llm_logs.get_llm_log_detail("task-1"))
+    assert detail["request_count"] == 2
+    assert len(detail["entries"]) == 2
+
+
+def test_llm_logs_skip_malformed_status_and_json(tmp_path, monkeypatch):
+    path = tmp_path / "llm_requests.jsonl"
+    path.write_text(
+        "not json\n"
+        + json.dumps({"task_id": "task-2", "timestamp": "2026-01-01", "status": "ok"})
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(llm_logs, "_find_log_path", lambda: path)
+
+    result = asyncio.run(llm_logs.get_llm_logs(page=1, page_size=50, search=""))
+
+    assert result["total"] == 1
+    assert result["groups"][0]["error_count"] == 0

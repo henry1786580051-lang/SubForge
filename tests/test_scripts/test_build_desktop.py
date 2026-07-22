@@ -1,3 +1,5 @@
+import pytest
+
 from scripts import build_desktop
 
 
@@ -48,3 +50,40 @@ def test_packaged_mlx_whisper_gets_numba_fallback(tmp_path):
     assert "except ImportError:" in patched
     assert "class _NumbaFallback:" in patched
     assert "import numba\n\n@numba.jit" not in patched
+
+
+def test_frontend_build_failure_is_not_hidden_by_stale_export(tmp_path, monkeypatch):
+    frontend = tmp_path / "frontend"
+    output = frontend / "out"
+    (frontend / "node_modules").mkdir(parents=True)
+    output.mkdir()
+    (frontend / "package.json").write_text("{}", encoding="utf-8")
+    (output / "index.html").write_text("stale", encoding="utf-8")
+    (output / "_next").mkdir()
+    monkeypatch.setattr(build_desktop, "FRONTEND_DIR", frontend)
+    monkeypatch.setattr(build_desktop, "FRONTEND_OUT_DIR", output)
+    monkeypatch.setattr(
+        build_desktop,
+        "_run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("npm failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="npm failed"):
+        build_desktop.build_frontend("1.2.3")
+
+
+def test_frontend_build_requires_explicit_skip_when_dependencies_are_missing(tmp_path, monkeypatch):
+    frontend = tmp_path / "frontend"
+    output = frontend / "out"
+    frontend.mkdir()
+    output.mkdir()
+    (frontend / "package.json").write_text("{}", encoding="utf-8")
+    (output / "index.html").write_text("existing", encoding="utf-8")
+    (output / "_next").mkdir()
+    monkeypatch.setattr(build_desktop, "FRONTEND_DIR", frontend)
+    monkeypatch.setattr(build_desktop, "FRONTEND_OUT_DIR", output)
+
+    with pytest.raises(RuntimeError, match="node_modules"):
+        build_desktop.build_frontend("1.2.3")
+
+    build_desktop.build_frontend("1.2.3", skip=True)

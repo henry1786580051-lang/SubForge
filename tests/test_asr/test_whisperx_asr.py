@@ -310,6 +310,8 @@ def test_whisperx_make_segments_can_return_sentence_segments_when_requested():
     assert [(seg.text, seg.start_time, seg.end_time) for seg in segments] == [
         ("Today, we drive.", 9964, 12150),
     ]
+    assert segments[0].timestamp_granularity == "sentence"
+    assert segments[0].timing_source == "native"
 
 
 def test_whisperx_make_segments_ignores_words_when_word_timestamps_disabled():
@@ -332,6 +334,31 @@ def test_whisperx_make_segments_ignores_words_when_word_timestamps_disabled():
     ]
 
 
+def test_whisperx_word_segments_keep_forced_alignment_metadata():
+    asr = WhisperXASR.__new__(WhisperXASR)
+    asr.need_word_time_stamp = True
+
+    segments = asr._make_segments(
+        {
+            "segments": [
+                {
+                    "text": "Today,",
+                    "start": 1.0,
+                    "end": 1.4,
+                    "words": [
+                        {"word": "Today,", "start": 1.02, "end": 1.38, "score": 0.93}
+                    ],
+                }
+            ]
+        }
+    )
+
+    assert len(segments) == 1
+    assert segments[0].timestamp_granularity == "word"
+    assert segments[0].timing_source == "forced_alignment"
+    assert segments[0].words[0].alignment_score == pytest.approx(0.93)
+
+
 def test_whisperx_ignores_default_english_alignment_model_for_korean():
     asr = WhisperXASR.__new__(WhisperXASR)
     asr.align_model = "WAV2VEC2_ASR_LARGE_LV60K_960H"
@@ -344,6 +371,17 @@ def test_whisperx_keeps_default_english_alignment_model_for_english():
     asr.align_model = "WAV2VEC2_ASR_LARGE_LV60K_960H"
 
     assert asr._resolve_align_model_name("en") == "WAV2VEC2_ASR_LARGE_LV60K_960H"
+
+
+def test_whisperx_maps_local_torchaudio_weight_to_pipeline_identifier(tmp_path):
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"audio")
+    asr = WhisperXASR(
+        str(audio_path),
+        align_model=str(tmp_path / "wav2vec2_fairseq_large_lv60k_asr_ls960.pth"),
+    )
+
+    assert asr.align_model == "WAV2VEC2_ASR_LARGE_LV60K_960H"
 
 
 def test_whisperx_keeps_explicit_non_english_alignment_model():

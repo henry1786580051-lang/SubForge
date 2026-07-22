@@ -66,6 +66,21 @@ def test_cleanup_desktop_session_requests_shutdown_and_removes_uploads(monkeypat
     assert calls == ["cleanup"]
 
 
+def test_cleanup_desktop_session_can_leave_active_uploads_in_place(monkeypatch):
+    calls = []
+
+    class FakeServer:
+        should_exit = False
+
+    server = FakeServer()
+    monkeypatch.setattr("app.api.files.cleanup_session_uploads", lambda: calls.append("cleanup"))
+
+    launcher._cleanup_desktop_session(server, cleanup_uploads=False)
+
+    assert server.should_exit is True
+    assert calls == []
+
+
 def test_start_server_disables_console_logging(monkeypatch):
     captured = {}
 

@@ -109,10 +109,12 @@ def start_server(port: int, server_errors: list[str], server_holder: list | None
             pass
 
 
-def _cleanup_desktop_session(server=None) -> None:
+def _cleanup_desktop_session(server=None, *, cleanup_uploads: bool = True) -> None:
     """Request backend shutdown and remove files owned by this process."""
     if server is not None:
         server.should_exit = True
+    if not cleanup_uploads:
+        return
     try:
         from app.api.files import cleanup_session_uploads
 
@@ -178,8 +180,9 @@ class Api:
             if result:
                 file_path = result if isinstance(result, str) else result[0]
                 data = base64.b64decode(base64_data)
-                with open(file_path, "wb") as f:
-                    f.write(data)
+                from subforge.core.utils.atomic_write import atomic_write_bytes
+
+                atomic_write_bytes(file_path, data)
                 print(f"[Api] saved to: {file_path}")
                 return {"ok": True, "path": file_path}
             print("[Api] dialog cancelled")
@@ -243,7 +246,16 @@ def main():
         if exit_started.is_set():
             return
         exit_started.set()
-        _cleanup_desktop_session(server_holder[0] if server_holder else None)
+        # Let FastAPI cancel background coroutines before the hard-exit fallback.
+        # If native ML work is still running, leave session uploads for the next
+        # startup's stale-file cleanup instead of deleting files under the worker.
+        _cleanup_desktop_session(
+            server_holder[0] if server_holder else None,
+            cleanup_uploads=False,
+        )
+        server_thread.join(timeout=5.0)
+        if not server_thread.is_alive():
+            _cleanup_desktop_session()
         os._exit(0)
 
     try:

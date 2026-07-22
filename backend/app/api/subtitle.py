@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.blocking import run_blocking
-from app.core.task_manager import task_manager
+from app.core.task_manager import TaskResourceBusyError, task_manager
 from app.security import validate_path
 
 router = APIRouter()
@@ -106,7 +106,13 @@ async def start_subtitle_processing(req: SubtitleRequest):
         raise HTTPException(status_code=400, detail="Subtitle file not found")
     req = req.model_copy(update={"subtitle_file": str(file_path)})
 
-    task = task_manager.create_task("subtitle")
+    try:
+        task = task_manager.create_task(
+            "subtitle",
+            resource_key=f"subtitle:{file_path.resolve()}",
+        )
+    except TaskResourceBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     task_obj = asyncio.create_task(_run_subtitle(task.id, req))
     task_manager.register_running_task(task.id, task_obj)
     _background_tasks.add(task_obj)
@@ -138,7 +144,9 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
         if api_key and base_url:
             from subforge.core.llm import create_client
             from subforge.core.llm.client import set_client_log_context
+            from subforge.core.llm.request_logger import set_llm_log_level
 
+            set_llm_log_level(get_config_value("llm_log_level", "summary"))
             llm_client = create_client(base_url=base_url, api_key=api_key)
             set_client_log_context(
                 llm_client,
@@ -167,6 +175,7 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
         partial_srt.close()
         preview_lock = threading.RLock()
         last_preview_save = [0.0]
+        last_recovery_save = [0.0]
 
         def _save_partial(data, msg="", *, force=False):
             """Save current ASRData to partial SRT and notify frontend."""
@@ -176,22 +185,24 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
                     if not force and now - last_preview_save[0] < 0.25:
                         return
                     last_preview_save[0] = now
-                    from subforge.core.entities import SubtitleLayoutEnum
+                    snapshot_due = force or now - last_recovery_save[0] >= 5.0
+                    snapshot_path = None
+                    if snapshot_due:
+                        from subforge.core.entities import SubtitleLayoutEnum
 
-                    data.save(
-                        partial_srt_path,
-                        layout=SubtitleLayoutEnum.TRANSLATE_ON_TOP,
-                        speaker_style="none",
-                    )
-                    task = task_manager.get_task(task_id)
-                    if task:
-                        task_manager.update_progress(
-                            task_id,
-                            task.progress,
-                            msg or task.message,
-                            subtitle_file=partial_srt_path,
-                            preview_segments=_preview_segments(data),
+                        data.save(
+                            partial_srt_path,
+                            layout=SubtitleLayoutEnum.TRANSLATE_ON_TOP,
+                            speaker_style="none",
                         )
+                        last_recovery_save[0] = now
+                        snapshot_path = partial_srt_path
+                    task_manager.publish_preview(
+                        task_id,
+                        _preview_segments(data),
+                        subtitle_file=snapshot_path,
+                        message=msg or None,
+                    )
             except Exception as e:
                 logger.warning(f"Failed to save partial result: {e}")
 

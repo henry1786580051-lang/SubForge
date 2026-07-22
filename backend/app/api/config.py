@@ -147,6 +147,7 @@ _DEFAULTS = {
     "llm_model": "gpt-4o-mini",
     "llm_provider": "custom",
     "llm_profiles": {},
+    "llm_log_level": "summary",
     "max_word_count_cjk": 25,
     "max_word_count_english": 18,
     "thread_num": 5,
@@ -237,6 +238,27 @@ def _effective_config(stored: dict) -> dict:
     return config
 
 
+def _public_config(config: dict) -> dict:
+    """Return configuration metadata without exposing persisted credentials."""
+    public = dict(config)
+    public["llm_api_key_configured"] = bool(config.get("llm_api_key"))
+    public["whisper_api_key_configured"] = bool(config.get("whisper_api_key"))
+    public["huggingface_token_configured"] = bool(config.get("huggingface_token"))
+    public["llm_api_key"] = ""
+    public["whisper_api_key"] = ""
+    public["huggingface_token"] = ""
+    public["llm_profiles"] = {
+        provider: {
+            "base_url": profile.get("base_url", ""),
+            "model": profile.get("model", ""),
+            "api_key_configured": bool(profile.get("api_key")),
+        }
+        for provider, profile in config.get("llm_profiles", {}).items()
+        if isinstance(profile, dict)
+    }
+    return public
+
+
 class ConfigUpdate(BaseModel):
     key: str
     value: str | int | float | bool
@@ -270,6 +292,7 @@ _CHOICES = {
         "turkish", "swedish", "ukrainian", "arabic",
     },
     "llm_provider": set(_LLM_PROVIDER_URLS),
+    "llm_log_level": {"summary", "standard", "debug"},
     "speaker_diarization": {"off", "two", "auto", "fixed"},
 }
 
@@ -318,7 +341,7 @@ def _validate_config_update(key: str, value: str | int | float | bool):
 async def get_config():
     """Get current application configuration."""
     stored = _read_settings()
-    config = _effective_config(stored)
+    config = _public_config(_effective_config(stored))
     return {
         **config,
         "runtime_platform": platform.system().lower(),
@@ -365,7 +388,10 @@ async def update_config(update: ConfigUpdate):
         stored["llm_profiles"] = profiles
     _write_settings(stored)
     invalidate_config_cache()
-    return {"status": "ok", "key": update.key, "value": value}
+    response_value = "" if update.key in {
+        "llm_api_key", "whisper_api_key", "huggingface_token"
+    } else value
+    return {"status": "ok", "key": update.key, "value": response_value}
 
 
 @router.post("/llm-provider")
@@ -377,9 +403,12 @@ async def switch_llm_provider(update: LlmProviderSwitch):
     stored = _read_settings()
     current_provider = _active_llm_provider(stored)
     profiles = _sanitize_llm_profiles(stored.get("llm_profiles"))
+    current_profile = profiles.get(current_provider, {})
     profiles[current_provider] = {
         "base_url": update.current_base_url.strip(),
-        "api_key": update.current_api_key,
+        "api_key": update.current_api_key or str(
+            current_profile.get("api_key") or stored.get("llm_api_key") or ""
+        ),
         "model": update.current_model.strip(),
     }
     target = profiles.get(update.provider)
@@ -406,7 +435,7 @@ async def switch_llm_provider(update: LlmProviderSwitch):
         "status": "ok",
         "provider": update.provider,
         "base_url": target["base_url"],
-        "api_key": target["api_key"],
+        "api_key_configured": bool(target["api_key"]),
         "model": target["model"],
     }
 

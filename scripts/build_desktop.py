@@ -120,26 +120,16 @@ def build_frontend(version: str, skip: bool = False) -> None:
     if skip:
         print("Skipping frontend build")
     elif (FRONTEND_DIR / "package.json").exists() and (FRONTEND_DIR / "node_modules").is_dir():
-        try:
-            _run(
-                [_npm_command(), "run", "build"],
-                cwd=str(FRONTEND_DIR),
-                env={**os.environ, "NEXT_PUBLIC_APP_VERSION": version},
-            )
-        except subprocess.CalledProcessError as exc:
-            if not FRONTEND_OUT_DIR.is_dir():
-                raise
-            print(
-                "WARNING: frontend build failed, using existing frontend/out. "
-                f"Exit code: {exc.returncode}"
-            )
-    elif not FRONTEND_OUT_DIR.is_dir():
-        raise RuntimeError(
-            "frontend/out is missing and frontend/node_modules is not installed. "
-            "Run `cd frontend && npm install && npm run build`, or install Node dependencies before packaging."
+        _run(
+            [_npm_command(), "run", "build"],
+            cwd=str(FRONTEND_DIR),
+            env={**os.environ, "NEXT_PUBLIC_APP_VERSION": version},
         )
-    else:
-        print("Using existing frontend/out (frontend/node_modules not found)")
+    elif not skip:
+        raise RuntimeError(
+            "frontend/node_modules is not installed. Run `cd frontend && npm install`, "
+            "or pass --skip-frontend-build to explicitly reuse frontend/out."
+        )
 
     required = [
         FRONTEND_OUT_DIR / "index.html",

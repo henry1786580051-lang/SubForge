@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.blocking import run_blocking
-from app.core.task_manager import task_manager
+from app.core.task_manager import TaskResourceBusyError, task_manager
 from app.security import validate_path
 from subforge.core.asr.faster_whisper import (
     is_faster_whisper_model_dir,
@@ -324,7 +324,13 @@ async def start_transcription(req: TranscribeRequest):
         raise HTTPException(status_code=400, detail="File not found")
     req = req.model_copy(update={"file_path": str(file_path)})
 
-    task = task_manager.create_task("transcribe")
+    try:
+        task = task_manager.create_task(
+            "transcribe",
+            resource_key=f"transcribe:{file_path.resolve()}",
+        )
+    except TaskResourceBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     # Run transcription in background
     task_obj = asyncio.create_task(_run_transcription(task.id, req))
     task_manager.register_running_task(task.id, task_obj)
@@ -378,15 +384,11 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
         def _on_segment(partial_data):
             try:
                 partial_data.save(partial_srt_path)
-                task = task_manager.get_task(task_id)
-                if task:
-                    task_manager.update_progress(
-                        task_id,
-                        task.progress,
-                        task.message,
-                        subtitle_file=partial_srt_path,
-                        preview_segments=_preview_segments(partial_data),
-                    )
+                task_manager.publish_preview(
+                    task_id,
+                    _preview_segments(partial_data),
+                    subtitle_file=partial_srt_path,
+                )
             except Exception as e:
                 logger.warning(f"Failed to save partial segment: {e}")
 

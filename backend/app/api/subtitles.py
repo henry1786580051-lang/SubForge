@@ -6,6 +6,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, field_validator
 
 from app.security import validate_path
+from subforge.core.utils.atomic_write import atomic_write_text
 
 _ASS_TAG_RE = re.compile(r"\{[^}]*\}")
 
@@ -335,13 +336,8 @@ async def save_subtitle(req: SaveRequest):
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported format: {suffix}")
 
-    file_path.write_text(content, encoding="utf-8")
+    atomic_write_text(file_path, content)
     return {"status": "ok", "file_path": str(file_path), "count": len(segments)}
-
-
-def _srt_to_vtt(srt_content: str) -> str:
-    """Convert SRT string to VTT."""
-    return "WEBVTT\n\n" + srt_content.replace(",", ".")
 
 
 def segments_to_srt(segments: list[dict]) -> str:

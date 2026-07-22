@@ -140,7 +140,7 @@ def test_switch_llm_provider_keeps_credentials_isolated_and_restores_them(
         "status": "ok",
         "provider": "deepseek",
         "base_url": "https://api.deepseek.com",
-        "api_key": "",
+        "api_key_configured": False,
         "model": "",
     }
 
@@ -156,11 +156,65 @@ def test_switch_llm_provider_keeps_credentials_isolated_and_restores_them(
     )
 
     assert mimo["base_url"] == "https://token-plan-cn.xiaomimimo.com/v1"
-    assert mimo["api_key"] == "mimo-secret"
+    assert mimo["api_key_configured"] is True
     assert mimo["model"] == "mimo-v2.5-pro"
     stored = json.loads(settings_path.read_text(encoding="utf-8"))
     assert stored["llm_profiles"]["deepseek"]["api_key"] == "deepseek-secret"
     assert stored["llm_profiles"]["mimo"]["api_key"] == "mimo-secret"
+
+
+def test_public_config_reports_credentials_without_exposing_them():
+    public = config_module._public_config(
+        {
+            "llm_api_key": "llm-secret",
+            "whisper_api_key": "whisper-secret",
+            "huggingface_token": "hf-secret",
+            "llm_profiles": {
+                "mimo": {
+                    "base_url": "https://example.test",
+                    "api_key": "profile-secret",
+                    "model": "mimo",
+                }
+            },
+        }
+    )
+
+    assert public["llm_api_key"] == ""
+    assert public["whisper_api_key"] == ""
+    assert public["huggingface_token"] == ""
+    assert public["llm_api_key_configured"] is True
+    assert public["llm_profiles"]["mimo"] == {
+        "base_url": "https://example.test",
+        "model": "mimo",
+        "api_key_configured": True,
+    }
+
+
+def test_switch_provider_blank_key_does_not_erase_current_profile(tmp_path, monkeypatch):
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setattr(config_module, "_SETTINGS_CANDIDATES", [settings_path])
+    config_module._write_settings(
+        {
+            "llm_provider": "mimo",
+            "llm_base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+            "llm_api_key": "saved-secret",
+            "llm_model": "mimo-v2.5-pro",
+        }
+    )
+
+    asyncio.run(
+        config_module.switch_llm_provider(
+            config_module.LlmProviderSwitch(
+                provider="deepseek",
+                current_base_url="https://token-plan-cn.xiaomimimo.com/v1",
+                current_api_key="",
+                current_model="mimo-v2.5-pro",
+            )
+        )
+    )
+
+    stored = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert stored["llm_profiles"]["mimo"]["api_key"] == "saved-secret"
 
 
 def test_updating_active_llm_key_updates_only_active_profile(tmp_path, monkeypatch):

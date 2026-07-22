@@ -419,13 +419,17 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
   const [downloadingModel, setDownloadingModel] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
   const [huggingfaceToken, setHuggingfaceToken] = useState("");
+  const [huggingfaceTokenConfigured, setHuggingfaceTokenConfigured] = useState(false);
 
   useEffect(() => {
     void transcribeApi.hardware().then(setHardware).catch(() => {});
     void transcribeApi.listModels().then(setModels).catch(() => {});
     void configApi
       .get()
-      .then((data) => setHuggingfaceToken(String(data.huggingface_token || "")))
+      .then((data) => {
+        setHuggingfaceToken("");
+        setHuggingfaceTokenConfigured(Boolean(data.huggingface_token_configured));
+      })
       .catch(() => {});
   }, []);
 
@@ -445,8 +449,10 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
       if (mapped) setConfig({ [mapped]: value });
       try {
         await configApi.update(key, value);
+        return true;
       } catch (err) {
         setError(err instanceof Error ? err.message : "配置保存失败");
+        return false;
       }
     },
     [setConfig, setError]
@@ -504,6 +510,8 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
       const requestedModel = models.find((model) => model.id === modelId);
       if (requestedModel?.type === "diarization" && huggingfaceToken.trim()) {
         await configApi.update("huggingface_token", huggingfaceToken.trim());
+        setHuggingfaceTokenConfigured(true);
+        setHuggingfaceToken("");
       }
       const result = await transcribeApi.downloadModel(modelId);
       if (result.status === "already_exists") {
@@ -672,8 +680,18 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                       type="password"
                       value={huggingfaceToken}
                       onChange={(event) => setHuggingfaceToken(event.target.value)}
-                      onBlur={(event) => void saveConfig("huggingface_token", event.target.value.trim())}
-                      placeholder="首次下载 Community-1 时填写 hf_..."
+                      onBlur={(event) => {
+                        const token = event.target.value.trim();
+                        if (token) {
+                          void saveConfig("huggingface_token", token).then((saved) => {
+                            if (saved) {
+                              setHuggingfaceTokenConfigured(true);
+                              setHuggingfaceToken("");
+                            }
+                          });
+                        }
+                      }}
+                      placeholder={huggingfaceTokenConfigured ? "已保存，需要更换时重新填写" : "首次下载 Community-1 时填写 hf_..."}
                       autoComplete="off"
                       className="input-field"
                     />

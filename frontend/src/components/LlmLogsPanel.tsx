@@ -67,7 +67,7 @@ export function LlmLogsPanel() {
       setTotal(data.total);
       setPages(data.pages);
       setPage(data.page);
-      setSelected((current) => data.groups.find((group) => group.id === current?.id) || null);
+      setSelected((current) => data.groups.some((group) => group.id === current?.id) ? current : null);
     } catch {
       setGroups([]);
       setTotal(0);
@@ -89,6 +89,16 @@ export function LlmLogsPanel() {
     await llmLogsApi.clear();
     setSelected(null);
     await fetchLogs(1, "");
+  };
+
+  const handleSelect = async (group: LlmLogGroup) => {
+    setSelected({ ...group, entries: [] });
+    try {
+      const detail = await llmLogsApi.detail(group.id);
+      setSelected((current) => current?.id === group.id ? detail : current);
+    } catch {
+      setSelected((current) => current?.id === group.id ? null : current);
+    }
   };
 
   return (
@@ -120,7 +130,7 @@ export function LlmLogsPanel() {
                 <th className="px-3 py-2 text-right font-medium">耗时</th><th className="px-3 py-2 text-right font-medium">Tokens</th>
               </tr></thead>
               <tbody>{groups.map((group) => (
-                <tr key={group.id} onClick={() => setSelected(group)} className={`border-b border-border cursor-pointer hover:bg-surface-hover ${selected?.id === group.id ? "bg-accent-dim" : ""}`}>
+                <tr key={group.id} onClick={() => void handleSelect(group)} className={`border-b border-border cursor-pointer hover:bg-surface-hover ${selected?.id === group.id ? "bg-accent-dim" : ""}`}>
                   <td className="px-3 py-2 font-mono text-[10px] text-text-muted">{group.started_at ? new Date(group.started_at).toLocaleString() : "-"}</td>
                   <td className="px-3 py-2 truncate max-w-[180px]">{group.file_name || "未关联文件"}</td>
                   <td className="px-3 py-2 text-[10px]">{group.stages.join(" · ") || "-"}</td>
@@ -151,7 +161,9 @@ export function LlmLogsPanel() {
           <div className="grid grid-cols-3 gap-2 mb-4 text-[11px] text-text-secondary">
             <span>输入 {fmtNumber(selected.prompt_tokens)}</span><span>输出 {fmtNumber(selected.completion_tokens)}</span><span>推理 {fmtNumber(selected.reasoning_tokens)}</span>
           </div>
-          <div className="space-y-2">{selected.entries.map((entry, index) => <RequestDetail key={`${entry.timestamp || index}-${index}`} entry={entry} />)}</div>
+          <div className="space-y-2">
+            {selected.entries.length ? selected.entries.map((entry, index) => <RequestDetail key={`${entry.timestamp || index}-${index}`} entry={entry} />) : <div className="py-8 text-center text-[11px] text-text-muted">正在加载请求明细...</div>}
+          </div>
         </aside>}
       </div>
     </div>

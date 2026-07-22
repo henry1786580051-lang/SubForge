@@ -10,6 +10,10 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 
+class TaskResourceBusyError(RuntimeError):
+    """Raised when another active task owns the same processing resource."""
+
+
 class TaskStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
@@ -28,6 +32,7 @@ class TaskInfo(BaseModel):
     error: str | None = None
     subtitle_file: str | None = None  # partial results during processing
     preview_segments: list[dict[str, Any]] | None = None
+    preview_revision: int = 0
 
 
 class TaskManager:
@@ -38,15 +43,31 @@ class TaskManager:
         self._listeners: list[Callable] = []
         self._running_tasks: dict[str, asyncio.Task] = {}
         self._cancel_callbacks: dict[str, list[Callable[[], Any]]] = {}
+        self._resource_owners: dict[str, str] = {}
+        self._task_resources: dict[str, str] = {}
         self._lock = threading.RLock()
 
-    def create_task(self, task_type: str) -> TaskInfo:
+    def create_task(self, task_type: str, resource_key: str | None = None) -> TaskInfo:
         self.cleanup_old_tasks()
         task_id = str(uuid.uuid4())[:12]
         task = TaskInfo(id=task_id, type=task_type)
         with self._lock:
+            if resource_key:
+                owner_id = self._resource_owners.get(resource_key)
+                owner = self._tasks.get(owner_id) if owner_id else None
+                if owner and owner.status in {TaskStatus.PENDING, TaskStatus.RUNNING}:
+                    raise TaskResourceBusyError(
+                        f"Another {owner.type} task is already processing this file"
+                    )
+                self._resource_owners[resource_key] = task_id
+                self._task_resources[task_id] = resource_key
             self._tasks[task_id] = task
             return task.model_copy(deep=True)
+
+    def _release_resource(self, task_id: str) -> None:
+        resource_key = self._task_resources.pop(task_id, None)
+        if resource_key and self._resource_owners.get(resource_key) == task_id:
+            self._resource_owners.pop(resource_key, None)
 
     def get_task(self, task_id: str) -> TaskInfo | None:
         with self._lock:
@@ -70,6 +91,7 @@ class TaskManager:
         subtitle_file: str | None = None,
         preview_segments: list[dict[str, Any]] | None = None,
     ):
+        preview_delta = None
         with self._lock:
             task = self._tasks.get(task_id)
             if not task or task.status in {
@@ -84,19 +106,86 @@ class TaskManager:
             if subtitle_file is not None:
                 task.subtitle_file = subtitle_file
             if preview_segments is not None:
+                preview_delta = self._build_preview_delta(
+                    task.preview_segments or [], preview_segments
+                )
                 task.preview_segments = preview_segments
-        self._notify_listeners(task_id)
+                task.preview_revision += 1
+        self._notify_listeners(task_id, preview_delta=preview_delta)
+
+    def publish_preview(
+        self,
+        task_id: str,
+        preview_segments: list[dict[str, Any]],
+        *,
+        subtitle_file: str | None = None,
+        message: str | None = None,
+    ) -> None:
+        """Publish a preview delta while retaining a full reconnect snapshot."""
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if not task or task.status in {
+                TaskStatus.COMPLETED,
+                TaskStatus.FAILED,
+                TaskStatus.CANCELLED,
+            }:
+                return
+            preview_delta = self._build_preview_delta(
+                task.preview_segments or [], preview_segments
+            )
+            task.preview_segments = preview_segments
+            task.preview_revision += 1
+            task.status = TaskStatus.RUNNING
+            if subtitle_file is not None:
+                task.subtitle_file = subtitle_file
+            if message is not None:
+                task.message = message
+        self._notify_listeners(task_id, preview_delta=preview_delta)
+
+    @staticmethod
+    def _build_preview_delta(
+        previous: list[dict[str, Any]], current: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        if not previous:
+            return {"mode": "replace", "segments": current, "total": len(current)}
+
+        common_prefix = 0
+        shared = min(len(previous), len(current))
+        while common_prefix < shared and previous[common_prefix] == current[common_prefix]:
+            common_prefix += 1
+        if common_prefix == len(previous) and len(current) >= len(previous):
+            return {
+                "mode": "append",
+                "segments": current[common_prefix:],
+                "total": len(current),
+            }
+
+        if len(previous) == len(current):
+            changed = [
+                segment
+                for old, segment in zip(previous, current)
+                if old != segment
+            ]
+            if len(changed) <= max(20, len(current) // 2):
+                return {"mode": "patch", "segments": changed, "total": len(current)}
+
+        return {"mode": "replace", "segments": current, "total": len(current)}
 
     def complete_task(self, task_id: str, result: dict[str, Any] | None = None):
         with self._lock:
             task = self._tasks.get(task_id)
-            if not task or task.status == TaskStatus.CANCELLED:
+            if not task or task.status in {
+                TaskStatus.COMPLETED,
+                TaskStatus.FAILED,
+                TaskStatus.CANCELLED,
+            }:
                 return
             task.status = TaskStatus.COMPLETED
             task.progress = 100
             task.result = result
             self._running_tasks.pop(task_id, None)
             self._cancel_callbacks.pop(task_id, None)
+            self._release_resource(task_id)
         self._notify_listeners(task_id)
 
     def fail_task(
@@ -107,13 +196,18 @@ class TaskManager:
     ):
         with self._lock:
             task = self._tasks.get(task_id)
-            if not task or task.status == TaskStatus.CANCELLED:
+            if not task or task.status in {
+                TaskStatus.COMPLETED,
+                TaskStatus.FAILED,
+                TaskStatus.CANCELLED,
+            }:
                 return
             task.status = TaskStatus.FAILED
             task.error = error
             task.result = result
             self._running_tasks.pop(task_id, None)
             self._cancel_callbacks.pop(task_id, None)
+            self._release_resource(task_id)
         self._notify_listeners(task_id)
 
     def register_running_task(self, task_id: str, async_task: asyncio.Task):
@@ -145,9 +239,16 @@ class TaskManager:
             task = self._tasks.get(task_id)
             if not task:
                 return False
+            if task.status in {
+                TaskStatus.COMPLETED,
+                TaskStatus.FAILED,
+                TaskStatus.CANCELLED,
+            }:
+                return False
             task.status = TaskStatus.CANCELLED
             async_task = self._running_tasks.pop(task_id, None)
             callbacks = self._cancel_callbacks.pop(task_id, [])
+            self._release_resource(task_id)
         for callback in callbacks:
             try:
                 callback()
@@ -175,6 +276,7 @@ class TaskManager:
                 self._tasks.pop(t.id, None)
                 self._running_tasks.pop(t.id, None)
                 self._cancel_callbacks.pop(t.id, None)
+                self._release_resource(t.id)
 
     def add_listener(self, callback: Callable):
         with self._lock:
@@ -184,12 +286,16 @@ class TaskManager:
         with self._lock:
             self._listeners = [listener for listener in self._listeners if listener != callback]
 
-    def _notify_listeners(self, task_id: str):
+    def _notify_listeners(
+        self, task_id: str, *, preview_delta: dict[str, Any] | None = None
+    ):
         with self._lock:
             task = self._tasks.get(task_id)
             if not task:
                 return
-            task_data = task.model_dump()
+            task_data = task.model_dump(exclude={"preview_segments"})
+            if preview_delta is not None:
+                task_data["preview_delta"] = preview_delta
             listeners = list(self._listeners)
         for listener in listeners:
             try:

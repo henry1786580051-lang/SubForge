@@ -39,7 +39,8 @@ def _candidate_cuda_runtime_dirs() -> list[Path]:
 
 
 def _prepare_cuda_runtime() -> None:
-    if platform.system() != "Windows" or not hasattr(os, "add_dll_directory"):
+    add_dll_directory = getattr(os, "add_dll_directory", None)
+    if platform.system() != "Windows" or not callable(add_dll_directory):
         return
     if _CUDA_DLL_DIRECTORY_HANDLES:
         return
@@ -50,7 +51,7 @@ def _prepare_cuda_runtime() -> None:
         ):
             continue
         try:
-            _CUDA_DLL_DIRECTORY_HANDLES.append(os.add_dll_directory(str(directory)))
+            _CUDA_DLL_DIRECTORY_HANDLES.append(add_dll_directory(str(directory)))
             logger.info("Using FasterWhisper CUDA runtime from %s", directory)
             return
         except OSError:
@@ -68,7 +69,7 @@ def is_faster_whisper_cuda_available() -> bool:
         if platform.system() == "Windows"
         else ("libcublas.so.12", "libcudnn.so.9")
     )
-    loader = ctypes.WinDLL if platform.system() == "Windows" else ctypes.CDLL
+    loader = getattr(ctypes, "WinDLL", ctypes.CDLL) if platform.system() == "Windows" else ctypes.CDLL
     try:
         handles = [loader(name) for name in libraries]
         import ctranslate2
@@ -199,9 +200,7 @@ class FasterWhisperASR(BaseASR):
                 "The FasterWhisper runtime is missing from this installation."
             ) from exc
 
-        if callback is None:
-            def callback(_progress: int, _message: str) -> None:
-                return None
+        effective_callback = callback or (lambda _progress, _message: None)
         if self.need_word_time_stamp:
             logger.info(
                 "FasterWhisper word timestamps are deferred; returning segment timestamps"
@@ -212,7 +211,7 @@ class FasterWhisperASR(BaseASR):
                 "SubForge audio enhancement remains unchanged"
             )
 
-        callback(*ASRStatus.TRANSCRIBING.with_progress(5))
+        effective_callback(*ASRStatus.TRANSCRIBING.with_progress(5))
         with tempfile.TemporaryDirectory() as temp_path:
             if isinstance(self.audio_input, str):
                 audio_path = self.audio_input
@@ -245,11 +244,11 @@ class FasterWhisperASR(BaseASR):
                 if text and end > start:
                     output.append({"text": text, "start": start, "end": end})
                 progress = min(99, 5 + int(end / duration * 90))
-                callback(progress, f"{progress}%")
+                effective_callback(progress, f"{progress}%")
 
         if not output:
             raise RuntimeError("FasterWhisper returned no transcription segments")
-        callback(*ASRStatus.COMPLETED.callback_tuple())
+        effective_callback(*ASRStatus.COMPLETED.callback_tuple())
         return output
 
     def _make_segments(self, resp_data: list[dict[str, Any]]) -> List[ASRDataSeg]:
@@ -258,6 +257,8 @@ class FasterWhisperASR(BaseASR):
                 text=str(item["text"]).strip(),
                 start_time=max(0, round(float(item["start"]) * 1000)),
                 end_time=max(1, round(float(item["end"]) * 1000)),
+                timestamp_granularity="sentence",
+                timing_source="native",
             )
             for item in resp_data
             if str(item.get("text", "")).strip()

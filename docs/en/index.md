@@ -86,7 +86,7 @@ features:
 
   - icon: 🖥️
     title: Cross-Platform Desktop App
-    details: Windows/macOS/Linux installers available. Modern PyQt5 interface with real-time preview and quick editing.
+    details: Windows and macOS desktop installers use a Next.js interface with a local FastAPI backend, real-time preview, and subtitle editing. Linux remains available through the CLI and source installation.
 ---
 
 ## Interface Preview

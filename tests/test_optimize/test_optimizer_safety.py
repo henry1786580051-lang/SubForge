@@ -1,4 +1,4 @@
-from subforge.core.asr.asr_data import ASRDataSeg
+from subforge.core.asr.asr_data import ASRData, ASRDataSeg, ASRWord
 from subforge.core.optimize.optimize import SubtitleOptimizer
 
 
@@ -40,6 +40,17 @@ def test_create_segments_preserves_translation_and_speaker_metadata():
             end_time=1000,
             translated_text="你好",
             speaker_id="Speaker 1",
+            words=[
+                ASRWord(
+                    "hello",
+                    0,
+                    1000,
+                    speaker_id="Speaker 1",
+                    timing_source="forced_alignment",
+                )
+            ],
+            timestamp_granularity="sentence",
+            timing_source="forced_alignment",
         )
     ]
 
@@ -51,3 +62,78 @@ def test_create_segments_preserves_translation_and_speaker_metadata():
     assert result[0].text == "Hello."
     assert result[0].translated_text == "你好"
     assert result[0].speaker_id == "Speaker 1"
+    assert result[0].timing_source == "forced_alignment"
+    assert result[0].words[0].speaker_id == "Speaker 1"
+
+
+def test_validation_rejects_copying_next_subtitle_into_current_key():
+    optimizer = SubtitleOptimizer.__new__(SubtitleOptimizer)
+    original = {
+        "1": (
+            "So anything you'd like to ask, let me know and I will get back "
+            "to you, but"
+        ),
+        "2": "That'll wrap it up. Take care, guys.",
+    }
+    optimized = {
+        "1": (
+            "So anything you'd like to ask, let me know and I will get back to "
+            "you, but that'll wrap it up. Take care, guys."
+        ),
+        "2": "That'll wrap it up. Take care, guys.",
+    }
+
+    valid, error = optimizer._validate_optimization_result(original, optimized)
+
+    assert not valid
+    assert "copied the start of adjacent key" in error
+
+
+def test_validation_allows_local_recognition_correction():
+    optimizer = SubtitleOptimizer.__new__(SubtitleOptimizer)
+    original = {
+        "1": "I like the seven series very mutch",
+        "2": "That'll wrap it up. Take care, guys.",
+    }
+    optimized = {
+        "1": "I like the 7 Series very much.",
+        "2": "That'll wrap it up. Take care, guys.",
+    }
+
+    valid, error = optimizer._validate_optimization_result(original, optimized)
+
+    assert valid
+    assert not error
+
+
+def test_global_ownership_check_repairs_copy_across_batch_boundary(monkeypatch):
+    optimizer = SubtitleOptimizer.__new__(SubtitleOptimizer)
+    optimizer.batch_num = 1
+    optimizer.is_running = False
+    optimizer.executor = None
+    source = ASRData(
+        [
+            ASRDataSeg(
+                "So anything you'd like to ask, let me know and I will get back to you, but",
+                0,
+                2000,
+            ),
+            ASRDataSeg("That'll wrap it up. Take care, guys.", 2100, 3000),
+        ]
+    )
+    monkeypatch.setattr(
+        optimizer,
+        "_parallel_optimize",
+        lambda _chunks: {
+            "1": (
+                "So anything you'd like to ask, let me know and I will get back "
+                "to you, but that'll wrap it up. Take care, guys."
+            ),
+            "2": "That'll wrap it up. Take care, everyone.",
+        },
+    )
+
+    result = optimizer.optimize_subtitle(source)
+
+    assert result.segments[0].text == source.segments[0].text
+    assert result.segments[1].text == "That'll wrap it up. Take care, everyone."

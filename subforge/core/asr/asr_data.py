@@ -4,12 +4,14 @@ import os
 import platform
 import re
 import unicodedata
+from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Literal, Optional, Tuple
+from typing import List, Literal, Optional, Tuple, cast
 
 from langdetect import LangDetectException, detect
 
 from ..entities import SubtitleLayoutEnum
+from ..utils.atomic_write import atomic_write_text
 from ..utils.text_utils import is_mainly_cjk
 
 # 多语言分词模式(支持词级和字符级语言)
@@ -30,6 +32,38 @@ _WORD_SPLIT_PATTERN = (
     r"|[\u0e80-\u0eff]"  # 老挝文
     r"|[\u1000-\u109f]"  # 缅甸文
 )
+
+TimestampGranularity = Literal["unknown", "word", "sentence"]
+TimestampSource = Literal[
+    "unknown",
+    "native",
+    "forced_alignment",
+    "estimated",
+    "imported",
+    "mixed",
+]
+
+
+@dataclass
+class ASRWord:
+    """Atomic word timing retained while words are merged into subtitle cues."""
+
+    text: str
+    start_time: int
+    end_time: int
+    speaker_id: str = ""
+    confidence: Optional[float] = None
+    alignment_score: Optional[float] = None
+    timing_source: TimestampSource = "unknown"
+
+
+def _common_timing_source(words: List[ASRWord]) -> TimestampSource:
+    sources = {word.timing_source for word in words if word.timing_source != "unknown"}
+    if not sources:
+        return "unknown"
+    if len(sources) == 1:
+        return cast(TimestampSource, next(iter(sources)))
+    return "mixed"
 
 
 def reasonable_word_duration_ms(text: str) -> int:
@@ -66,12 +100,62 @@ class ASRDataSeg:
         end_time: int,
         translated_text: str = "",
         speaker_id: str = "",
+        words: Optional[List[ASRWord]] = None,
+        timestamp_granularity: TimestampGranularity = "unknown",
+        timing_source: TimestampSource = "unknown",
     ):
         self.text = text
         self.translated_text = translated_text
         self.start_time = start_time
         self.end_time = end_time
         self.speaker_id = speaker_id
+        self.timestamp_granularity = timestamp_granularity
+        self.timing_source = timing_source
+        self.words = list(words or [])
+        if timestamp_granularity == "word" and not self.words:
+            self.words = [
+                ASRWord(
+                    text=text,
+                    start_time=start_time,
+                    end_time=end_time,
+                    speaker_id=speaker_id,
+                    timing_source=timing_source,
+                )
+            ]
+
+    @classmethod
+    def from_segments(
+        cls,
+        segments: List["ASRDataSeg"],
+        *,
+        text: str,
+        translated_text: str = "",
+        speaker_id: str = "",
+    ) -> "ASRDataSeg":
+        """Build one display cue while retaining any atomic word timings."""
+        if not segments:
+            raise ValueError("segments must not be empty")
+        words = [word for segment in segments for word in segment.words]
+        source = _common_timing_source(words)
+        if source == "unknown":
+            segment_sources = {
+                segment.timing_source
+                for segment in segments
+                if segment.timing_source != "unknown"
+            }
+            source = cast(TimestampSource, next(iter(segment_sources))) if len(segment_sources) == 1 else (
+                "mixed" if segment_sources else "unknown"
+            )
+        return cls(
+            text=text,
+            start_time=segments[0].start_time,
+            end_time=segments[-1].end_time,
+            translated_text=translated_text,
+            speaker_id=speaker_id,
+            words=words,
+            timestamp_granularity="sentence",
+            timing_source=source,
+        )
 
     def to_srt_ts(self) -> str:
         """Convert to SRT timestamp format"""
@@ -119,10 +203,35 @@ class ASRDataSeg:
 
 
 class ASRData:
-    def __init__(self, segments: List[ASRDataSeg]):
+    def __init__(
+        self,
+        segments: List[ASRDataSeg],
+        granularity: TimestampGranularity = "unknown",
+        timing_source: TimestampSource = "unknown",
+    ):
         filtered_segments = [seg for seg in segments if seg.text and seg.text.strip()]
         filtered_segments.sort(key=lambda x: x.start_time)
         self.segments = filtered_segments
+        explicit_granularities: set[TimestampGranularity] = {
+            cast(TimestampGranularity, segment.timestamp_granularity)
+            for segment in filtered_segments
+            if segment.timestamp_granularity != "unknown"
+        }
+        self.granularity: TimestampGranularity = granularity
+        if granularity == "unknown" and len(explicit_granularities) == 1:
+            self.granularity = next(iter(explicit_granularities))
+
+        explicit_sources: set[TimestampSource] = {
+            cast(TimestampSource, segment.timing_source)
+            for segment in filtered_segments
+            if segment.timing_source != "unknown"
+        }
+        self.timing_source: TimestampSource = timing_source
+        if timing_source == "unknown":
+            if len(explicit_sources) == 1:
+                self.timing_source = next(iter(explicit_sources))
+            elif len(explicit_sources) > 1:
+                self.timing_source = "mixed"
 
     def __iter__(self):
         return iter(self.segments)
@@ -133,6 +242,32 @@ class ASRData:
     def has_data(self) -> bool:
         """Check if there are any utterances"""
         return len(self.segments) > 0
+
+    @classmethod
+    def from_imported_segments(cls, segments: List[ASRDataSeg]) -> "ASRData":
+        """Restore atomic word metadata when a word-level subtitle is reloaded."""
+        data = cls(segments, timing_source="imported")
+        if data.is_word_timestamp():
+            data.granularity = "word"
+            for segment in data.segments:
+                segment.timestamp_granularity = "word"
+                segment.timing_source = "imported"
+                if not segment.words:
+                    segment.words = [
+                        ASRWord(
+                            text=segment.text,
+                            start_time=segment.start_time,
+                            end_time=segment.end_time,
+                            speaker_id=segment.speaker_id,
+                            timing_source="imported",
+                        )
+                    ]
+        else:
+            data.granularity = "sentence"
+            for segment in data.segments:
+                segment.timestamp_granularity = "sentence"
+                segment.timing_source = "imported"
+        return data
 
     def _is_word_level_segment(self, segment: ASRDataSeg) -> bool:
         """判断单 segments是否为词级
@@ -164,6 +299,10 @@ class ASRData:
         Returns:
             True 如果80%+的片段符合词级模式
         """
+        if self.granularity == "word":
+            return True
+        if self.granularity == "sentence":
+            return False
         if not self.segments:
             return False
 
@@ -214,11 +353,15 @@ class ASRData:
                         start_time=current_time,
                         end_time=word_end_time,
                         speaker_id=seg.speaker_id,
+                        timestamp_granularity="word",
+                        timing_source="estimated",
                     )
                 )
                 current_time = word_end_time
 
         self.segments = new_segments
+        self.granularity = "word"
+        self.timing_source = "estimated"
         return self
 
     def remove_punctuation(self) -> "ASRData":
@@ -272,8 +415,10 @@ class ASRData:
         elif save_path.endswith(".txt"):
             self.to_txt(save_path=save_path, layout=layout)
         elif save_path.endswith(".json"):
-            with open(save_path, "w", encoding="utf-8") as f:
-                json.dump(self.to_json(), f, ensure_ascii=False, indent=2)
+            atomic_write_text(
+                save_path,
+                json.dumps(self.to_json(), ensure_ascii=False, indent=2),
+            )
         elif save_path.endswith(".ass"):
             self.to_ass(save_path=save_path, style_str=ass_style, layout=layout)
         else:
@@ -302,8 +447,7 @@ class ASRData:
         text = "\n".join(result)
         if save_path:
             save_path = handle_long_path(save_path)
-            with open(save_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(result))
+            atomic_write_text(save_path, "\n".join(result))
         return text
 
     def to_srt(
@@ -349,8 +493,7 @@ class ASRData:
         srt_text = "\n".join(srt_lines)
         if save_path:
             save_path = handle_long_path(save_path)
-            with open(save_path, "w", encoding="utf-8") as f:
-                f.write(srt_text)
+            atomic_write_text(save_path, srt_text)
         return srt_text
 
     def to_lrc(self, save_path=None) -> str:
@@ -457,8 +600,7 @@ class ASRData:
 
         if save_path:
             save_path = handle_long_path(save_path)
-            with open(save_path, "w", encoding="utf-8") as f:
-                f.write(ass_content)
+            atomic_write_text(save_path, ass_content)
         return ass_content
 
     def to_vtt(self, save_path=None) -> str:
@@ -494,8 +636,6 @@ class ASRData:
         """Merge segments from start_index to end_index (inclusive)."""
         if start_index < 0 or end_index >= len(self.segments) or start_index > end_index:
             raise IndexError("Invalid segment index")
-        merged_start_time = self.segments[start_index].start_time
-        merged_end_time = self.segments[end_index].end_time
         if merged_text is None:
             merged_text = "".join(seg.text for seg in self.segments[start_index : end_index + 1])
         merged_translated = " ".join(
@@ -503,10 +643,9 @@ class ASRData:
             for seg in self.segments[start_index : end_index + 1]
             if seg.translated_text
         )
-        merged_seg = ASRDataSeg(
-            merged_text,
-            merged_start_time,
-            merged_end_time,
+        merged_seg = ASRDataSeg.from_segments(
+            self.segments[start_index : end_index + 1],
+            text=merged_text,
             translated_text=merged_translated,
             speaker_id=self.segments[start_index].speaker_id,
         )
@@ -522,17 +661,18 @@ class ASRData:
         merged_translated = ""
         if current_seg.translated_text or next_seg.translated_text:
             merged_translated = f"{current_seg.translated_text} {next_seg.translated_text}".strip()
-        merged_seg = ASRDataSeg(
-            merged_text,
-            current_seg.start_time,
-            next_seg.end_time,
+        merged_seg = ASRDataSeg.from_segments(
+            [current_seg, next_seg],
+            text=merged_text,
             translated_text=merged_translated,
             speaker_id=current_seg.speaker_id,
         )
         self.segments[index] = merged_seg
         del self.segments[index + 1]
 
-    def filter_hallucinations(self, audio_path: Optional[str] = None) -> "ASRData":
+    def filter_hallucinations(
+        self, audio_path: Optional[str] = None, analysis_context=None
+    ) -> "ASRData":
         """Remove segments likely caused by ASR hallucination.
 
         If audio_path is provided, uses audio energy analysis to detect speech
@@ -561,7 +701,7 @@ class ASRData:
             return self
 
         if audio_path:
-            self._filter_by_audio_energy(audio_path)
+            self._filter_by_audio_energy(audio_path, analysis_context=analysis_context)
         else:
             logger.info("No audio_path provided, using text heuristics")
             self._filter_by_text_heuristics()
@@ -1037,7 +1177,7 @@ class ASRData:
 
         return self
 
-    def _filter_by_audio_energy(self, audio_path: str) -> None:
+    def _filter_by_audio_energy(self, audio_path: str, analysis_context=None) -> None:
         """Filter segments using audio energy-based speech detection.
 
         Two-pass approach:
@@ -1057,7 +1197,11 @@ class ASRData:
 
         try:
             logger.info(f"Analyzing audio for speech detection: {audio_path}")
-            audio = AudioSegment.from_file(audio_path)
+            audio = (
+                analysis_context.audio_segment()
+                if analysis_context is not None
+                else AudioSegment.from_file(audio_path)
+            )
             logger.info(f"Audio loaded: {len(audio) / 1000:.1f}s")
         except Exception as e:
             logger.error(f"Failed to load audio: {e}")
@@ -1065,11 +1209,14 @@ class ASRData:
 
         # Pass 1: Calculate RMS energy for each 50ms window
         window_ms = 50
-        energies = []
-        for i in range(0, len(audio), window_ms):
-            chunk = audio[i : i + window_ms]
-            rms = chunk.rms
-            energies.append({"time_ms": i, "rms": rms})
+        energies = (
+            analysis_context.energy_windows(window_ms)
+            if analysis_context is not None
+            else [
+                {"time_ms": i, "rms": audio[i : i + window_ms].rms}
+                for i in range(0, len(audio), window_ms)
+            ]
+        )
 
         if not energies:
             return
@@ -1090,12 +1237,16 @@ class ASRData:
                 from subforge.core.asr.speech_vad import is_available as vad_available
 
                 if vad_available():
-                    speech_segments_for_refinement = detect_speech_segments(
-                        audio_path,
-                        threshold=0.5,
-                        min_speech_ms=200,
-                        min_silence_ms=350,
-                        speech_pad_ms=120,
+                    kwargs = {
+                        "threshold": 0.5,
+                        "min_speech_ms": 200,
+                        "min_silence_ms": 350,
+                        "speech_pad_ms": 120,
+                    }
+                    speech_segments_for_refinement = (
+                        analysis_context.speech_segments(**kwargs)
+                        if analysis_context is not None
+                        else detect_speech_segments(audio_path, **kwargs)
                     )
             except Exception as e:
                 logger.debug("Speech VAD timing refinement skipped: %s", e, exc_info=True)
@@ -1544,6 +1695,8 @@ class ASRData:
                     seg.text,
                 )
                 seg.end_time = max(seg.start_time + 20, candidate_end)
+                if seg.timestamp_granularity == "word" and seg.words:
+                    seg.words[-1].end_time = seg.end_time
                 capped += 1
 
         if capped:
@@ -1603,6 +1756,8 @@ class ASRData:
                 )
                 if candidate_start < first.end_time:
                     first.start_time = candidate_start
+                    if first.timestamp_granularity == "word" and first.words:
+                        first.words[0].start_time = candidate_start
                     adjusted += 1
 
             last = self.segments[last_index]
@@ -1616,6 +1771,8 @@ class ASRData:
                 candidate_end = min(speech_end + boundary_pad_ms, next_start - boundary_pad_ms)
                 if candidate_end > last.end_time:
                     last.end_time = candidate_end
+                    if last.timestamp_granularity == "word" and last.words:
+                        last.words[-1].end_time = candidate_end
                     adjusted += 1
 
         if adjusted:
@@ -1787,6 +1944,8 @@ class ASRData:
         for seg in self.segments:
             if seg.end_time < seg.start_time:
                 seg.end_time = seg.start_time
+                if seg.timestamp_granularity == "word" and seg.words:
+                    seg.words[-1].end_time = seg.end_time
 
         for i in range(1, len(self.segments)):
             prev = self.segments[i - 1]
@@ -1805,8 +1964,14 @@ class ASRData:
 
             prev.end_time = min(prev.end_time, split)
             curr.start_time = max(curr.start_time, split)
+            if prev.timestamp_granularity == "word" and prev.words:
+                prev.words[-1].end_time = prev.end_time
+            if curr.timestamp_granularity == "word" and curr.words:
+                curr.words[0].start_time = curr.start_time
             if curr.end_time < curr.start_time:
                 curr.end_time = curr.start_time
+                if curr.timestamp_granularity == "word" and curr.words:
+                    curr.words[-1].end_time = curr.end_time
 
         return self
 
@@ -1820,6 +1985,8 @@ class ASRData:
             if segment.start_time >= duration_ms:
                 continue
             segment.end_time = min(segment.end_time, duration_ms)
+            if segment.timestamp_granularity == "word" and segment.words:
+                segment.words[-1].end_time = segment.end_time
             if segment.end_time > segment.start_time:
                 clipped.append(segment)
         self.segments = clipped
@@ -1879,7 +2046,7 @@ class ASRData:
                 end_time=segment_data["end_time"],
             )
             segments.append(segment)
-        return ASRData(segments)
+        return ASRData.from_imported_segments(segments)
 
     @staticmethod
     def from_srt(srt_str: str) -> "ASRData":
@@ -2125,7 +2292,7 @@ class ASRData:
                     ASRDataSeg("\n".join(text_lines), start_time, end_time, speaker_id=speaker_id)
                 )
 
-        return ASRData(segments)
+        return ASRData.from_imported_segments(segments)
 
     @staticmethod
     def from_vtt(vtt_str: str) -> "ASRData":
@@ -2205,7 +2372,7 @@ class ASRData:
             if cleaned_text and cleaned_text != " ":
                 segments.append(ASRDataSeg(cleaned_text, start_time, end_time))
 
-        return ASRData(segments)
+        return ASRData.from_imported_segments(segments)
 
     @staticmethod
     def from_youtube_vtt(vtt_str: str) -> "ASRData":
@@ -2269,7 +2436,7 @@ class ASRData:
                 word_segments = split_timestamped_text(text)
                 segments.extend(word_segments)
 
-        return ASRData(segments)
+        return ASRData.from_imported_segments(segments)
 
     @staticmethod
     def from_ass(ass_str: str) -> "ASRData":
@@ -2342,4 +2509,4 @@ class ASRData:
         for segment in temp_segments.values():
             segments.append(segment)
 
-        return ASRData(segments)
+        return ASRData.from_imported_segments(segments)

@@ -115,7 +115,7 @@ def _create_detector(threshold: float) -> _TenVadDetector:
     return _TenVadDetector(threshold)
 
 
-def _group_speech_frames(
+def group_speech_frames(
     flags: list[int],
     *,
     audio_len_ms: int,
@@ -166,6 +166,24 @@ def _group_speech_frames(
     return padded
 
 
+def infer_vad_flags(samples: np.ndarray, threshold: float = 0.5) -> list[int]:
+    """Run TEN-VAD once and retain frame decisions for multiple groupings."""
+    samples = np.asarray(samples, dtype=np.float32).reshape(-1)
+    if samples.size == 0:
+        return []
+    pcm = np.clip(samples, -1.0, 1.0)
+    pcm = np.rint(pcm * 32767.0).astype(np.int16)
+    flags: list[int] = []
+    with _create_detector(threshold) as detector:
+        for offset in range(0, pcm.size, HOP_SIZE):
+            frame = pcm[offset : offset + HOP_SIZE]
+            if frame.size < HOP_SIZE:
+                frame = np.pad(frame, (0, HOP_SIZE - frame.size))
+            _, flag = detector.process(frame)
+            flags.append(int(bool(flag)))
+    return flags
+
+
 def run_vad_inference(
     samples: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
@@ -183,18 +201,9 @@ def run_vad_inference(
     if audio_len_ms <= 0:
         audio_len_ms = int(round(samples.size / sample_rate * 1000))
 
-    pcm = np.clip(samples, -1.0, 1.0)
-    pcm = np.rint(pcm * 32767.0).astype(np.int16)
-    flags: list[int] = []
-    with _create_detector(threshold) as detector:
-        for offset in range(0, pcm.size, HOP_SIZE):
-            frame = pcm[offset : offset + HOP_SIZE]
-            if frame.size < HOP_SIZE:
-                frame = np.pad(frame, (0, HOP_SIZE - frame.size))
-            _, flag = detector.process(frame)
-            flags.append(int(bool(flag)))
+    flags = infer_vad_flags(samples, threshold)
 
-    return _group_speech_frames(
+    return group_speech_frames(
         flags,
         audio_len_ms=audio_len_ms,
         min_speech_ms=min_speech_ms,

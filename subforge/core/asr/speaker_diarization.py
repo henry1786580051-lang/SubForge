@@ -12,12 +12,14 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from subforge.core.asr.asr_data import ASRData
+from subforge.core.asr.model_cache import SingleEntryModelCache
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"
 LOCAL_DIARIZATION_DIR = "pyannote-speaker-diarization-community-1"
 DIARIZATION_CACHE_VERSION = 1
+_DIARIZATION_MODEL_CACHE = SingleEntryModelCache()
 
 if platform.system() == "Darwin" and platform.machine() == "arm64":
     os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
@@ -222,13 +224,6 @@ def diarize_audio(
             raise RuntimeError("Speaker diarization model could not be loaded")
         return loaded
 
-    try:
-        pipeline = _load_pipeline()
-    except Exception as exc:
-        raise RuntimeError(
-            "Unable to load the speaker diarization model. Verify the local model or "
-            "Hugging Face token and Community-1 access."
-        ) from exc
     audio = _load_waveform(audio_path)
     kwargs = {"num_speakers": num_speakers} if num_speakers else {}
     selected_device = _select_diarization_device(torch)
@@ -245,10 +240,19 @@ def diarize_audio(
         return pipeline_call(audio, **kwargs)
 
     try:
-        output = _run_pipeline(pipeline, selected_device)
+        cache_key = (
+            str(Path(resolved_model).resolve()),
+            selected_device,
+            id(Pipeline.from_pretrained),
+        )
+        with _DIARIZATION_MODEL_CACHE.acquire(cache_key, _load_pipeline) as pipeline:
+            output = _run_pipeline(pipeline, selected_device)
     except Exception as exc:
         if selected_device != "mps":
-            raise
+            raise RuntimeError(
+                "Unable to load or run the speaker diarization model. Verify the local "
+                "model and Community-1 runtime."
+            ) from exc
         logger.warning(
             "Community-1 MPS inference failed; retrying on CPU: %s",
             exc,
@@ -257,8 +261,15 @@ def diarize_audio(
         if callback:
             callback(94, "MPS unavailable; retrying speaker analysis on CPU...")
         try:
-            pipeline = _load_pipeline()
-            output = _run_pipeline(pipeline, "cpu")
+            cpu_cache_key = (
+                str(Path(resolved_model).resolve()),
+                "cpu",
+                id(Pipeline.from_pretrained),
+            )
+            with _DIARIZATION_MODEL_CACHE.acquire(
+                cpu_cache_key, _load_pipeline
+            ) as pipeline:
+                output = _run_pipeline(pipeline, "cpu")
             selected_device = "cpu"
         except Exception as cpu_exc:
             raise RuntimeError(
@@ -498,4 +509,6 @@ def smooth_speaker_assignments(
 
     for segment, label in zip(segments, labels):
         segment.speaker_id = label
+        for word in segment.words:
+            word.speaker_id = label
     return asr_data

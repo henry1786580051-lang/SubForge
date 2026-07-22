@@ -1,4 +1,3 @@
-import atexit
 import difflib
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -198,9 +197,8 @@ class SubtitleSplitter:
         self._init_thread_pool()
 
     def _init_thread_pool(self):
-        """初始化线程池并注册清理"""
+        """初始化线程池"""
         self.executor = ThreadPoolExecutor(max_workers=self.thread_num)
-        atexit.register(self.stop)
 
     def split_subtitle(self, subtitle_data: Union[str, ASRData]) -> ASRData:
         """分割字幕(主入口)
@@ -667,10 +665,9 @@ class SubtitleSplitter:
 
             # Segments足够短或无法继续拆分
             if count_words(merged_text) <= max_word_count or n < RULE_MIN_SEGMENT_SIZE:
-                merged_seg = ASRDataSeg(
-                    merged_text.strip(),
-                    current_segments[0].start_time,
-                    current_segments[-1].end_time,
+                merged_seg = ASRDataSeg.from_segments(
+                    current_segments,
+                    text=merged_text.strip(),
                     speaker_id=_dominant_speaker(current_segments),
                 )
                 result_segs.append(merged_seg)
@@ -788,12 +785,25 @@ class SubtitleSplitter:
                     f"合并短Segments: {current_seg.text} + {next_seg.text} (间隔:{time_gap}ms)"
                 )
 
-                # 合并文本
+                # 合并文本和原子词时间轴
                 if is_mainly_cjk(current_seg.text):
-                    current_seg.text += next_seg.text
+                    merged_text = current_seg.text + next_seg.text
                 else:
-                    current_seg.text += " " + next_seg.text
-                current_seg.end_time = next_seg.end_time
+                    merged_text = current_seg.text + " " + next_seg.text
+
+                segments[i] = ASRDataSeg.from_segments(
+                    [current_seg, next_seg],
+                    text=merged_text,
+                    translated_text=" ".join(
+                        text
+                        for text in (
+                            current_seg.translated_text,
+                            next_seg.translated_text,
+                        )
+                        if text
+                    ),
+                    speaker_id=current_seg.speaker_id or next_seg.speaker_id,
+                )
 
                 segments.pop(i + 1)
             else:
@@ -896,16 +906,7 @@ class SubtitleSplitter:
 
                 for group in seg_groups:
                     merged_text = _join_segment_text(group)
-                    merged_start_time = group[0].start_time
-                    merged_end_time = group[-1].end_time
-                    merged_seg = ASRDataSeg(
-                        merged_text,
-                        merged_start_time,
-                        merged_end_time,
-                        speaker_id=_dominant_speaker(group),
-                    )
-
-                    logger.debug(f"Merged segments: {merged_seg.text}")
+                    logger.debug(f"Merged segments: {merged_text}")
 
                     # 拆分超长Segments
                     split_segs = self._split_long_segment(group)

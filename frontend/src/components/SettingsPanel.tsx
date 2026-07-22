@@ -160,7 +160,12 @@ export function SettingsPanel() {
     setSaving(true);
     try {
       await configApi.update(key, value);
-      setSettings((prev) => ({ ...prev, [key]: value }));
+      const secretKey = ["llm_api_key", "whisper_api_key", "huggingface_token"].includes(key);
+      setSettings((prev) => ({
+        ...prev,
+        [key]: secretKey ? "" : value,
+        ...(secretKey ? { [`${key}_configured`]: true } : {}),
+      }));
       const configKeyMap: Record<string, string> = {
         transcribe_model: "transcribeModel",
         source_language: "sourceLanguage",
@@ -206,7 +211,8 @@ export function SettingsPanel() {
         ...prev,
         llm_provider: result.provider,
         llm_base_url: result.base_url,
-        llm_api_key: result.api_key,
+        llm_api_key: "",
+        llm_api_key_configured: result.api_key_configured,
         llm_model: result.model,
       }));
       useAppStore.getState().setConfig({ llmModel: result.model });
@@ -365,9 +371,9 @@ export function SettingsPanel() {
                   <option key={provider.id} value={provider.id}>{provider.name}</option>
                 ))}
               </select>
-              <span className={`flex shrink-0 items-center gap-1.5 text-[10px] ${settings.llm_api_key ? "text-emerald-600" : "text-amber-600"}`}>
-                <span className={`h-1.5 w-1.5 rounded-full ${settings.llm_api_key ? "bg-emerald-500" : "bg-amber-500"}`} />
-                {settings.llm_api_key ? "已配置" : "待配置"}
+              <span className={`flex shrink-0 items-center gap-1.5 text-[10px] ${settings.llm_api_key || settings.llm_api_key_configured ? "text-emerald-600" : "text-amber-600"}`}>
+                <span className={`h-1.5 w-1.5 rounded-full ${settings.llm_api_key || settings.llm_api_key_configured ? "bg-emerald-500" : "bg-amber-500"}`} />
+                {settings.llm_api_key || settings.llm_api_key_configured ? "已配置" : "待配置"}
               </span>
             </div>
           </SettingsField>
@@ -380,8 +386,10 @@ export function SettingsPanel() {
           <SettingsField label="API Key">
             <input type="password" value={(settings.llm_api_key as string) || ""}
               onChange={(e) => setSettings((prev) => ({ ...prev, llm_api_key: e.target.value }))}
-              onBlur={(e) => handleSave("llm_api_key", e.target.value)}
-              placeholder="sk-..." className="input-field" />
+              onBlur={(e) => {
+                if (e.target.value) void handleSave("llm_api_key", e.target.value);
+              }}
+              placeholder={settings.llm_api_key_configured ? "已安全保存，输入新值覆盖" : "sk-..."} className="input-field" />
           </SettingsField>
           <SettingsField label="模型" description="点击「检测模型」从服务商获取可用模型列表">
             <div className="flex items-center gap-2 mb-2">
@@ -441,7 +449,7 @@ export function SettingsPanel() {
               <button onClick={async () => {
                 setTestingLlm(true); setLlmTestResult(null);
                 try { const r = await configApi.testLlm(); setLlmTestResult(r); } catch (err) { setLlmTestResult({ ok: false, error: err instanceof Error ? err.message : "测试失败" }); } finally { setTestingLlm(false); }
-              }} disabled={testingLlm || !settings.llm_api_key || !settings.llm_model}
+              }} disabled={testingLlm || (!settings.llm_api_key && !settings.llm_api_key_configured) || !settings.llm_model}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] rounded-md bg-accent-dim text-accent hover:bg-accent/15 transition-all font-medium disabled:opacity-40 disabled:cursor-not-allowed btn-press">
                 {testingLlm ? (<><svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" strokeDasharray="42 21" strokeLinecap="round" /></svg>测试中...</>) : "测试连接"}
               </button>
@@ -470,6 +478,17 @@ export function SettingsPanel() {
                 className="flex-1 accent-accent" />
               <span className="w-8 text-right font-mono text-[12px] text-text-primary">{(settings.batch_size as number) || 10}</span>
             </div>
+          </SettingsField>
+          <SettingsField label="日志详细度" description="摘要仅记录任务指标；标准保留截断内容；调试记录完整请求与响应">
+            <select
+              value={(settings.llm_log_level as string) || "summary"}
+              onChange={(e) => handleSave("llm_log_level", e.target.value)}
+              className="input-field"
+            >
+              <option value="summary">摘要（推荐）</option>
+              <option value="standard">标准</option>
+              <option value="debug">调试</option>
+            </select>
           </SettingsField>
         </SettingsSection>
           </>
@@ -589,8 +608,10 @@ export function SettingsPanel() {
             <SettingsField label="API Key">
               <input type="password" value={(settings.whisper_api_key as string) || ""}
                 onChange={(e) => setSettings((prev) => ({ ...prev, whisper_api_key: e.target.value }))}
-                onBlur={(e) => handleSave("whisper_api_key", e.target.value)}
-                placeholder="sk-..." className="input-field" />
+                onBlur={(e) => {
+                  if (e.target.value) void handleSave("whisper_api_key", e.target.value);
+                }}
+                placeholder={settings.whisper_api_key_configured ? "已安全保存，输入新值覆盖" : "sk-..."} className="input-field" />
             </SettingsField>
             <SettingsField label="模型名称">
               <div className="flex gap-2">

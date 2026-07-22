@@ -12,7 +12,7 @@ import difflib
 from typing import List, Optional
 
 from ..utils.logger import setup_logger
-from .asr_data import ASRData, ASRDataSeg
+from .asr_data import ASRData, ASRDataSeg, ASRWord
 
 logger = setup_logger("chunk_merger")
 
@@ -264,6 +264,21 @@ class ChunkMerger:
                 start_time=seg.start_time + offset,
                 end_time=seg.end_time + offset,
                 translated_text=seg.translated_text,
+                speaker_id=seg.speaker_id,
+                words=[
+                    ASRWord(
+                        text=word.text,
+                        start_time=word.start_time + offset,
+                        end_time=word.end_time + offset,
+                        speaker_id=word.speaker_id,
+                        confidence=word.confidence,
+                        alignment_score=word.alignment_score,
+                        timing_source=word.timing_source,
+                    )
+                    for word in seg.words
+                ],
+                timestamp_granularity=seg.timestamp_granularity,
+                timing_source=seg.timing_source,
             )
             for seg in segments
         ]

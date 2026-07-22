@@ -3,7 +3,6 @@
 使用LLM优化字幕内容，支持agent loop自动验证和修正。
 """
 
-import atexit
 import difflib
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -20,6 +19,84 @@ from ..utils.text_utils import count_words
 logger = setup_logger("subtitle_optimizer")
 
 MAX_STEPS = 3
+MIN_CROSS_KEY_COPY_TOKENS = 4
+
+
+def _ownership_tokens(text: str) -> List[str]:
+    """Tokenize text for conservative adjacent-key ownership checks."""
+    return re.findall(
+        r"[A-Za-z0-9]+(?:['’][A-Za-z0-9]+)?|[\u3400-\u9fff]",
+        str(text or "").lower(),
+    )
+
+
+def _contains_tokens(haystack: List[str], needle: List[str]) -> bool:
+    if not needle or len(needle) > len(haystack):
+        return False
+    return any(
+        haystack[index : index + len(needle)] == needle
+        for index in range(len(haystack) - len(needle) + 1)
+    )
+
+
+def _cross_key_ownership_violations(
+    original_chunk: Dict[str, str], optimized_chunk: Dict[str, str]
+) -> List[Tuple[str, str]]:
+    """Detect a neighboring subtitle copied across a key boundary."""
+    ordered_keys = sorted(original_chunk, key=lambda value: int(value))
+    violations: List[Tuple[str, str]] = []
+    for position, key in enumerate(ordered_keys):
+        original = _ownership_tokens(original_chunk[key])
+        optimized = _ownership_tokens(optimized_chunk[key])
+        if optimized == original:
+            continue
+
+        if position + 1 < len(ordered_keys):
+            next_key = ordered_keys[position + 1]
+            next_tokens = _ownership_tokens(original_chunk[next_key])
+            overlap = min(len(next_tokens), len(optimized), 12)
+            while overlap >= MIN_CROSS_KEY_COPY_TOKENS:
+                phrase = next_tokens[:overlap]
+                if optimized[-overlap:] == phrase and not _contains_tokens(original, phrase):
+                    violations.append(
+                        (
+                            key,
+                            f"Key '{key}' copied the start of adjacent key '{next_key}': "
+                            f"{' '.join(phrase)!r}",
+                        )
+                    )
+                    break
+                overlap -= 1
+
+        if position > 0:
+            previous_key = ordered_keys[position - 1]
+            previous_tokens = _ownership_tokens(original_chunk[previous_key])
+            overlap = min(len(previous_tokens), len(optimized), 12)
+            while overlap >= MIN_CROSS_KEY_COPY_TOKENS:
+                phrase = previous_tokens[-overlap:]
+                if optimized[:overlap] == phrase and not _contains_tokens(original, phrase):
+                    violations.append(
+                        (
+                            key,
+                            f"Key '{key}' copied the end of adjacent key '{previous_key}': "
+                            f"{' '.join(phrase)!r}",
+                        )
+                    )
+                    break
+                overlap -= 1
+    return violations
+
+
+def _cross_key_ownership_errors(
+    original_chunk: Dict[str, str], optimized_chunk: Dict[str, str]
+) -> List[str]:
+    return [
+        message
+        for _, message in _cross_key_ownership_violations(
+            original_chunk,
+            optimized_chunk,
+        )
+    ]
 
 
 class SubtitleOptimizer:
@@ -64,9 +141,8 @@ class SubtitleOptimizer:
         self._init_thread_pool()
 
     def _init_thread_pool(self) -> None:
-        """初始化线程池并注册清理函数"""
+        """初始化线程池"""
         self.executor = ThreadPoolExecutor(max_workers=self.thread_num)
-        atexit.register(self.stop)
 
     def optimize_subtitle(self, subtitle_data: Union[str, ASRData]) -> ASRData:
         """优化字幕
@@ -94,6 +170,16 @@ class SubtitleOptimizer:
 
             # 并行优化
             optimized_dict = self._parallel_optimize(chunks)
+
+            # Chunks are processed independently, so also protect the boundaries
+            # between batches. Only the offending key is restored.
+            violations = _cross_key_ownership_violations(
+                subtitle_dict,
+                optimized_dict,
+            )
+            for key, message in violations:
+                logger.warning("Rejected cross-key optimization: %s", message)
+                optimized_dict[key] = subtitle_dict[key]
 
             # 创建新segments
             new_segments = self._create_segments(asr_data.segments, optimized_dict)
@@ -332,6 +418,17 @@ class SubtitleOptimizer:
             )
             return False, error_msg
 
+        ownership_errors = _cross_key_ownership_errors(
+            original_chunk,
+            optimized_chunk,
+        )
+        if ownership_errors:
+            return False, (
+                ";\n".join(ownership_errors)
+                + "\nKeep every phrase in its original subtitle key. Do not copy text "
+                "from the previous or next key."
+            )
+
         return True, ""
 
     @staticmethod
@@ -407,6 +504,9 @@ class SubtitleOptimizer:
                 end_time=seg.end_time,
                 translated_text=seg.translated_text,
                 speaker_id=seg.speaker_id,
+                words=list(seg.words),
+                timestamp_granularity=seg.timestamp_granularity,
+                timing_source=seg.timing_source,
             )
             for i, seg in enumerate(original_segments, 1)
         ]

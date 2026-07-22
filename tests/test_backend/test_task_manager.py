@@ -2,9 +2,11 @@ import asyncio
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 
-from app.core.task_manager import TaskManager, TaskStatus
+from app.core.task_manager import TaskManager, TaskResourceBusyError, TaskStatus
 
 
 def test_cancelled_task_is_not_overwritten_by_late_completion():
@@ -88,6 +90,41 @@ def test_task_progress_carries_preview_segments():
     updated = manager.get_task(task.id)
     assert updated is not None
     assert updated.preview_segments == preview
+    assert updated.preview_revision == 1
+
+
+def test_preview_updates_emit_small_deltas_and_keep_full_snapshot():
+    manager = TaskManager()
+    task = manager.create_task("subtitle")
+    events = []
+    manager.add_listener(lambda _task_id, data: events.append(data))
+    first = [
+        {"id": 1, "text": "one"},
+        {"id": 2, "text": "two"},
+    ]
+    manager.publish_preview(task.id, first)
+    manager.publish_preview(task.id, [*first, {"id": 3, "text": "three"}])
+    manager.publish_preview(
+        task.id,
+        [first[0], {"id": 2, "text": "translated"}, {"id": 3, "text": "three"}],
+    )
+
+    assert events[0]["preview_delta"] == {
+        "mode": "replace",
+        "segments": first,
+        "total": 2,
+    }
+    assert events[1]["preview_delta"]["mode"] == "append"
+    assert events[1]["preview_delta"]["segments"] == [{"id": 3, "text": "three"}]
+    assert events[2]["preview_delta"]["mode"] == "patch"
+    assert events[2]["preview_delta"]["segments"] == [
+        {"id": 2, "text": "translated"}
+    ]
+    assert all("preview_segments" not in event for event in events)
+    snapshot = manager.get_task(task.id)
+    assert snapshot is not None
+    assert len(snapshot.preview_segments or []) == 3
+    assert snapshot.preview_revision == 3
 
 
 def test_progress_is_clamped_and_does_not_move_backwards():
@@ -110,3 +147,37 @@ def test_cancel_task_runs_registered_cleanup_callback():
 
     assert manager.cancel_task(task.id) is True
     assert calls == [task.id]
+
+
+def test_terminal_task_cannot_be_cancelled_or_overwritten():
+    manager = TaskManager()
+    task = manager.create_task("subtitle")
+    manager.complete_task(task.id, {"subtitle_file": "final.srt"})
+
+    assert manager.cancel_task(task.id) is False
+    manager.fail_task(task.id, "late failure")
+
+    completed = manager.get_task(task.id)
+    assert completed is not None
+    assert completed.status == TaskStatus.COMPLETED
+    assert completed.result == {"subtitle_file": "final.srt"}
+    assert completed.error is None
+
+
+@pytest.mark.parametrize("terminal", ["complete", "fail", "cancel"])
+def test_resource_lock_blocks_duplicate_task_and_releases_at_terminal_state(terminal):
+    manager = TaskManager()
+    first = manager.create_task("transcribe", resource_key="transcribe:/video.mp4")
+
+    with pytest.raises(TaskResourceBusyError):
+        manager.create_task("transcribe", resource_key="transcribe:/video.mp4")
+
+    if terminal == "complete":
+        manager.complete_task(first.id)
+    elif terminal == "fail":
+        manager.fail_task(first.id, "failed")
+    else:
+        assert manager.cancel_task(first.id) is True
+
+    replacement = manager.create_task("transcribe", resource_key="transcribe:/video.mp4")
+    assert replacement.id != first.id

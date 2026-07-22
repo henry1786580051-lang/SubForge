@@ -1,6 +1,5 @@
 """翻译器基类"""
 
-import atexit
 import re
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -55,7 +54,6 @@ class BaseTranslator(ABC):
         self._cache = get_translate_cache()
 
         self._init_thread_pool()
-        atexit.register(self.stop)
 
     def _init_thread_pool(self):
         """初始化线程池"""

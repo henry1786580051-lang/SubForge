@@ -40,7 +40,15 @@ def _tokens_to_word_segments(transcription: list[dict]) -> list[ASRDataSeg]:
         nonlocal current_text, current_start, current_end
         text = current_text.strip()
         if text and current_start is not None and current_end is not None:
-            words.append(ASRDataSeg(text, current_start, max(current_start, current_end)))
+            words.append(
+                ASRDataSeg(
+                    text,
+                    current_start,
+                    max(current_start, current_end),
+                    timestamp_granularity="word",
+                    timing_source="native",
+                )
+            )
         current_text = ""
         current_start = None
         current_end = None
@@ -91,6 +99,8 @@ def _cap_unreasonable_word_durations(words: list[ASRDataSeg]) -> list[ASRDataSeg
         if duration <= max_duration * 1.5:
             continue
         word.start_time = max(0, word.end_time - max_duration)
+        if word.words:
+            word.words[0].start_time = word.start_time
     return words
 
 
@@ -126,7 +136,7 @@ def _segments_from_words(
             return
         text = text_of(current)
         if text:
-            segments.append(ASRDataSeg(text, current[0].start_time, current[-1].end_time))
+            segments.append(ASRDataSeg.from_segments(current, text=text))
         current.clear()
 
     for word in words:
@@ -244,7 +254,13 @@ class WhisperCppASR(BaseASR):
         text = match.group(3).strip()
         if not text:
             return None
-        return ASRDataSeg(text, to_ms(match.group(1)), to_ms(match.group(2)))
+        return ASRDataSeg(
+            text,
+            to_ms(match.group(1)),
+            to_ms(match.group(2)),
+            timestamp_granularity="sentence",
+            timing_source="native",
+        )
 
     def _emit_live_segment(self, line: str) -> None:
         if not self.segment_callback:
@@ -283,6 +299,8 @@ class WhisperCppASR(BaseASR):
                 or text.startswith("（")
             ):
                 filtered_segments.append(seg)
+                seg.timestamp_granularity = "sentence"
+                seg.timing_source = "native"
         return filtered_segments
 
     def _build_command(

@@ -187,14 +187,22 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None, on_segm
                     removed,
                 )
 
+        analysis_context = None
         if asr_data.is_word_timestamp():
             try:
+                from subforge.core.asr.audio_analysis import AudioAnalysisContext
                 from subforge.core.asr.speech_vad import detect_speech_segments
                 from subforge.core.asr.speech_vad import is_available as vad_available
 
                 if vad_available():
+                    analysis_path = audio_path if preserve_multiple_speakers else audio_for_asr
+                    try:
+                        analysis_context = AudioAnalysisContext(analysis_path)
+                    except FileNotFoundError:
+                        analysis_context = None
                     speech_segments = detect_speech_segments(
-                        audio_path if preserve_multiple_speakers else audio_for_asr,
+                        analysis_path,
+                        analysis_context=analysis_context,
                         threshold=0.5,
                         min_speech_ms=160,
                         min_silence_ms=180,
@@ -210,9 +218,14 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None, on_segm
         asr_data.fix_boundary_overlaps()
 
         # Filter hallucinated segments using audio energy analysis
-        asr_data.filter_hallucinations(
-            audio_path=audio_path if preserve_multiple_speakers else audio_for_asr
-        )
+        filter_audio_path = audio_path if preserve_multiple_speakers else audio_for_asr
+        if analysis_context is None:
+            asr_data.filter_hallucinations(audio_path=filter_audio_path)
+        else:
+            asr_data.filter_hallucinations(
+                audio_path=filter_audio_path,
+                analysis_context=analysis_context,
+            )
 
         # Remove duplicate text emitted around VAD/chunk boundaries before the
         # final timing pass, so exports do not keep short repeated fragments.
@@ -224,8 +237,10 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None, on_segm
         if not asr_data.is_word_timestamp():
             asr_data.merge_sentence_fragments()
 
-        # Optimize subtitle timing if not using word timestamps
-        if not config.need_word_time_stamp:
+        # Follow the data the engine actually returned. Some backends may
+        # conservatively fall back to sentence timestamps even when word
+        # timestamps were requested.
+        if not asr_data.is_word_timestamp():
             asr_data.optimize_timing()
 
         # Keep the final exported timeline monotonic even if a post-processor
@@ -317,12 +332,18 @@ def _transcribe_segments(
             for seg in chunk_result.segments:
                 seg.start_time += ext_start
                 seg.end_time += ext_start
+                for word in seg.words:
+                    word.start_time += ext_start
+                    word.end_time += ext_start
                 # For models without timestamps (e.g. mimo-omni), use VAD boundaries
                 if seg.end_time <= seg.start_time:
                     seg.end_time = end_ms
                 # Clip to original VAD boundary — discard overlap context
                 seg.start_time = max(seg.start_time, start_ms)
                 seg.end_time = min(seg.end_time, end_ms)
+                if seg.timestamp_granularity == "word" and seg.words:
+                    seg.words[0].start_time = seg.start_time
+                    seg.words[-1].end_time = seg.end_time
             all_segments.extend(chunk_result.segments)
 
             progress = int((idx + 1) / total * 100)

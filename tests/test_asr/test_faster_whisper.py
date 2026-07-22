@@ -96,5 +96,8 @@ def test_direct_runtime_keeps_segment_timestamps_when_word_mode_requested(
         (100, 1400, "Hello world"),
         (1500, 2200, "Second sentence."),
     ]
+    assert result.granularity == "sentence"
+    assert result.timing_source == "native"
+    assert not result.is_word_timestamp()
     assert calls["transcribe"]["word_timestamps"] is False
     assert calls["init"]["local_files_only"] is True
