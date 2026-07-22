@@ -534,6 +534,20 @@ def verify_bundle(version: str) -> None:
         _verify_macos_app(app, version)
 
 
+def verify_windows_torch_cuda_build() -> None:
+    """Reject CPU-only PyTorch before producing a Windows desktop bundle."""
+    if platform.system() != "Windows":
+        return
+    import torch
+
+    if torch.version.cuda is None:
+        raise RuntimeError(
+            "Windows desktop packaging requires a CUDA-enabled PyTorch wheel. "
+            "Sync the project from the configured pytorch-cu128 index first."
+        )
+    print(f"Verified CUDA-enabled PyTorch build: {torch.__version__} (CUDA {torch.version.cuda})")
+
+
 def archive(version: str) -> None:
     bundle = DIST_DIR / "SubForge"
     tag = _platform_tag()
@@ -555,6 +569,7 @@ def main() -> int:
         clean()
     original_version_file = ensure_version_file(version)
     try:
+        verify_windows_torch_cuda_build()
         build_frontend(version, skip=args.skip_frontend_build)
         prepare_ffmpeg()
         prepare_whisper_cpp()

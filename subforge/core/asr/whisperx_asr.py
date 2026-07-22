@@ -13,7 +13,7 @@ from ...config import MODEL_PATH
 from ..utils.logger import setup_logger
 from .asr_data import ASRData, ASRDataSeg, ASRWord, TimestampSource
 from .base import BaseASR
-from .faster_whisper import is_faster_whisper_model_dir
+from .faster_whisper import is_faster_whisper_model_dir, resolve_faster_whisper_runtime
 from .model_cache import SingleEntryModelCache
 from .status import ASRStatus
 
@@ -148,11 +148,12 @@ def _normalize_language(language: str | None) -> str | None:
 
 def _normalize_align_device(device: str | None) -> str:
     value = (device or "cpu").strip().lower()
-    if value == "auto":
+    if value in {"auto", "cuda"}:
         try:
             import torch
 
-            if torch.cuda.is_available():
+            torch_cuda_version = getattr(getattr(torch, "version", None), "cuda", None)
+            if torch_cuda_version is not None and torch.cuda.is_available():
                 return "cuda"
         except Exception:
             pass
@@ -160,7 +161,7 @@ def _normalize_align_device(device: str | None) -> str:
     if value == "mps":
         # MLX handles Apple Silicon acceleration; WhisperX alignment is more stable on CPU.
         return "cpu"
-    if value in {"cuda", "cpu"}:
+    if value == "cpu":
         return value
     return "cpu"
 
@@ -800,8 +801,17 @@ class WhisperXASR(BaseASR):
         self.whisper_model = requested_model
         self.mlx_model = _mlx_model_repo(self.whisper_model) if self.uses_mlx else ""
         self.language = _normalize_language(language)
+        if self.uses_mlx:
+            self.transcribe_device = "mlx"
+            self.compute_type = _normalize_compute_type("cpu", compute_type)
+        else:
+            self.transcribe_device, self.compute_type = resolve_faster_whisper_runtime(
+                device, compute_type
+            )
+        # CTranslate2 and PyTorch have independent CUDA runtimes. A working
+        # FasterWhisper CUDA device does not prove that the bundled torch build
+        # can execute forced alignment on CUDA.
         self.align_device = _normalize_align_device(device)
-        self.compute_type = _normalize_compute_type(self.align_device, compute_type)
         self.align_model = _normalize_align_model(align_model)
         self.batch_size = max(1, int(batch_size or 4))
         self.segment_callback = segment_callback
@@ -869,18 +879,21 @@ class WhisperXASR(BaseASR):
                 "the WhisperX desktop runtime included."
             ) from exc
 
+        _install_offline_sentence_tokenizer(whisperx_alignment)
         with tempfile.TemporaryDirectory() as tmp:
             audio_path = self._write_audio_to_temp(Path(tmp))
             callback(15, "Loading WhisperX transcription model...")
             logger.info(
-                "Transcribing with standard WhisperX model=%s device=%s compute=%s",
+                "Transcribing with standard WhisperX model=%s transcribe_device=%s "
+                "align_device=%s compute=%s",
                 self.whisper_model,
+                self.transcribe_device,
                 self.align_device,
                 self.compute_type,
             )
             model = load_model(
                 self.whisper_model,
-                self.align_device,
+                self.transcribe_device,
                 compute_type=self.compute_type,
                 language=self.language,
                 vad_method="silero",

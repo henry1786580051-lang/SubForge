@@ -318,11 +318,29 @@ if __name__ == "__main__":
         import traceback
 
         try:
+            import torch
             from whisperx.alignment import align as _align  # noqa: F401
             from whisperx.asr import load_model as _load_model  # noqa: F401
             from whisperx.audio import load_audio as _load_audio  # noqa: F401
 
-            print("WhisperX Windows runtime imports: ok")
+            from subforge.core.asr.faster_whisper import resolve_faster_whisper_runtime
+            from subforge.core.asr.whisperx_asr import _normalize_align_device
+
+            if os.name == "nt" and torch.version.cuda is None:
+                raise RuntimeError("Windows desktop build contains CPU-only PyTorch")
+            transcribe_device, compute_type = resolve_faster_whisper_runtime(
+                "auto", "default"
+            )
+            align_device = _normalize_align_device("auto")
+            if align_device == "cuda":
+                probe = torch.ones(1, device="cuda")
+                if probe.device.type != "cuda":
+                    raise RuntimeError("PyTorch CUDA tensor probe did not use CUDA")
+            print(
+                "WhisperX Windows runtime: ok "
+                f"(transcribe={transcribe_device}/{compute_type}, "
+                f"alignment={align_device}, torch={torch.__version__})"
+            )
             finish_packaged_check(0)
         except Exception:
             traceback.print_exc()

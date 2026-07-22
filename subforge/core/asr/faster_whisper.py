@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import hashlib
 import importlib
+import importlib.util
 import logging
 import os
 import platform
@@ -27,9 +28,17 @@ def _candidate_cuda_runtime_dirs() -> list[Path]:
     if configured:
         candidates.append(Path(configured).expanduser())
     if getattr(sys, "frozen", False):
+        # Prefer the CUDA libraries shipped with the CUDA-enabled PyTorch
+        # wheel. Loading a second cuBLAS/cuDNN set in the same WhisperX process
+        # can terminate Windows before Python can report an exception.
+        candidates.append(Path(getattr(sys, "_MEIPASS", "")) / "torch" / "lib")
         candidates.append(Path(getattr(sys, "_MEIPASS", "")) / "cuda")
 
     if platform.system() == "Windows":
+        torch_spec = importlib.util.find_spec("torch")
+        if torch_spec and torch_spec.submodule_search_locations:
+            torch_package = Path(next(iter(torch_spec.submodule_search_locations)))
+            candidates.append(torch_package / "lib")
         program_files = Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
         toolkit_root = program_files / "NVIDIA GPU Computing Toolkit" / "CUDA"
         if toolkit_root.is_dir():
