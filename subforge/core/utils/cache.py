@@ -43,7 +43,7 @@ def _open_cache(name: str, **kwargs: Any) -> Cache:
     cache_dir.mkdir(parents=True, exist_ok=True)
     try:
         return Cache(str(cache_dir), **kwargs)
-    except sqlite3.OperationalError:
+    except (sqlite3.OperationalError, OSError):
         fallback_dir = Path(tempfile.gettempdir()) / "SubForge" / "cache" / name
         fallback_dir.mkdir(parents=True, exist_ok=True)
         return Cache(str(fallback_dir), **kwargs)

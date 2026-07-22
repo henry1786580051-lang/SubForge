@@ -93,6 +93,28 @@ def test_model_list_uses_stable_mlx_ids_and_selection(tmp_path, monkeypatch):
     assert large_v3["path"] == str(local_model)
 
 
+def test_windows_lists_standard_whisperx_and_downloadable_tool_models(tmp_path, monkeypatch):
+    values = _config_values(tmp_path)
+    monkeypatch.setattr(
+        config_module,
+        "get_config_value",
+        lambda key, default=None: values.get(key, default),
+    )
+    monkeypatch.setattr(transcribe_api.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(transcribe_api.platform, "machine", lambda: "AMD64")
+
+    models = asyncio.run(transcribe_api.list_whisper_models())
+    whisperx_model = next(model for model in models if model["id"] == "whisperx-large-v3")
+    alignment = next(model for model in models if model["type"] == "alignment")
+    diarization = next(model for model in models if model["type"] == "diarization")
+
+    assert whisperx_model["type"] == "ctranslate2"
+    assert whisperx_model["selected"] is True
+    assert whisperx_model["state"] == "on_demand"
+    assert alignment["downloadable"] is True
+    assert diarization["downloadable"] is True
+
+
 def test_model_self_test_returns_real_transcript_metadata(tmp_path, monkeypatch):
     audio = tmp_path / "en.mp3"
     audio.write_bytes(b"test")

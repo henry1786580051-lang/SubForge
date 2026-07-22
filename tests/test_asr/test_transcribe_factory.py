@@ -216,6 +216,41 @@ def test_transcribe_diarization_uses_original_audio_and_preserves_timing(monkeyp
     ]
 
 
+def test_transcribe_passes_fixed_speaker_count_to_diarization(monkeypatch):
+    diarization = importlib.import_module("subforge.core.asr.speaker_diarization")
+    speech_vad = importlib.import_module("subforge.core.asr.speech_vad")
+    received: dict[str, int | None] = {}
+
+    monkeypatch.setattr(
+        transcribe_module,
+        "_create_asr_instance",
+        lambda *_args, **_kwargs: DummyWordTimestampASR(),
+    )
+    monkeypatch.setattr(
+        diarization,
+        "require_local_diarization_model",
+        lambda *_args, **_kwargs: "/tmp/diarization-model",
+    )
+
+    def _diarize(_audio_path, **kwargs):
+        received["num_speakers"] = kwargs["num_speakers"]
+        return [diarization.SpeakerTurn(0, 4_000, "Speaker 1")]
+
+    monkeypatch.setattr(diarization, "diarize_audio", _diarize)
+    monkeypatch.setattr(speech_vad, "is_available", lambda: False)
+    config = TranscribeConfig(
+        transcribe_model=TranscribeModelEnum.WHISPERX,
+        need_word_time_stamp=True,
+        enable_audio_enhancement=False,
+        speaker_diarization="fixed",
+        speaker_count=5,
+    )
+
+    transcribe_module.transcribe("original.wav", config)
+
+    assert received["num_speakers"] == 5
+
+
 def test_transcribe_uses_selected_multispeaker_attenuation_but_original_for_vad(
     monkeypatch, tmp_path
 ):

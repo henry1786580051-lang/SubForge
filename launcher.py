@@ -203,7 +203,13 @@ def main():
     )
     server_thread.start()
 
-    if not wait_for_server(url, server_errors):
+    startup_timeout = float(
+        os.environ.get(
+            "SUBFORGE_STARTUP_TIMEOUT",
+            "120" if getattr(sys, "frozen", False) else "30",
+        )
+    )
+    if not wait_for_server(url, server_errors, startup_timeout):
         detail = server_errors[-1] if server_errors else f"Timed out waiting for backend at {url}"
         raise RuntimeError(f"SubForge backend failed to start: {detail}")
 
@@ -268,6 +274,24 @@ if __name__ == "__main__":
             except Exception:
                 traceback.print_exc()
         raise SystemExit(0 if available else 1)
+    if os.environ.get("SUBFORGE_CHECK_FASTER_WHISPER") == "1":
+        import traceback
+
+        try:
+            import av  # noqa: F401
+            import ctranslate2  # noqa: F401
+            import faster_whisper  # noqa: F401
+
+            from subforge.core.asr.faster_whisper import (
+                resolve_faster_whisper_runtime,
+            )
+
+            device, compute_type = resolve_faster_whisper_runtime("auto", "default")
+            print(f"FasterWhisper import: ok ({device}/{compute_type})")
+            raise SystemExit(0)
+        except Exception:
+            traceback.print_exc()
+            raise SystemExit(1)
     if os.environ.get("SUBFORGE_CHECK_ASR") == "1":
         import traceback
 

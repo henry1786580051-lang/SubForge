@@ -20,6 +20,25 @@ def test_subtitle_request_does_not_default_to_stale_llm_model():
     assert req.llm_model == ""
 
 
+def test_result_path_moves_session_uploads_to_durable_work_dir(tmp_path, monkeypatch):
+    import app.api.files as files_module
+    import app.api.subtitle as subtitle_module
+
+    import subforge.config as subforge_config
+
+    upload_root = tmp_path / "uploads"
+    uploaded = upload_root / "session-test" / "input.srt"
+    uploaded.parent.mkdir(parents=True)
+    uploaded.write_text("", encoding="utf-8")
+    durable = tmp_path / "work"
+    monkeypatch.setattr(files_module, "UPLOAD_ROOT", upload_root)
+    monkeypatch.setattr(subforge_config, "WORK_PATH", durable)
+
+    result = subtitle_module._result_path(str(uploaded), "_processed")
+
+    assert result == durable / "input_processed.srt"
+
+
 def test_backend_parse_srt_preserves_bilingual_fields():
     srt = """1
 00:00:00,000 --> 00:00:02,000

@@ -1,15 +1,109 @@
+import sys
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 
+import subforge.core.asr.speaker_diarization as diarization_module
 from subforge.core.asr.asr_data import ASRData, ASRDataSeg
 from subforge.core.asr.speaker_diarization import (
     SpeakerTurn,
     _deserialize_cached_turns,
+    _select_diarization_device,
     assign_speakers,
     is_diarization_model_dir,
     require_local_diarization_model,
     resolve_diarization_model,
     smooth_speaker_assignments,
 )
+
+
+class _MpsBackend:
+    @staticmethod
+    def is_available() -> bool:
+        return True
+
+
+def _write_community_model(model_dir: Path) -> None:
+    model_dir.mkdir()
+    (model_dir / "config.yaml").write_text("pipeline: {}" * 20, encoding="utf-8")
+    for relative in (
+        "segmentation/pytorch_model.bin",
+        "embedding/pytorch_model.bin",
+    ):
+        path = model_dir / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x" * (1024 * 1024))
+    for relative in ("plda/plda.npz", "plda/xvec_transform.npz"):
+        path = model_dir / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x" * 1024)
+
+
+def test_select_diarization_device_prefers_mps_on_apple_silicon(monkeypatch):
+    fake_torch = SimpleNamespace(backends=SimpleNamespace(mps=_MpsBackend()))
+    monkeypatch.setattr(diarization_module.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(diarization_module.platform, "machine", lambda: "arm64")
+    monkeypatch.delenv("SUBFORGE_DIARIZATION_DEVICE", raising=False)
+
+    assert _select_diarization_device(fake_torch) == "mps"
+
+
+def test_select_diarization_device_honors_cpu_override(monkeypatch):
+    fake_torch = SimpleNamespace(backends=SimpleNamespace(mps=_MpsBackend()))
+    monkeypatch.setenv("SUBFORGE_DIARIZATION_DEVICE", "cpu")
+
+    assert _select_diarization_device(fake_torch) == "cpu"
+
+
+def test_diarize_audio_reloads_pipeline_on_mps_failure(tmp_path, monkeypatch):
+    model_dir = tmp_path / "pyannote-speaker-diarization-community-1"
+    _write_community_model(model_dir)
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"audio")
+    devices: list[str] = []
+    load_count = 0
+
+    class FakePipeline:
+        def __init__(self, fail: bool):
+            self.fail = fail
+
+        def to(self, device):
+            devices.append(str(device))
+
+        def __call__(self, _audio, **_kwargs):
+            if self.fail:
+                raise RuntimeError("unsupported MPS operator")
+            segment = SimpleNamespace(start=0.0, end=1.0)
+            return [(segment, "raw-speaker")]
+
+    class PipelineFactory:
+        @staticmethod
+        def from_pretrained(*_args, **_kwargs):
+            nonlocal load_count
+            load_count += 1
+            return FakePipeline(fail=load_count == 1)
+
+    fake_audio_module = ModuleType("pyannote.audio")
+    fake_audio_module.Pipeline = PipelineFactory
+    monkeypatch.setitem(sys.modules, "pyannote.audio", fake_audio_module)
+    monkeypatch.setattr(diarization_module, "_load_waveform", lambda _path: object())
+    monkeypatch.setattr(
+        diarization_module,
+        "_select_diarization_device",
+        lambda _torch: "mps",
+    )
+    import subforge.core.utils.cache as cache_module
+
+    monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: False)
+
+    turns = diarization_module.diarize_audio(
+        str(audio_path),
+        model_dir=tmp_path,
+        num_speakers=2,
+    )
+
+    assert load_count == 2
+    assert devices == ["mps", "cpu"]
+    assert turns == [SpeakerTurn(0, 1_000, "Speaker 1")]
 
 
 def test_assign_speakers_preserves_text_and_timestamps():
@@ -114,8 +208,7 @@ def test_smooth_speaker_assignments_fills_short_unlabeled_edge():
 
 def test_resolve_diarization_model_prefers_managed_snapshot(tmp_path: Path):
     local_model = tmp_path / "pyannote-speaker-diarization-community-1"
-    local_model.mkdir()
-    (local_model / "config.yaml").write_text("pipeline: {}", encoding="utf-8")
+    _write_community_model(local_model)
 
     assert is_diarization_model_dir(local_model)
     assert resolve_diarization_model("pyannote/speaker-diarization-community-1", tmp_path) == str(

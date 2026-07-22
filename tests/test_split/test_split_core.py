@@ -484,6 +484,26 @@ class TestSplitLongSegment:
         assert not result[0].text.endswith("this")
         assert "this 2008" in result[0].text
 
+    def test_split_long_segment_prefers_nearby_sentence_boundary_over_later_gap(self):
+        words = "made a dramatic film from them. The issue over the years as we use them more and more".split()
+        segments = []
+        cursor = 0
+        for index, word in enumerate(words):
+            start = cursor
+            end = start + 180
+            segments.append(ASRDataSeg(text=word, start_time=start, end_time=end))
+            cursor = end + (700 if index == 7 else 40)
+
+        splitter = SubtitleSplitter(
+            thread_num=1,
+            model="gpt-4o-mini",
+            max_word_count_english=8,
+        )
+        result = splitter._split_long_segment(segments)
+
+        assert result[0].text == "made a dramatic film from them."
+        assert result[1].text.startswith("The issue")
+
     def test_equal_time_gaps(self):
         """测试相等时间间隔（中间分割）"""
         segments = [

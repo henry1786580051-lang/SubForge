@@ -104,6 +104,7 @@ def _write_settings(data: dict):
 
 # Default config values
 _IS_APPLE_SILICON = platform.system() == "Darwin" and platform.machine().lower() == "arm64"
+_WHISPERX_SUPPORTED = _IS_APPLE_SILICON or platform.system() in {"Windows", "Linux"}
 
 _LLM_PROVIDER_URLS = {
     "openai": "https://api.openai.com/v1",
@@ -164,6 +165,7 @@ _DEFAULTS = {
     "ff_mdx_kim2": False,
     "enable_audio_enhancement": True,
     "speaker_diarization": "off",
+    "speaker_count": 2,
     "diarization_model": "pyannote/speaker-diarization-community-1",
     "huggingface_token": "",
     "replace_chinese_punctuation": True,
@@ -212,7 +214,7 @@ def _effective_config(stored: dict) -> dict:
         key: _coerce_config_value(stored.get(key, default), default)
         for key, default in _DEFAULTS.items()
     }
-    if not _IS_APPLE_SILICON and config.get("transcribe_model") == "whisperx":
+    if not _WHISPERX_SUPPORTED and config.get("transcribe_model") == "whisperx":
         config["transcribe_model"] = "whisper_cpp"
     provider = _active_llm_provider(stored)
     profiles = _sanitize_llm_profiles(stored.get("llm_profiles"))
@@ -255,6 +257,7 @@ _INTEGER_RANGES = {
     "batch_size": (1, 100),
     "whisper_n_threads": (0, 128),
     "whisperx_batch_size": (1, 64),
+    "speaker_count": (2, 10),
 }
 
 _CHOICES = {
@@ -267,7 +270,7 @@ _CHOICES = {
         "turkish", "swedish", "ukrainian", "arabic",
     },
     "llm_provider": set(_LLM_PROVIDER_URLS),
-    "speaker_diarization": {"off", "two", "auto"},
+    "speaker_diarization": {"off", "two", "auto", "fixed"},
 }
 
 
@@ -319,7 +322,8 @@ async def get_config():
     return {
         **config,
         "runtime_platform": platform.system().lower(),
-        "whisperx_supported": _IS_APPLE_SILICON,
+        "whisperx_supported": _WHISPERX_SUPPORTED,
+        "whisperx_backend": "mlx" if _IS_APPLE_SILICON else "faster-whisper",
     }
 
 
@@ -334,10 +338,10 @@ async def update_config(update: ConfigUpdate):
             detail="LLM providers must be changed through the provider switch endpoint",
         )
     value = _validate_config_update(update.key, update.value)
-    if update.key == "transcribe_model" and value == "whisperx" and not _IS_APPLE_SILICON:
+    if update.key == "transcribe_model" and value == "whisperx" and not _WHISPERX_SUPPORTED:
         raise HTTPException(
             status_code=400,
-            detail="WhisperX MLX 转录仅支持 Apple Silicon；Windows 请使用 Whisper.cpp。",
+            detail="当前平台不支持此 WhisperX 桌面运行时。",
         )
     stored = _read_settings()
     stored[update.key] = value

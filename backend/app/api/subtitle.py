@@ -18,6 +18,28 @@ logger = logging.getLogger(__name__)
 _background_tasks: set[asyncio.Task] = set()
 
 
+def _result_path(input_file: str, suffix: str, configured_work_dir: str = "") -> Path:
+    """Choose a durable output path without changing the existing filename contract."""
+    source = Path(input_file).resolve()
+    output_dir = source.parent
+    if configured_work_dir.strip():
+        try:
+            output_dir = validate_path(configured_work_dir.strip())
+        except ValueError as exc:
+            raise RuntimeError("Configured output folder is outside allowed roots") from exc
+        if not output_dir.is_dir():
+            raise RuntimeError("Configured output folder does not exist")
+    else:
+        from app.api.files import UPLOAD_ROOT
+
+        if source.is_relative_to(UPLOAD_ROOT.resolve()):
+            from subforge.config import WORK_PATH
+
+            output_dir = WORK_PATH.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir / f"{source.stem}{suffix}.srt"
+
+
 def _preview_segments(data) -> list[dict]:
     from subforge.core.translate.base import BaseTranslator
 
@@ -364,6 +386,8 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
             _raise_if_cancelled(task_id)
             task_manager.update_progress(task_id, 90, "Translation complete")
 
+            task_manager.update_progress(task_id, 95, "Validating bilingual subtitles...")
+            validate_bilingual_result(asr_data, source_lock)
             if req.target_language.lower() in {"chinese", "cantonese"} and bool(
                 get_config_value("replace_chinese_punctuation", True)
             ):
@@ -371,22 +395,14 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
                     task_id, 96, "Cleaning Chinese subtitle punctuation..."
                 )
                 asr_data.replace_chinese_translation_punctuation()
-                _save_partial(
-                    asr_data,
-                    "Chinese subtitle punctuation cleaned",
-                    force=True,
-                )
-
-            task_manager.update_progress(task_id, 95, "Validating bilingual subtitles...")
-            validate_bilingual_result(asr_data, source_lock)
             _save_partial(asr_data, "Bilingual subtitles validated", force=True)
 
         # Save result
         task_manager.update_progress(task_id, 97, "Saving result...")
-        output_path = (
-            Path(req.subtitle_file)
-            .with_stem(Path(req.subtitle_file).stem + "_processed")
-            .with_suffix(".srt")
+        output_path = _result_path(
+            req.subtitle_file,
+            "_processed",
+            str(get_config_value("work_dir", "") or ""),
         )
 
         from subforge.core.entities import SubtitleLayoutEnum
@@ -402,7 +418,13 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
         )
 
         task_manager.update_progress(task_id, 100, "Done")
-        task_manager.complete_task(task_id, {"subtitle_file": str(output_path)})
+        task_manager.complete_task(
+            task_id,
+            {
+                "subtitle_file": str(output_path),
+                "segments": _preview_segments(asr_data),
+            },
+        )
 
     except asyncio.CancelledError:
         logger.info("Subtitle task %s cancelled", task_id)
@@ -418,10 +440,10 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
                     get_config_value("replace_chinese_punctuation", True)
                 ):
                     asr_data.replace_chinese_translation_punctuation()
-                recovery_path = (
-                    Path(req.subtitle_file)
-                    .with_stem(Path(req.subtitle_file).stem + "_recovery")
-                    .with_suffix(".srt")
+                recovery_path = _result_path(
+                    req.subtitle_file,
+                    "_recovery",
+                    str(get_config_value("work_dir", "") or ""),
                 )
                 from subforge.core.entities import SubtitleLayoutEnum
 

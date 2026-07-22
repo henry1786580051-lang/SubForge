@@ -151,6 +151,11 @@ def main() -> int:
             _run([str(exe)], env=env)
             print("Verified packaged DeepFilterNet3 imports")
 
+            env = os.environ.copy()
+            env["SUBFORGE_CHECK_FASTER_WHISPER"] = "1"
+            _run([str(exe)], env=env)
+            print("Verified packaged FasterWhisper/CTranslate2/PyAV imports")
+
         if platform.system() == "Darwin" and platform.machine() == "arm64":
             env = os.environ.copy()
             env["SUBFORGE_CHECK_ASR"] = "1"

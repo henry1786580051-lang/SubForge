@@ -1810,6 +1810,21 @@ class ASRData:
 
         return self
 
+    def clip_to_media_duration(self, duration_ms: int) -> "ASRData":
+        """Remove or clip timestamps that extend beyond the source media."""
+        if duration_ms <= 0 or not self.segments:
+            return self
+
+        clipped: list[ASRDataSeg] = []
+        for segment in self.segments:
+            if segment.start_time >= duration_ms:
+                continue
+            segment.end_time = min(segment.end_time, duration_ms)
+            if segment.end_time > segment.start_time:
+                clipped.append(segment)
+        self.segments = clipped
+        return self
+
     def __str__(self):
         return self.to_txt()
 

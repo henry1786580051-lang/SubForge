@@ -109,6 +109,12 @@ class LLMTranslator(BaseTranslator):
             else:
                 processed_result = {k: f"{v}" for k, v in result_dict.items()}
 
+            if self._needs_alignment_audit():
+                processed_result = self._audit_reflective_alignment(
+                    subtitle_dict,
+                    processed_result,
+                )
+
             # 将结果填充回SubtitleProcessData
             missing_keys = []
             for data in subtitle_chunk:
@@ -138,6 +144,165 @@ class LLMTranslator(BaseTranslator):
                 raise RuntimeError(self._fatal_provider_message) from e
             logger.error(f"LLM translation error: {e}")
             return self._translate_chunk_single(subtitle_chunk)
+
+    def _needs_alignment_audit(self) -> bool:
+        """Use the extra semantic ownership pass only for MiniMax M3 reflection."""
+        normalized = re.sub(r"[^a-z0-9]+", "", self.model.lower())
+        return self.is_reflect and normalized == "minimaxm3"
+
+    def _audit_reflective_alignment(
+        self,
+        subtitle_dict: Dict[str, str],
+        translated_dict: Dict[str, str],
+    ) -> Dict[str, str]:
+        """Correct only translations that clearly belong to a neighboring key.
+
+        MiniMax M3 can preserve every JSON key while shifting a run of translations
+        by one key when the source contains fragments. This independent pass asks
+        for sparse corrections, then subjects the combined result to all existing
+        structural validators. Audit failure keeps the already validated result.
+        """
+        try:
+            misaligned_keys = self._request_alignment_flags(
+                {
+                    key: {"source": subtitle_dict[key], "translation": translated_dict[key]}
+                    for key in subtitle_dict
+                }
+            )
+            if not misaligned_keys:
+                return translated_dict
+
+            ordered_keys = list(subtitle_dict)
+            flagged_positions = [ordered_keys.index(key) for key in misaligned_keys]
+            focus_keys = {
+                ordered_keys[position]
+                for flagged_position in flagged_positions
+                for position in range(
+                    max(0, flagged_position - 2),
+                    min(len(ordered_keys), flagged_position + 3),
+                )
+            }
+            if focus_keys - set(misaligned_keys):
+                focused_flags = self._request_alignment_flags(
+                    {
+                        key: {
+                            "source": subtitle_dict[key],
+                            "translation": translated_dict[key],
+                        }
+                        for key in ordered_keys
+                        if key in focus_keys
+                    },
+                    focused=True,
+                )
+                misaligned_keys = list(dict.fromkeys([*misaligned_keys, *focused_flags]))
+
+            candidate = dict(translated_dict)
+            ordered_keys = list(subtitle_dict)
+            for key in dict.fromkeys(misaligned_keys):
+                position = ordered_keys.index(key)
+                candidate[key] = self._translate_alignment_item(
+                    subtitle_dict[key],
+                    previous_source=subtitle_dict.get(ordered_keys[position - 1])
+                    if position > 0
+                    else "",
+                    next_source=subtitle_dict.get(ordered_keys[position + 1])
+                    if position + 1 < len(ordered_keys)
+                    else "",
+                )
+            valid, error = self._validate_llm_response(
+                candidate,
+                subtitle_dict,
+                require_reflect=False,
+            )
+            if not valid:
+                raise ValueError(error)
+            logger.info(
+                "MiniMax M3 alignment audit corrected keys: %s",
+                sorted(misaligned_keys, key=lambda key: int(key) if key.isdigit() else key),
+            )
+            return candidate
+        except Exception as error:
+            logger.warning("MiniMax M3 alignment audit was ignored: %s", error)
+            return translated_dict
+
+    def _request_alignment_flags(
+        self,
+        items: Dict[str, Dict[str, str]],
+        *,
+        focused: bool = False,
+    ) -> List[str]:
+        focus_instruction = (
+            " This is a focused second check around an already detected shift; inspect "
+            "every item independently and include all other misaligned keys in this window."
+            if focused
+            else ""
+        )
+        system_prompt = f"""You are a conservative bilingual subtitle alignment auditor for {self.target_language.value}.
+Compare each source with the translation under the SAME key. Flag a key only when the translation clearly contains meaning owned by a different item, omits the current key's core meaning, or is shifted from another key. Sentence fragments are valid and do not need to be completed. Do not judge writing style and do not write translations.{focus_instruction} Return ONLY {{\"misaligned_keys\": [\"key\"]}}. Return an empty list when every key is aligned."""
+        response = call_llm(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps({"items": items}, ensure_ascii=False)},
+            ],
+            model=self.model,
+            temperature=0.1,
+            use_cache=self.use_cache,
+            client=self.llm_client,
+        )
+        audit = parse_json_object(get_response_text(response))
+        misaligned_keys = audit.get("misaligned_keys")
+        if not isinstance(misaligned_keys, list) or not all(
+            isinstance(key, (str, int)) for key in misaligned_keys
+        ):
+            raise ValueError("alignment audit must return a misaligned_keys list")
+        normalized = list(dict.fromkeys(str(key) for key in misaligned_keys))
+        unknown = set(normalized) - set(items)
+        if unknown:
+            raise ValueError(f"alignment audit returned unknown keys: {sorted(unknown)}")
+        return normalized
+
+    def _translate_alignment_item(
+        self,
+        source: str,
+        *,
+        previous_source: str = "",
+        next_source: str = "",
+    ) -> str:
+        """Translate one flagged key with source-only context for disambiguation."""
+        system_prompt = f"""Translate the exact source text into {self.target_language.value}.
+Use neighboring English only to resolve word sense and references. Translate ONLY current_source and never include words or clauses owned by previous_source or next_source. If current_source is a sentence fragment, return a natural fragment without completing it. Preserve names, model identifiers, numbers, and technical terms. Return only the translation with no JSON, labels, reasoning, markdown, or notes."""
+        response = call_llm(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "previous_source": previous_source,
+                            "current_source": source,
+                            "next_source": next_source,
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            model=self.model,
+            temperature=0.1,
+            use_cache=self.use_cache,
+            client=self.llm_client,
+        )
+        translated = get_response_text(response).strip()
+        if not translated or self._looks_like_placeholder_translation(translated):
+            raise ValueError("alignment item translation was empty or a placeholder")
+        single_response = {"1": translated}
+        valid, error = self._validate_llm_response(
+            single_response,
+            {"1": source},
+            require_reflect=False,
+        )
+        if not valid:
+            raise ValueError(error)
+        return translated
 
     @staticmethod
     def _is_fatal_provider_error(error: Exception) -> bool:
@@ -451,7 +616,8 @@ class LLMTranslator(BaseTranslator):
             right_target = self._normalized_target_text(
                 extract_text(response_dict.get(right_key, ""))
             )
-            if min(len(left_target), len(right_target)) < 8:
+            shorter_target = min(len(left_target), len(right_target))
+            if shorter_target < 6:
                 continue
             target_ratio = difflib.SequenceMatcher(None, left_target, right_target).ratio()
             left_source = self._normalized_source_text(subtitle_dict[left_key])
@@ -467,9 +633,15 @@ class LLMTranslator(BaseTranslator):
                 and source_ratio < 0.45
                 and common_share - source_ratio >= 0.15
             )
+            contained_short_phrase = (
+                shorter_target >= 6
+                and common_share == 1.0
+                and source_ratio < 0.45
+                and common_share - source_ratio >= 0.35
+            )
             if (
                 target_ratio >= 0.68 and target_ratio - source_ratio >= 0.25
-            ) or repeated_phrase:
+            ) or repeated_phrase or contained_short_phrase:
                 duplicate_pairs.append(
                     f"{left_key}-{right_key} (target={target_ratio:.0%}, "
                     f"shared={common_share:.0%}, source={source_ratio:.0%})"

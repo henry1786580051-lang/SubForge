@@ -9,10 +9,10 @@ from typing import Callable, Dict, List
 
 import pytest
 
-from tests.conftest import assert_translation_quality
 from subforge.core.asr.asr_data import ASRData
 from subforge.core.translate import SubtitleProcessData, TargetLanguage
 from subforge.core.translate.deeplx_translator import DeepLXTranslator
+from tests.conftest import assert_translation_quality
 
 
 @pytest.mark.integration

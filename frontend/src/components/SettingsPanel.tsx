@@ -129,7 +129,8 @@ export function SettingsPanel() {
       if (data.whisperx_batch_size !== undefined) storeUpdates.whisperxBatchSize = Number(data.whisperx_batch_size || 4);
       if (data.whisperx_supported !== undefined) storeUpdates.whisperxSupported = !!data.whisperx_supported;
       if (data.enable_audio_enhancement !== undefined) storeUpdates.enableAudioEnhancement = !!data.enable_audio_enhancement;
-      if (data.speaker_diarization !== undefined) storeUpdates.speakerDiarization = data.speaker_diarization as "off" | "two" | "auto";
+      if (data.speaker_diarization !== undefined) storeUpdates.speakerDiarization = data.speaker_diarization as "off" | "two" | "auto" | "fixed";
+      if (data.speaker_count !== undefined) storeUpdates.speakerCount = Number(data.speaker_count || 2);
       if (Object.keys(storeUpdates).length > 0) useAppStore.getState().setConfig(storeUpdates);
       // Prefer the persisted provider; detect legacy configurations by URL.
       const url = (data.llm_base_url as string) || "";
@@ -173,6 +174,7 @@ export function SettingsPanel() {
         whisperx_batch_size: "whisperxBatchSize",
         enable_audio_enhancement: "enableAudioEnhancement",
         speaker_diarization: "speakerDiarization",
+        speaker_count: "speakerCount",
       };
       const mappedKey = configKeyMap[key];
       if (mappedKey) {
@@ -533,7 +535,7 @@ export function SettingsPanel() {
           <SettingsField label="识别引擎">
             <div className="grid grid-cols-2 gap-2">
               {[
-                { id: "whisperx", name: "WhisperX", desc: "Apple Silicon 推荐 · MLX 加速 + forced alignment" },
+                { id: "whisperx", name: "WhisperX", desc: "Apple 使用 MLX；Windows 使用 CTranslate2 + forced alignment" },
                 { id: "whisper_cpp", name: "Whisper.cpp", desc: "macOS 推荐 · Metal GPU 加速" },
                 { id: "faster_whisper", name: "FasterWhisper", desc: "NVIDIA GPU 推荐 · CUDA 加速" },
                 { id: "whisper_api", name: "Whisper API", desc: "云端接口，无需本地算力" },
@@ -556,15 +558,19 @@ export function SettingsPanel() {
                       </span>
                     )}
                   </div>
-                  <span className="text-[10px] text-text-muted">{unsupported ? "仅支持 Apple Silicon" : e.desc}</span>
+                  <span className="text-[10px] text-text-muted">{unsupported ? "当前平台不支持" : e.desc}</span>
                 </button>
               )})}
             </div>
             {(settings.transcribe_model as string) === "faster_whisper" && (
-              <p className="text-[10px] text-amber-600 mt-1.5">需要 NVIDIA GPU 和 faster-whisper-xxl，macOS 上仅支持 CPU 模式（无 GPU 加速）</p>
+              <p className="text-[10px] text-emerald-600 mt-1.5">内置 CTranslate2 运行时；Windows 自动使用可用的 NVIDIA CUDA，否则回退 CPU</p>
             )}
             {(settings.transcribe_model as string) === "whisperx" && (
-              <p className="text-[10px] text-emerald-600 mt-1.5">WhisperX 使用 Apple Silicon 专门优化的 MLX Whisper 转录，并通过 forced alignment 生成词级时间轴</p>
+              <p className="text-[10px] text-emerald-600 mt-1.5">
+                {settings.whisperx_backend === "mlx"
+                  ? "当前使用 Apple Silicon 优化的 MLX Whisper，并通过 forced alignment 生成词级时间轴"
+                  : "当前使用 Windows CTranslate2/CUDA 或 CPU 路径，并通过 forced alignment 生成词级时间轴"}
+              </p>
             )}
             {(settings.transcribe_model as string) === "whisper_cpp" && (
               <p className="text-[10px] text-emerald-600 mt-1.5">Apple Silicon 原生 Metal 加速，NVIDIA GPU 上使用 CPU + int8 量化</p>
@@ -669,7 +675,7 @@ export function SettingsPanel() {
                   placeholder="/opt/homebrew/bin/whisper-cli" className="input-field" />
               </SettingsField>
             )}
-            <SettingsField label="模型存储目录" description={(settings.transcribe_model as string) === "whisperx" ? "用于保存 forced alignment 模型；MLX 模型会优先自动识别已下载的本地目录" : "留空则使用默认目录（~/SubForge/models）"}>
+            <SettingsField label="模型存储目录" description={(settings.transcribe_model as string) === "whisperx" ? "保存 WhisperX 转录与 forced alignment 模型；首次使用可自动下载" : "留空则使用默认目录（~/SubForge/models）"}>
               <input type="text" value={(settings.whisper_model_dir as string) || ""}
                 onChange={(e) => setSettings((prev) => ({ ...prev, whisper_model_dir: e.target.value }))}
                 onBlur={(e) => handleSave("whisper_model_dir", e.target.value)}
@@ -707,6 +713,7 @@ export function SettingsPanel() {
                   const isSelected = effectiveWhisperModel === m.id || Boolean(apiModel?.selected);
                   const isReady = Boolean(apiModel?.downloaded);
                   const isOnDemand = apiModel?.state === "on_demand" || Boolean((m as { onDemand?: boolean }).onDemand);
+                  const downloadKey = apiModel?.id || m.id;
                   return (
                   <div key={m.id} className={`flex items-center justify-between gap-3 rounded-lg border p-3 ${isSelected ? "border-accent/40 bg-accent-dim/40" : "border-border bg-[rgba(0,0,0,0.01)]"}`}>
                     <div className="flex-1">
@@ -726,10 +733,10 @@ export function SettingsPanel() {
                         if (settings.transcribe_model === "whisperx" || isReady) {
                           void handleSave("whisper_model_size", m.id);
                         } else {
-                          void handleDownloadModel(m.id);
+                          void handleDownloadModel(downloadKey);
                         }
                       }}
-                      disabled={downloadingModel === m.id || isSelected}
+                      disabled={downloadingModel === downloadKey || isSelected}
                       className={`px-3 py-1.5 text-[11px] rounded-md transition-all font-medium disabled:opacity-50 ${
                         isSelected
                           ? "bg-accent text-white cursor-default"
@@ -737,10 +744,10 @@ export function SettingsPanel() {
                           ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
                           : "bg-accent-dim text-accent hover:bg-accent/15"
                       }`}>
-                      {isSelected ? "当前使用" : isReady ? "使用" : downloadingModel === m.id ? (
+                      {isSelected ? "当前使用" : isReady ? "使用" : downloadingModel === downloadKey ? (
                         <span className="flex items-center gap-1.5">
                           <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" strokeDasharray="42 21" strokeLinecap="round" /></svg>
-                          {downloadProgress[m.id] != null ? `${downloadProgress[m.id]}%` : "下载中"}
+                          {downloadProgress[downloadKey] != null ? `${downloadProgress[downloadKey]}%` : "下载中"}
                         </span>
                       ) : settings.transcribe_model === "whisperx" ? "选择" : "下载"}
                     </button>

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
+import platform
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +18,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"
 LOCAL_DIARIZATION_DIR = "pyannote-speaker-diarization-community-1"
 DIARIZATION_CACHE_VERSION = 1
+
+if platform.system() == "Darwin" and platform.machine() == "arm64":
+    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 
 @dataclass(frozen=True)
@@ -30,7 +35,18 @@ class SpeakerTurn:
 def is_diarization_model_dir(path: str | Path) -> bool:
     """Return whether a local pyannote pipeline snapshot is usable."""
     model_dir = Path(path).expanduser()
-    return model_dir.is_dir() and (model_dir / "config.yaml").is_file()
+    required = {
+        "config.yaml": 100,
+        "segmentation/pytorch_model.bin": 1024 * 1024,
+        "embedding/pytorch_model.bin": 1024 * 1024,
+        "plda/plda.npz": 1024,
+        "plda/xvec_transform.npz": 1024,
+    }
+    return model_dir.is_dir() and all(
+        (model_dir / name).is_file()
+        and (model_dir / name).stat().st_size >= minimum
+        for name, minimum in required.items()
+    )
 
 
 def resolve_diarization_model(model: str, model_dir: str | Path | None = None) -> str:
@@ -138,6 +154,26 @@ def _deserialize_cached_turns(value: Any) -> list[SpeakerTurn]:
     return turns
 
 
+def _select_diarization_device(torch_module: Any) -> str:
+    """Select a safe pyannote device, with an override for diagnostics."""
+    configured = os.environ.get("SUBFORGE_DIARIZATION_DEVICE", "auto").strip().lower()
+    if configured not in {"auto", "cpu", "mps"}:
+        logger.warning("Ignoring unsupported diarization device: %s", configured)
+        configured = "auto"
+    if configured == "cpu":
+        return "cpu"
+
+    mps_backend = getattr(getattr(torch_module, "backends", None), "mps", None)
+    mps_available = bool(mps_backend and mps_backend.is_available())
+    if configured == "mps":
+        if not mps_available:
+            raise RuntimeError("Apple MPS was requested but is not available")
+        return "mps"
+    if platform.system() == "Darwin" and platform.machine() == "arm64" and mps_available:
+        return "mps"
+    return "cpu"
+
+
 def diarize_audio(
     audio_path: str,
     *,
@@ -176,29 +212,58 @@ def diarize_audio(
 
     if callback:
         callback(92, "Loading speaker diarization model...")
-    try:
-        pipeline = Pipeline.from_pretrained(
+    def _load_pipeline():
+        loaded = Pipeline.from_pretrained(
             resolved_model,
             token=token or None,
             cache_dir=str(model_dir) if model_dir else None,
         )
+        if loaded is None:
+            raise RuntimeError("Speaker diarization model could not be loaded")
+        return loaded
+
+    try:
+        pipeline = _load_pipeline()
     except Exception as exc:
         raise RuntimeError(
             "Unable to load the speaker diarization model. Verify the local model or "
             "Hugging Face token and Community-1 access."
         ) from exc
-    if pipeline is None:
-        raise RuntimeError("Speaker diarization model could not be loaded")
-
-    # pyannote is reliable on CPU in packaged macOS builds. MPS support varies
-    # by model/operator and must not make the existing MLX transcription fail.
-    pipeline.to(torch.device("cpu"))
     audio = _load_waveform(audio_path)
     kwargs = {"num_speakers": num_speakers} if num_speakers else {}
-    if callback:
-        callback(94, "Identifying speakers from the original audio...")
-    pipeline_call: Any = pipeline
-    output = pipeline_call(audio, **kwargs)
+    selected_device = _select_diarization_device(torch)
+
+    def _run_pipeline(active_pipeline: Any, device_name: str):
+        active_pipeline.to(torch.device(device_name))
+        if callback:
+            count = f" {num_speakers}" if num_speakers else ""
+            callback(
+                94,
+                f"Identifying{count} speakers on {device_name.upper()}...",
+            )
+        pipeline_call: Any = active_pipeline
+        return pipeline_call(audio, **kwargs)
+
+    try:
+        output = _run_pipeline(pipeline, selected_device)
+    except Exception as exc:
+        if selected_device != "mps":
+            raise
+        logger.warning(
+            "Community-1 MPS inference failed; retrying on CPU: %s",
+            exc,
+            exc_info=True,
+        )
+        if callback:
+            callback(94, "MPS unavailable; retrying speaker analysis on CPU...")
+        try:
+            pipeline = _load_pipeline()
+            output = _run_pipeline(pipeline, "cpu")
+            selected_device = "cpu"
+        except Exception as cpu_exc:
+            raise RuntimeError(
+                "Speaker diarization failed on both Apple MPS and CPU"
+            ) from cpu_exc
     annotation = getattr(output, "exclusive_speaker_diarization", None)
     if annotation is None:
         annotation = getattr(output, "speaker_diarization", output)
@@ -237,7 +302,12 @@ def diarize_audio(
             )
     except Exception as exc:
         logger.debug("Speaker diarization cache write failed: %s", exc)
-    logger.info("Speaker diarization found %d speakers in %d turns", len(label_map), len(turns))
+    logger.info(
+        "Speaker diarization found %d speakers in %d turns on %s",
+        len(label_map),
+        len(turns),
+        selected_device.upper(),
+    )
     return turns
 
 

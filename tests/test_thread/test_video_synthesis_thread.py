@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_thread.conftest import run_thread_with_timeout
 from subforge.core.entities import SynthesisConfig, SynthesisTask
 from subforge.ui.thread.video_synthesis_thread import VideoSynthesisThread
+from tests.test_thread.conftest import run_thread_with_timeout
 
 
 @pytest.mark.integration

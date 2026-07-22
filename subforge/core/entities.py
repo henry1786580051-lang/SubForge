@@ -570,6 +570,7 @@ class TranscribeConfig:
     whisperx_batch_size: int = 4
     enable_audio_enhancement: bool = True
     speaker_diarization: str = "off"
+    speaker_count: int = 2
     diarization_model: str = "pyannote/speaker-diarization-community-1"
     diarization_token: str = ""
     diarization_model_dir: str = ""
@@ -590,6 +591,8 @@ class TranscribeConfig:
         lines.append(f"Word Timestamp: {self.need_word_time_stamp}")
         lines.append(f"Audio Enhancement: {self.enable_audio_enhancement}")
         lines.append(f"Speaker Diarization: {self.speaker_diarization}")
+        if self.speaker_diarization == "fixed":
+            lines.append(f"Speaker Count: {self.speaker_count}")
         lines.append(
             f"Output Format: {self.output_format.value if self.output_format else 'None'}"
         )

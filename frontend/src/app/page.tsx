@@ -56,7 +56,8 @@ export default function Home() {
         whisperxBatchSize: Number(data.whisperx_batch_size || 8),
         whisperxSupported: (data.whisperx_supported as boolean) ?? true,
         enableAudioEnhancement: (data.enable_audio_enhancement as boolean) ?? true,
-        speakerDiarization: (data.speaker_diarization as "off" | "two" | "auto") || "off",
+        speakerDiarization: (data.speaker_diarization as "off" | "two" | "auto" | "fixed") || "off",
+        speakerCount: Number(data.speaker_count || 2),
       });
     }).catch(() => {});
   }, []);

@@ -1,5 +1,6 @@
 import json
 import os
+import platform
 import re
 import sys
 import tempfile
@@ -669,7 +670,11 @@ def _words_to_segments(
 
 
 class WhisperXASR(BaseASR):
-    """MLX Whisper ASR on Apple Silicon followed by WhisperX forced alignment."""
+    """Platform-native Whisper transcription followed by WhisperX alignment.
+
+    Apple Silicon uses MLX Whisper. Other platforms use WhisperX's
+    Faster-Whisper backend so Windows can use the same forced-alignment model.
+    """
 
     def __init__(
         self,
@@ -686,8 +691,9 @@ class WhisperXASR(BaseASR):
         need_word_time_stamp: bool = True,
     ):
         super().__init__(audio_input, use_cache, need_word_time_stamp)
-        self.whisper_model = whisper_model or default_mlx_model()
-        self.mlx_model = _mlx_model_repo(self.whisper_model)
+        self.uses_mlx = platform.system() == "Darwin" and platform.machine() == "arm64"
+        self.whisper_model = whisper_model or (default_mlx_model() if self.uses_mlx else "large-v3")
+        self.mlx_model = _mlx_model_repo(self.whisper_model) if self.uses_mlx else ""
         self.model_dir = model_dir or str(MODEL_PATH)
         self.language = _normalize_language(language)
         self.align_device = _normalize_align_device(device)
@@ -727,6 +733,164 @@ class WhisperXASR(BaseASR):
         callback: Optional[Callable[[int, str], None]] = None,
         **kwargs: Any,
     ) -> dict:
+        if self.uses_mlx:
+            return self._run_mlx(callback=callback, **kwargs)
+        return self._run_standard(callback=callback, **kwargs)
+
+    def _run_standard(
+        self,
+        callback: Optional[Callable[[int, str], None]] = None,
+        **_kwargs: Any,
+    ) -> dict:
+        def _default_callback(_progress: int, _message: str) -> None:
+            pass
+
+        callback = callback or _default_callback
+        try:
+            import whisperx.alignment as whisperx_alignment
+            from whisperx.asr import load_model
+            from whisperx.audio import load_audio
+        except ImportError as exc:
+            raise RuntimeError(
+                "WhisperX is not installed in this desktop build. Reinstall SubForge with "
+                "the WhisperX desktop runtime included."
+            ) from exc
+
+        with tempfile.TemporaryDirectory() as tmp:
+            audio_path = self._write_audio_to_temp(Path(tmp))
+            callback(15, "Loading WhisperX transcription model...")
+            logger.info(
+                "Transcribing with standard WhisperX model=%s device=%s compute=%s",
+                self.whisper_model,
+                self.align_device,
+                self.compute_type,
+            )
+            model = load_model(
+                self.whisper_model,
+                self.align_device,
+                compute_type=self.compute_type,
+                language=self.language,
+                vad_method="silero",
+                download_root=self.model_dir,
+            )
+            callback(30, "Loading audio...")
+            audio = load_audio(audio_path)
+            callback(40, "Transcribing with WhisperX...")
+            result = dict(
+                model.transcribe(
+                    audio,
+                    batch_size=self.batch_size,
+                    language=self.language,
+                )
+            )
+
+            if self.segment_callback:
+                raw_segments = self._make_segments(result)
+                if raw_segments:
+                    self.segment_callback(ASRData(raw_segments))
+
+            language_code = str(result.get("language") or self.language or "en").lower()
+            aligned = self._align_result(
+                result,
+                audio,
+                language_code,
+                callback,
+                whisperx_alignment,
+            )
+            aligned["asr_backend"] = "faster-whisper"
+            aligned["whisper_model"] = self.whisper_model
+
+            if self.segment_callback:
+                aligned_segments = self._make_segments(aligned)
+                if aligned_segments:
+                    self.segment_callback(ASRData(aligned_segments))
+
+            try:
+                del model
+                if self.align_device == "cuda":
+                    import torch
+
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+            callback(*ASRStatus.COMPLETED.callback_tuple())
+            return aligned
+
+    def _align_result(
+        self,
+        result: dict,
+        audio: Any,
+        language_code: str,
+        callback: Callable[[int, str], None],
+        whisperx_alignment: Any,
+    ) -> dict:
+        align_segments = _segments_for_alignment(result)
+        if not align_segments:
+            raise RuntimeError("WhisperX did not return alignable transcript segments")
+
+        spoken_align_segments, alignment_plans = _prepare_spoken_alignment(
+            align_segments, language_code
+        )
+        callback(65, "Loading forced alignment model...")
+        align_model_name = self._resolve_align_model_name(language_code)
+        align_kwargs: dict[str, Any] = {
+            "language_code": language_code,
+            "device": self.align_device,
+        }
+        if align_model_name:
+            align_kwargs["model_name"] = align_model_name
+        if self.model_dir:
+            align_kwargs["model_dir"] = self.model_dir
+        try:
+            model_a, metadata = whisperx_alignment.load_align_model(**align_kwargs)
+        except TypeError:
+            align_kwargs.pop("model_dir", None)
+            model_a, metadata = whisperx_alignment.load_align_model(**align_kwargs)
+
+        callback(78, "Running forced alignment...")
+
+        def _align(segments_to_align: list[dict]) -> dict:
+            try:
+                return dict(
+                    whisperx_alignment.align(
+                        segments_to_align,
+                        model_a,
+                        metadata,
+                        audio,
+                        self.align_device,
+                        return_char_alignments=True,
+                    )
+                )
+            except TypeError:
+                return dict(
+                    whisperx_alignment.align(
+                        segments_to_align,
+                        model_a,
+                        metadata,
+                        audio,
+                        self.align_device,
+                    )
+                )
+
+        aligned = _align(spoken_align_segments)
+        if alignment_plans:
+            restored = _restore_display_alignment(aligned, alignment_plans)
+            if restored is None:
+                logger.warning("Spoken alignment mapping was incomplete; retrying original text")
+                aligned = _align(align_segments)
+            else:
+                aligned = restored
+        aligned["language"] = language_code
+        aligned["align_model"] = align_model_name or ""
+
+        return aligned
+
+    def _run_mlx(
+        self,
+        callback: Optional[Callable[[int, str], None]] = None,
+        **kwargs: Any,
+    ) -> dict:
         def _default_callback(_progress: int, _message: str) -> None:
             pass
 
@@ -759,9 +923,6 @@ class WhisperXASR(BaseASR):
             raise
 
         _install_offline_sentence_tokenizer(whisperx_alignment)
-        whisperx_align = whisperx_alignment.align
-        load_align_model = whisperx_alignment.load_align_model
-
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
             audio_path = self._write_audio_to_temp(tmp_dir)
@@ -799,67 +960,14 @@ class WhisperXASR(BaseASR):
             callback(35, "Loading audio...")
             audio = load_audio(audio_path)
 
-            align_segments = _segments_for_alignment(result)
-            if not align_segments:
-                raise RuntimeError("MLX Whisper did not return alignable transcript segments")
-
             language_code = str(result.get("language") or self.language or "en").lower()
-            spoken_align_segments, alignment_plans = _prepare_spoken_alignment(
-                align_segments, language_code
+            aligned = self._align_result(
+                result,
+                audio,
+                language_code,
+                callback,
+                whisperx_alignment,
             )
-            callback(65, "Loading forced alignment model...")
-            align_model_name = self._resolve_align_model_name(language_code)
-            align_kwargs: dict[str, Any] = {
-                "language_code": language_code,
-                "device": self.align_device,
-            }
-            if align_model_name:
-                align_kwargs["model_name"] = align_model_name
-            if self.model_dir:
-                align_kwargs["model_dir"] = self.model_dir
-            try:
-                model_a, metadata = load_align_model(**align_kwargs)
-            except TypeError:
-                align_kwargs.pop("model_dir", None)
-                model_a, metadata = load_align_model(**align_kwargs)
-
-            callback(78, "Running forced alignment...")
-            alignment_model = model_a
-            alignment_metadata = metadata
-
-            def _align(segments_to_align: list[dict]) -> dict:
-                try:
-                    return dict(whisperx_align(
-                        segments_to_align,
-                        alignment_model,
-                        alignment_metadata,
-                        audio,
-                        self.align_device,
-                        return_char_alignments=True,
-                    ))
-                except TypeError:
-                    # Keep compatibility with older externally managed WhisperX
-                    # installations that do not expose character alignments.
-                    return dict(whisperx_align(
-                        segments_to_align,
-                        alignment_model,
-                        alignment_metadata,
-                        audio,
-                        self.align_device,
-                    ))
-
-            aligned = _align(spoken_align_segments)
-            if alignment_plans:
-                restored = _restore_display_alignment(aligned, alignment_plans)
-                if restored is None:
-                    logger.warning(
-                        "Spoken alignment mapping was incomplete; retrying original text"
-                    )
-                    aligned = _align(align_segments)
-                else:
-                    aligned = restored
-            aligned["language"] = language_code
-            aligned["align_model"] = align_model_name or ""
             aligned["asr_backend"] = "mlx-whisper"
             aligned["mlx_model"] = self.mlx_model
 
@@ -869,7 +977,6 @@ class WhisperXASR(BaseASR):
                     self.segment_callback(ASRData(aligned_segments))
 
             try:
-                del model_a
                 if self.align_device == "cuda":
                     import torch
 

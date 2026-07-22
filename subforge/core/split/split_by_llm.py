@@ -191,6 +191,38 @@ def _validate_split_result(
     merged = merged_char.join(split_result)
     merged_cleaned = re.sub(r"\s+", " ", merged)
 
+    # Splitting may adjust punctuation and whitespace, but it must never remove,
+    # insert, or rewrite spoken words. Character similarity can hide a handful
+    # of dropped filler words in a long batch, so lock the lexical sequence for
+    # Latin-language input before applying the more permissive punctuation check.
+    original_has_cjk = bool(
+        re.search(r"[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]", original_cleaned)
+    )
+    if not text_is_cjk and not original_has_cjk:
+        original_tokens = re.findall(
+            r"[A-Za-z0-9]+(?:['’][A-Za-z0-9]+)?", original_cleaned.lower()
+        )
+        merged_tokens = re.findall(
+            r"[A-Za-z0-9]+(?:['’][A-Za-z0-9]+)?", merged_cleaned.lower()
+        )
+        if original_tokens != merged_tokens:
+            token_matcher = difflib.SequenceMatcher(None, original_tokens, merged_tokens)
+            token_differences = []
+            for opcode, a0, a1, b0, b1 in token_matcher.get_opcodes():
+                if opcode == "equal":
+                    continue
+                token_differences.append(
+                    f"{opcode}: expected {original_tokens[a0:a1]!r}, "
+                    f"got {merged_tokens[b0:b1]!r}"
+                )
+                if len(token_differences) >= 5:
+                    break
+            return (
+                False,
+                "Source words were modified. Only punctuation, whitespace, and <br> "
+                "placement may change:\n- " + "\n- ".join(token_differences),
+            )
+
     # 使用SequenceMatcher计算相似度和差异
     matcher = difflib.SequenceMatcher(None, original_cleaned, merged_cleaned)
     similarity_ratio = matcher.ratio()
@@ -265,7 +297,6 @@ def _validate_split_result(
         error_msg += "\n\nSplit these long segments further with <br>, then output the COMPLETE text with ALL segments (not just the fixed ones)."
         return False, error_msg
 
-    original_has_cjk = bool(re.search(r"[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]", original_cleaned))
     if not text_is_cjk and not original_has_cjk:
         dangling = [
             f"Segment {index} ends with an incomplete phrase: '{segment}'"

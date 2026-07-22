@@ -58,6 +58,9 @@ denoise = [
     "torch==2.8.0",
     "torchaudio==2.8.0",
 ]
+faster-whisper = [
+    "faster-whisper>=1.2.1,<2",
+]
 whisperx = [
     "mlx-whisper>=0.4.2; platform_system == 'Darwin' and platform_machine == 'arm64'",
     "whisperx>=3.8.6,<3.9.0",

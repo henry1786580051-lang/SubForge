@@ -24,12 +24,22 @@ def _make_translator(is_reflect=False):
     )
 
 
+def _make_minimax_reflect_translator():
+    translator = _make_translator(is_reflect=True)
+    translator.model = "MiniMax-M3"
+    return translator
+
+
 def _llm_response(payload):
     return SimpleNamespace(
         choices=[
             SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload, ensure_ascii=False)))
         ]
     )
+
+
+def _text_response(text):
+    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text))])
 
 
 class TestValidateLLmResponse:
@@ -508,6 +518,106 @@ class TestValidateLLmResponse:
 
         assert ok is False
         assert "398-399" in msg
+
+    def test_rejects_short_translation_repeated_from_previous_key(self):
+        t = _make_translator()
+        source = {
+            "421": "Seeing how he does it up close, I understand",
+            "422": "a little more why.",
+        }
+        response = {
+            "421": "近距离看到他的工作方式 我也更明白了为什么会是这样",
+            "422": "为什么会是这样",
+        }
+
+        ok, msg = t._validate_llm_response(response, source)
+
+        assert ok is False
+        assert "421-422" in msg
+
+    def test_minimax_alignment_audit_applies_only_sparse_valid_corrections(self, monkeypatch):
+        translator = _make_minimax_reflect_translator()
+        source = {
+            "33": "made a dramatic film from them. The issue",
+            "34": "over the years as we use them more and more",
+        }
+        translated = {
+            "33": "不过麻烦也跟着来了 这些年我们越用越多",
+            "34": "也越来越想把这项技术整合到电影里",
+        }
+        responses = iter(
+            [
+                _llm_response({"misaligned_keys": ["33", "34"]}),
+                _text_response("我们首次用这些摄影机拍了剧情片 但问题也随之而来"),
+                _text_response("这些年来我们用得越来越多"),
+            ]
+        )
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm",
+            lambda **_kwargs: next(responses),
+        )
+
+        result = translator._audit_reflective_alignment(source, translated)
+
+        assert result["33"].endswith("问题也随之而来")
+        assert result["34"] == "这些年来我们用得越来越多"
+
+    def test_alignment_item_receives_source_only_neighbor_context(self, monkeypatch):
+        translator = _make_minimax_reflect_translator()
+        captured = {}
+
+        def fake_call(**kwargs):
+            captured.update(kwargs)
+            return _text_response("从很多方面来说")
+
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm",
+            fake_call,
+        )
+
+        result = translator._translate_alignment_item(
+            "in so many ways",
+            previous_source="Because it was so challenging",
+            next_source="not only for me, for everybody",
+        )
+
+        assert result == "从很多方面来说"
+        payload = json.loads(captured["messages"][1]["content"])
+        assert payload["current_source"] == "in so many ways"
+        assert payload["previous_source"] == "Because it was so challenging"
+        assert "translation" not in captured["messages"][1]["content"]
+
+    def test_alignment_audit_focuses_on_neighbors_of_detected_shift(self, monkeypatch):
+        translator = _make_minimax_reflect_translator()
+        source = {str(i): f"source {i}" for i in range(1, 7)}
+        translated = {str(i): f"译文{i}" for i in range(1, 7)}
+        responses = iter(
+            [
+                _llm_response({"misaligned_keys": ["3"]}),
+                _llm_response({"misaligned_keys": ["3", "4", "5"]}),
+                _text_response("正确三"),
+                _text_response("正确四"),
+                _text_response("正确五"),
+            ]
+        )
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm",
+            lambda **_kwargs: next(responses),
+        )
+
+        result = translator._audit_reflective_alignment(source, translated)
+
+        assert result["2"] == "译文2"
+        assert result["3"] == "正确三"
+        assert result["4"] == "正确四"
+        assert result["5"] == "正确五"
+        assert result["6"] == "译文6"
+
+    def test_alignment_audit_is_disabled_for_other_models(self):
+        translator = _make_translator(is_reflect=True)
+        assert translator._needs_alignment_audit() is False
+        translator.model = "MiniMax-M3"
+        assert translator._needs_alignment_audit() is True
 
     def test_allows_repeated_translation_when_source_is_also_repeated(self):
         t = _make_translator()

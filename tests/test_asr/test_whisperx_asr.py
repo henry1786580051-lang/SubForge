@@ -351,3 +351,19 @@ def test_whisperx_keeps_explicit_non_english_alignment_model():
     asr.align_model = "example/korean-alignment-model"
 
     assert asr._resolve_align_model_name("ko") == "example/korean-alignment-model"
+
+
+@pytest.mark.parametrize(("uses_mlx", "method_name"), [(True, "mlx"), (False, "standard")])
+def test_whisperx_routes_to_platform_backend(monkeypatch, uses_mlx, method_name):
+    asr = WhisperXASR.__new__(WhisperXASR)
+    asr.uses_mlx = uses_mlx
+    calls = []
+    monkeypatch.setattr(asr, "_run_mlx", lambda **_kwargs: calls.append("mlx") or {"ok": True})
+    monkeypatch.setattr(
+        asr,
+        "_run_standard",
+        lambda **_kwargs: calls.append("standard") or {"ok": True},
+    )
+
+    assert asr._run() == {"ok": True}
+    assert calls == [method_name]

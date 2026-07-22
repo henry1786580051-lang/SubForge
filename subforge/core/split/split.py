@@ -698,6 +698,21 @@ class SubtitleSplitter:
                 if split_index == 0 or split_index == n - 1:
                     split_index = n // 2
 
+            # A local pause can occur immediately after the first words of the
+            # next sentence. Prefer a nearby completed sentence boundary so the
+            # translator does not receive fragments such as "The issue" attached
+            # to the previous cue and then borrow meaning from the next cue.
+            sentence_boundaries = [
+                index
+                for index in range(max(1, split_index - 6), min(n - 1, split_index + 5))
+                if re.search(r"[.!?][\"')\]]*$", current_segments[index].text.strip())
+            ]
+            if sentence_boundaries:
+                split_index = min(
+                    sentence_boundaries,
+                    key=lambda index: (abs(index - split_index), index > split_index),
+                )
+
             while split_index < n - 2 and _is_dangling_tail(current_segments[split_index].text):
                 split_index += 1
 

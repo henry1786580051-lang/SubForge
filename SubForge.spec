@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
 block_cipher = None
 ROOT = os.path.dirname(os.path.abspath(SPEC))
@@ -10,6 +10,7 @@ APP_VERSION = os.environ.get('SUBFORGE_BUILD_VERSION', '0.0.0-dev')
 # collecting submodules initializes Metal and can terminate headless builds.
 optional_hiddenimports = []
 optional_datas = []
+optional_binaries = []
 if os.name == 'nt':
     optional_hiddenimports += [
         'colorama',
@@ -18,7 +19,28 @@ if os.name == 'nt':
         'colorama.initialise',
         'colorama.win32',
         'colorama.winterm',
+        'whisperx.asr',
+        'whisperx.vads',
+        'whisperx.vads.silero',
+        'faster_whisper',
+        'ctranslate2',
+        'av',
     ]
+    for runtime_pkg in ('faster_whisper', 'ctranslate2', 'av', 'whisperx.vads'):
+        try:
+            optional_hiddenimports += collect_submodules(runtime_pkg)
+        except Exception:
+            pass
+    for runtime_pkg in ('ctranslate2', 'av'):
+        try:
+            optional_binaries += collect_dynamic_libs(runtime_pkg)
+        except Exception:
+            pass
+
+whisperx_runtime_excludes = [] if os.name == 'nt' else [
+    'whisperx.asr', 'whisperx.transcribe', 'whisperx.vads',
+    'whisperx.vads.pyannote', 'whisperx.vads.silero',
+]
 
 # DeepFilterNet is used only for local enhancement inference. Avoid collecting
 # training, evaluation, and visualization modules, which pull unnecessary
@@ -155,7 +177,7 @@ if os.path.isdir(runtime_bin):
 a = Analysis(
     [os.path.join(ROOT, 'launcher.py')],
     pathex=[ROOT, os.path.join(ROOT, 'backend')],
-    binaries=[],
+    binaries=optional_binaries,
     datas=frontend_datas + backend_datas + vc_datas + resource_datas + runtime_datas + optional_datas,
     hiddenimports=[
         'torch',
@@ -225,8 +247,6 @@ a = Analysis(
         'IPython', 'jupyter',
         'test', 'tests',
         'whisperx.diarize',
-        'whisperx.asr', 'whisperx.transcribe', 'whisperx.vads',
-        'whisperx.vads.pyannote', 'whisperx.vads.silero',
         'pyannoteai', 'pyannoteai_sdk',
         'speechbrain',
         'torchcodec',
@@ -234,7 +254,7 @@ a = Analysis(
         # fallback in build_desktop.py; forced alignment does not use its DTW JIT.
         'numba', 'llvmlite',
         'pytest', '_pytest', 'tkinter',
-    ],
+    ] + whisperx_runtime_excludes,
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,

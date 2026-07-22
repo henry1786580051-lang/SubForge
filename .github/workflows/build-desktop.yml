@@ -41,10 +41,10 @@ jobs:
         include:
           - name: Windows x64
             os: windows-latest
-            uv-extra: "--extra denoise"
+            uv-extra: "--extra denoise --extra whisperx"
           - name: macOS Intel
             os: macos-15-intel
-            uv-extra: ""
+            uv-extra: "--extra faster-whisper"
 
     steps:
       - uses: actions/checkout@v6

@@ -88,7 +88,7 @@ const ASR_ENGINES = [
   {
     id: "whisperx",
     name: "WhisperX",
-    desc: "Apple Silicon 专门优化 · MLX + forced alignment",
+    desc: "Apple MLX / Windows CTranslate2 · forced alignment",
     icon: "solar:bolt-bold-duotone",
   },
   {
@@ -439,6 +439,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
         whisperx_batch_size: "whisperxBatchSize",
         enable_audio_enhancement: "enableAudioEnhancement",
         speaker_diarization: "speakerDiarization",
+        speaker_count: "speakerCount",
       };
       const mapped = map[key];
       if (mapped) setConfig({ [mapped]: value });
@@ -470,7 +471,9 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
       return models.filter((model) => model.category === "whisper_cpp");
     }
     if (config.transcribeModel === "whisperx") {
-      return models.filter((model) => model.category === "whisperx" && model.type !== "alignment");
+      return models.filter(
+        (model) => model.category === "whisperx" && ["mlx", "ctranslate2"].includes(model.type)
+      );
     }
     return [];
   }, [config.transcribeModel, models]);
@@ -484,7 +487,6 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
     [models]
   );
   const diarizationReady =
-    config.transcribeModel !== "whisperx" ||
     config.speakerDiarization === "off" ||
     diarizationModels.some((model) => model.downloaded);
   const selectedModel = currentModels.find(
@@ -578,7 +580,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                     </span>
                     <span className="text-[13px] font-semibold leading-5">{engine.name}</span>
                   </div>
-                  <p className="mt-2 min-h-8 text-[10px] leading-4 text-text-muted">{unsupported ? "仅支持 Apple Silicon" : engine.desc}</p>
+                  <p className="mt-2 min-h-8 text-[10px] leading-4 text-text-muted">{unsupported ? "当前平台不支持" : engine.desc}</p>
                 </button>
               )})}
             </div>
@@ -594,17 +596,13 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                   </p>
                 </div>
                 <span className={`shrink-0 rounded-md px-2 py-1 text-[9px] font-semibold ${
-                  config.transcribeModel === "whisperx"
-                    ? config.speakerDiarization === "off"
-                      ? "bg-background text-text-muted"
-                      : diarizationReady
-                      ? "bg-emerald-50 text-emerald-700"
-                      : "bg-amber-50 text-amber-700"
-                    : "bg-background text-text-muted"
+                  config.speakerDiarization === "off"
+                    ? "bg-background text-text-muted"
+                    : diarizationReady
+                    ? "bg-emerald-50 text-emerald-700"
+                    : "bg-amber-50 text-amber-700"
                 }`}>
-                  {config.transcribeModel !== "whisperx"
-                    ? "需要 WhisperX"
-                    : config.speakerDiarization === "off"
+                  {config.speakerDiarization === "off"
                     ? "未启用"
                     : diarizationReady
                     ? "已就绪"
@@ -612,14 +610,13 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                 </span>
               </div>
 
-              <div className="grid grid-cols-3 gap-2" role="group" aria-label="多人语音识别模式">
-                {([["off", "关闭"], ["two", "双人"], ["auto", "自动人数"]] as const).map(([value, label]) => (
+              <div className="grid grid-cols-4 gap-2" role="group" aria-label="多人语音识别模式">
+                {([["off", "关闭"], ["two", "双人"], ["auto", "自动"], ["fixed", "指定人数"]] as const).map(([value, label]) => (
                   <button
                     key={value}
-                    disabled={config.transcribeModel !== "whisperx"}
                     onClick={() => void saveConfig("speaker_diarization", value)}
-                    className={`h-9 rounded-md border text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
-                      config.speakerDiarization === value && config.transcribeModel === "whisperx"
+                    className={`h-9 rounded-md border text-[11px] font-medium transition-colors ${
+                      config.speakerDiarization === value
                         ? "border-accent bg-accent-dim text-accent"
                         : "border-border bg-background text-text-secondary hover:border-border-active"
                     }`}
@@ -629,7 +626,29 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                 ))}
               </div>
 
-              {config.transcribeModel === "whisperx" && config.speakerDiarization !== "off" && (
+              {config.speakerDiarization === "fixed" && (
+                <label className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2">
+                  <span>
+                    <span className="block text-[11px] font-semibold text-text-primary">说话人数</span>
+                    <span className="mt-0.5 block text-[9px] text-text-muted">已知人数时可避免自动模式过度聚类</span>
+                  </span>
+                  <input
+                    type="number"
+                    min={2}
+                    max={10}
+                    step={1}
+                    value={config.speakerCount}
+                    onChange={(event) => {
+                      const count = Math.max(2, Math.min(10, Number(event.target.value) || 2));
+                      void saveConfig("speaker_count", count);
+                    }}
+                    className="input-field h-9 w-20 text-center"
+                    aria-label="说话人数"
+                  />
+                </label>
+              )}
+
+              {config.speakerDiarization !== "off" && (
                 <div className="space-y-3 border-t border-border pt-3">
                   {diarizationModels.map((model) => (
                     <ModelRow

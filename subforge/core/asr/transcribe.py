@@ -16,6 +16,19 @@ def _noop_callback(x, y):
     pass
 
 
+def _audio_duration_ms(audio_path: str) -> int | None:
+    """Read source duration without decoding the complete waveform."""
+    try:
+        import soundfile as sf
+
+        info = sf.info(audio_path)
+        if info.frames > 0 and info.samplerate > 0:
+            return round(info.frames * 1000 / info.samplerate)
+    except Exception as exc:
+        logger.debug("Unable to read source audio duration: %s", exc)
+    return None
+
+
 def transcribe(audio_path: str, config: TranscribeConfig, callback=None, on_segment=None) -> ASRData:
     """Transcribe audio file using specified configuration.
 
@@ -47,7 +60,12 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None, on_segm
             getattr(config, "diarization_model_dir", "") or None,
         )
         callback(2, "Analyzing speakers from the original audio...")
-        num_speakers = 2 if diarization_mode == "two" else None
+        if diarization_mode == "two":
+            num_speakers = 2
+        elif diarization_mode == "fixed":
+            num_speakers = max(2, min(10, int(getattr(config, "speaker_count", 2))))
+        else:
+            num_speakers = None
 
         def _diarization_progress(_progress: int, message: str) -> None:
             callback(4, message)
@@ -60,6 +78,8 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None, on_segm
             num_speakers=num_speakers,
             callback=_diarization_progress,
         )
+        detected_speakers = len({turn.speaker_id for turn in diarization_turns})
+        callback(5, f"Detected {detected_speakers} speakers...")
 
     # Enhance audio with DeepFilterNet3 when the optional denoise stack is
     # installed. This is especially useful before VAD on noisy in-car footage.
@@ -155,6 +175,17 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None, on_segm
 
             asr_data = asr.run(callback=_asr_progress)
             callback(90, "Processing results...")
+
+        source_duration_ms = _audio_duration_ms(audio_path)
+        if source_duration_ms is not None:
+            before_clip = len(asr_data.segments)
+            asr_data.clip_to_media_duration(source_duration_ms)
+            removed = before_clip - len(asr_data.segments)
+            if removed:
+                logger.warning(
+                    "Removed %d ASR segments beyond the source duration",
+                    removed,
+                )
 
         if asr_data.is_word_timestamp():
             try:

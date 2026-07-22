@@ -2,8 +2,8 @@
 
 import pytest
 
-from tests.test_thread.conftest import run_thread_with_timeout
 from subforge.ui.thread.video_info_thread import VideoInfoThread
+from tests.test_thread.conftest import run_thread_with_timeout
 
 
 @pytest.mark.integration

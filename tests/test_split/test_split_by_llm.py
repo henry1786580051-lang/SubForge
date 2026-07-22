@@ -61,6 +61,34 @@ def test_validation_allows_complete_clause_boundary():
     assert message == ""
 
 
+def test_validation_rejects_dropped_words_despite_high_character_similarity():
+    original = (
+        "You know this is a deliberately long sentence with enough surrounding words "
+        "that deleting two short filler words would otherwise exceed the old character "
+        "similarity threshold and silently alter the transcript."
+    )
+    split = [
+        "This is a deliberately long sentence with enough surrounding words",
+        "that deleting two short filler words would otherwise exceed the old character",
+        "similarity threshold and silently alter the transcript.",
+    ]
+
+    ok, message = _validate_split_result(original, split, 25, 20)
+
+    assert ok is False
+    assert "Source words were modified" in message
+
+
+def test_validation_allows_punctuation_only_changes_for_latin_text():
+    original = "Well, this is the first clause, and this is the second."
+    split = ["Well this is the first clause", "and this is the second"]
+
+    ok, message = _validate_split_result(original, split, 25, 12)
+
+    assert ok is True
+    assert message == ""
+
+
 @pytest.mark.parametrize(
     "first",
     [

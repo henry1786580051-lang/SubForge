@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_asr.conftest import assert_asr_result_valid
 from subforge.core.asr import WhisperAPI
 from subforge.core.asr.asr_data import ASRData
+from tests.test_asr.conftest import assert_asr_result_valid
 
 
 @pytest.mark.integration

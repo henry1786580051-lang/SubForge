@@ -144,10 +144,7 @@ export function SubtitlePanel({
         reader.readAsDataURL(blob);
       } else {
         // Browser: use blob download
-        const url = subtitlesApi.exportUrl(subtitleFile, f, m);
-        const resp = await fetch(url);
-        if (!resp.ok) throw new Error(`Export failed: ${resp.status}`);
-        const blob = await resp.blob();
+        const blob = await subtitlesApi.exportPost(subtitles, f, m, defaultName);
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
         a.download = defaultName;

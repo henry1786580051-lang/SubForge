@@ -44,7 +44,7 @@ def test_write_settings_is_atomic_and_private(tmp_path, monkeypatch):
 
 
 def test_effective_config_migrates_whisperx_on_unsupported_platform(monkeypatch):
-    monkeypatch.setattr(config_module, "_IS_APPLE_SILICON", False)
+    monkeypatch.setattr(config_module, "_WHISPERX_SUPPORTED", False)
 
     config = config_module._effective_config({"transcribe_model": "whisperx"})
 
@@ -52,7 +52,16 @@ def test_effective_config_migrates_whisperx_on_unsupported_platform(monkeypatch)
 
 
 def test_effective_config_keeps_whisperx_on_apple_silicon(monkeypatch):
-    monkeypatch.setattr(config_module, "_IS_APPLE_SILICON", True)
+    monkeypatch.setattr(config_module, "_WHISPERX_SUPPORTED", True)
+
+    config = config_module._effective_config({"transcribe_model": "whisperx"})
+
+    assert config["transcribe_model"] == "whisperx"
+
+
+def test_effective_config_keeps_whisperx_on_windows_runtime(monkeypatch):
+    monkeypatch.setattr(config_module, "_IS_APPLE_SILICON", False)
+    monkeypatch.setattr(config_module, "_WHISPERX_SUPPORTED", True)
 
     config = config_module._effective_config({"transcribe_model": "whisperx"})
 
@@ -75,6 +84,9 @@ def test_effective_config_discards_corrupted_persisted_types():
         ("batch_size", 101),
         ("translator", "unknown"),
         ("target_language", "hindi"),
+        ("speaker_count", 1),
+        ("speaker_count", 11),
+        ("speaker_diarization", "five"),
     ],
 )
 def test_config_update_rejects_values_that_would_silently_fallback(key, value):

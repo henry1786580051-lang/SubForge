@@ -5909,6 +5909,9 @@ denoise = [
     { name = "torch", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "torchaudio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
+faster-whisper = [
+    { name = "faster-whisper", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
 whisperx = [
     { name = "mlx-whisper", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "pyannote-audio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -5942,6 +5945,7 @@ requires-dist = [
     { name = "diskcache", specifier = ">=5.6.3" },
     { name = "edge-tts", specifier = ">=7.2.8" },
     { name = "fastapi", specifier = ">=0.136.3" },
+    { name = "faster-whisper", marker = "extra == 'faster-whisper'", specifier = ">=1.2.1,<2" },
     { name = "fonttools", specifier = ">=4.61.1" },
     { name = "gputil", specifier = ">=1.4.0" },
     { name = "json-repair", specifier = ">=0.49.0" },
@@ -5971,7 +5975,7 @@ requires-dist = [
     { name = "whisperx", marker = "extra == 'whisperx'", specifier = ">=3.8.6,<3.9.0" },
     { name = "yt-dlp", specifier = ">=2025.7.21" },
 ]
-provides-extras = ["denoise", "gui", "whisperx"]
+provides-extras = ["denoise", "faster-whisper", "gui", "whisperx"]
 
 [package.metadata.requires-dev]
 dev = [

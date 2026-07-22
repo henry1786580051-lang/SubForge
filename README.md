@@ -20,8 +20,8 @@ SubForge 是一个 AI 驱动的视频字幕工具，覆盖转录、断句、优�
 
 | 能力 | 说明 |
 | --- | --- |
-| 语音转文字 | 默认使用 MLX Whisper + WhisperX forced alignment，生成词级时间轴并由 VAD 保守校验 |
-| 多人语音 | 可选 pyannote Community-1 说话人分离，并用自适应降噪保护较弱说话人的内容 |
+| 语音转文字 | WhisperX 在 Apple Silicon 使用 MLX、在 Windows 使用 CTranslate2，并通过 forced alignment 生成词级时间轴 |
+| 多人语音 | 可选 pyannote Community-1 说话人分离，支持双人、自动人数和 2–10 人精确约束，并用自适应降噪保护较弱说话人的内容 |
 | 智能断句 | 使用 LLM 按语义重排字幕，同时校验原文完整性、长度与时间轴 |
 | 字幕优化 | 保守修正明显 ASR 错误和标点，不允许 LLM 任意改写正确原文 |
 | 智能翻译 | 支持上下文感知、反思翻译、MiniMax Anthropic 接口及 OpenAI 兼容接口 |
@@ -31,11 +31,11 @@ SubForge 是一个 AI 驱动的视频字幕工具，覆盖转录、断句、优�
 
 ## 当前工作流
 
-SubForge 的重点不只是把语音转成文字，而是尽量让时间轴、原文和译文都达到可发布状态。默认流程围绕 Apple Silicon 本地转录、WhisperX 对齐和带完整性校验的上下文翻译组织。
+SubForge 的重点不只是把语音转成文字，而是尽量让时间轴、原文和译文都达到可发布状态。转录层按平台选择 MLX 或 CTranslate2，之后共享 WhisperX 对齐和带完整性校验的上下文翻译流程。
 
 ### 转录优化
 
-单人模式可直接使用 DeepFilterNet3 增强音频。多人模式先在原始音频上运行 pyannote Community-1，再抽取多名说话人的代表片段，对原音频和多档轻度降噪结果进行校准；只有在没有损失说话人覆盖时才采用降噪版本。
+单人模式可直接使用 DeepFilterNet3 增强音频。多人模式先在原始音频上运行 pyannote Community-1，再抽取多名说话人的代表片段，对原音频和多档轻度降噪结果进行校准；只有在没有损失说话人覆盖时才采用降噪版本。已知参与人数的访谈建议使用“指定人数”，可减少自动聚类将同一人拆成多个标签的风险。
 
 转录文本会先将数字、单位和符号展开为 forced alignment 更容易识别的口语 token，对齐完成后再恢复原文显示。TEN-VAD 只修正可疑边界，不全局覆盖已经正确的 WhisperX 时间戳：
 
@@ -43,7 +43,7 @@ SubForge 的重点不只是把语音转成文字，而是尽量让时间轴、�
 原始音频
   -> [多人模式] pyannote Community-1 说话人分离
   -> DeepFilterNet3 可选/自适应降噪
-  -> MLX Whisper 转录（Apple Silicon）
+  -> MLX Whisper（Apple Silicon）/ Faster-Whisper（Windows）
   -> 数字/单位/符号语音规范化
   -> WhisperX forced alignment
   -> TEN-VAD 时间轴保守校验（Silero VAD 回退）
@@ -55,6 +55,7 @@ SubForge 的重点不只是把语音转成文字，而是尽量让时间轴、�
 | --- | --- |
 | [DeepFilterNet3](https://github.com/Rikorose/DeepFilterNet) | 单人模式直接增强；多人模式按说话人覆盖率校准降噪强度，必要时保留原音频 |
 | [MLX Whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper) | Apple Silicon 专门优化的本地 Whisper 推理，默认使用本地 MLX 模型 |
+| [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper) | Windows 上为 WhisperX 提供 CTranslate2/CUDA 或 CPU 转录路径 |
 | [WhisperX forced alignment](https://github.com/m-bain/whisperX) | 使用独立对齐模型把转录文本落到词级时间轴 |
 | 对齐前语音规范化 | 将 `350`、`mph`、`kg` 等数字与单位展开为口语 token，对齐后恢复原文展示 |
 | [TEN-VAD](https://github.com/TEN-framework/ten-vad) | 默认的语音活动检测器，用于校验可疑句首和句尾，不全局覆盖 WhisperX 的正确对齐 |
@@ -155,7 +156,7 @@ uv sync --extra whisperx --extra denoise
 PYTHONPATH=backend uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Windows/Linux 或只使用云端 Whisper API 时，可将安装命令简化为 `uv sync`。
+Windows 使用 WhisperX、forced alignment 或 Community-1 时同样需要 `--extra whisperx`；只使用 Whisper.cpp 或云端 Whisper API 时可简化为 `uv sync`。
 
 另开一个终端启动前端：
 
@@ -224,7 +225,7 @@ MiniMax 推荐 Base URL 为 `https://api.minimaxi.com/anthropic`。SubForge 会�
 
 | 引擎 | 适合场景 |
 | --- | --- |
-| WhisperX + MLX Whisper | 默认推荐；Apple Silicon 本地加速，配合 forced alignment 生成词级时间轴 |
+| WhisperX | Apple Silicon 使用 MLX，Windows 使用 CTranslate2/CUDA 或 CPU；均配合 forced alignment 生成词级时间轴 |
 | WhisperX Alignment | 独立管理 forced alignment 模型，用于英语等语言的词级对齐 |
 | Whisper.cpp | 备用本地转录通道，适合已有 ggml 模型的用户 |
 | Whisper API | 云端转录，配置简单 |

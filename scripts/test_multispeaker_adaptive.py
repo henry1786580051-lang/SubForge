@@ -42,7 +42,23 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--model-dir", type=Path, required=True)
     parser.add_argument("--baseline", type=Path)
+    parser.add_argument(
+        "--speakers",
+        type=int,
+        default=0,
+        help="Known speaker count (2-10); omit or use 0 for automatic detection",
+    )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Disable ASR and diarization caches for performance diagnostics",
+    )
     args = parser.parse_args()
+
+    if args.no_cache:
+        from subforge.core.utils.cache import disable_cache
+
+        disable_cache()
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
@@ -60,7 +76,8 @@ def main() -> int:
             faster_whisper_model_dir=str(args.model_dir),
             faster_whisper_device="auto",
             enable_audio_enhancement=True,
-            speaker_diarization="two",
+            speaker_diarization="fixed" if args.speakers else "auto",
+            speaker_count=args.speakers or 2,
             diarization_model="pyannote/speaker-diarization-community-1",
             diarization_model_dir=str(args.model_dir),
         )

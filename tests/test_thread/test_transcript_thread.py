@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_thread.conftest import run_thread_with_timeout
 from subforge.core.entities import TranscribeConfig, TranscribeModelEnum, TranscribeTask
 from subforge.ui.thread.transcript_thread import TranscriptThread
+from tests.test_thread.conftest import run_thread_with_timeout
 
 
 @pytest.mark.integration

@@ -105,6 +105,22 @@ class TestASRDataEdgeCases:
         asr_data.optimize_timing()
         assert len(asr_data) == 1
 
+    def test_clip_to_media_duration_drops_overflow_and_clamps_tail(self):
+        data = ASRData(
+            [
+                ASRDataSeg("Valid", 8_000, 9_000),
+                ASRDataSeg("Tail", 9_500, 10_500),
+                ASRDataSeg("Hallucination", 12_000, 13_000),
+            ]
+        )
+
+        data.clip_to_media_duration(10_000)
+
+        assert [(segment.text, segment.start_time, segment.end_time) for segment in data] == [
+            ("Valid", 8_000, 9_000),
+            ("Tail", 9_500, 10_000),
+        ]
+
 
 class TestWordTimestampEdgeCases:
     """测试词级时间戳检测边缘情况"""

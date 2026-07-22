@@ -85,6 +85,10 @@ export function useTaskMonitor() {
       const result = task.result;
       if (task.type === "transcribe" && result?.subtitle_file) {
         setSubtitleFile(result.subtitle_file as string);
+        if (Array.isArray(result.segments)) {
+          setSubtitles(result.segments as import("@/lib/api").SubtitleSegment[]);
+          return;
+        }
         subtitlesApi
           .load(result.subtitle_file as string)
           .then((subFile) => {
@@ -98,6 +102,10 @@ export function useTaskMonitor() {
       }
       if (task.type === "subtitle" && result?.subtitle_file) {
         setSubtitleFile(result.subtitle_file as string);
+        if (Array.isArray(result.segments)) {
+          setSubtitles(result.segments as import("@/lib/api").SubtitleSegment[]);
+          return;
+        }
         subtitlesApi
           .load(result.subtitle_file as string)
           .then((subFile) => {
