@@ -3,6 +3,7 @@ import math
 import os
 import platform
 import re
+import unicodedata
 from pathlib import Path
 from typing import List, Literal, Optional, Tuple
 
@@ -50,7 +51,10 @@ def handle_long_path(path: str) -> str:
         Path with \\?\ prefix if needed (Windows only)
     """
     if platform.system() == "Windows" and len(path) > 260 and not path.startswith("\\\\?\\"):
-        return rf"\\?\{os.path.abspath(path)}"
+        absolute = os.path.abspath(path)
+        if absolute.startswith("\\\\"):
+            return "\\\\?\\UNC\\" + absolute.lstrip("\\")
+        return rf"\\?\{absolute}"
     return path
 
 
@@ -1888,33 +1892,55 @@ class ASRData:
 
             A Chinese translation often contains Latin tokens such as W126,
             AMG, Mercedes-Benz, or email addresses. Presence of meaningful CJK
-            text therefore wins over embedded Latin identifiers.
+            text therefore wins over embedded Latin identifiers. Han, Japanese,
+            and Korean remain distinct so bilingual CJK cues can be separated.
             """
             stripped = text.strip()
             if not stripped:
                 return "empty"
-            cjk_count = len(re.findall(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]", stripped))
-            latin_count = len(re.findall(r"[A-Za-z]", stripped))
-            if cjk_count >= 2:
-                return "cjk"
-            if latin_count >= 2 and cjk_count == 0:
+
+            normalized = unicodedata.normalize("NFC", stripped)
+            counts = {
+                "han": len(
+                    re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", normalized)
+                ),
+                "kana": len(re.findall(r"[\u3040-\u30ff\u31f0-\u31ff]", normalized)),
+                "hangul": len(
+                    re.findall(
+                        r"[\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\uac00-\ud7af\ud7b0-\ud7ff]",
+                        normalized,
+                    )
+                ),
+                "latin": len(re.findall(r"[A-Za-z]", normalized)),
+            }
+            non_latin = counts["han"] + counts["kana"] + counts["hangul"]
+            if counts["hangul"] >= 2 and counts["hangul"] >= counts["han"]:
+                return "hangul"
+            if counts["kana"]:
+                return "japanese"
+            if counts["han"] >= 2:
+                return "han"
+            if counts["latin"] >= 2 and non_latin == 0:
                 return "latin"
-            if cjk_count:
-                return "cjk"
+            if counts["hangul"]:
+                return "hangul"
+            if counts["han"]:
+                return "han"
             return "other"
 
         def _group_family(lines: list[str]) -> str:
             joined = " ".join(line.strip() for line in lines if line.strip())
             family = _line_family(joined)
-            if family in {"cjk", "latin"}:
+            if family in {"han", "japanese", "hangul", "latin"}:
                 return family
             families = [_line_family(line) for line in lines if line.strip()]
-            cjk = families.count("cjk")
-            latin = families.count("latin")
-            if cjk > latin and cjk > 0:
-                return "cjk"
-            if latin > cjk and latin > 0:
-                return "latin"
+            counts = {
+                family_name: families.count(family_name)
+                for family_name in ("han", "japanese", "hangul", "latin")
+            }
+            winner, winner_count = max(counts.items(), key=lambda item: item[1])
+            if winner_count > 0 and list(counts.values()).count(winner_count) == 1:
+                return winner
             return "other"
 
         def _fallback_different_language(left: str, right: str) -> bool:
@@ -1938,16 +1964,23 @@ class ASRData:
             if len(non_empty) == 2:
                 left_family = _line_family(non_empty[0])
                 right_family = _line_family(non_empty[1])
+                short_latin_line = re.compile(r"^[A-Za-z][.!?]?$", re.IGNORECASE)
                 if (
-                    left_family == "cjk"
+                    left_family == "han"
                     and right_family == "other"
-                    and re.search(r"\d", non_empty[1])
+                    and (
+                        re.search(r"\d", non_empty[1])
+                        or short_latin_line.fullmatch(non_empty[1].strip())
+                    )
                 ):
                     return non_empty[1], non_empty[0]
                 if (
-                    right_family == "cjk"
+                    right_family == "han"
                     and left_family == "other"
-                    and re.search(r"\d", non_empty[0])
+                    and (
+                        re.search(r"\d", non_empty[0])
+                        or short_latin_line.fullmatch(non_empty[0].strip())
+                    )
                 ):
                     return non_empty[0], non_empty[1]
                 normalized_left = re.sub(r"\s+", "", non_empty[0])
@@ -1967,7 +2000,12 @@ class ASRData:
                 right_family = _group_family(right)
 
                 score = 0
-                if {left_family, right_family} == {"cjk", "latin"}:
+                language_pair = {left_family, right_family}
+                if language_pair in (
+                    {"han", "latin"},
+                    {"han", "hangul"},
+                    {"han", "japanese"},
+                ):
                     score = 100
                 elif (
                     left_family != right_family
@@ -1998,8 +2036,15 @@ class ASRData:
             left_text = "\n".join(non_empty[:split_index]).strip()
             right_text = "\n".join(non_empty[split_index:]).strip()
 
-            if {left_family, right_family} == {"cjk", "latin"}:
-                if left_family == "latin":
+            language_pair = {left_family, right_family}
+            if language_pair in (
+                {"han", "latin"},
+                {"han", "hangul"},
+                {"han", "japanese"},
+            ):
+                # SubForge's bilingual SRT workflow translates source speech to
+                # Chinese. Resolve either display order back to source/target.
+                if left_family != "han":
                     return left_text, right_text
                 return right_text, left_text
 

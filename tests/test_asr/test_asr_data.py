@@ -1,6 +1,7 @@
 """ASRData 核心功能测试 - 严格边缘用例"""
 
 import tempfile
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -1088,6 +1089,19 @@ you should also recognize this 1986 Mercedes-Benz 420 SEL
             asr_data.segments[0].translated_text == "你肯定还认得出这辆1986年的梅赛德斯-奔驰420 SEL"
         )
 
+    def test_parse_target_above_bilingual_with_single_letter_source(self):
+        srt = """1
+00:00:00,000 --> 00:00:01,000
+D挡
+D.
+"""
+
+        asr_data = ASRData.from_srt(srt)
+
+        assert len(asr_data.segments) == 1
+        assert asr_data.segments[0].text == "D."
+        assert asr_data.segments[0].translated_text == "D挡"
+
     def test_parse_source_above_bilingual(self):
         """测试英文在上、中文在下的常规双语布局"""
         srt = """1
@@ -1099,6 +1113,57 @@ It's time to sell my dirt cheap W126.
         assert len(asr_data.segments) == 1
         assert asr_data.segments[0].text == "It's time to sell my dirt cheap W126."
         assert asr_data.segments[0].translated_text == "是时候卖掉我这辆便宜的 W126 了。"
+
+    @pytest.mark.parametrize(
+        ("first_line", "second_line"),
+        [
+            ("교황이 일시적인 호흡 곤란을 겪었습니다", "教皇一度出现呼吸困难"),
+            ("教皇一度出现呼吸困难", "교황이 일시적인 호흡 곤란을 겪었습니다"),
+        ],
+    )
+    def test_parse_korean_chinese_bilingual_in_either_layout(
+        self, first_line: str, second_line: str
+    ):
+        srt = f"""1
+00:00:00,000 --> 00:00:03,000
+{first_line}
+{second_line}
+"""
+
+        asr_data = ASRData.from_srt(srt)
+
+        assert len(asr_data.segments) == 1
+        assert asr_data.segments[0].text == "교황이 일시적인 호흡 곤란을 겪었습니다"
+        assert asr_data.segments[0].translated_text == "教皇一度出现呼吸困难"
+
+    def test_parse_multiline_korean_chinese_bilingual_groups(self):
+        srt = """1
+00:00:00,000 --> 00:00:05,000
+教皇一度出现呼吸困难
+目前已经恢复稳定
+교황이 일시적인 호흡 곤란을 겪었지만
+현재는 안정을 되찾았습니다
+"""
+
+        asr_data = ASRData.from_srt(srt)
+
+        assert asr_data.segments[0].text == (
+            "교황이 일시적인 호흡 곤란을 겪었지만\n현재는 안정을 되찾았습니다"
+        )
+        assert asr_data.segments[0].translated_text == "教皇一度出现呼吸困难\n目前已经恢复稳定"
+
+    def test_parse_decomposed_hangul_source(self):
+        korean = unicodedata.normalize("NFD", "교황이 호흡 곤란을 겪었습니다")
+        srt = f"""1
+00:00:00,000 --> 00:00:03,000
+教皇出现呼吸困难
+{korean}
+"""
+
+        asr_data = ASRData.from_srt(srt)
+
+        assert asr_data.segments[0].text == korean
+        assert asr_data.segments[0].translated_text == "教皇出现呼吸困难"
 
     def test_parse_multiline_bilingual_groups(self):
         """测试多行原文和多行译文可以按语言组拆分"""
@@ -1197,6 +1262,13 @@ class TestHandleLongPath:
         twice = handle_long_path(once)
         assert twice == once
         assert "\\\\?\\\\" not in twice
+
+    def test_windows_long_unc_path_uses_unc_prefix(self, monkeypatch):
+        monkeypatch.setattr("subforge.core.asr.asr_data.platform.system", lambda: "Windows")
+        long_path = "\\\\server\\share\\" + "a" * 300 + ".srt"
+        monkeypatch.setattr("subforge.core.asr.asr_data.os.path.abspath", lambda p: p)
+
+        assert handle_long_path(long_path) == "\\\\?\\UNC\\server\\share\\" + "a" * 300 + ".srt"
 
 
 class TestConservativeTimingRepair:

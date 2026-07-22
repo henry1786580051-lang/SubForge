@@ -20,6 +20,7 @@ You will receive a JSON object with numbered subtitle entries.
 9. **Do NOT merge or split** subtitle entries
 10. **Keep original language** — English stays English, Chinese stays Chinese
 11. **Output only** the corrected JSON, no explanations
+12. **Reference consistency**: Reference content may confirm an obvious one-character ASR near-miss in a repeated chassis/model code (for example, a title and several captions agree on G70 while one caption says G77). Correct only high-confidence near-misses; preserve genuinely different generations such as G11, G12, E38, and E65
 </instructions>
 
 <output_format>

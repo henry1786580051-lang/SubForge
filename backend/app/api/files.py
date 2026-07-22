@@ -1,5 +1,7 @@
 import hashlib
+import os
 import shutil
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -13,7 +15,7 @@ router = APIRouter()
 
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024 * 1024  # 10 GB
 
-UPLOAD_ROOT = Path("/tmp/subforge/uploads")
+UPLOAD_ROOT = Path(tempfile.gettempdir()) / "SubForge" / "uploads"
 UPLOAD_DIR = UPLOAD_ROOT / f"session-{uuid.uuid4().hex}"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -127,6 +129,9 @@ def get_file_info(path: str = Query(..., description="File path")):
             capture_output=True,
             text=True,
             timeout=30,
+            creationflags=(
+                getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+            ),
         )
 
         if result.returncode != 0:
@@ -208,6 +213,9 @@ def get_thumbnail(path: str = Query(...)):
             ],
             capture_output=True,
             timeout=30,
+            creationflags=(
+                getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+            ),
         )
         if result.returncode != 0:
             raise HTTPException(status_code=500, detail="Thumbnail generation failed")

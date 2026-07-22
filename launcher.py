@@ -8,10 +8,27 @@ import multiprocessing
 import os
 import socket
 import sys
+import tempfile
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.request
+from pathlib import Path
+
+_NULL_STREAMS = []
+
+
+def _configure_frozen_standard_streams() -> None:
+    """Provide writable streams for libraries inside a windowed executable."""
+    if not getattr(sys, "frozen", False):
+        return
+    for name in ("stdout", "stderr"):
+        if getattr(sys, name, None) is not None:
+            continue
+        stream = open(os.devnull, "w", encoding="utf-8")
+        _NULL_STREAMS.append(stream)
+        setattr(sys, name, stream)
 
 
 def _configure_frozen_runtime_paths() -> None:
@@ -39,6 +56,7 @@ def _configure_frozen_runtime_paths() -> None:
             sys.path.insert(0, path)
 
 
+_configure_frozen_standard_streams()
 _configure_frozen_runtime_paths()
 
 HOST = "127.0.0.1"
@@ -62,18 +80,33 @@ def start_server(port: int, server_errors: list[str], server_holder: list | None
     import uvicorn
 
     try:
+        # A frozen GUI executable has no console streams on Windows. Uvicorn's
+        # default colour formatter probes those streams while dictConfig is
+        # initialized and can abort startup before FastAPI is loaded.
         config = uvicorn.Config(
             "app.main:app",
             host=HOST,
             port=port,
             log_level="warning",
+            log_config=None,
+            access_log=False,
         )
         server = uvicorn.Server(config)
         if server_holder is not None:
             server_holder.append(server)
         server.run()
     except Exception as exc:
-        server_errors.append(str(exc))
+        detail = f"{type(exc).__name__}: {exc}"
+        server_errors.append(detail)
+        try:
+            log_dir = Path(tempfile.gettempdir()) / "SubForge"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            (log_dir / "startup-error.log").write_text(
+                "".join(traceback.format_exception(exc)),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
 
 
 def _cleanup_desktop_session(server=None) -> None:
@@ -90,7 +123,7 @@ def _cleanup_desktop_session(server=None) -> None:
         pass
 
 
-def wait_for_server(url: str, server_errors: list[str], timeout_seconds: float = 15.0) -> bool:
+def wait_for_server(url: str, server_errors: list[str], timeout_seconds: float = 30.0) -> bool:
     deadline = time.monotonic() + timeout_seconds
     health_url = f"{url}/api/health"
     while time.monotonic() < deadline:
@@ -103,6 +136,25 @@ def wait_for_server(url: str, server_errors: list[str], timeout_seconds: float =
         except (OSError, urllib.error.URLError):
             time.sleep(0.1)
     return False
+
+
+def check_backend_runtime(timeout_seconds: float = 30.0) -> None:
+    """Start the embedded server and verify the packaged HTTP runtime."""
+    port = find_available_port()
+    url = f"http://{HOST}:{port}"
+    server_errors: list[str] = []
+    server_holder: list = []
+    server_thread = threading.Thread(
+        target=start_server,
+        args=(port, server_errors, server_holder),
+        daemon=True,
+    )
+    server_thread.start()
+    if not wait_for_server(url, server_errors, timeout_seconds):
+        detail = server_errors[-1] if server_errors else f"Timed out waiting for backend at {url}"
+        raise RuntimeError(f"SubForge backend failed to start: {detail}")
+    _cleanup_desktop_session(server_holder[0] if server_holder else None)
+    server_thread.join(timeout=5.0)
 
 
 class Api:
@@ -300,6 +352,8 @@ if __name__ == "__main__":
             if missing:
                 raise RuntimeError(f"Packaged backend routes are missing: {sorted(missing)}")
             print("Packaged FastAPI routes: ok")
+            check_backend_runtime()
+            print("Packaged FastAPI HTTP runtime: ok")
             raise SystemExit(0)
         except Exception:
             import traceback

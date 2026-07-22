@@ -163,6 +163,9 @@ def enhance_audio(
             ["ffmpeg", "-y", "-i", input_path, "-ac", "1", "-ar", "48000", temp_48k],
             capture_output=True,
             check=True,
+            creationflags=(
+                getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+            ),
         )
 
         info = sf.info(temp_48k)
@@ -235,6 +238,9 @@ def enhance_audio(
             ["ffmpeg", "-y", "-i", temp_enhanced_48k, "-ac", "1", "-ar", "16000", output_path],
             capture_output=True,
             check=True,
+            creationflags=(
+                getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+            ),
         )
 
         logger.info(f"Enhanced audio saved: {output_path}")

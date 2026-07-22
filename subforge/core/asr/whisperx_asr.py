@@ -707,10 +707,19 @@ class WhisperXASR(BaseASR):
         return str(audio_path)
 
     def _resolve_align_model_name(self, language_code: str) -> str | None:
-        if self.align_model:
+        normalized_language = _normalize_language(language_code)
+        if self.align_model and (
+            self.align_model != DEFAULT_EN_ALIGN_MODEL or normalized_language == "en"
+        ):
             return self.align_model
-        if language_code == "en":
+        if normalized_language == "en":
             return DEFAULT_EN_ALIGN_MODEL
+        if self.align_model == DEFAULT_EN_ALIGN_MODEL:
+            logger.info(
+                "Ignoring English-only forced alignment model for language=%s; "
+                "using WhisperX language default",
+                normalized_language,
+            )
         return None
 
     def _run(

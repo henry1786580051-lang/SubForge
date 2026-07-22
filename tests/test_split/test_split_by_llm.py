@@ -10,7 +10,11 @@ Requires environment variables:
 import pytest
 
 from subforge.core.split import split_by_llm as split_module
-from subforge.core.split.split_by_llm import count_words, split_by_llm
+from subforge.core.split.split_by_llm import (
+    _validate_split_result,
+    count_words,
+    split_by_llm,
+)
 
 
 class _FakeMessage:
@@ -26,6 +30,56 @@ class _FakeChoice:
 class _FakeResponse:
     def __init__(self, content):
         self.choices = [_FakeChoice(content)]
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        "I hope that gives you a good enough idea of",
+        "the cabin comes with a choice of",
+        "it can be configured as much as",
+    ],
+)
+def test_validation_rejects_dangling_english_split_boundaries(tail):
+    following = "what it is like to drive this car"
+    original = f"{tail} {following}"
+
+    ok, message = _validate_split_result(original, [tail, following], 25, 18)
+
+    assert ok is False
+    assert "Unnatural split boundaries" in message
+
+
+def test_validation_allows_complete_clause_boundary():
+    first = "This car is surprisingly agile"
+    second = "and it remains comfortable on the highway"
+    original = f"{first} {second}"
+
+    ok, message = _validate_split_result(original, [first, second], 25, 18)
+
+    assert ok is True
+    assert message == ""
+
+
+@pytest.mark.parametrize(
+    "first",
+    [
+        "I'm so happy to report that.",
+        "Of course, I don't have my shoes on.",
+        "It's an easy car to live with.",
+        "I don't want to stop driving this",
+        "This is probably",
+        "I like it a lot",
+    ],
+)
+def test_validation_allows_complete_or_ambiguous_english_tails(first):
+    second = "The next thought starts here"
+    original = f"{first} {second}"
+
+    ok, message = _validate_split_result(original, [first, second], 25, 18)
+
+    assert ok is True
+    assert message == ""
 
 
 @pytest.mark.integration

@@ -8,6 +8,7 @@ import functools
 import hashlib
 import json
 import sqlite3
+import tempfile
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
@@ -43,7 +44,7 @@ def _open_cache(name: str, **kwargs: Any) -> Cache:
     try:
         return Cache(str(cache_dir), **kwargs)
     except sqlite3.OperationalError:
-        fallback_dir = Path("/private/tmp") / "SubForge" / "cache" / name
+        fallback_dir = Path(tempfile.gettempdir()) / "SubForge" / "cache" / name
         fallback_dir.mkdir(parents=True, exist_ok=True)
         return Cache(str(fallback_dir), **kwargs)
 

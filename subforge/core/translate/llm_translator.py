@@ -1,5 +1,6 @@
-"""LLM 翻译器（使用 OpenAI）"""
+"""LLM subtitle translator with structured validation and recovery."""
 
+import difflib
 import json
 import re
 import threading
@@ -22,7 +23,7 @@ from subforge.core.utils.cache import generate_cache_key
 
 
 class LLMTranslator(BaseTranslator):
-    """LLM 翻译器（OpenAI兼容API）"""
+    """Translate subtitles through OpenAI- or Anthropic-compatible clients."""
 
     MAX_STEPS = 3
     SINGLE_FALLBACK_MAX_ATTEMPTS = 3
@@ -267,7 +268,11 @@ class LLMTranslator(BaseTranslator):
         ]
 
     def _validate_llm_response(
-        self, response_dict: Any, subtitle_dict: Dict[str, str]
+        self,
+        response_dict: Any,
+        subtitle_dict: Dict[str, str],
+        *,
+        require_reflect: bool | None = None,
     ) -> Tuple[bool, str]:
         """验证LLM翻译结果（支持普通和反思模式）
 
@@ -309,7 +314,7 @@ class LLMTranslator(BaseTranslator):
             return str(val)
 
         # Check if translated text is actually in the target language
-        _cjk_langs = {"简体中文", "繁體中文", "日本語", "한국어"}
+        _cjk_langs = {"简体中文", "繁体中文", "日本語", "韩语", "粤语"}
         _is_cjk_target = self.target_language.value in _cjk_langs
         if _is_cjk_target:
             untranslated = []
@@ -340,6 +345,12 @@ class LLMTranslator(BaseTranslator):
         if not placeholder_ok:
             return False, placeholder_error
 
+        residue_ok, residue_error = self._validate_unexpected_latin_residue(
+            response_dict, subtitle_dict, _extract_text
+        )
+        if not residue_ok:
+            return False, residue_error
+
         boundary_ok, boundary_error = self._validate_cross_key_boundaries(
             response_dict, subtitle_dict, _extract_text
         )
@@ -347,7 +358,9 @@ class LLMTranslator(BaseTranslator):
             return False, boundary_error
 
         # 如果是反思模式，检查嵌套结构
-        if self.is_reflect:
+        if require_reflect is None:
+            require_reflect = self.is_reflect
+        if require_reflect:
             for key, value in response_dict.items():
                 if not isinstance(value, dict):
                     return (
@@ -390,18 +403,9 @@ class LLMTranslator(BaseTranslator):
                 f"Boundary-edit instructions were found in keys: {boundary_edits[:20]}",
             )
 
-        def numeric_tokens(text: str) -> set[str]:
-            return {
-                match.group().lower()
-                for match in re.finditer(
-                    r"\b(?:[A-Za-z]+\d+[A-Za-z0-9.-]*|\d+[A-Za-z]+[A-Za-z0-9.-]*|\d{2,4})\b",
-                    text,
-                )
-            }
-
         source_owners: dict[str, set[str]] = {}
         for key, source in subtitle_dict.items():
-            for token in numeric_tokens(source):
+            for token in self._boundary_tokens(source):
                 source_owners.setdefault(token, set()).add(key)
 
         translated_owners: dict[str, set[str]] = {}
@@ -422,14 +426,130 @@ class LLMTranslator(BaseTranslator):
         leaks = []
         for token, owners in source_owners.items():
             output_keys = translated_owners.get(token, set())
-            if len(owners) == 1 and owners.issubset(output_keys):
-                leaks.extend(f"{key}:{token}" for key in sorted(output_keys - owners))
+            leaked_keys = output_keys - owners
+            leaks.extend(f"{key}:{token}" for key in sorted(leaked_keys))
         if leaks:
             return (
                 False,
                 "A number or model fact was duplicated into a different subtitle key. "
                 "Keep each fact in the key that contains it in current_subtitles. "
                 f"Cross-key duplicates: {leaks[:20]}",
+            )
+
+        ordered_keys = sorted(
+            subtitle_dict,
+            key=lambda key: int(key) if str(key).isdigit() else str(key),
+        )
+        duplicate_pairs: list[str] = []
+        for left_key, right_key in zip(ordered_keys, ordered_keys[1:]):
+            if left_key.isdigit() and right_key.isdigit():
+                if int(right_key) != int(left_key) + 1:
+                    continue
+            left_target = self._normalized_target_text(
+                extract_text(response_dict.get(left_key, ""))
+            )
+            right_target = self._normalized_target_text(
+                extract_text(response_dict.get(right_key, ""))
+            )
+            if min(len(left_target), len(right_target)) < 8:
+                continue
+            target_ratio = difflib.SequenceMatcher(None, left_target, right_target).ratio()
+            left_source = self._normalized_source_text(subtitle_dict[left_key])
+            right_source = self._normalized_source_text(subtitle_dict[right_key])
+            source_ratio = difflib.SequenceMatcher(None, left_source, right_source).ratio()
+            target_common = difflib.SequenceMatcher(
+                None, left_target, right_target
+            ).find_longest_match().size
+            common_share = target_common / min(len(left_target), len(right_target))
+            repeated_phrase = (
+                target_common >= 7
+                and common_share >= 0.45
+                and source_ratio < 0.45
+                and common_share - source_ratio >= 0.15
+            )
+            if (
+                target_ratio >= 0.68 and target_ratio - source_ratio >= 0.25
+            ) or repeated_phrase:
+                duplicate_pairs.append(
+                    f"{left_key}-{right_key} (target={target_ratio:.0%}, "
+                    f"shared={common_share:.0%}, source={source_ratio:.0%})"
+                )
+        if duplicate_pairs:
+            return (
+                False,
+                "Adjacent translations are substantially more repetitive than their source "
+                "subtitles. Do not complete, repeat, or anticipate a neighboring key. "
+                f"Suspicious pairs: {duplicate_pairs[:10]}",
+            )
+        return True, ""
+
+    @staticmethod
+    def _boundary_tokens(text: str) -> set[str]:
+        """Extract numbers and alphanumeric model/spec tokens with locked ownership."""
+        return {
+            match.group().lower()
+            for match in re.finditer(
+                r"\b(?:[A-Za-z]+\d+[A-Za-z0-9.-]*|\d+[A-Za-z]+[A-Za-z0-9.-]*|\d{2,4})\b",
+                str(text or ""),
+            )
+        }
+
+    @staticmethod
+    def _normalized_target_text(text: str) -> str:
+        return re.sub(r"[^A-Za-z0-9\u3400-\u9fff]+", "", str(text or "").lower())
+
+    @staticmethod
+    def _normalized_source_text(text: str) -> str:
+        return " ".join(re.findall(r"[A-Za-z0-9']+", str(text or "").lower()))
+
+    def _validate_unexpected_latin_residue(
+        self,
+        response_dict: Dict[str, Any],
+        subtitle_dict: Dict[str, str],
+        extract_text,
+    ) -> Tuple[bool, str]:
+        """Reject stray English grammar words in Chinese translations.
+
+        Brand names and mode labels remain valid. This intentionally checks only
+        common lowercase function words, avoiding broad language detection that
+        would reject legitimate Latin product names.
+        """
+        if self.target_language.value not in {"简体中文", "繁体中文", "粤语"}:
+            return True, ""
+        function_words = {
+            "and",
+            "because",
+            "but",
+            "for",
+            "from",
+            "into",
+            "of",
+            "that",
+            "the",
+            "this",
+            "to",
+            "with",
+        }
+        residue: list[str] = []
+        for key in subtitle_dict:
+            translated = str(extract_text(response_dict.get(key, "")) or "")
+            matches = list(re.finditer(r"(?<![A-Za-z-])[A-Za-z]{2,}(?![A-Za-z-])", translated))
+            for index, match in enumerate(matches):
+                token = match.group()
+                lower = token.lower()
+                if token != lower or lower not in function_words:
+                    continue
+                previous = matches[index - 1].group() if index else ""
+                following = matches[index + 1].group() if index + 1 < len(matches) else ""
+                if previous[:1].isupper() and following[:1].isupper():
+                    continue
+                residue.append(f"{key}:{token}")
+        if residue:
+            return (
+                False,
+                "Unexpected English grammar words remain in a Chinese translation. "
+                "Translate them unless they are part of a proper product name. "
+                f"Residual words: {residue[:20]}",
             )
         return True, ""
 
@@ -456,17 +576,12 @@ class LLMTranslator(BaseTranslator):
             )
         return True, ""
 
-    @staticmethod
-    def _looks_untranslated_for_cjk(text: str, original: str) -> bool:
+    def _looks_untranslated_for_cjk(self, text: str, original: str) -> bool:
         text = str(text or "").strip()
         original = str(original or "").strip()
         if not text:
             return True
-        if re.search(r"[一-鿿぀-ヿ가-힯]", text):
-            return False
-        if not re.search(r"[A-Za-z]", original):
-            return False
-        return not LLMTranslator._is_cjk_no_script_exempt(original, text)
+        return self._is_untranslated_output(text, original)
 
     @staticmethod
     def _is_cjk_no_script_exempt(original: str, translated: str) -> bool:
@@ -654,14 +769,139 @@ class LLMTranslator(BaseTranslator):
             )
         return True, ""
 
+    def _translate_locked_batch(
+        self,
+        subtitle_chunk: List[SubtitleProcessData],
+        initial_feedback: str = "",
+    ) -> List[SubtitleProcessData]:
+        """Recover a failed reflective batch without discarding key ownership."""
+        subtitle_dict = {str(data.index): data.original_text for data in subtitle_chunk}
+        system_prompt = get_prompt(
+            "translate/standard",
+            target_language=self.target_language.value,
+            custom_prompt=self.custom_prompt,
+        )
+        context_text = self.translation_context.render()
+        if context_text:
+            system_prompt += f"\n\n<global_context>\n{context_text}\n</global_context>"
+        system_prompt += (
+            "\n\n<recovery_rules>\n"
+            "This is a boundary-safe recovery pass. Every output key is locked to exactly "
+            "the words and meaning in the same current_subtitles key. Keep fragments as "
+            "fragments. Never complete, repeat, anticipate, or summarize a neighboring key. "
+            "Return one plain JSON string value for every current key.\n"
+            "</recovery_rules>"
+        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "previous_context": self._neighbor_context(subtitle_dict, before=True),
+                        "current_subtitles": subtitle_dict,
+                        "next_context": self._neighbor_context(subtitle_dict, before=False),
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ]
+        if initial_feedback:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": f"The previous recovery was invalid: {initial_feedback}",
+                }
+            )
+
+        last_error = "invalid recovery response"
+        for _attempt in range(self.SINGLE_FALLBACK_MAX_ATTEMPTS):
+            response = call_llm(
+                messages=messages,
+                model=self.model,
+                temperature=0.2,
+                use_cache=self.use_cache,
+                client=self.llm_client,
+            )
+            try:
+                response_dict = parse_json_object(get_response_text(response))
+            except ValueError as error:
+                last_error = str(error)
+            else:
+                is_valid, error_message = self._validate_llm_response(
+                    response_dict,
+                    subtitle_dict,
+                    require_reflect=False,
+                )
+                if is_valid:
+                    recovered = []
+                    for data in subtitle_chunk:
+                        value = response_dict[str(data.index)]
+                        if isinstance(value, dict):
+                            value = value.get("native_translation", value.get("translation", ""))
+                        recovered.append(replace(data, translated_text=str(value).strip()))
+                    return recovered
+                last_error = error_message
+                messages.append(
+                    {"role": "assistant", "content": json.dumps(response_dict, ensure_ascii=False)}
+                )
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"Validation failed: {last_error}. Fix only the invalid ownership or "
+                        "formatting. Output the complete JSON object with exactly the current "
+                        "subtitle keys and plain translated string values."
+                    ),
+                }
+            )
+        raise RuntimeError(f"Locked batch recovery failed validation: {last_error}")
+
+    def _validate_single_context_ownership(self, current: Dict[str, str], translated: str) -> None:
+        """Reject model/spec tokens borrowed from neighboring source context."""
+        own_tokens = set().union(*(self._boundary_tokens(text) for text in current.values()))
+        neighbors = [
+            *self._neighbor_context(current, before=True),
+            *self._neighbor_context(current, before=False),
+        ]
+        neighbor_tokens = set().union(
+            *(self._boundary_tokens(item["source"]) for item in neighbors),
+            set(),
+        )
+        compact = re.sub(r"[\s,，.。-]+", "", translated).lower()
+        borrowed = []
+        for token in neighbor_tokens - own_tokens:
+            token_compact = re.sub(r"[\s,，.。-]+", "", token)
+            pattern = (
+                rf"(?<!\d){re.escape(token_compact)}(?!\d)"
+                if token_compact.isdigit()
+                else rf"(?<![a-z0-9]){re.escape(token_compact)}(?![a-z0-9])"
+            )
+            if re.search(pattern, compact, flags=re.IGNORECASE):
+                borrowed.append(token)
+        if borrowed:
+            raise RuntimeError(
+                "Single item translation borrowed number/model tokens from context: "
+                f"{sorted(borrowed)}"
+            )
+
     def _translate_chunk_single(
         self, subtitle_chunk: List[SubtitleProcessData]
     ) -> List[SubtitleProcessData]:
-        """单条翻译模式"""
+        """Recover a failed batch, preserving batch boundaries whenever possible."""
+        if len(subtitle_chunk) > 1:
+            try:
+                return self._translate_locked_batch(subtitle_chunk)
+            except Exception as error:
+                if self._is_fatal_provider_error(error):
+                    self._open_provider_circuit(error)
+                    raise RuntimeError(self._fatal_provider_message) from error
+                logger.warning("Locked batch recovery failed; trying single items: %s", error)
+
         single_prompt = get_prompt("translate/single", target_language=self.target_language.value)
 
         def _looks_untranslated(text: str, original: str) -> bool:
-            if self.target_language.value not in {"简体中文", "繁體中文", "日本語", "한국어"}:
+            if self.target_language.value not in {"简体中文", "繁体中文", "日本語", "韩语", "粤语"}:
                 return False
             import re
 
@@ -713,6 +953,23 @@ class LLMTranslator(BaseTranslator):
                             "Single item translation returned a placeholder instead of a "
                             f"translation: {translated_text!r}"
                         )
+                    current_response = {str(data.index): translated_text}
+                    current_source = {str(data.index): data.original_text}
+                    preserved_ok, preserved_error = self._validate_preserved_tokens(
+                        current_response,
+                        current_source,
+                        lambda value: str(value),
+                    )
+                    if not preserved_ok:
+                        raise RuntimeError(preserved_error)
+                    residue_ok, residue_error = self._validate_unexpected_latin_residue(
+                        current_response,
+                        current_source,
+                        lambda value: str(value),
+                    )
+                    if not residue_ok:
+                        raise RuntimeError(residue_error)
+                    self._validate_single_context_ownership(current, translated_text)
                     translated_items.append(replace(data, translated_text=translated_text))
                     last_error = None
                     break
@@ -743,6 +1000,28 @@ class LLMTranslator(BaseTranslator):
                 completed=translated_items,
                 failed_indices=failures,
             )
+
+        fallback_source = {str(data.index): data.original_text for data in subtitle_chunk}
+        fallback_response = {
+            str(data.index): data.translated_text for data in translated_items
+        }
+        fallback_ok, fallback_error = self._validate_llm_response(
+            fallback_response,
+            fallback_source,
+            require_reflect=False,
+        )
+        if not fallback_ok and len(subtitle_chunk) > 1:
+            try:
+                return self._translate_locked_batch(
+                    subtitle_chunk,
+                    initial_feedback=fallback_error,
+                )
+            except Exception as error:
+                raise PartialTranslationError(
+                    f"Fallback translations failed cross-key validation: {error}",
+                    completed=[],
+                    failed_indices=[data.index for data in subtitle_chunk],
+                ) from error
         return translated_items
 
     def _get_cache_key(self, chunk: List[SubtitleProcessData]) -> str:
@@ -756,7 +1035,7 @@ class LLMTranslator(BaseTranslator):
                 "custom_prompt": self.custom_prompt,
                 "reflect": self.is_reflect,
                 "context": self.translation_context.fingerprint(),
-                "prompt_version": "context-v2-no-placeholders",
+                "prompt_version": "context-v3-boundary-ownership",
             }
         )
         return f"{class_name}:{chunk_key}:{lang}:{model}:{prompt_key}"

@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.0.8 - 2026-07-22
+
+### Added
+
+- Added adaptive multi-speaker audio enhancement that compares conservative DeepFilterNet settings and retains the candidate that improves recognition without suppressing quieter speakers.
+- Added MiniMax M3 support through its native Anthropic-compatible endpoint, including provider-aware retry behavior and prompt-cache usage reporting.
+- Added stricter translation ownership checks for neighboring subtitle keys, preserved model/spec tokens, duplicated target phrases, untranslated Latin residue, and incomplete English split boundaries.
+- Added Korean/Chinese bilingual SRT parsing coverage, including decomposed Hangul filenames and either source/translation display order.
+- Added packaged HTTP runtime smoke testing so desktop CI launches the real FastAPI server and checks its health endpoint before publishing installers.
+
+### Fixed
+
+- Fixed Windows desktop startup failing with `Unable to configure formatter 'default'` when Uvicorn initialized console logging inside a windowed PyInstaller executable.
+- Fixed frozen desktop builds exposing missing standard streams to libraries and debug output, which could also break native file export calls.
+- Fixed Windows upload, cache, and fallback log paths using Unix-only `/tmp` or `/private/tmp` locations.
+- Fixed ffmpeg, DeepFilterNet, and Whisper.cpp subprocesses opening unwanted console windows on Windows.
+- Fixed Windows long UNC media paths receiving an invalid extended-path prefix.
+- Fixed English-only forced-alignment models being applied to Korean and other non-English transcription jobs.
+- Fixed translated subtitles accepting merge notes, neighboring-key content, repeated translations, untranslated fragments, or misplaced model/spec values.
+- Fixed subtitle optimization discarding the original batch when all LLM correction attempts failed validation.
+
+### Changed
+
+- Improved MiniMax M3 translation reliability with native Anthropic requests, stable system prompts, rate-limit waiting, and clearer token/cache metrics.
+- Improved sentence splitting so English captions cannot end on obvious conjunctions, determiners, prepositions, or incomplete phrases.
+- Improved desktop startup diagnostics by writing full backend startup traces to the platform temporary directory and allowing more time for antivirus-scanned Windows bundles to initialize.
+- Updated Windows packaging to collect the required Colorama runtime explicitly and strengthened installed-app smoke tests.
+
 ## v1.0.7 - 2026-07-12
 
 ### Added

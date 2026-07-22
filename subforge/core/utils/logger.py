@@ -1,10 +1,11 @@
 import logging
 import logging.handlers
+import tempfile
 from pathlib import Path
 
 from ...config import LOG_LEVEL, LOG_PATH
 
-FALLBACK_LOG_PATH = Path("/private/tmp") / "SubForge" / "logs"
+FALLBACK_LOG_PATH = Path(tempfile.gettempdir()) / "SubForge" / "logs"
 _active_log_file: Path | None = None
 
 

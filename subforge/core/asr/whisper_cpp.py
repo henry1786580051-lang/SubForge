@@ -370,6 +370,11 @@ class WhisperCppASR(BaseASR):
                     text=True,
                     encoding="utf-8",
                     bufsize=1,
+                    creationflags=(
+                        getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                        if os.name == "nt"
+                        else 0
+                    ),
                 )
 
                 logger.debug(f"Whisper.cpp process started, PID: {self.process.pid}")

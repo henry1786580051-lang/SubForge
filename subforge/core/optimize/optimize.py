@@ -218,8 +218,6 @@ class SubtitleOptimizer:
             {"role": "user", "content": user_prompt},
         ]
 
-        last_result = None
-
         # Agent loop
         for step in range(MAX_STEPS):
             # 调用LLM
@@ -235,8 +233,6 @@ class SubtitleOptimizer:
             parsed_result = parse_json_object(result_text)
 
             result_dict: Dict[str, str] = parsed_result
-            last_result = result_dict
-
             # 验证结果
             is_valid, error_message = self._validate_optimization_result(
                 original_chunk=subtitle_chunk, optimized_chunk=result_dict
@@ -261,12 +257,12 @@ class SubtitleOptimizer:
             )
 
         # 达到最大步数
-        logger.warning(f"Max attempts reached({MAX_STEPS})，returning last result")
-        return (
-            self._repair_subtitle(subtitle_chunk, last_result)
-            if last_result
-            else subtitle_chunk
+        logger.warning(
+            "Max attempts reached(%s); preserving the original batch because every "
+            "optimization response failed validation",
+            MAX_STEPS,
         )
+        return dict(subtitle_chunk)
 
     def _validate_optimization_result(
         self, original_chunk: Dict[str, str], optimized_chunk: Dict[str, str]

@@ -139,7 +139,7 @@ def main() -> int:
         env = os.environ.copy()
         env["SUBFORGE_CHECK_BACKEND"] = "1"
         _run([str(exe)], env=env)
-        print("Verified packaged FastAPI backend routes")
+        print("Verified packaged FastAPI routes and HTTP runtime")
 
         if platform.system() == "Windows":
             whisper_cli = _find_bundled_tool(bundle, "whisper-cli")

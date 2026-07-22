@@ -105,12 +105,27 @@ def _split_mock_text(text: str) -> str:
 
 
 def _translate_mock_value(text: str, target: str, reflect: bool):
+    simplified = {
+        "I am a student": "我是学生",
+        "You are a teacher": "你是老师",
+        "SubForge is a tool for captioning videos": "SubForge 是一款视频字幕工具",
+    }
+    japanese = {
+        "I am a student": "私は学生です",
+        "You are a teacher": "あなたは先生です",
+        "SubForge is a tool for captioning videos": "SubForge は動画字幕作成ツールです",
+    }
+    checksum = sum(ord(character) for character in text) % 10_000
+    signature = "".join(
+        chr(0x4E00 + ((ord(character) * (index + 17)) % 2_000))
+        for index, character in enumerate(text[:10])
+    )
     if "日本語" in target:
-        translated = f"日本語訳: {text}"
+        translated = japanese.get(text, f"日本語の翻訳{signature}{checksum}")
     elif "繁體中文" in target:
-        translated = f"繁體中文翻譯：{text}"
+        translated = simplified.get(text, f"繁體中文譯文{signature}{checksum}")
     elif "简体中文" in target or "中文" in target:
-        translated = f"中文翻译：{text}"
+        translated = simplified.get(text, f"简体中文译文{signature}{checksum}")
     else:
         translated = f"Translated: {text}"
     if reflect:
@@ -140,10 +155,17 @@ def mock_llm_client(monkeypatch):
             text = user.split("\n", 1)[-1]
             return _mock_llm_response(_split_mock_text(text))
 
-        try:
-            data = json.loads(user)
-        except Exception:
-            data = {}
+        data = {}
+        for message in reversed(messages):
+            if message.get("role") != "user":
+                continue
+            try:
+                candidate = json.loads(str(message.get("content", "")))
+            except Exception:
+                continue
+            if isinstance(candidate, dict):
+                data = candidate
+                break
 
         if isinstance(data, dict):
             if "transcript_excerpt" in data:

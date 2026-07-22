@@ -1,5 +1,6 @@
 """子进程输出流处理工具模块"""
 
+import os
 import queue
 import subprocess
 import threading
@@ -128,6 +129,9 @@ def run_process_with_stream_reader(
         "text": True,
         "encoding": "utf-8",
         "bufsize": 1,  # 行缓冲
+        "creationflags": (
+            getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+        ),
     }
     default_kwargs.update(popen_kwargs)
 

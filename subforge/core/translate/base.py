@@ -233,17 +233,33 @@ class BaseTranslator(ABC):
         return bool(meta_note.search(text))
 
     def _is_untranslated_output(self, output: str, source: str) -> bool:
-        if self.target_language not in {
-            TargetLanguage.SIMPLIFIED_CHINESE,
-            TargetLanguage.TRADITIONAL_CHINESE,
-            TargetLanguage.CANTONESE,
-            TargetLanguage.JAPANESE,
-            TargetLanguage.KOREAN,
-        }:
+        target_patterns = {
+            TargetLanguage.SIMPLIFIED_CHINESE: r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]",
+            TargetLanguage.TRADITIONAL_CHINESE: r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]",
+            TargetLanguage.CANTONESE: r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]",
+            TargetLanguage.JAPANESE: r"[\u3040-\u30ff\u31f0-\u31ff\u3400-\u4dbf\u4e00-\u9fff]",
+            TargetLanguage.KOREAN: r"[\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\uac00-\ud7af\ud7b0-\ud7ff]",
+        }
+        target_pattern = target_patterns.get(self.target_language)
+        if target_pattern is None:
             return False
-        if re.search(r"[一-鿿぀-ヿ가-힯]", output):
+        if re.search(target_pattern, output):
             return False
+
+        # Broad CJK presence is insufficient: unchanged Korean is not a valid
+        # Simplified Chinese translation, and vice versa.
+        if re.search(
+            r"[\u3040-\u30ff\u31f0-\u31ff\u1100-\u11ff\u3130-\u318f"
+            r"\ua960-\ua97f\uac00-\ud7af\ud7b0-\ud7ff\u3400-\u4dbf"
+            r"\u4e00-\u9fff\uf900-\ufaff]",
+            source,
+        ):
+            return True
+
         source_words = re.findall(r"[A-Za-z]+", source)
+        if not source_words:
+            # Numbers, symbols, and punctuation can legitimately be identical.
+            return False
         if len(source_words) <= 3 and all(
             re.search(r"\d", token) or token.isupper() or token[:1].isupper()
             for token in re.findall(r"[A-Za-z0-9.+#&/-]+", source)

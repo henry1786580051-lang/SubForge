@@ -330,3 +330,24 @@ def test_whisperx_make_segments_ignores_words_when_word_timestamps_disabled():
     assert [(seg.text, seg.start_time, seg.end_time) for seg in segments] == [
         ("Today, we drive.", 9964, 12150),
     ]
+
+
+def test_whisperx_ignores_default_english_alignment_model_for_korean():
+    asr = WhisperXASR.__new__(WhisperXASR)
+    asr.align_model = "WAV2VEC2_ASR_LARGE_LV60K_960H"
+
+    assert asr._resolve_align_model_name("ko") is None
+
+
+def test_whisperx_keeps_default_english_alignment_model_for_english():
+    asr = WhisperXASR.__new__(WhisperXASR)
+    asr.align_model = "WAV2VEC2_ASR_LARGE_LV60K_960H"
+
+    assert asr._resolve_align_model_name("en") == "WAV2VEC2_ASR_LARGE_LV60K_960H"
+
+
+def test_whisperx_keeps_explicit_non_english_alignment_model():
+    asr = WhisperXASR.__new__(WhisperXASR)
+    asr.align_model = "example/korean-alignment-model"
+
+    assert asr._resolve_align_model_name("ko") == "example/korean-alignment-model"

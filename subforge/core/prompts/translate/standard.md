@@ -38,4 +38,5 @@ ${custom_prompt}
 <input_note>
 The user message may include previous_context, current_subtitles, and next_context.
 Translate ONLY entries inside current_subtitles. previous_context and next_context are for context only; never include their keys in the output.
+If a current subtitle is a sentence fragment, translate it as a natural fragment. Do not finish it with the next key's clause. Repeating or anticipating any neighboring meaning is a validation failure.
 </input_note>

@@ -11,6 +11,37 @@ logger = setup_logger("split_by_llm")
 
 MAX_STEPS = 2  # Agent loop max retry count
 
+_DANGLING_ENGLISH_TAILS = {
+    "a",
+    "an",
+    "and",
+    "but",
+    "into",
+    "of",
+    "or",
+    "the",
+}
+_DANGLING_ENGLISH_PHRASES = (
+    "as much as",
+    "because of",
+    "idea of",
+    "one of",
+)
+
+
+def _has_dangling_english_tail(text: str) -> bool:
+    """Return whether a split leaves an obviously incomplete English tail."""
+    raw = str(text or "").strip()
+    if not raw or re.search(r"[.!?][\"')\]]*$", raw):
+        return False
+    words = re.findall(r"[A-Za-z0-9']+", raw.lower())
+    if not words:
+        return False
+    if words[-1] in _DANGLING_ENGLISH_TAILS:
+        return True
+    normalized = " ".join(words)
+    return any(normalized.endswith(phrase) for phrase in _DANGLING_ENGLISH_PHRASES)
+
 
 def split_by_llm(
     text: str,
@@ -233,6 +264,23 @@ def _validate_split_result(
         error_msg = "Length violations:\n" + "\n".join(f"- {v}" for v in violations)
         error_msg += "\n\nSplit these long segments further with <br>, then output the COMPLETE text with ALL segments (not just the fixed ones)."
         return False, error_msg
+
+    original_has_cjk = bool(re.search(r"[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]", original_cleaned))
+    if not text_is_cjk and not original_has_cjk:
+        dangling = [
+            f"Segment {index} ends with an incomplete phrase: '{segment}'"
+            for index, segment in enumerate(split_result[:-1], 1)
+            if _has_dangling_english_tail(segment)
+        ]
+        if dangling:
+            return (
+                False,
+                "Unnatural split boundaries:\n"
+                + "\n".join(f"- {item}" for item in dangling)
+                + "\nMove each <br> to an earlier or later natural clause boundary. "
+                "Do not end a subtitle with a preposition, determiner, conjunction, "
+                "hedge such as 'probably', or an incomplete phrase such as 'a lot'.",
+            )
 
     return True, ""
 

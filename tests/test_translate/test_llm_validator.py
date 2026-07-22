@@ -1,5 +1,8 @@
 """Tests for LLM translation response validation."""
 
+import json
+from types import SimpleNamespace
+
 import pytest
 
 from subforge.core.entities import SubtitleProcessData
@@ -18,6 +21,14 @@ def _make_translator(is_reflect=False):
         custom_prompt="",
         is_reflect=is_reflect,
         update_callback=None,
+    )
+
+
+def _llm_response(payload):
+    return SimpleNamespace(
+        choices=[
+            SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload, ensure_ascii=False)))
+        ]
     )
 
 
@@ -121,6 +132,26 @@ class TestValidateLLmResponse:
         assert ok is False
         assert "Untranslated keys" in msg
 
+    def test_chinese_target_rejects_unchanged_korean_source(self):
+        t = _make_translator()
+        resp = {"0": "교황이 일시적인 호흡 곤란을 겪었습니다"}
+        inp = {"0": "교황이 일시적인 호흡 곤란을 겪었습니다"}
+
+        ok, msg = t._validate_llm_response(resp, inp)
+
+        assert ok is False
+        assert "Untranslated keys" in msg
+
+    def test_chinese_target_accepts_chinese_translation_of_korean(self):
+        t = _make_translator()
+        resp = {"0": "教皇一度出现呼吸困难"}
+        inp = {"0": "교황이 일시적인 호흡 곤란을 겪었습니다"}
+
+        ok, msg = t._validate_llm_response(resp, inp)
+
+        assert ok is True
+        assert msg == ""
+
     def test_rejects_placeholder_merge_translation(self):
         t = _make_translator()
         resp = {
@@ -173,6 +204,62 @@ class TestValidateLLmResponse:
             translator._translate_chunk(chunk)
 
         assert fallback_called is False
+
+    def test_reflect_failure_recovers_as_locked_batch(self, monkeypatch):
+        translator = _make_translator(is_reflect=True)
+        translator._all_source_by_index = {
+            1: "That's fine. That's actually better than",
+            2: "I felt in many similar cars.",
+        }
+        chunk = [
+            SubtitleProcessData(index=1, original_text=translator._all_source_by_index[1]),
+            SubtitleProcessData(index=2, original_text=translator._all_source_by_index[2]),
+        ]
+        calls = []
+
+        def fake_call_llm(**kwargs):
+            calls.append(kwargs)
+            return _llm_response({"1": "这没问题 其实表现还更好", "2": "很多同类车型都是如此"})
+
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm",
+            fake_call_llm,
+        )
+
+        recovered = translator._translate_chunk_single(chunk)
+
+        assert [item.translated_text for item in recovered] == [
+            "这没问题 其实表现还更好",
+            "很多同类车型都是如此",
+        ]
+        assert len(calls) == 1
+        assert "boundary-safe recovery pass" in calls[0]["messages"][0]["content"]
+
+    def test_locked_batch_fatal_error_does_not_fall_back_to_single_items(self, monkeypatch):
+        translator = _make_translator(is_reflect=True)
+        chunk = [
+            SubtitleProcessData(index=1, original_text="First subtitle."),
+            SubtitleProcessData(index=2, original_text="Second subtitle."),
+        ]
+        calls = 0
+
+        class PaymentRequiredError(Exception):
+            status_code = 402
+
+        def fail_call_llm(**_kwargs):
+            nonlocal calls
+            calls += 1
+            raise PaymentRequiredError("Insufficient Balance")
+
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm",
+            fail_call_llm,
+        )
+
+        with pytest.raises(RuntimeError, match="HTTP 402"):
+            translator._translate_chunk_single(chunk)
+
+        assert calls == 1
 
     @pytest.mark.parametrize(
         "placeholder",
@@ -368,6 +455,88 @@ class TestValidateLLmResponse:
         }
 
         ok, msg = t._validate_llm_response(resp, source)
+
+        assert ok is True
+        assert msg == ""
+
+    def test_rejects_model_token_leak_even_when_source_owns_token_in_multiple_keys(self):
+        t = _make_translator()
+        source = {
+            "1": "One last look at this 760i.",
+            "2": "I hope that gives you a good idea of",
+            "3": "what it is like to drive this 760i.",
+        }
+        response = {
+            "1": "最后看一眼这台760i",
+            "2": "希望大家了解这台760i开起来怎么样",
+            "3": "这台760i的驾驶感受",
+        }
+
+        ok, msg = t._validate_llm_response(response, source)
+
+        assert ok is False
+        assert "2:760i" in msg
+
+    def test_rejects_adjacent_target_duplication_not_present_in_source(self):
+        t = _make_translator()
+        source = {
+            "402": "and that's the highest praise",
+            "403": "you can give something in this class.",
+        }
+        response = {
+            "402": "这是我能给出的最高评价",
+            "403": "这是同级别里我能给出的最高评价",
+        }
+
+        ok, msg = t._validate_llm_response(response, source)
+
+        assert ok is False
+        assert "Suspicious pairs" in msg
+
+    def test_rejects_long_neighbor_phrase_anticipation_below_ratio_threshold(self):
+        t = _make_translator()
+        source = {
+            "398": "controller right here, but we can change",
+            "399": "what color we want this to be in here. It's quite simple.",
+        }
+        response = {
+            "398": "就在这儿 不过想换什么颜色都行",
+            "399": "想换什么颜色都行 操作非常简单",
+        }
+
+        ok, msg = t._validate_llm_response(response, source)
+
+        assert ok is False
+        assert "398-399" in msg
+
+    def test_allows_repeated_translation_when_source_is_also_repeated(self):
+        t = _make_translator()
+        source = {"118": "Stop.", "119": "Stop."}
+        response = {"118": "赶快停下来", "119": "赶快停下来"}
+
+        ok, msg = t._validate_llm_response(response, source)
+
+        assert ok is True
+        assert msg == ""
+
+    def test_rejects_lowercase_english_function_word_in_chinese_translation(self):
+        t = _make_translator()
+
+        ok, msg = t._validate_llm_response(
+            {"285": "into 表现、放松、影院模式之后"},
+            {"285": "into expressive, relax, theater modes"},
+        )
+
+        assert ok is False
+        assert "285:into" in msg
+
+    def test_allows_english_word_inside_proper_product_name(self):
+        t = _make_translator()
+
+        ok, msg = t._validate_llm_response(
+            {"1": "配的是Bowers and Wilkins音响"},
+            {"1": "It has the Bowers and Wilkins sound system."},
+        )
 
         assert ok is True
         assert msg == ""

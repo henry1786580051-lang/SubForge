@@ -10,6 +10,15 @@ APP_VERSION = os.environ.get('SUBFORGE_BUILD_VERSION', '0.0.0-dev')
 # collecting submodules initializes Metal and can terminate headless builds.
 optional_hiddenimports = []
 optional_datas = []
+if os.name == 'nt':
+    optional_hiddenimports += [
+        'colorama',
+        'colorama.ansi',
+        'colorama.ansitowin32',
+        'colorama.initialise',
+        'colorama.win32',
+        'colorama.winterm',
+    ]
 
 # DeepFilterNet is used only for local enhancement inference. Avoid collecting
 # training, evaluation, and visualization modules, which pull unnecessary
