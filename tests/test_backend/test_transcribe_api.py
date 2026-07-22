@@ -66,6 +66,9 @@ def test_model_list_uses_stable_mlx_ids_and_selection(tmp_path, monkeypatch):
     local_model.mkdir()
     values["whisper_model_size"] = str(local_model)
 
+    monkeypatch.setattr(transcribe_api.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(transcribe_api.platform, "machine", lambda: "arm64")
+
     monkeypatch.setattr(
         config_module,
         "get_config_value",
