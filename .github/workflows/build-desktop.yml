@@ -44,7 +44,7 @@ jobs:
             uv-extra: "--extra denoise --extra whisperx"
           - name: macOS Intel
             os: macos-15-intel
-            uv-extra: "--extra faster-whisper"
+            uv-extra: ""
 
     steps:
       - uses: actions/checkout@v6
