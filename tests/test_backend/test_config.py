@@ -68,6 +68,18 @@ def test_effective_config_keeps_whisperx_on_windows_runtime(monkeypatch):
     assert config["transcribe_model"] == "whisperx"
 
 
+def test_effective_config_defaults_alignment_to_automatic_language_matching():
+    config = config_module._effective_config({})
+
+    assert config["whisperx_alignment_strategy"] == "auto"
+
+
+def test_effective_config_preserves_legacy_custom_alignment_as_manual():
+    config = config_module._effective_config({"whisperx_align_model": "example/custom-alignment"})
+
+    assert config["whisperx_alignment_strategy"] == "manual"
+
+
 def test_effective_config_discards_corrupted_persisted_types():
     config = config_module._effective_config(
         {"thread_num": "ten", "enable_audio_enhancement": "false"}
@@ -276,6 +288,4 @@ def test_effective_config_migrates_legacy_minimax_profile_url():
     )
 
     assert config["llm_base_url"] == "https://api.minimaxi.com/anthropic"
-    assert config["llm_profiles"]["minimax"]["base_url"] == (
-        "https://api.minimaxi.com/anthropic"
-    )
+    assert config["llm_profiles"]["minimax"]["base_url"] == ("https://api.minimaxi.com/anthropic")

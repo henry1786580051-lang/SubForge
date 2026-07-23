@@ -81,56 +81,16 @@ def transcribe(audio_path: str, config: TranscribeConfig, callback=None, on_segm
         detected_speakers = len({turn.speaker_id for turn in diarization_turns})
         callback(5, f"Detected {detected_speakers} speakers...")
 
-    # Enhance audio with DeepFilterNet3 when the optional denoise stack is
-    # installed. This is especially useful before VAD on noisy in-car footage.
+    # Enhance single-speaker audio when the optional denoise stack is installed.
+    # Multi-speaker recordings always retain the original signal: repeated
+    # production tests showed that denoising can suppress quieter speakers,
+    # while candidate calibration adds multiple ASR passes before transcription.
     enhanced_path = None
     audio_for_asr = audio_path
     preserve_multiple_speakers = diarization_mode != "off"
-    if preserve_multiple_speakers and config.enable_audio_enhancement:
-        try:
-            from subforge.core.asr.adaptive_enhancement import (
-                calibrate_audio_enhancement,
-            )
-            from subforge.core.asr.audio_enhancer import enhance_audio, is_available
-
-            if is_available() and diarization_turns:
-                callback(7, "Preparing adaptive multi-speaker denoise calibration...")
-
-                def _transcribe_calibration_sample(sample_path: str) -> ASRData:
-                    return _create_single_asr(sample_path, config).run()
-
-                calibration = calibrate_audio_enhancement(
-                    audio_path,
-                    diarization_turns,
-                    transcribe_sample=_transcribe_calibration_sample,
-                    enhance=enhance_audio,
-                    callback=lambda index, message: callback(8 + index * 4, message),
-                )
-                if calibration.attenuation_db is not None:
-                    callback(
-                        22,
-                        f"Applying {calibration.attenuation_db:g} dB adaptive denoise...",
-                    )
-                    enhanced_path = enhance_audio(
-                        audio_path,
-                        atten_lim_db=calibration.attenuation_db,
-                    )
-                    audio_for_asr = enhanced_path
-                else:
-                    callback(22, "Original audio retained for speaker coverage...")
-            else:
-                logger.info(
-                    "Adaptive multi-speaker denoise unavailable; using original audio"
-                )
-                callback(22, "Using original audio to preserve multiple speakers...")
-        except Exception as e:
-            logger.warning(
-                "Adaptive multi-speaker denoise calibration failed, using original: %s",
-                e,
-                exc_info=True,
-            )
-            callback(22, "Adaptive denoise unavailable; using original audio...")
-            audio_for_asr = audio_path
+    if preserve_multiple_speakers:
+        logger.info("Multi-speaker mode retains original audio and skips enhancement")
+        callback(22, "Using original audio to preserve all speakers...")
     elif config.enable_audio_enhancement:
         try:
             from subforge.core.asr.audio_enhancer import enhance_audio, is_available

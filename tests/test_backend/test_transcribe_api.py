@@ -44,7 +44,9 @@ def test_model_status_reports_detected_local_mlx_model(tmp_path, monkeypatch):
         "resolve_mlx_model",
         lambda model: str(local_model) if model in {str(local_model), "large-v3"} else model,
     )
-    monkeypatch.setattr(transcribe_api, "is_valid_mlx_model_dir", lambda path: Path(path) == local_model)
+    monkeypatch.setattr(
+        transcribe_api, "is_valid_mlx_model_dir", lambda path: Path(path) == local_model
+    )
     monkeypatch.setattr(transcribe_api.importlib.util, "find_spec", lambda _name: object())
     monkeypatch.setattr(transcribe_api.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(transcribe_api.platform, "machine", lambda: "arm64")
@@ -118,6 +120,95 @@ def test_windows_lists_standard_whisperx_and_downloadable_tool_models(tmp_path, 
     assert diarization["downloadable"] is True
 
 
+def test_model_list_exposes_language_specific_alignment_models(tmp_path, monkeypatch):
+    values = _config_values(tmp_path)
+    values.update(
+        {
+            "source_language": "ko",
+            "whisperx_alignment_strategy": "auto",
+        }
+    )
+    monkeypatch.setattr(
+        config_module,
+        "get_config_value",
+        lambda key, default=None: values.get(key, default),
+    )
+
+    models = asyncio.run(transcribe_api.list_whisper_models())
+    alignment_models = [model for model in models if model["type"] == "alignment"]
+    korean = next(model for model in alignment_models if model["language"] == "ko")
+    chinese = next(model for model in alignment_models if model["language"] == "zh")
+
+    assert len(alignment_models) >= 40
+    assert korean["align_model"] == "kresnik/wav2vec2-large-xlsr-korean"
+    assert korean["selected"] is True
+    assert korean["source"] == "huggingface"
+    assert chinese["selected"] is False
+
+
+def test_huggingface_alignment_cache_is_reported_ready(tmp_path):
+    models_dir = tmp_path / "models"
+    model_id = "whisperx-align-ko"
+    cache_path = transcribe_api._alignment_model_path(model_id, models_dir)
+    snapshot = cache_path / "snapshots" / "revision"
+    snapshot.mkdir(parents=True)
+    (snapshot / "config.json").write_text("{}", encoding="utf-8")
+    (snapshot / "model.safetensors").write_bytes(b"weights")
+
+    assert transcribe_api._alignment_model_ready(model_id, models_dir) is True
+
+
+def test_huggingface_alignment_download_uses_whisperx_cache_layout(tmp_path, monkeypatch):
+    import huggingface_hub
+
+    models_dir = tmp_path / "models"
+    model_id = "whisperx-align-ko"
+    completed = {}
+
+    def fake_snapshot_download(repo_id, cache_dir):
+        assert repo_id == "kresnik/wav2vec2-large-xlsr-korean"
+        cache_path = Path(cache_dir) / "models--kresnik--wav2vec2-large-xlsr-korean"
+        snapshot = cache_path / "snapshots" / "revision"
+        snapshot.mkdir(parents=True)
+        (snapshot / "config.json").write_text("{}", encoding="utf-8")
+        (snapshot / "pytorch_model.bin").write_bytes(b"weights")
+        return str(snapshot)
+
+    monkeypatch.setattr(transcribe_api, "_get_models_dir", lambda: models_dir)
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", fake_snapshot_download)
+    monkeypatch.setattr(
+        transcribe_api.task_manager, "update_progress", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        transcribe_api.task_manager,
+        "complete_task",
+        lambda task_id, result: completed.update({"task_id": task_id, **result}),
+    )
+
+    asyncio.run(transcribe_api._download_huggingface_alignment_model("task-1", model_id))
+
+    assert completed["task_id"] == "task-1"
+    assert transcribe_api._alignment_model_ready(model_id, models_dir) is True
+
+
+def test_build_transcribe_config_uses_auto_or_manual_alignment(tmp_path, monkeypatch):
+    values = _config_values(tmp_path)
+    values["whisperx_alignment_strategy"] = "auto"
+    monkeypatch.setattr(
+        config_module,
+        "get_config_value",
+        lambda key, default=None: values.get(key, default),
+    )
+
+    automatic = transcribe_api._build_transcribe_config("whisperx", "ko")
+    values["whisperx_alignment_strategy"] = "manual"
+    values["whisperx_align_model"] = "example/custom-alignment"
+    manual = transcribe_api._build_transcribe_config("whisperx", "ko")
+
+    assert automatic.whisperx_align_model == ""
+    assert manual.whisperx_align_model == "example/custom-alignment"
+
+
 def test_model_self_test_returns_real_transcript_metadata(tmp_path, monkeypatch):
     audio = tmp_path / "en.mp3"
     audio.write_bytes(b"test")
@@ -147,7 +238,9 @@ def test_model_self_test_returns_real_transcript_metadata(tmp_path, monkeypatch)
         segments = [Segment()]
 
     monkeypatch.setattr(transcribe_api, "_current_model_status", lambda: status)
-    monkeypatch.setattr(transcribe_api, "_build_transcribe_config", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        transcribe_api, "_build_transcribe_config", lambda *_args, **_kwargs: object()
+    )
     monkeypatch.setattr(subforge_config, "ASSETS_PATH", tmp_path)
     monkeypatch.setattr(transcribe_module, "transcribe", lambda *_args, **_kwargs: Result())
 

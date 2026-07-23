@@ -161,6 +161,7 @@ _DEFAULTS = {
     "whisper_device": "auto",
     "whisper_n_threads": 4,
     "whisper_compute_type": "default",
+    "whisperx_alignment_strategy": "auto",
     "whisperx_align_model": "WAV2VEC2_ASR_LARGE_LV60K_960H",
     "whisperx_batch_size": 8,
     "ff_mdx_kim2": False,
@@ -217,11 +218,14 @@ def _effective_config(stored: dict) -> dict:
     }
     if not _WHISPERX_SUPPORTED and config.get("transcribe_model") == "whisperx":
         config["transcribe_model"] = "whisper_cpp"
+    if "whisperx_alignment_strategy" not in stored:
+        legacy_align_model = str(stored.get("whisperx_align_model") or "")
+        if legacy_align_model and legacy_align_model != "WAV2VEC2_ASR_LARGE_LV60K_960H":
+            config["whisperx_alignment_strategy"] = "manual"
     provider = _active_llm_provider(stored)
     profiles = _sanitize_llm_profiles(stored.get("llm_profiles"))
     if provider not in profiles and any(
-        str(stored.get(key) or "").strip()
-        for key in ("llm_base_url", "llm_api_key", "llm_model")
+        str(stored.get(key) or "").strip() for key in ("llm_base_url", "llm_api_key", "llm_model")
     ):
         profiles[provider] = {
             "base_url": str(stored.get("llm_base_url") or ""),
@@ -286,14 +290,33 @@ _CHOICES = {
     "transcribe_model": {"whisperx", "whisper_cpp", "faster_whisper", "whisper_api"},
     "translator": {"llm", "bing", "google", "deeplx"},
     "target_language": {
-        "chinese", "english", "japanese", "korean", "french", "german",
-        "spanish", "portuguese", "russian", "cantonese", "thai", "vietnamese",
-        "indonesian", "malay", "tagalog", "italian", "dutch", "polish",
-        "turkish", "swedish", "ukrainian", "arabic",
+        "chinese",
+        "english",
+        "japanese",
+        "korean",
+        "french",
+        "german",
+        "spanish",
+        "portuguese",
+        "russian",
+        "cantonese",
+        "thai",
+        "vietnamese",
+        "indonesian",
+        "malay",
+        "tagalog",
+        "italian",
+        "dutch",
+        "polish",
+        "turkish",
+        "swedish",
+        "ukrainian",
+        "arabic",
     },
     "llm_provider": set(_LLM_PROVIDER_URLS),
     "llm_log_level": {"summary", "standard", "debug"},
     "speaker_diarization": {"off", "two", "auto", "fixed"},
+    "whisperx_alignment_strategy": {"auto", "manual"},
 }
 
 
@@ -329,9 +352,7 @@ def _validate_config_update(key: str, value: str | int | float | bool):
         if not isinstance(value, (int, float)) or isinstance(value, bool):
             raise HTTPException(status_code=422, detail="outline_width must be a number")
         if not 0 <= value <= 20:
-            raise HTTPException(
-                status_code=422, detail="outline_width must be between 0 and 20"
-            )
+            raise HTTPException(status_code=422, detail="outline_width must be between 0 and 20")
     if key in _CHOICES and value not in _CHOICES[key]:
         raise HTTPException(status_code=422, detail=f"Unsupported {key}: {value}")
     return value
@@ -388,9 +409,9 @@ async def update_config(update: ConfigUpdate):
         stored["llm_profiles"] = profiles
     _write_settings(stored)
     invalidate_config_cache()
-    response_value = "" if update.key in {
-        "llm_api_key", "whisper_api_key", "huggingface_token"
-    } else value
+    response_value = (
+        "" if update.key in {"llm_api_key", "whisper_api_key", "huggingface_token"} else value
+    )
     return {"status": "ok", "key": update.key, "value": response_value}
 
 
@@ -406,9 +427,8 @@ async def switch_llm_provider(update: LlmProviderSwitch):
     current_profile = profiles.get(current_provider, {})
     profiles[current_provider] = {
         "base_url": update.current_base_url.strip(),
-        "api_key": update.current_api_key or str(
-            current_profile.get("api_key") or stored.get("llm_api_key") or ""
-        ),
+        "api_key": update.current_api_key
+        or str(current_profile.get("api_key") or stored.get("llm_api_key") or ""),
         "model": update.current_model.strip(),
     }
     target = profiles.get(update.provider)

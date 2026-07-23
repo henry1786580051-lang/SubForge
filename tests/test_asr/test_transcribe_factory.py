@@ -251,17 +251,13 @@ def test_transcribe_passes_fixed_speaker_count_to_diarization(monkeypatch):
     assert received["num_speakers"] == 5
 
 
-def test_transcribe_uses_selected_multispeaker_attenuation_but_original_for_vad(
-    monkeypatch, tmp_path
-):
-    adaptive = importlib.import_module("subforge.core.asr.adaptive_enhancement")
+def test_transcribe_multispeaker_always_skips_enhancement(monkeypatch):
     enhancer = importlib.import_module("subforge.core.asr.audio_enhancer")
     diarization = importlib.import_module("subforge.core.asr.speaker_diarization")
     speech_vad = importlib.import_module("subforge.core.asr.speech_vad")
-    enhanced_path = tmp_path / "enhanced.wav"
-    enhanced_path.write_bytes(b"audio")
     asr_paths = []
     vad_paths = []
+    progress_messages = []
 
     monkeypatch.setattr(
         transcribe_module,
@@ -279,17 +275,11 @@ def test_transcribe_uses_selected_multispeaker_attenuation_but_original_for_vad(
             diarization.SpeakerTurn(2_000, 4_000, "Speaker 2"),
         ],
     )
-    monkeypatch.setattr(enhancer, "is_available", lambda: True)
-    monkeypatch.setattr(
-        enhancer,
-        "enhance_audio",
-        lambda _path, output_path=None, **_kwargs: output_path or str(enhanced_path),
-    )
-    monkeypatch.setattr(
-        adaptive,
-        "calibrate_audio_enhancement",
-        lambda *_args, **_kwargs: adaptive.EnhancementCalibration(6.0, ()),
-    )
+
+    def _unexpected_enhancement(*_args, **_kwargs):
+        raise AssertionError("Multi-speaker mode must not run DeepFilterNet3")
+
+    monkeypatch.setattr(enhancer, "enhance_audio", _unexpected_enhancement)
     monkeypatch.setattr(speech_vad, "is_available", lambda: True)
     monkeypatch.setattr(
         speech_vad,
@@ -308,10 +298,15 @@ def test_transcribe_uses_selected_multispeaker_attenuation_but_original_for_vad(
         speaker_diarization="two",
     )
 
-    transcribe_module.transcribe("original.wav", config)
+    transcribe_module.transcribe(
+        "original.wav",
+        config,
+        callback=lambda _progress, message: progress_messages.append(message),
+    )
 
-    assert asr_paths == [str(enhanced_path)]
+    assert asr_paths == ["original.wav"]
     assert vad_paths == ["original.wav", "original.wav"]
+    assert "Using original audio to preserve all speakers..." in progress_messages
 
 
 def test_transcribe_maps_engine_progress_without_regressing(monkeypatch):

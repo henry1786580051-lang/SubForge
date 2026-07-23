@@ -60,6 +60,7 @@ interface AppState {
     needReflect: boolean;
     customPrompt: string;
     whisperModelSize: string;
+    whisperxAlignmentStrategy: "auto" | "manual";
     whisperxAlignModel: string;
     whisperxBatchSize: number;
     whisperxSupported: boolean;
@@ -158,6 +159,7 @@ export const useAppStore = create<AppState>((set) => ({
     needReflect: false,
     customPrompt: "",
     whisperModelSize: "large-v3",
+    whisperxAlignmentStrategy: "auto",
     whisperxAlignModel: "WAV2VEC2_ASR_LARGE_LV60K_960H",
     whisperxBatchSize: 8,
     whisperxSupported: true,

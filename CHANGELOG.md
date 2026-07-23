@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.0.10 - 2026-07-24
+
+### Added
+
+- Added a compact forced-alignment model manager covering 41 languages, with search, download status, automatic source-language matching, and manual override support.
+
+### Changed
+
+- Multi-speaker transcription now always retains the original audio and skips DeepFilterNet candidate calibration, candidate ASR passes, and full-length denoising. Single-speaker audio enhancement remains available.
+- WhisperX alignment settings now use automatic source-language matching by default. The transcription workspace shows only the model required by the current language.
+- Legacy custom alignment-model settings are preserved as manual overrides instead of being replaced during configuration migration.
+- DeepFilterNet uses bounded CPU threading on Apple Silicon to reduce avoidable contention during single-speaker enhancement.
+
+### Removed
+
+- Removed the obsolete adaptive multi-speaker enhancement pipeline and its redundant candidate transcription passes.
+
 ## v1.0.9 - 2026-07-22
 
 ### Added

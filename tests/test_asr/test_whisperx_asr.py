@@ -345,9 +345,7 @@ def test_whisperx_word_segments_keep_forced_alignment_metadata():
                     "text": "Today,",
                     "start": 1.0,
                     "end": 1.4,
-                    "words": [
-                        {"word": "Today,", "start": 1.02, "end": 1.38, "score": 0.93}
-                    ],
+                    "words": [{"word": "Today,", "start": 1.02, "end": 1.38, "score": 0.93}],
                 }
             ]
         }
@@ -359,11 +357,11 @@ def test_whisperx_word_segments_keep_forced_alignment_metadata():
     assert segments[0].words[0].alignment_score == pytest.approx(0.93)
 
 
-def test_whisperx_ignores_default_english_alignment_model_for_korean():
+def test_whisperx_replaces_default_english_alignment_model_for_korean():
     asr = WhisperXASR.__new__(WhisperXASR)
     asr.align_model = "WAV2VEC2_ASR_LARGE_LV60K_960H"
 
-    assert asr._resolve_align_model_name("ko") is None
+    assert asr._resolve_align_model_name("ko") == "kresnik/wav2vec2-large-xlsr-korean"
 
 
 def test_whisperx_keeps_default_english_alignment_model_for_english():

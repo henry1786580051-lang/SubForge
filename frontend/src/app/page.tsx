@@ -52,6 +52,8 @@ export default function Home() {
         needReflect: (data.need_reflect as boolean) ?? false,
         customPrompt: (data.custom_prompt as string) || "",
         whisperModelSize: (data.whisper_model_size as string) || "large-v3",
+        whisperxAlignmentStrategy:
+          (data.whisperx_alignment_strategy as "auto" | "manual") || "auto",
         whisperxAlignModel: (data.whisperx_align_model as string) || "WAV2VEC2_ASR_LARGE_LV60K_960H",
         whisperxBatchSize: Number(data.whisperx_batch_size || 8),
         whisperxSupported: (data.whisperx_supported as boolean) ?? true,

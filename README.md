@@ -21,7 +21,7 @@ SubForge 是一个 AI 驱动的视频字幕工具，覆盖转录、断句、优�
 | 能力 | 说明 |
 | --- | --- |
 | 语音转文字 | WhisperX 在 Apple Silicon 使用 MLX、在 Windows 使用 CTranslate2，并通过 forced alignment 生成词级时间轴 |
-| 多人语音 | 可选 pyannote Community-1 说话人分离，支持双人、自动人数和 2–10 人精确约束，并用自适应降噪保护较弱说话人的内容 |
+| 多人语音 | 可选 pyannote Community-1 说话人分离，支持双人、自动人数和 2–10 人精确约束；固定保留原始音轨以保护较弱说话人的内容 |
 | 智能断句 | 使用 LLM 按语义重排字幕，同时校验原文完整性、长度与时间轴 |
 | 字幕优化 | 保守修正明显 ASR 错误和标点，不允许 LLM 任意改写正确原文 |
 | 智能翻译 | 支持上下文感知、反思翻译、MiniMax Anthropic 接口及 OpenAI 兼容接口 |
@@ -35,14 +35,15 @@ SubForge 的重点不只是把语音转成文字，而是尽量让时间轴、�
 
 ### 转录优化
 
-单人模式可直接使用 DeepFilterNet3 增强音频。多人模式先在原始音频上运行 pyannote Community-1，再抽取多名说话人的代表片段，对原音频和多档轻度降噪结果进行校准；只有在没有损失说话人覆盖时才采用降噪版本。已知参与人数的访谈建议使用“指定人数”，可减少自动聚类将同一人拆成多个标签的风险。
+单人模式可直接使用 DeepFilterNet3 增强音频。多人模式在原始音频上运行 pyannote Community-1，并固定使用原始音轨完成 ASR、时间轴校验和说话人归属，不执行候选降噪或额外的候选 ASR。已知参与人数的访谈建议使用“指定人数”，可减少自动聚类将同一人拆成多个标签的风险。
 
 转录文本会先将数字、单位和符号展开为 forced alignment 更容易识别的口语 token，对齐完成后再恢复原文显示。TEN-VAD 只修正可疑边界，不全局覆盖已经正确的 WhisperX 时间戳：
 
 ```text
 原始音频
   -> [多人模式] pyannote Community-1 说话人分离
-  -> DeepFilterNet3 可选/自适应降噪
+  -> [单人模式] DeepFilterNet3 可选降噪
+  -> [多人模式] 固定保留原始音轨
   -> MLX Whisper（Apple Silicon）/ Faster-Whisper（Windows）
   -> 数字/单位/符号语音规范化
   -> WhisperX forced alignment
@@ -53,10 +54,10 @@ SubForge 的重点不只是把语音转成文字，而是尽量让时间轴、�
 
 | 技术 | 作用 |
 | --- | --- |
-| [DeepFilterNet3](https://github.com/Rikorose/DeepFilterNet) | 单人模式直接增强；多人模式按说话人覆盖率校准降噪强度，必要时保留原音频 |
+| [DeepFilterNet3](https://github.com/Rikorose/DeepFilterNet) | 单人模式可选增强；多人模式自动跳过，以避免压制较弱说话人的语音 |
 | [MLX Whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper) | Apple Silicon 专门优化的本地 Whisper 推理，默认使用本地 MLX 模型 |
 | [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper) | Windows 上为 WhisperX 提供 CTranslate2/CUDA 或 CPU 转录路径 |
-| [WhisperX forced alignment](https://github.com/m-bain/whisperX) | 使用独立对齐模型把转录文本落到词级时间轴 |
+| [WhisperX forced alignment](https://github.com/m-bain/whisperX) | 按源语言自动匹配独立对齐模型，把转录文本落到词级时间轴；设置页可搜索、下载并检查各语言模型 |
 | 对齐前语音规范化 | 将 `350`、`mph`、`kg` 等数字与单位展开为口语 token，对齐后恢复原文展示 |
 | [TEN-VAD](https://github.com/TEN-framework/ten-vad) | 默认的语音活动检测器，用于校验可疑句首和句尾，不全局覆盖 WhisperX 的正确对齐 |
 | Silero VAD | TEN-VAD 不可用或运行失败时的回退方案，保证跨平台可用性 |
@@ -90,7 +91,7 @@ LLM 处理不是单次自由生成。每个阶段都有结构化输出、键完�
 - 上传文件、缩略图和导出结果使用独立路径与范围请求处理，避免同名文件或并发任务相互覆盖。
 - LLM 日志按任务和阶段聚合，仍可展开查看单次请求；并发翻译不会错配 prompt 和 response。
 - 翻译阶段增量保存中间结果，最终校验失败时不会丢失已经完成的字幕。
-- macOS 桌面包内置 FFmpeg、DeepFilterNet3 运行时和 TEN-VAD；Whisper、forced alignment 与说话人模型由用户管理，不重复打包大模型。
+- macOS 桌面包内置 FFmpeg、DeepFilterNet3 运行时和 TEN-VAD；Whisper、forced alignment 与说话人模型由用户按需管理，不重复打包大模型。词级对齐模型默认按源语言自动选择，无需手动记忆模型 ID。
 
 ## Audi Q3 实测案例
 
@@ -144,7 +145,7 @@ LLM 处理不是单次自由生成。每个阶段都有结构化输出、键完�
 
 ## 五人访谈实测案例
 
-以下数据来自 Matt Damon、Anne Hathaway、Tom Holland、Christopher Nolan 与主持人的完整访谈。测试日期为 2026-07-22，流程覆盖 MLX 转录、WhisperX forced alignment、pyannote Community-1 五人约束、自适应降噪选择、智能断句、保守纠错、MiniMax M3 翻译和反思校验。片中包含电影原片段，因此这里的“五人”是对访谈参与者数量的约束，并不等同于声纹身份识别。
+以下数据来自 Matt Damon、Anne Hathaway、Tom Holland、Christopher Nolan 与主持人的完整访谈。测试日期为 2026-07-22，流程覆盖 MLX 转录、WhisperX forced alignment、pyannote Community-1 五人约束、智能断句、保守纠错、MiniMax M3 翻译和反思校验。片中包含电影原片段，因此这里的“五人”是对访谈参与者数量的约束，并不等同于声纹身份识别。该案例的候选比较最终选择了原音频；当前版本因此在多人模式中直接保留原音频。
 
 | 配置 | 实测值 |
 | --- | --- |
@@ -152,7 +153,7 @@ LLM 处理不是单次自由生成。每个阶段都有结构化输出、键完�
 | 视频时长 | 18:03 |
 | ASR / 对齐 | MLX Large V3 FP16 / WhisperX forced alignment |
 | 说话人分离 | pyannote Community-1，指定 5 人 |
-| 降噪选择 | 比较原音频、6 dB 与 12 dB；最终保留原音频以保护较弱说话人 |
+| 多人音频策略 | 固定保留原音频，不执行候选降噪与额外候选 ASR |
 | 转录结果 | 3,777 条词级片段 / 3,785 个词 |
 | 翻译模型 | `MiniMax-M3` |
 | 协议 / Base URL | Anthropic / `https://api.minimaxi.com/anthropic` |
@@ -291,7 +292,7 @@ MiniMax 推荐 Base URL 为 `https://api.minimaxi.com/anthropic`。SubForge 会�
 | 引擎 | 适合场景 |
 | --- | --- |
 | WhisperX | Apple Silicon 使用 MLX，Windows 使用 CTranslate2/CUDA 或 CPU；均配合 forced alignment 生成词级时间轴 |
-| WhisperX Alignment | 独立管理 forced alignment 模型，用于英语等语言的词级对齐 |
+| WhisperX Alignment | 按源语言管理 41 种 forced alignment 模型，支持自动匹配、下载状态、搜索和手动覆盖 |
 | Whisper.cpp | 备用本地转录通道，适合已有 ggml 模型的用户 |
 | Whisper API | 云端转录，配置简单 |
 | pyannote Community-1 | 多人模式；需先获得模型访问权限并在设置页下载到本地模型目录 |

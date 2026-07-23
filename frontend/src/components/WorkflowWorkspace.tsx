@@ -439,6 +439,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
         transcribe_model: "transcribeModel",
         source_language: "sourceLanguage",
         whisper_model_size: "whisperModelSize",
+        whisperx_alignment_strategy: "whisperxAlignmentStrategy",
         whisperx_align_model: "whisperxAlignModel",
         whisperx_batch_size: "whisperxBatchSize",
         enable_audio_enhancement: "enableAudioEnhancement",
@@ -498,8 +499,11 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
   const selectedModel = currentModels.find(
     (model) => (model.value || model.id) === config.whisperModelSize || model.selected
   );
-  const selectedAlignModel = alignmentModels.find(
-    (model) => model.align_model === config.whisperxAlignModel || model.id === config.whisperxAlignModel
+  const alignmentLanguage = config.sourceLanguage === "nb" ? "no" : config.sourceLanguage;
+  const selectedAlignModel = alignmentModels.find((model) =>
+    config.whisperxAlignmentStrategy === "manual"
+      ? model.align_model === config.whisperxAlignModel || model.id === config.whisperxAlignModel
+      : alignmentLanguage !== "auto" && model.language === alignmentLanguage
   );
   const quality = useMemo(() => analyzeSubtitleQuality(subtitles), [subtitles]);
 
@@ -600,7 +604,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                 <div>
                   <p className="text-[12px] font-semibold text-text-primary">说话人识别</p>
                   <p className="mt-1 text-[10px] leading-4 text-text-muted">
-                    区分双人或多人对话，并优先保护较弱说话人的语音覆盖率。
+                    区分双人或多人对话，并使用原始音轨保护较弱说话人的语音覆盖率。
                   </p>
                 </div>
                 <span className={`shrink-0 rounded-md px-2 py-1 text-[9px] font-semibold ${
@@ -697,7 +701,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                     />
                   </label>
                   <p className="text-[10px] leading-4 text-text-muted">
-                    转录前会比较原音、6 dB 与 12 dB 轻度降噪，仅在所有说话人覆盖率不下降时采用降噪结果。
+                    多人模式固定使用原始音轨，不执行 DeepFilterNet 候选比较或降噪。
                   </p>
                 </div>
               )}
@@ -730,32 +734,44 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                 </div>
 
                 {config.transcribeModel === "whisperx" && (
-                  <div className="space-y-4">
-                    <div>
-                    <FieldLabel
-                      label="Forced alignment"
-                      value={selectedAlignModel?.downloaded ? "词级时间轴可用" : "需要模型"}
-                    />
-                    <div className="mt-2 space-y-2">
-                      {alignmentModels.map((model) => (
-                        <ModelRow
-                          key={model.id}
-                          model={model}
-                          active={
-                            config.whisperxAlignModel === model.align_model ||
-                            config.whisperxAlignModel === model.id
-                          }
-                          downloading={downloadingModel === model.id}
-                          progress={downloadProgress[model.id]}
-                          onSelect={() =>
-                            void saveConfig("whisperx_align_model", model.align_model || model.id)
-                          }
-                          onDownload={() => void downloadModel(model.id)}
-                        />
-                      ))}
+                  <div>
+                    <FieldLabel label="词级时间轴" value="按源语言匹配" />
+                    <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-border bg-background/70 p-3">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${
+                          selectedAlignModel?.downloaded ? "bg-emerald-50 text-emerald-600" : "bg-accent-dim text-accent"
+                        }`}>
+                          <Icon icon="solar:align-bottom-linear" className="h-4 w-4" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-semibold text-text-primary">
+                            {config.whisperxAlignmentStrategy === "manual"
+                              ? selectedAlignModel?.language_name || "手动指定模型"
+                              : config.sourceLanguage === "auto"
+                                ? "识别语言后自动匹配"
+                                : selectedAlignModel?.language_name || "该语言暂无默认模型"}
+                          </p>
+                          <p className="mt-0.5 truncate text-[9px] text-text-muted">
+                            {selectedAlignModel
+                              ? `${selectedAlignModel.downloaded ? "本地已就绪" : "尚未下载"} · ${selectedAlignModel.align_model}`
+                              : config.sourceLanguage === "auto"
+                                ? "首次使用对应语言时按需加载"
+                                : "WhisperX 暂无默认模型，请在设置中手动指定"}
+                          </p>
+                        </div>
+                      </div>
+                      {selectedAlignModel && !selectedAlignModel.downloaded && (
+                        <button
+                          onClick={() => void downloadModel(selectedAlignModel.id)}
+                          disabled={downloadingModel === selectedAlignModel.id}
+                          className="shrink-0 rounded-md bg-accent px-2.5 py-1.5 text-[10px] font-semibold text-white transition-colors hover:bg-accent-hover disabled:opacity-60"
+                        >
+                          {downloadingModel === selectedAlignModel.id
+                            ? `${downloadProgress[selectedAlignModel.id] ?? 0}%`
+                            : "下载"}
+                        </button>
+                      )}
                     </div>
-                    </div>
-
                   </div>
                 )}
 
@@ -791,7 +807,15 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
 
                 <ToggleLine
                   label="DeepFilterNet 音频增强"
-                  checked={config.enableAudioEnhancement}
+                  description={
+                    config.speakerDiarization === "off"
+                      ? "适用于单人录音；多人模式会自动跳过"
+                      : "多人模式已自动跳过，以保护所有说话人"
+                  }
+                  checked={
+                    config.speakerDiarization === "off" && config.enableAudioEnhancement
+                  }
+                  disabled={config.speakerDiarization !== "off"}
                   onChange={(value) => void saveConfig("enable_audio_enhancement", value)}
                 />
               </div>
@@ -1297,19 +1321,29 @@ function ModelRow({
 
 function ToggleLine({
   checked,
+  description,
+  disabled = false,
   label,
   onChange,
 }: {
   checked: boolean;
+  description?: string;
+  disabled?: boolean;
   label: string;
   onChange: (value: boolean) => void;
 }) {
   return (
     <button
+      disabled={disabled}
       onClick={() => onChange(!checked)}
-      className="flex w-full items-center justify-between rounded-xl border border-border bg-background p-3 text-left transition hover:border-border-active"
+      className="flex w-full items-center justify-between gap-4 rounded-xl border border-border bg-background p-3 text-left transition hover:border-border-active disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-border"
     >
-      <span className="text-[13px] font-medium text-text-primary">{label}</span>
+      <span className="min-w-0">
+        <span className="block text-[13px] font-medium text-text-primary">{label}</span>
+        {description && (
+          <span className="mt-0.5 block text-[10px] leading-4 text-text-muted">{description}</span>
+        )}
+      </span>
       <span className={`relative h-[22px] w-10 rounded-full transition ${checked ? "bg-accent" : "bg-black/10"}`}>
         <span
           className={`absolute top-[3px] h-4 w-4 rounded-full bg-white shadow-sm transition ${

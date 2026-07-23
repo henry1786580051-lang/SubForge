@@ -225,6 +225,10 @@ export interface AsrModelInfo {
   state?: "ready" | "missing" | "on_demand" | string;
   detail?: string;
   resolved_model?: string;
+  language?: string;
+  language_name?: string;
+  source?: "torchaudio" | "huggingface" | string;
+  recommended?: boolean;
 }
 
 export interface AsrModelStatus {
@@ -239,8 +243,13 @@ export interface AsrModelStatus {
   model_state: "ready" | "missing" | "on_demand" | string;
   model_message: string;
   alignment_model: string;
+  alignment_model_id: string;
+  alignment_strategy: "auto" | "manual" | string;
+  alignment_language: string;
+  alignment_language_name: string;
   alignment_path: string;
   alignment_ready: boolean;
+  alignment_supported: boolean;
   platform_supported: boolean;
   runtime_ready: boolean;
   testable: boolean;

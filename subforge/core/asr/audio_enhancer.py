@@ -2,6 +2,7 @@
 
 import logging
 import os
+import platform
 import subprocess
 import tempfile
 import threading
@@ -21,6 +22,26 @@ def _device_name(device) -> str:
     return getattr(device, "type", str(device))
 
 
+def _configure_apple_silicon_cpu(torch_module) -> None:
+    """Use the measured optimal CPU parallelism for DeepFilterNet3."""
+    if platform.system() != "Darwin" or platform.machine().lower() not in {"arm64", "aarch64"}:
+        return
+    available_threads = os.cpu_count() or 4
+    configured = os.environ.get("SUBFORGE_DENOISE_THREADS", "").strip()
+    if configured:
+        try:
+            threads = int(configured)
+        except ValueError:
+            logger.warning("Invalid SUBFORGE_DENOISE_THREADS=%r; using automatic value", configured)
+            threads = min(8, available_threads)
+    else:
+        threads = min(8, available_threads)
+    threads = max(1, min(threads, available_threads))
+    if torch_module.get_num_threads() != threads:
+        torch_module.set_num_threads(threads)
+        logger.info("DeepFilterNet3 CPU inference using %d threads", threads)
+
+
 def _select_device():
     """Choose the fastest available DeepFilterNet device.
 
@@ -28,18 +49,27 @@ def _select_device():
     whisper.cpp Metal backend. Keep this isolated so unavailable or incomplete
     MPS support can fall back to CPU without disabling transcription.
     """
-    import os
-
     import torch
 
     requested = os.environ.get("SUBFORGE_DENOISE_DEVICE", "auto").strip().lower()
     if requested in {"cpu", "mps"}:
         if requested == "mps" and not _mps_available(torch):
             logger.warning("Requested DeepFilterNet3 MPS device is unavailable, using CPU")
+            _configure_apple_silicon_cpu(torch)
             return torch.device("cpu")
+        if requested == "cpu":
+            _configure_apple_silicon_cpu(torch)
         return torch.device(requested)
 
     if _df_mps_failed:
+        _configure_apple_silicon_cpu(torch)
+        return torch.device("cpu")
+
+    # DeepFilterNet3 repeatedly transfers features and masks between its Rust
+    # DSP code and PyTorch. On Apple Silicon, those small transfers make MPS
+    # slower than the tuned CPU path.
+    if platform.system() == "Darwin" and platform.machine().lower() in {"arm64", "aarch64"}:
+        _configure_apple_silicon_cpu(torch)
         return torch.device("cpu")
 
     if _mps_available(torch):
@@ -119,8 +149,73 @@ def _load_model(device=None):
             logger.warning("DeepFilterNet not installed (pip install deepfilternet)")
             raise
         except Exception as e:
-            logger.error(f"Failed to load DeepFilterNet: {e}")
+            logger.error("Failed to load DeepFilterNet: %s", e)
             raise
+
+
+def _enhance_with_python(
+    input_path: str,
+    output_path: str,
+    atten_lim_db: float | None,
+    sample_rate: int,
+) -> None:
+    import soundfile as sf
+    import torch
+    from df.enhance import enhance
+
+    global _df_mps_failed
+
+    chunk_size = 60 * sample_rate
+    processed_frames = 0
+    with _df_lock:
+        device = _select_device()
+        _load_model(device)
+        if _df_model is None or _df_state is None:
+            raise RuntimeError("DeepFilterNet3 model is not initialized")
+
+        with sf.SoundFile(
+            output_path,
+            mode="w",
+            samplerate=sample_rate,
+            channels=1,
+            format="WAV",
+            subtype="FLOAT",
+        ) as output_file:
+            for chunk in sf.blocks(
+                input_path,
+                blocksize=chunk_size,
+                dtype="float32",
+                always_2d=False,
+            ):
+                chunk_tensor = torch.from_numpy(chunk).float().unsqueeze(0)
+                try:
+                    enhanced = enhance(
+                        _df_model,
+                        _df_state,
+                        chunk_tensor,
+                        atten_lim_db=atten_lim_db,
+                    )
+                except Exception:
+                    if _device_name(_df_device) != "mps":
+                        raise
+                    logger.warning("DeepFilterNet3 MPS enhancement failed, retrying on CPU")
+                    logger.debug("DeepFilterNet3 MPS enhancement traceback", exc_info=True)
+                    _df_mps_failed = True
+                    _move_model_to_device(torch.device("cpu"))
+                    enhanced = enhance(
+                        _df_model,
+                        _df_state,
+                        chunk_tensor,
+                        atten_lim_db=atten_lim_db,
+                    )
+                enhanced_chunk = enhanced.squeeze(0).cpu().numpy()
+                output_file.write(enhanced_chunk)
+                processed_frames += len(chunk)
+                logger.debug(
+                    "Enhanced %.0fs - %.0fs",
+                    (processed_frames - len(chunk)) / sample_rate,
+                    processed_frames / sample_rate,
+                )
 
 
 def enhance_audio(
@@ -141,10 +236,6 @@ def enhance_audio(
         Path to enhanced audio file
     """
     import soundfile as sf
-    import torch
-    from df.enhance import enhance
-
-    global _df_mps_failed
 
     if not input_path or not Path(input_path).is_file():
         raise FileNotFoundError(f"Input audio not found: {input_path}")
@@ -160,7 +251,17 @@ def enhance_audio(
 
     try:
         subprocess.run(
-            ["ffmpeg", "-y", "-i", input_path, "-ac", "1", "-ar", "48000", temp_48k],
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                input_path,
+                "-ac",
+                "1",
+                "-ar",
+                "48000",
+                temp_48k,
+            ],
             capture_output=True,
             check=True,
             creationflags=(
@@ -178,61 +279,9 @@ def enhance_audio(
             f"{atten_lim_db:g} dB" if atten_lim_db is not None else "unrestricted",
         )
 
-        # Stream 60-second blocks to disk. This keeps long videos from holding
-        # the source audio and every enhanced chunk in memory simultaneously.
         fd, temp_enhanced_48k = tempfile.mkstemp(suffix="_enhanced_48k.wav")
         os.close(fd)
-        chunk_size = 60 * sr
-        processed_frames = 0
-        with _df_lock:
-            device = _select_device()
-            _load_model(device)
-            if _df_model is None or _df_state is None:
-                raise RuntimeError("DeepFilterNet3 model is not initialized")
-
-            with sf.SoundFile(
-                temp_enhanced_48k,
-                mode="w",
-                samplerate=sr,
-                channels=1,
-                format="WAV",
-                subtype="FLOAT",
-            ) as output_file:
-                for chunk in sf.blocks(
-                    temp_48k,
-                    blocksize=chunk_size,
-                    dtype="float32",
-                    always_2d=False,
-                ):
-                    chunk_tensor = torch.from_numpy(chunk).float().unsqueeze(0)
-                    try:
-                        enhanced = enhance(
-                            _df_model,
-                            _df_state,
-                            chunk_tensor,
-                            atten_lim_db=atten_lim_db,
-                        )
-                    except Exception:
-                        if _device_name(_df_device) != "mps":
-                            raise
-                        logger.warning("DeepFilterNet3 MPS enhancement failed, retrying on CPU")
-                        logger.debug("DeepFilterNet3 MPS enhancement traceback", exc_info=True)
-                        _df_mps_failed = True
-                        _move_model_to_device(torch.device("cpu"))
-                        enhanced = enhance(
-                            _df_model,
-                            _df_state,
-                            chunk_tensor,
-                            atten_lim_db=atten_lim_db,
-                        )
-                    enhanced_chunk = enhanced.squeeze(0).cpu().numpy()
-                    output_file.write(enhanced_chunk)
-                    processed_frames += len(chunk)
-                    logger.debug(
-                        "Enhanced %.0fs - %.0fs",
-                        (processed_frames - len(chunk)) / sr,
-                        processed_frames / sr,
-                    )
+        _enhance_with_python(temp_48k, temp_enhanced_48k, atten_lim_db, sr)
 
         subprocess.run(
             ["ffmpeg", "-y", "-i", temp_enhanced_48k, "-ac", "1", "-ar", "16000", output_path],

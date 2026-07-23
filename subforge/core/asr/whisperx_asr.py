@@ -11,6 +11,7 @@ from typing import Any, Callable, List, Optional, Union
 
 from ...config import MODEL_PATH
 from ..utils.logger import setup_logger
+from .alignment_models import alignment_model_for_language
 from .asr_data import ASRData, ASRDataSeg, ASRWord, TimestampSource
 from .base import BaseASR
 from .model_cache import SingleEntryModelCache
@@ -206,9 +207,26 @@ def _segments_for_alignment(result: dict) -> list[dict]:
 
 
 _SMALL_NUMBERS = (
-    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
-    "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
-    "sixteen", "seventeen", "eighteen", "nineteen",
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
 )
 _TENS = ("", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
 _UNIT_NAMES = {
@@ -285,7 +303,7 @@ def _spoken_token(token: str) -> str:
     trailing_match = re.search(r"[\)\]\}\"',.!?;:]*$", token)
     trailing = trailing_match.group(0) if trailing_match else ""
     core_end = len(token) - len(trailing) if trailing else len(token)
-    core = token[len(leading):core_end]
+    core = token[len(leading) : core_end]
     if not core:
         return token
 
@@ -369,9 +387,7 @@ def _prepare_spoken_alignment(
     return (normalized, plans) if changed else (segments, None)
 
 
-def _restore_display_alignment(
-    aligned: dict, plans: list[_AlignmentSegmentPlan]
-) -> dict | None:
+def _restore_display_alignment(aligned: dict, plans: list[_AlignmentSegmentPlan]) -> dict | None:
     spoken_words = [
         word
         for segment in aligned.get("segments") or []
@@ -490,9 +506,7 @@ def _install_offline_sentence_tokenizer(alignment_module: Any) -> None:
         except LookupError:
             unavailable_resources.add(resource)
             if not fallback_logged:
-                logger.warning(
-                    "NLTK Punkt data is unavailable; using offline sentence boundaries"
-                )
+                logger.warning("NLTK Punkt data is unavailable; using offline sentence boundaries")
                 fallback_logged = True
             if fallback_tokenizer is None:
                 fallback_tokenizer = _OfflineSentenceTokenizer()
@@ -513,7 +527,10 @@ def _word_text(word: dict) -> str:
 
 
 def _word_has_timing(word: dict) -> bool:
-    return _float_seconds(word.get("start")) is not None and _float_seconds(word.get("end")) is not None
+    return (
+        _float_seconds(word.get("start")) is not None
+        and _float_seconds(word.get("end")) is not None
+    )
 
 
 def _word_duration_weight(text: str) -> int:
@@ -521,9 +538,7 @@ def _word_duration_weight(text: str) -> int:
     return max(1, alnum)
 
 
-def _refine_words_with_char_alignments(
-    words: list[dict], chars: list[dict] | None
-) -> list[dict]:
+def _refine_words_with_char_alignments(words: list[dict], chars: list[dict] | None) -> list[dict]:
     """Use WhisperX character timings to tighten aligned word boundaries.
 
     WhisperX already derives words from characters, but older releases can
@@ -535,14 +550,8 @@ def _refine_words_with_char_alignments(
     if not chars:
         return words
 
-    timed_chars = [
-        char
-        for char in chars
-        if isinstance(char, dict) and str(char.get("char") or "")
-    ]
-    uses_space_delimiters = any(
-        str(char.get("char") or "").isspace() for char in timed_chars
-    )
+    timed_chars = [char for char in chars if isinstance(char, dict) and str(char.get("char") or "")]
+    uses_space_delimiters = any(str(char.get("char") or "").isspace() for char in timed_chars)
     char_index = 0
     refined: list[dict] = []
 
@@ -570,9 +579,7 @@ def _refine_words_with_char_alignments(
                     break
                 matched.append(item)
                 scan_index += 1
-            candidate = "".join(
-                str(item.get("char") or "").lower() for item in matched
-            )
+            candidate = "".join(str(item.get("char") or "").lower() for item in matched)
             target_index = len(target) if candidate == target else 0
             char_index = scan_index
         else:
@@ -768,19 +775,17 @@ class WhisperXASR(BaseASR):
 
     def _resolve_align_model_name(self, language_code: str) -> str | None:
         normalized_language = _normalize_language(language_code)
-        if self.align_model and (
-            self.align_model != DEFAULT_EN_ALIGN_MODEL or normalized_language == "en"
-        ):
+        if self.align_model and self.align_model != DEFAULT_EN_ALIGN_MODEL:
             return self.align_model
-        if normalized_language == "en":
-            return DEFAULT_EN_ALIGN_MODEL
         if self.align_model == DEFAULT_EN_ALIGN_MODEL:
+            if normalized_language == "en":
+                return DEFAULT_EN_ALIGN_MODEL
             logger.info(
-                "Ignoring English-only forced alignment model for language=%s; "
-                "using WhisperX language default",
+                "Ignoring English-only forced alignment model for language=%s",
                 normalized_language,
             )
-        return None
+        default_model = alignment_model_for_language(normalized_language)
+        return default_model.model_name if default_model else None
 
     def _run(
         self,
@@ -896,6 +901,7 @@ class WhisperXASR(BaseASR):
             align_kwargs["model_name"] = align_model_name
         if self.model_dir:
             align_kwargs["model_dir"] = self.model_dir
+
         def _load_alignment_model():
             try:
                 return whisperx_alignment.load_align_model(**align_kwargs)
@@ -966,6 +972,7 @@ class WhisperXASR(BaseASR):
 
         try:
             import mlx_whisper
+
             install_whisperx_runtime_stubs()
             import whisperx.alignment as whisperx_alignment
             from whisperx.audio import load_audio

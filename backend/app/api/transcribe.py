@@ -14,6 +14,12 @@ from pydantic import BaseModel, Field
 from app.core.blocking import run_blocking
 from app.core.task_manager import TaskResourceBusyError, task_manager
 from app.security import validate_path
+from subforge.core.asr.alignment_models import (
+    ALIGNMENT_MODEL_BY_ID,
+    ALIGNMENT_MODELS,
+    alignment_model_for_language,
+    normalize_alignment_language,
+)
 from subforge.core.asr.faster_whisper import (
     is_faster_whisper_model_dir,
 )
@@ -172,15 +178,19 @@ FASTER_WHISPER_MODELS = {
 }
 
 WHISPERX_MODELS = {
-    "whisperx-align-en-large": {
-        "name": "English Large LV60K Alignment",
+    model.id: {
+        "name": f"{model.language_name} Alignment",
         "category": "whisperx",
         "type": "alignment",
-        "url": "https://download.pytorch.org/torchaudio/models/wav2vec2_fairseq_large_lv60k_asr_ls960.pth",
-        "filename": "wav2vec2_fairseq_large_lv60k_asr_ls960.pth",
-        "size": "1.18GB",
-        "align_model": "WAV2VEC2_ASR_LARGE_LV60K_960H",
-    },
+        "url": model.url,
+        "filename": model.filename,
+        "size": model.size,
+        "align_model": model.model_name,
+        "language": model.language,
+        "language_name": model.language_name,
+        "source": model.source,
+    }
+    for model in ALIGNMENT_MODELS
 }
 
 DIARIZATION_MODELS = {
@@ -209,9 +219,7 @@ MLX_MODEL_SIZES = {
 
 class TranscribeRequest(BaseModel):
     file_path: str = Field(max_length=4096)
-    model: Literal["whisper_cpp", "whisperx", "faster_whisper", "whisper_api"] = (
-        "whisper_cpp"
-    )
+    model: Literal["whisper_cpp", "whisperx", "faster_whisper", "whisper_api"] = "whisper_cpp"
     language: str = Field(default="auto", min_length=1, max_length=32)
     device: str = Field(default="auto", max_length=32)
     n_threads: int = Field(default=4, ge=1, le=128)
@@ -256,22 +264,23 @@ def _build_transcribe_config(
         transcribe_model=model_enum,
         transcribe_language=language,
         faster_whisper_device=device,
-        need_word_time_stamp=(
-            need_word_time_stamp if model_id != "faster_whisper" else False
-        ),
+        need_word_time_stamp=(need_word_time_stamp if model_id != "faster_whisper" else False),
     )
     config.whisper_n_threads = n_threads
     config.faster_whisper_compute_type = compute_type
     config.whisper_cpp_path = get_config_value("whisper_cpp_path", "")
     configured_enhancement = bool(get_config_value("enable_audio_enhancement", True))
     config.enable_audio_enhancement = (
-        configured_enhancement
-        if enable_audio_enhancement is None
-        else enable_audio_enhancement
+        configured_enhancement if enable_audio_enhancement is None else enable_audio_enhancement
     )
-    config.whisperx_align_model = get_config_value(
-        "whisperx_align_model",
-        "WAV2VEC2_ASR_LARGE_LV60K_960H",
+    alignment_strategy = get_config_value("whisperx_alignment_strategy", "auto")
+    config.whisperx_align_model = (
+        get_config_value(
+            "whisperx_align_model",
+            "WAV2VEC2_ASR_LARGE_LV60K_960H",
+        )
+        if alignment_strategy == "manual"
+        else ""
     )
     config.whisperx_batch_size = int(get_config_value("whisperx_batch_size", 8) or 8)
     config.speaker_diarization = get_config_value("speaker_diarization", "off")
@@ -393,9 +402,7 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
                 logger.warning(f"Failed to save partial segment: {e}")
 
         # Run transcription on the extracted audio
-        result = await run_blocking(
-            transcribe, temp_audio_path, config, _on_progress, _on_segment
-        )
+        result = await run_blocking(transcribe, temp_audio_path, config, _on_progress, _on_segment)
         _raise_if_cancelled(task_id)
 
         # Save subtitle file
@@ -463,11 +470,42 @@ def _get_models_dir() -> Path:
     return models_dir
 
 
+def _alignment_model_path(model_id: str, models_dir: Path) -> Path:
+    spec = ALIGNMENT_MODEL_BY_ID[model_id]
+    if spec.source == "torchaudio":
+        return models_dir / spec.filename
+    return models_dir / f"models--{spec.model_name.replace('/', '--')}"
+
+
+def _alignment_model_ready(model_id: str, models_dir: Path) -> bool:
+    spec = ALIGNMENT_MODEL_BY_ID[model_id]
+    path = _alignment_model_path(model_id, models_dir)
+    if spec.source == "torchaudio":
+        return path.is_file() and path.stat().st_size > 0
+    snapshots = path / "snapshots"
+    if not snapshots.is_dir():
+        return False
+    for snapshot in snapshots.iterdir():
+        if not snapshot.is_dir() or not (snapshot / "config.json").is_file():
+            continue
+        has_weights = any(
+            (snapshot / filename).is_file()
+            for filename in ("model.safetensors", "pytorch_model.bin")
+        )
+        if has_weights:
+            return True
+    return False
+
+
 def _current_model_status() -> dict:
     """Describe the effective ASR engine and model selected in settings."""
     from app.api.config import get_config_value
 
-    default_engine = "whisperx" if platform.system() == "Darwin" and platform.machine() == "arm64" else "whisper_cpp"
+    default_engine = (
+        "whisperx"
+        if platform.system() == "Darwin" and platform.machine() == "arm64"
+        else "whisper_cpp"
+    )
     default_model = "large-v3" if default_engine == "whisperx" else "base"
     engine = str(get_config_value("transcribe_model", default_engine) or default_engine)
     model_value = str(get_config_value("whisper_model_size", default_model) or default_model)
@@ -490,8 +528,13 @@ def _current_model_status() -> dict:
         "model_state": "missing",
         "model_message": "模型尚未配置",
         "alignment_model": "",
+        "alignment_model_id": "",
+        "alignment_strategy": "auto",
+        "alignment_language": "",
+        "alignment_language_name": "",
         "alignment_path": "",
         "alignment_ready": False,
+        "alignment_supported": True,
         "platform_supported": True,
         "runtime_ready": True,
         "testable": True,
@@ -524,14 +567,23 @@ def _current_model_status() -> dict:
                 and importlib.util.find_spec("faster_whisper") is not None
             )
         platform_supported = uses_mlx or platform.system() in {"Windows", "Linux"}
-        align_model = str(
+        alignment_strategy = str(get_config_value("whisperx_alignment_strategy", "auto") or "auto")
+        source_language = normalize_alignment_language(
+            str(get_config_value("source_language", "auto") or "auto")
+        )
+        configured_align_model = str(
             get_config_value("whisperx_align_model", "WAV2VEC2_ASR_LARGE_LV60K_960H") or ""
         )
-        align_info = next(
-            (info for info in WHISPERX_MODELS.values() if info["align_model"] == align_model),
-            None,
-        )
-        align_path = models_dir / align_info["filename"] if align_info else Path()
+        if alignment_strategy == "manual":
+            align_spec = next(
+                (spec for spec in ALIGNMENT_MODELS if spec.model_name == configured_align_model),
+                None,
+            )
+        elif source_language and source_language != "auto":
+            align_spec = alignment_model_for_language(source_language)
+        else:
+            align_spec = None
+        align_path = _alignment_model_path(align_spec.id, models_dir) if align_spec else Path()
         status.update(
             {
                 "model_value": model_value,
@@ -552,9 +604,24 @@ def _current_model_status() -> dict:
                     if local_ready
                     else "首次测试或转录时将自动下载"
                 ),
-                "alignment_model": align_model or "按语言自动选择",
-                "alignment_path": str(align_path) if align_info else "",
-                "alignment_ready": bool(align_info and align_path.is_file()),
+                "alignment_model": (
+                    align_spec.model_name
+                    if align_spec
+                    else configured_align_model
+                    if alignment_strategy == "manual"
+                    else "按语言自动选择"
+                ),
+                "alignment_model_id": align_spec.id if align_spec else "",
+                "alignment_strategy": alignment_strategy,
+                "alignment_language": align_spec.language if align_spec else source_language,
+                "alignment_language_name": align_spec.language_name if align_spec else "",
+                "alignment_path": str(align_path) if align_spec else "",
+                "alignment_ready": bool(
+                    align_spec and _alignment_model_ready(align_spec.id, models_dir)
+                ),
+                "alignment_supported": bool(
+                    align_spec or alignment_strategy == "manual" or source_language == "auto"
+                ),
                 "platform_supported": platform_supported,
                 "runtime_ready": runtime_ready,
                 "testable": platform_supported and runtime_ready,
@@ -690,7 +757,11 @@ async def list_whisper_models():
 
     from app.api.config import get_config_value
 
-    default_engine = "whisperx" if platform.system() == "Darwin" and platform.machine() == "arm64" else "whisper_cpp"
+    default_engine = (
+        "whisperx"
+        if platform.system() == "Darwin" and platform.machine() == "arm64"
+        else "whisper_cpp"
+    )
     selected_engine = str(get_config_value("transcribe_model", default_engine) or default_engine)
     selected_model = str(get_config_value("whisper_model_size", "large-v3") or "large-v3")
     if selected_model == "mlx-large-v3":
@@ -702,6 +773,10 @@ async def list_whisper_models():
         else selected_model
     )
     selected_align = str(get_config_value("whisperx_align_model", "") or "")
+    alignment_strategy = str(get_config_value("whisperx_alignment_strategy", "auto") or "auto")
+    selected_language = normalize_alignment_language(
+        str(get_config_value("source_language", "auto") or "auto")
+    )
     selected_diarization = str(get_config_value("speaker_diarization", "off") or "off")
     result = []
     for model_id, info in WHISPER_CPP_MODELS.items():
@@ -742,16 +817,15 @@ async def list_whisper_models():
                 "downloaded": local_ready,
                 "downloadable": False,
                 "path": str(model_path) if local_ready else "",
-                "resolved_model": resolved if uses_mlx and local_ready else repo if uses_mlx else model_value,
-                "selected": selected_engine == "whisperx" and (
-                    selected_model == model_value or selected_resolved == resolved
-                ),
+                "resolved_model": resolved
+                if uses_mlx and local_ready
+                else repo
+                if uses_mlx
+                else model_value,
+                "selected": selected_engine == "whisperx"
+                and (selected_model == model_value or selected_resolved == resolved),
                 "state": "ready" if local_ready else "on_demand",
-                "detail": (
-                    "本地模型已验证"
-                    if local_ready
-                    else "首次测试或转录时自动下载"
-                ),
+                "detail": ("本地模型已验证" if local_ready else "首次测试或转录时自动下载"),
             }
         )
     for model_id, info in FASTER_WHISPER_MODELS.items():
@@ -769,14 +843,22 @@ async def list_whisper_models():
                 "downloadable": True,
                 "path": str(model_path),
                 "value": model_value,
-                "selected": selected_engine == "faster_whisper"
-                and selected_model == model_value,
+                "selected": selected_engine == "faster_whisper" and selected_model == model_value,
                 "state": "ready" if ready else "missing",
                 "detail": "本地 CTranslate2 模型" if ready else "需要下载",
             }
         )
     for model_id, info in WHISPERX_MODELS.items():
-        model_path = models_dir / info["filename"]
+        model_path = _alignment_model_path(model_id, models_dir)
+        ready = _alignment_model_ready(model_id, models_dir)
+        selected = selected_engine == "whisperx" and (
+            (alignment_strategy == "manual" and selected_align == info["align_model"])
+            or (
+                alignment_strategy == "auto"
+                and selected_language != "auto"
+                and selected_language == info["language"]
+            )
+        )
         result.append(
             {
                 "id": model_id,
@@ -784,13 +866,21 @@ async def list_whisper_models():
                 "category": info["category"],
                 "type": info["type"],
                 "size": info["size"],
-                "downloaded": model_path.exists(),
+                "downloaded": ready,
                 "downloadable": True,
                 "path": str(model_path),
                 "align_model": info["align_model"],
                 "value": info["align_model"],
-                "selected": selected_engine == "whisperx" and selected_align == info["align_model"],
-                "state": "ready" if model_path.exists() else "missing",
+                "selected": selected,
+                "state": "ready" if ready else "missing",
+                "detail": (
+                    f"{info['language_name']} · "
+                    f"{'TorchAudio' if info['source'] == 'torchaudio' else 'Hugging Face'}"
+                ),
+                "language": info["language"],
+                "language_name": info["language_name"],
+                "source": info["source"],
+                "recommended": True,
             }
         )
     for model_id, info in DIARIZATION_MODELS.items():
@@ -829,7 +919,7 @@ async def download_whisper_model(req: DownloadModelRequest):
         model_path = models_dir / f"ggml-{req.model_id}.bin"
     elif req.model_id in WHISPERX_MODELS:
         models_dir = _get_models_dir()
-        model_path = models_dir / WHISPERX_MODELS[req.model_id]["filename"]
+        model_path = _alignment_model_path(req.model_id, models_dir)
     elif req.model_id in DIARIZATION_MODELS:
         models_dir = _get_models_dir()
         model_path = models_dir / DIARIZATION_MODELS[req.model_id]["dirname"]
@@ -850,6 +940,8 @@ async def download_whisper_model(req: DownloadModelRequest):
         model_ready = is_diarization_model_dir(model_path)
     elif req.model_id in FASTER_WHISPER_MODELS:
         model_ready = is_faster_whisper_model_dir(model_path)
+    elif req.model_id in WHISPERX_MODELS:
+        model_ready = _alignment_model_ready(req.model_id, models_dir)
     else:
         model_ready = model_path.exists()
     if model_ready:
@@ -871,6 +963,9 @@ async def _download_model(task_id: str, model_id: str, dest: Path):
     if model_id in FASTER_WHISPER_MODELS:
         await _download_faster_whisper_model(task_id, model_id, dest)
         return
+    if model_id in WHISPERX_MODELS and WHISPERX_MODELS[model_id]["source"] == "huggingface":
+        await _download_huggingface_alignment_model(task_id, model_id)
+        return
 
     import httpx
 
@@ -886,8 +981,7 @@ async def _download_model(task_id: str, model_id: str, dest: Path):
         "large-v1": 4 * 1024**3,
         "large-v2": 4 * 1024**3,
         "large-v3": 4 * 1024**3,
-        "whisperx-align-en-large": 2 * 1024**3,
-    }[model_id]
+    }.get(model_id, 5 * 1024**3)
     tmp_dest = dest.with_name(f".{dest.name}.{task_id}.part")
     download_lock = _model_download_locks.setdefault(str(dest), asyncio.Lock())
     try:
@@ -917,9 +1011,7 @@ async def _download_model(task_id: str, model_id: str, dest: Path):
                                 pct = min(99, int(downloaded / total * 100))
                                 if pct > last_pct:
                                     last_pct = pct
-                                    task_manager.update_progress(
-                                        task_id, pct, f"下载中... {pct}%"
-                                    )
+                                    task_manager.update_progress(task_id, pct, f"下载中... {pct}%")
 
             if downloaded == 0 or (total > 0 and downloaded != total):
                 raise RuntimeError("Model download was empty or incomplete")
@@ -933,6 +1025,42 @@ async def _download_model(task_id: str, model_id: str, dest: Path):
         tmp_dest.unlink(missing_ok=True)
         logger.exception("Model download failed for %s", model_id)
         task_manager.fail_task(task_id, str(e))
+    finally:
+        if not download_lock.locked():
+            _model_download_locks.pop(str(dest), None)
+
+
+async def _download_huggingface_alignment_model(task_id: str, model_id: str):
+    """Download an alignment model into the cache consumed by WhisperX."""
+    spec = ALIGNMENT_MODEL_BY_ID[model_id]
+    models_dir = _get_models_dir()
+    dest = _alignment_model_path(model_id, models_dir)
+    download_lock = _model_download_locks.setdefault(str(dest), asyncio.Lock())
+    try:
+        async with download_lock:
+            if _alignment_model_ready(model_id, models_dir):
+                task_manager.complete_task(task_id, {"path": str(dest)})
+                return
+            task_manager.update_progress(task_id, 5, f"正在下载{spec.language_name}词级对齐模型...")
+
+            def _snapshot_download():
+                from huggingface_hub import snapshot_download
+
+                return snapshot_download(
+                    repo_id=spec.model_name,
+                    cache_dir=str(models_dir),
+                )
+
+            await run_blocking(_snapshot_download)
+            task_manager.update_progress(task_id, 95, "正在校验模型文件...")
+            if not _alignment_model_ready(model_id, models_dir):
+                raise RuntimeError("下载完成但模型配置或权重文件不完整")
+            task_manager.complete_task(task_id, {"path": str(dest)})
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.exception("Alignment model download failed for %s", spec.model_name)
+        task_manager.fail_task(task_id, f"{spec.language_name}对齐模型下载失败：{exc}")
     finally:
         if not download_lock.locked():
             _model_download_locks.pop(str(dest), None)
@@ -1031,8 +1159,7 @@ async def _download_diarization_model(task_id: str, model_id: str, dest: Path):
         logger.exception("Diarization model download failed")
         task_manager.fail_task(
             task_id,
-            "说话人模型下载失败。请确认已接受 Community-1 条款且 Token 具有读取权限："
-            + str(exc),
+            "说话人模型下载失败。请确认已接受 Community-1 条款且 Token 具有读取权限：" + str(exc),
         )
     finally:
         if not download_lock.locked():

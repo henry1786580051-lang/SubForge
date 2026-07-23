@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Icon } from "@iconify/react";
 import { useAppStore } from "@/store/appStore";
 import { configApi, transcribeApi, tasksApi } from "@/lib/api";
@@ -60,16 +60,6 @@ const MLX_WHISPER_MODELS = [
   ...FASTER_WHISPER_MODELS.map((model) => ({ ...model, onDemand: true })),
 ];
 
-const WHISPERX_ALIGNMENT_MODELS = [
-  {
-    id: "whisperx-align-en-large",
-    name: "English Large LV60K",
-    size: "1.18GB",
-    desc: "英文 forced alignment 模型，用于 WhisperX 词级时间轴",
-    alignModel: "WAV2VEC2_ASR_LARGE_LV60K_960H",
-  },
-];
-
 export function SettingsPanel() {
   const { setActiveView } = useAppStore();
   const [settings, setSettings] = useState<Record<string, unknown>>({});
@@ -79,12 +69,13 @@ export function SettingsPanel() {
   const [selectedProvider, setSelectedProvider] = useState("deepseek");
   const [activeSettingsView, setActiveSettingsView] = useState<SettingsView>("llm");
   const [downloadingModel, setDownloadingModel] = useState<string | null>(null);
-  const [downloadedModels, setDownloadedModels] = useState<Set<string>>(new Set());
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
   const [asrModels, setAsrModels] = useState<AsrModelInfo[]>([]);
   const [modelStatus, setModelStatus] = useState<AsrModelStatus | null>(null);
   const [testingAsrModel, setTestingAsrModel] = useState(false);
   const [asrTestResult, setAsrTestResult] = useState<AsrModelTestResult | null>(null);
+  const [alignmentSearch, setAlignmentSearch] = useState("");
+  const [alignmentFilter, setAlignmentFilter] = useState<"recommended" | "installed" | "all">("recommended");
   const downloadPollsRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
 
   useEffect(() => () => {
@@ -108,7 +99,6 @@ export function SettingsPanel() {
       transcribeApi.modelStatus(),
     ]);
     setAsrModels(models);
-    setDownloadedModels(new Set(models.filter((model) => model.downloaded).map((model) => model.id)));
     setModelStatus(status);
   };
 
@@ -125,6 +115,9 @@ export function SettingsPanel() {
       if (data.translator !== undefined) storeUpdates.translator = data.translator as string;
       if (data.llm_model !== undefined) storeUpdates.llmModel = data.llm_model as string;
       if (data.whisper_model_size !== undefined) storeUpdates.whisperModelSize = data.whisper_model_size as string;
+      if (data.whisperx_alignment_strategy !== undefined) {
+        storeUpdates.whisperxAlignmentStrategy = data.whisperx_alignment_strategy as "auto" | "manual";
+      }
       if (data.whisperx_align_model !== undefined) storeUpdates.whisperxAlignModel = data.whisperx_align_model as string;
       if (data.whisperx_batch_size !== undefined) storeUpdates.whisperxBatchSize = Number(data.whisperx_batch_size || 4);
       if (data.whisperx_supported !== undefined) storeUpdates.whisperxSupported = !!data.whisperx_supported;
@@ -175,6 +168,7 @@ export function SettingsPanel() {
         need_reflect: "needReflect",
         custom_prompt: "customPrompt",
         whisper_model_size: "whisperModelSize",
+        whisperx_alignment_strategy: "whisperxAlignmentStrategy",
         whisperx_align_model: "whisperxAlignModel",
         whisperx_batch_size: "whisperxBatchSize",
         enable_audio_enhancement: "enableAudioEnhancement",
@@ -185,7 +179,7 @@ export function SettingsPanel() {
       if (mappedKey) {
         useAppStore.getState().setConfig({ [mappedKey]: value });
       }
-      if (["transcribe_model", "whisper_model_size", "whisperx_align_model", "whisper_model_dir", "whisper_cpp_path"].includes(key)) {
+      if (["transcribe_model", "whisper_model_size", "whisperx_alignment_strategy", "whisperx_align_model", "source_language", "whisper_model_dir", "whisper_cpp_path"].includes(key)) {
         setAsrTestResult(null);
         await refreshAsrState();
       }
@@ -254,7 +248,6 @@ export function SettingsPanel() {
     try {
       const result = await transcribeApi.downloadModel(modelId);
       if (result.status === "already_exists") {
-        setDownloadedModels((prev) => new Set([...prev, modelId]));
         setDownloadingModel(null);
         await refreshAsrState();
         return;
@@ -268,7 +261,6 @@ export function SettingsPanel() {
             if (task.status === "completed") {
               clearInterval(downloadPollsRef.current.get(modelId)!);
               downloadPollsRef.current.delete(modelId);
-              setDownloadedModels((prev) => new Set([...prev, modelId]));
               setDownloadingModel(null);
               setDownloadProgress((prev) => { const n = { ...prev }; delete n[modelId]; return n; });
               await refreshAsrState();
@@ -293,13 +285,36 @@ export function SettingsPanel() {
     }
   };
 
+  const alignmentModels = useMemo(
+    () => asrModels.filter((model) => model.type === "alignment"),
+    [asrModels]
+  );
+  const installedAlignmentCount = alignmentModels.filter((model) => model.downloaded).length;
+  const filteredAlignmentModels = useMemo(() => {
+    const query = alignmentSearch.trim().toLowerCase();
+    return alignmentModels.filter((model) => {
+      if (alignmentFilter === "installed" && !model.downloaded) return false;
+      if (alignmentFilter === "recommended") {
+        const configuredLanguage = String(settings.source_language || "auto");
+        const sourceLanguage = configuredLanguage === "nb" ? "no" : configuredLanguage;
+        if (sourceLanguage !== "auto" && model.language !== sourceLanguage) return false;
+        if (
+          sourceLanguage === "auto"
+          && !model.downloaded
+          && !["en", "zh", "ja", "ko"].includes(model.language || "")
+        ) return false;
+      }
+      if (!query) return true;
+      return [model.language_name, model.language, model.name, model.align_model]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(query));
+    });
+  }, [alignmentFilter, alignmentModels, alignmentSearch, settings.source_language]);
+
   if (loading) return <div className="flex items-center justify-center h-full"><div className="w-6 h-6 rounded-full border-2 border-accent/20 border-t-accent animate-spin" /></div>;
 
   const currentProvider = LLM_PROVIDERS.find((p) => p.id === selectedProvider);
   const effectiveWhisperModel = modelStatus?.model_value || (settings.whisper_model_size as string) || "large-v3";
-  const effectiveAlignmentName = WHISPERX_ALIGNMENT_MODELS.find(
-    (model) => model.alignModel === modelStatus?.alignment_model
-  )?.name;
   const activeViewMeta = SETTINGS_VIEWS.find((view) => view.id === activeSettingsView) || SETTINGS_VIEWS[0];
 
   return (
@@ -508,14 +523,18 @@ export function SettingsPanel() {
                   </div>
                   <p className="mt-1.5 text-[14px] font-semibold text-text-primary">
                     {modelStatus.engine_name} · {modelStatus.model_name}
-                    {modelStatus.engine === "whisperx" && modelStatus.alignment_model
-                      ? ` · ${effectiveAlignmentName || modelStatus.alignment_model}`
-                      : ""}
                   </p>
                   <p className="mt-1 text-[10px] leading-4 text-text-muted">
                     {modelStatus.model_message}
                     {hwInfo && hwInfo.chip !== "Unknown" ? ` · ${hwInfo.chip} · ${hwInfo.gpu}` : ""}
                   </p>
+                  {modelStatus.engine === "whisperx" && (
+                    <p className="mt-1 text-[10px] leading-4 text-text-secondary">
+                      词级对齐：{modelStatus.alignment_strategy === "auto" ? "按源语言自动匹配" : "手动指定"}
+                      {modelStatus.alignment_language_name ? ` · ${modelStatus.alignment_language_name}` : ""}
+                      {modelStatus.alignment_language === "auto" ? " · 识别语言后加载" : ""}
+                    </p>
+                  )}
                 </div>
                 <button
                   onClick={async () => {
@@ -702,14 +721,6 @@ export function SettingsPanel() {
                 onBlur={(e) => handleSave("whisper_model_dir", e.target.value)}
                 placeholder="~/SubForge/models" className="input-field" />
             </SettingsField>
-            {(settings.transcribe_model as string) === "whisperx" && (
-              <SettingsField label="Forced alignment 模型" description="英文推荐 WAV2VEC2_ASR_LARGE_LV60K_960H；留空则按语言自动选择">
-                <input type="text" value={(settings.whisperx_align_model as string) || "WAV2VEC2_ASR_LARGE_LV60K_960H"}
-                  onChange={(e) => setSettings((prev) => ({ ...prev, whisperx_align_model: e.target.value }))}
-                  onBlur={(e) => handleSave("whisperx_align_model", e.target.value)}
-                  placeholder="WAV2VEC2_ASR_LARGE_LV60K_960H" className="input-field" />
-              </SettingsField>
-            )}
               </div>
             </details>
 
@@ -777,52 +788,175 @@ export function SettingsPanel() {
                 })}
                 </div>
               </details>
-                {(settings.transcribe_model as string) === "whisperx" && (
-                  <div className="pt-2 mt-2 border-t border-border space-y-5">
-                    <div className="space-y-2">
-                    <div>
-                      <p className="text-[12px] font-semibold text-text-secondary">词级时间轴对齐</p>
-                      <p className="mt-0.5 text-[10px] text-text-muted">使用独立对齐模型，提高单词起止时间精度</p>
-                    </div>
-                    {WHISPERX_ALIGNMENT_MODELS.map((m) => {
-                      const alignmentSelected = (settings.whisperx_align_model as string) === m.alignModel;
-                      const alignmentReady = downloadedModels.has(m.id);
-                      return (
-                      <div key={m.id} className={`flex items-center justify-between p-3 rounded-lg border ${alignmentSelected ? "border-accent/40 bg-accent-dim/40" : "border-border bg-[rgba(0,0,0,0.01)]"}`}>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="text-[12px] font-medium text-text-primary">{m.name}</span>
-                            <span className="text-[10px] text-text-muted font-mono">{m.size}</span>
-                          </div>
-                          <span className="text-[10px] text-text-muted">{m.desc}</span>
-                        </div>
-                        <button onClick={async () => {
-                          if (alignmentSelected) return;
-                          await handleSave("whisperx_align_model", m.alignModel);
-                          if (!alignmentReady) await handleDownloadModel(m.id);
-                        }}
-                          disabled={downloadingModel === m.id || alignmentSelected}
-                          className={`px-3 py-1.5 text-[11px] rounded-md transition-all font-medium disabled:opacity-50 ${
-                            alignmentSelected
-                              ? "bg-accent text-white cursor-default"
-                              : alignmentReady
-                              ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                              : "bg-accent-dim text-accent hover:bg-accent/15"
-                          }`}>
-                          {alignmentSelected ? "当前使用" : alignmentReady ? "使用" : downloadingModel === m.id ? (
-                            <span className="flex items-center gap-1.5">
-                              <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" strokeDasharray="42 21" strokeLinecap="round" /></svg>
-                              {downloadProgress[m.id] != null ? `${downloadProgress[m.id]}%` : "下载中"}
-                            </span>
-                          ) : "下载并使用"}
-                        </button>
-                      </div>
-                    )})}
-                    </div>
-
-                  </div>
-                )}
             </SettingsField>
+            {(settings.transcribe_model as string) === "whisperx" && (
+              <SettingsField
+                label="词级时间轴模型"
+                description="默认按源语言自动匹配；只需下载经常使用的语言"
+              >
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-1 rounded-lg bg-background p-1 ring-1 ring-border">
+                    {([
+                      ["auto", "自动匹配", "推荐"],
+                      ["manual", "手动指定", "高级"],
+                    ] as const).map(([value, label, hint]) => {
+                      const active = (settings.whisperx_alignment_strategy || "auto") === value;
+                      return (
+                        <button
+                          key={value}
+                          onClick={() => void handleSave("whisperx_alignment_strategy", value)}
+                          className={`flex items-center justify-center gap-2 rounded-md px-3 py-2 text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 ${
+                            active
+                              ? "bg-surface text-text-primary shadow-sm"
+                              : "text-text-muted hover:text-text-secondary"
+                          }`}
+                        >
+                          {label}
+                          <span className={`text-[9px] font-medium ${active ? "text-accent" : "text-text-muted"}`}>
+                            {hint}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <details className="group overflow-hidden rounded-lg border border-border bg-background/60">
+                    <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-4 py-3.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/30">
+                      <span className="flex min-w-0 items-center gap-3">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-accent-dim text-accent">
+                          <Icon icon="solar:align-bottom-linear" className="h-4 w-4" />
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block text-[12px] font-semibold text-text-primary">
+                            {modelStatus?.alignment_strategy === "manual"
+                              ? modelStatus.alignment_language_name || "自定义对齐模型"
+                              : modelStatus?.alignment_language_name
+                                ? `${modelStatus.alignment_language_name}自动匹配`
+                                : "识别语言后自动匹配"}
+                          </span>
+                          <span className="mt-0.5 block text-[10px] text-text-muted">
+                            已安装 {installedAlignmentCount} / {alignmentModels.length} 种语言
+                          </span>
+                        </span>
+                      </span>
+                      <span className="flex shrink-0 items-center gap-2 text-[10px] font-medium text-accent">
+                        管理模型
+                        <Icon icon="solar:alt-arrow-down-linear" className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
+                      </span>
+                    </summary>
+
+                    <div className="border-t border-border p-3">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex rounded-md bg-surface-hover p-0.5">
+                          {([
+                            ["recommended", "推荐"],
+                            ["installed", "已安装"],
+                            ["all", "全部"],
+                          ] as const).map(([value, label]) => (
+                            <button
+                              key={value}
+                              onClick={() => setAlignmentFilter(value)}
+                              className={`rounded px-2.5 py-1 text-[10px] font-medium transition-colors ${
+                                alignmentFilter === value
+                                  ? "bg-surface text-text-primary shadow-sm"
+                                  : "text-text-muted hover:text-text-secondary"
+                              }`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                        <label className="flex min-w-0 items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5 focus-within:border-accent/50 sm:w-56">
+                          <Icon icon="solar:magnifer-linear" className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                          <input
+                            value={alignmentSearch}
+                            onChange={(event) => setAlignmentSearch(event.target.value)}
+                            placeholder="搜索语言或模型"
+                            className="min-w-0 flex-1 bg-transparent text-[10px] text-text-primary outline-none placeholder:text-text-muted"
+                          />
+                        </label>
+                      </div>
+
+                      <div className="mt-3 max-h-72 space-y-1.5 overflow-y-auto pr-1">
+                        {filteredAlignmentModels.map((model) => {
+                          const manual = (settings.whisperx_alignment_strategy || "auto") === "manual";
+                          const selected = manual && (settings.whisperx_align_model as string) === model.align_model;
+                          const downloading = downloadingModel === model.id;
+                          return (
+                            <div
+                              key={model.id}
+                              className={`flex items-center justify-between gap-3 rounded-md px-3 py-2.5 transition-colors ${
+                                selected ? "bg-accent-dim/60 ring-1 ring-accent/25" : "bg-surface-hover/65 hover:bg-surface-hover"
+                              }`}
+                            >
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                  <span className="text-[11px] font-semibold text-text-primary">
+                                    {model.language_name || model.name}
+                                  </span>
+                                  <span className="font-mono text-[9px] uppercase text-text-muted">{model.language}</span>
+                                  {model.downloaded && (
+                                    <span className="text-[9px] font-medium text-emerald-600">本地可用</span>
+                                  )}
+                                </div>
+                                <p className="mt-0.5 max-w-xl truncate text-[9px] text-text-muted" title={model.align_model}>
+                                  {model.align_model} · {model.source === "torchaudio" ? "TorchAudio" : "Hugging Face"}
+                                  {model.size ? ` · ${model.size}` : ""}
+                                </p>
+                              </div>
+                              <button
+                                onClick={async () => {
+                                  if (selected || downloading) return;
+                                  if (manual) await handleSave("whisperx_align_model", model.align_model || "");
+                                  if (!model.downloaded) await handleDownloadModel(model.id);
+                                }}
+                                disabled={selected || downloading}
+                                className={`shrink-0 rounded-md px-2.5 py-1.5 text-[10px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 disabled:cursor-default ${
+                                  selected
+                                    ? "bg-accent text-white"
+                                    : model.downloaded && manual
+                                      ? "bg-surface text-text-secondary ring-1 ring-border hover:text-accent"
+                                      : model.downloaded
+                                        ? "text-emerald-700"
+                                        : "bg-accent text-white hover:bg-accent-hover"
+                                }`}
+                              >
+                                {selected
+                                  ? "当前使用"
+                                  : downloading
+                                    ? `${downloadProgress[model.id] ?? 0}%`
+                                    : model.downloaded
+                                      ? manual ? "使用" : "已安装"
+                                      : "下载"}
+                              </button>
+                            </div>
+                          );
+                        })}
+                        {filteredAlignmentModels.length === 0 && (
+                          <div className="px-3 py-8 text-center text-[10px] text-text-muted">
+                            {alignmentFilter === "installed" ? "尚未安装对齐模型" : "没有匹配的语言模型"}
+                          </div>
+                        )}
+                      </div>
+
+                      {(settings.whisperx_alignment_strategy || "auto") === "manual" && (
+                        <div className="mt-3 border-t border-border pt-3">
+                          <label className="text-[10px] font-medium text-text-secondary">自定义模型 ID</label>
+                          <input
+                            type="text"
+                            value={(settings.whisperx_align_model as string) || ""}
+                            onChange={(event) => setSettings((prev) => ({ ...prev, whisperx_align_model: event.target.value }))}
+                            onBlur={(event) => void handleSave("whisperx_align_model", event.target.value.trim())}
+                            placeholder="organization/wav2vec2-model"
+                            className="input-field mt-1.5"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </details>
+                </div>
+              </SettingsField>
+            )}
             </>
           )}
 
