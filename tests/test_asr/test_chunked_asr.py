@@ -285,6 +285,32 @@ class TestAudioSplitting:
 class TestConcurrentTranscription:
     """测试并发转录逻辑"""
 
+    def test_single_worker_runs_on_calling_thread(self, monkeypatch):
+        """Single-worker CUDA jobs must not tear down a temporary worker thread."""
+        audio_input = create_test_audio_file(600)
+        try:
+            def fail_if_executor_is_created(*args, **kwargs):
+                raise AssertionError("single-worker path must not create ThreadPoolExecutor")
+
+            monkeypatch.setattr(
+                "subforge.core.asr.chunked_asr.ThreadPoolExecutor",
+                fail_if_executor_is_created,
+            )
+            MockASR.global_run_count = 0
+            chunked = ChunkedASR(
+                asr_class=MockASR,
+                audio_path=audio_input,
+                chunk_length=480,
+                chunk_concurrency=1,
+            )
+
+            result = chunked.run()
+
+            assert MockASR.global_run_count == 2
+            assert result.segments
+        finally:
+            Path(audio_input).unlink()
+
     def test_concurrency_3_workers(self):
         """测试 3 个并发 worker"""
         # 20分钟 -> 3块

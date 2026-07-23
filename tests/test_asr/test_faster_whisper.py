@@ -117,3 +117,30 @@ def test_direct_runtime_returns_requested_word_timestamps(tmp_path, monkeypatch)
     assert result.is_word_timestamp()
     assert calls["transcribe"]["word_timestamps"] is True
     assert calls["init"]["local_files_only"] is True
+
+
+def test_packaged_windows_cuda_routes_through_isolated_worker(tmp_path, monkeypatch):
+    model_dir = tmp_path / "faster-whisper-base"
+    _write_model(model_dir)
+    audio_path = tmp_path / "audio.wav"
+    _write_audio(audio_path)
+    monkeypatch.setattr(module, "is_faster_whisper_cuda_available", lambda: True)
+    monkeypatch.setattr(module.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(module.sys, "frozen", True, raising=False)
+    monkeypatch.delenv(module._FASTER_WORKER_FLAG, raising=False)
+    expected = [{"text": "isolated", "start": 0.0, "end": 1.0}]
+    calls = []
+
+    def fake_worker(self, callback=None):
+        calls.append(callback)
+        return expected
+
+    monkeypatch.setattr(module.FasterWhisperASR, "_run_in_packaged_worker", fake_worker)
+    asr = module.FasterWhisperASR(
+        str(audio_path),
+        whisper_model=str(model_dir),
+        device="cuda",
+    )
+
+    assert asr._run() == expected
+    assert calls == [None]

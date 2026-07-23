@@ -270,6 +270,11 @@ def main():
 if __name__ == "__main__":
     multiprocessing.freeze_support()
 
+    if os.environ.get("SUBFORGE_FASTER_WHISPER_WORKER") == "1":
+        from subforge.core.asr.faster_whisper import run_packaged_faster_whisper_worker
+
+        run_packaged_faster_whisper_worker()
+
     def finish_packaged_check(exit_code: int) -> None:
         """Exit frozen self-checks without waiting on third-party worker threads."""
         for stream in (sys.stdout, sys.stderr):

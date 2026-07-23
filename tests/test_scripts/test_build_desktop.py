@@ -71,6 +71,8 @@ def test_windows_bundle_requires_faster_whisper_vad_asset(tmp_path, monkeypatch)
         data_root / "resource" / "bin" / "ffmpeg.exe",
         data_root / "resource" / "bin" / "ffprobe.exe",
         data_root / "resource" / "bin" / "whisper-cli.exe",
+        data_root / "torch" / "lib" / "cudnn64_9.dll",
+        data_root / "torch" / "lib" / "libiomp5md.dll",
     ]
     for path in required:
         if path.suffix:
@@ -174,3 +176,36 @@ def test_windows_cuda_runtime_rejects_incomplete_source(tmp_path, monkeypatch):
 
     with pytest.raises(RuntimeError, match="Incomplete SUBFORGE_CUDA_RUNTIME_DIR"):
         build_desktop.inject_windows_cuda_runtime()
+
+
+def test_windows_bundle_removes_conflicting_ctranslate2_runtimes(tmp_path, monkeypatch):
+    dist_dir = tmp_path / "dist"
+    data_root = dist_dir / "SubForge" / "_internal"
+    torch_lib = data_root / "torch" / "lib"
+    ctranslate2 = data_root / "ctranslate2"
+    torch_lib.mkdir(parents=True)
+    ctranslate2.mkdir(parents=True)
+    for name in ("cudnn64_9.dll", "libiomp5md.dll"):
+        (torch_lib / name).write_bytes(b"shared")
+        (ctranslate2 / name).write_bytes(b"conflicting")
+
+    monkeypatch.setattr(build_desktop, "DIST_DIR", dist_dir)
+    monkeypatch.setattr(build_desktop.platform, "system", lambda: "Windows")
+
+    build_desktop.dedupe_windows_native_ml_runtime()
+
+    assert all((torch_lib / name).is_file() for name in ("cudnn64_9.dll", "libiomp5md.dll"))
+    assert all(
+        not (ctranslate2 / name).exists()
+        for name in ("cudnn64_9.dll", "libiomp5md.dll")
+    )
+
+
+def test_windows_bundle_rejects_missing_shared_ml_runtime(tmp_path, monkeypatch):
+    dist_dir = tmp_path / "dist"
+    (dist_dir / "SubForge" / "_internal" / "torch" / "lib").mkdir(parents=True)
+    monkeypatch.setattr(build_desktop, "DIST_DIR", dist_dir)
+    monkeypatch.setattr(build_desktop.platform, "system", lambda: "Windows")
+
+    with pytest.raises(RuntimeError, match="Missing shared Windows ML runtime"):
+        build_desktop.dedupe_windows_native_ml_runtime()

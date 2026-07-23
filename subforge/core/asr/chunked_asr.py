@@ -211,6 +211,18 @@ class ChunkedASR:
             return idx, asr_data
 
         # 使用 ThreadPoolExecutor 并发转录
+        # Avoid a throwaway worker thread for the single-worker path. On Windows,
+        # CTranslate2's CUDA allocator stores thread-local state and can raise a
+        # native exception while that worker thread is being torn down. Running
+        # sequentially on the caller's long-lived task thread also avoids the
+        # pointless executor overhead without changing result ordering.
+        if self.chunk_concurrency == 1:
+            for i, (chunk_bytes, offset) in enumerate(chunks):
+                idx, asr_data = transcribe_single_chunk(i, chunk_bytes, offset)
+                results[idx] = asr_data
+            logger.debug(f"All {total_chunks} chunks transcription complete")
+            return [r for r in results if r is not None]
+
         with ThreadPoolExecutor(max_workers=self.chunk_concurrency) as executor:
             futures = {
                 executor.submit(transcribe_single_chunk, i, chunk_bytes, offset): i
