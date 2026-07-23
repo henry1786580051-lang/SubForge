@@ -471,7 +471,15 @@ def _verify_data_root(data_root: Path, label: str) -> None:
         data_root / "resource" / "bin" / ("ffprobe.exe" if platform.system() == "Windows" else "ffprobe"),
     ]
     if platform.system() == "Windows":
-        required.append(data_root / "resource" / "bin" / "whisper-cli.exe")
+        required.extend(
+            [
+                data_root / "resource" / "bin" / "whisper-cli.exe",
+                data_root
+                / "faster_whisper"
+                / "assets"
+                / "silero_vad_v6.onnx",
+            ]
+        )
     if _requires_mlx_metallib():
         required.extend(
             [

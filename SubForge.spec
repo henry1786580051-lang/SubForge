@@ -37,6 +37,13 @@ if os.name == 'nt':
             optional_binaries += collect_dynamic_libs(runtime_pkg)
         except Exception:
             pass
+    # FasterWhisper loads its Silero VAD ONNX model at transcription time.
+    # Import-only smoke tests do not touch this asset, so collect the package
+    # data explicitly instead of relying on PyInstaller module discovery.
+    try:
+        optional_datas += collect_data_files('faster_whisper', include_py_files=False)
+    except Exception:
+        pass
 
 whisperx_runtime_excludes = [] if os.name == 'nt' else [
     'whisperx.asr', 'whisperx.transcribe', 'whisperx.vads',
