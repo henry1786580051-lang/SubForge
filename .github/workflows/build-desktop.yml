@@ -34,7 +34,7 @@ jobs:
   desktop:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -107,7 +107,8 @@ jobs:
           choco install innosetup --no-progress -y
           $version = (uv run --no-sync python -c "from subforge.config import VERSION; print(VERSION)").Trim()
           $suffix = if ($env:SUBFORGE_BUILD_FLAVOR) { "-$($env:SUBFORGE_BUILD_FLAVOR)" } else { "" }
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" "/DMyAppSuffix=$suffix" "scripts\windows_installer.iss"
+          $compression = if ($env:SUBFORGE_BUILD_FLAVOR -eq "cuda") { "lzma2/normal" } else { "lzma2/ultra64" }
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" "/DMyAppSuffix=$suffix" "/DMyCompression=$compression" "scripts\windows_installer.iss"
 
       - name: Smoke test installed Windows app
         if: runner.os == 'Windows'

@@ -21,6 +21,7 @@
 - Fixed speaker identifiers appearing in translated subtitle text and dialogue meaning drifting across speaker boundaries.
 - Fixed legitimate uppercase pronouns being mistaken for protected model identifiers and standard translations such as REM being rejected.
 - Fixed Windows desktop packages missing FasterWhisper's Silero VAD asset and failing when the FFmpeg download endpoint returned a transient gateway timeout.
+- Fixed CUDA installer packaging exceeding the GitHub Actions time limit by using a large-runtime compression profile.
 - Fixed base CI importing the optional Hugging Face runtime before alignment-download tests could install their isolated test substitute.
 
 ## v1.0.10 - 2026-07-24

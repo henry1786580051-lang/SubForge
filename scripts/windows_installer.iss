@@ -4,6 +4,9 @@
 #ifndef MyAppSuffix
   #define MyAppSuffix ""
 #endif
+#ifndef MyCompression
+  #define MyCompression "lzma2/ultra64"
+#endif
 
 [Setup]
 AppId={{D86D8B72-A76B-4F5D-BF36-B6781971C703}
@@ -16,7 +19,7 @@ DefaultGroupName=SubForge
 DisableProgramGroupPage=yes
 OutputDir=..\artifacts
 OutputBaseFilename=SubForge-{#MyAppVersion}-windows-x64{#MyAppSuffix}-setup
-Compression=lzma2/ultra64
+Compression={#MyCompression}
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
