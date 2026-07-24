@@ -7,6 +7,12 @@
 #ifndef MyCompression
   #define MyCompression "lzma2/ultra64"
 #endif
+#ifndef MyDiskSpanning
+  #define MyDiskSpanning "no"
+#endif
+#ifndef MyDiskSliceSize
+  #define MyDiskSliceSize "1900000000"
+#endif
 
 [Setup]
 AppId={{D86D8B72-A76B-4F5D-BF36-B6781971C703}
@@ -21,6 +27,8 @@ OutputDir=..\artifacts
 OutputBaseFilename=SubForge-{#MyAppVersion}-windows-x64{#MyAppSuffix}-setup
 Compression={#MyCompression}
 SolidCompression=yes
+DiskSpanning={#MyDiskSpanning}
+DiskSliceSize={#MyDiskSliceSize}
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest

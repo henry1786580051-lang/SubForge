@@ -7,6 +7,7 @@
 - Added dialogue-aware subtitle translation. Anonymous speaker metadata now helps the LLM resolve replies, pronouns, ellipsis, intent, tone, and register without leaking speaker labels into final subtitles.
 - Added conservative same-speaker boundary validation for duplicated connectors and repeated Chinese conclusions, with isolated recovery that preserves valid neighboring translations.
 - Added a dedicated Windows CUDA 12.8 installer using PyTorch and Torchaudio 2.8 CUDA wheels. The standard Windows installer remains available for broader hardware compatibility.
+- CUDA release assets use an EXE plus sub-2 GB BIN volumes to stay within GitHub's per-file limit; keep all CUDA installer files in the same folder when installing.
 
 ### Changed
 

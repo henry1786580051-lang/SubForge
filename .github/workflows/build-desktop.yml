@@ -108,7 +108,8 @@ jobs:
           $version = (uv run --no-sync python -c "from subforge.config import VERSION; print(VERSION)").Trim()
           $suffix = if ($env:SUBFORGE_BUILD_FLAVOR) { "-$($env:SUBFORGE_BUILD_FLAVOR)" } else { "" }
           $compression = if ($env:SUBFORGE_BUILD_FLAVOR -eq "cuda") { "lzma2/normal" } else { "lzma2/ultra64" }
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" "/DMyAppSuffix=$suffix" "/DMyCompression=$compression" "scripts\windows_installer.iss"
+          $diskSpanning = if ($env:SUBFORGE_BUILD_FLAVOR -eq "cuda") { "yes" } else { "no" }
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" "/DMyAppSuffix=$suffix" "/DMyCompression=$compression" "/DMyDiskSpanning=$diskSpanning" "scripts\windows_installer.iss"
 
       - name: Smoke test installed Windows app
         if: runner.os == 'Windows'
@@ -126,6 +127,7 @@ jobs:
           path: |
             artifacts/*.zip
             artifacts/*-setup.exe
+            artifacts/*-setup-*.bin
           if-no-files-found: error
           retention-days: 14
 
@@ -139,5 +141,9 @@ jobs:
           gh release view "$TAG" >/dev/null 2>&1 || \
             gh release create "$TAG" --title "$TAG" --generate-notes
           if [ "$RUNNER_OS" = "Windows" ]; then
-            gh release upload "$TAG" artifacts/*-setup.exe --clobber
+            if [ "$SUBFORGE_BUILD_FLAVOR" = "cuda" ]; then
+              gh release upload "$TAG" artifacts/*-setup.exe artifacts/*-setup-*.bin --clobber
+            else
+              gh release upload "$TAG" artifacts/*-setup.exe --clobber
+            fi
           fi
