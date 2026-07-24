@@ -4,26 +4,25 @@
 
 ### Added
 
-- Added dialogue-aware subtitle translation. Anonymous speaker metadata now helps the LLM resolve replies, pronouns, ellipsis, intent, tone, and register without leaking speaker labels into final subtitles.
-- Added conservative same-speaker boundary validation for duplicated connectors and repeated Chinese conclusions, with isolated recovery that preserves valid neighboring translations.
-- Added a dedicated Windows CUDA 12.8 installer using PyTorch and Torchaudio 2.8 CUDA wheels. The standard Windows installer remains available for broader hardware compatibility.
-- CUDA release assets use an EXE plus sub-2 GB BIN volumes to stay within GitHub's per-file limit; keep all CUDA installer files in the same folder when installing.
+- Added dialogue-aware translation that uses anonymous speaker turns to improve replies, pronouns, ellipsis, intent, and tone without exposing speaker labels in final subtitles.
+- Added a Windows CUDA 12.8 build for supported NVIDIA GPUs while retaining the standard Windows installer for broader compatibility.
 
-### Changed
+### Improved
 
-- Improved multi-speaker assignment smoothing around incomplete question, subject, and continuation islands while preserving complete short interjections and genuine turn changes.
-- Improved dialogue-aware sentence grouping across hesitation pauses and stuttered continuations without merging complete replies across speaker boundaries.
-- Translation context and cache keys now include anonymous speaker turns, while single-speaker payloads retain the existing compact format.
-- Windows WhisperX now selects CTranslate2 transcription and PyTorch forced-alignment devices independently, reuses managed FasterWhisper models, and isolates packaged CUDA transcription workers for safer cancellation and failure recovery.
+- Improved multi-speaker assignment and sentence grouping around hesitation, stutter, short interjections, and genuine speaker changes.
+- Improved translation recovery for isolated mismatches and repeated phrases without rewriting valid neighboring subtitles.
+- Improved Windows WhisperX device selection, model reuse, cancellation, and worker-process recovery.
 
 ### Fixed
 
-- Fixed sparse MiniMax M3 alignment corrections repeatedly failing without a conservative per-item recovery path.
-- Fixed speaker identifiers appearing in translated subtitle text and dialogue meaning drifting across speaker boundaries.
-- Fixed legitimate uppercase pronouns being mistaken for protected model identifiers and standard translations such as REM being rejected.
-- Fixed Windows desktop packages missing FasterWhisper's Silero VAD asset and failing when the FFmpeg download endpoint returned a transient gateway timeout.
-- Fixed CUDA installer packaging exceeding the GitHub Actions time limit by using a large-runtime compression profile.
-- Fixed base CI importing the optional Hugging Face runtime before alignment-download tests could install their isolated test substitute.
+- Fixed speaker labels, duplicated phrases, and occasional dialogue meaning drift in translated subtitles.
+- Fixed MiniMax M3 partial-correction failures and false rejection of legitimate uppercase words and abbreviations.
+- Fixed missing Silero VAD assets, transient FFmpeg download failures, and optional-dependency conflicts in Windows packaging and CI.
+- Fixed oversized CUDA release packaging by publishing one installer EXE with three required BIN volumes.
+
+### Installation note
+
+- The Windows CUDA edition requires its EXE and all three matching BIN files in the same folder. See `.github/release-notes/v1.1.0.md` for the complete download instructions.
 
 ## v1.0.10 - 2026-07-24
 
