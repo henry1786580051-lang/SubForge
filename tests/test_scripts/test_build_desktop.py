@@ -89,6 +89,50 @@ def test_frontend_build_requires_explicit_skip_when_dependencies_are_missing(tmp
     build_desktop.build_frontend("1.2.3", skip=True)
 
 
+def test_static_ffmpeg_download_retries_transient_failures(tmp_path, monkeypatch):
+    attempts = []
+    delays = []
+
+    def fake_fetch(*, download_dir):
+        attempts.append(download_dir)
+        if len(attempts) < 3:
+            raise RuntimeError("temporary gateway timeout")
+        return "ffmpeg", "ffprobe"
+
+    monkeypatch.setattr(build_desktop.time, "sleep", delays.append)
+
+    result = build_desktop._fetch_static_ffmpeg(
+        fake_fetch,
+        tmp_path,
+        attempts=4,
+        initial_delay=0.5,
+    )
+
+    assert result == ("ffmpeg", "ffprobe")
+    assert attempts == [str(tmp_path)] * 3
+    assert delays == [0.5, 1.0]
+
+
+def test_static_ffmpeg_download_raises_after_retry_limit(tmp_path, monkeypatch):
+    attempts = []
+
+    def fake_fetch(*, download_dir):
+        attempts.append(download_dir)
+        raise RuntimeError("persistent gateway timeout")
+
+    monkeypatch.setattr(build_desktop.time, "sleep", lambda _delay: None)
+
+    with pytest.raises(RuntimeError, match="persistent gateway timeout"):
+        build_desktop._fetch_static_ffmpeg(
+            fake_fetch,
+            tmp_path,
+            attempts=3,
+            initial_delay=0,
+        )
+
+    assert attempts == [str(tmp_path)] * 3
+
+
 def test_windows_bundle_requires_faster_whisper_vad_asset(tmp_path, monkeypatch):
     data_root = tmp_path / "bundle" / "_internal"
     required = [

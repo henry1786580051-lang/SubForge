@@ -14,8 +14,10 @@ import shutil
 import stat
 import subprocess
 import sys
+import time
 import urllib.request
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -140,6 +142,29 @@ def build_frontend(version: str, skip: bool = False) -> None:
         raise RuntimeError("Missing frontend static export:\n  - " + "\n  - ".join(missing))
 
 
+def _fetch_static_ffmpeg(
+    fetch: Callable[..., tuple[str, str]],
+    cache_dir: Path,
+    *,
+    attempts: int = 4,
+    initial_delay: float = 5.0,
+) -> tuple[str, str]:
+    """Retry transient CDN failures while fetching desktop FFmpeg binaries."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return fetch(download_dir=str(cache_dir))
+        except Exception as exc:
+            if attempt == attempts:
+                raise
+            delay = initial_delay * (2 ** (attempt - 1))
+            print(
+                f"FFmpeg download attempt {attempt}/{attempts} failed: {exc}. "
+                f"Retrying in {delay:g}s..."
+            )
+            time.sleep(delay)
+    raise RuntimeError("FFmpeg download retry loop exited unexpectedly")
+
+
 def prepare_ffmpeg() -> None:
     """Download the current platform's static ffmpeg/ffprobe into runtime resources."""
     try:
@@ -157,7 +182,10 @@ def prepare_ffmpeg() -> None:
     runtime_bin = RUNTIME_DIR / "resource" / "bin"
     runtime_bin.mkdir(parents=True, exist_ok=True)
     cache_dir = BUILD_DIR / "static-ffmpeg" / get_platform_key()
-    ffmpeg, ffprobe = get_or_fetch_platform_executables_else_raise(download_dir=str(cache_dir))
+    ffmpeg, ffprobe = _fetch_static_ffmpeg(
+        get_or_fetch_platform_executables_else_raise,
+        cache_dir,
+    )
     for src in [Path(ffmpeg), Path(ffprobe)]:
         dst = runtime_bin / src.name
         if dst.exists():
