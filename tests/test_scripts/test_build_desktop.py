@@ -87,3 +87,30 @@ def test_frontend_build_requires_explicit_skip_when_dependencies_are_missing(tmp
         build_desktop.build_frontend("1.2.3")
 
     build_desktop.build_frontend("1.2.3", skip=True)
+
+
+def test_windows_bundle_requires_faster_whisper_vad_asset(tmp_path, monkeypatch):
+    data_root = tmp_path / "bundle" / "_internal"
+    required = [
+        data_root / "frontend" / "out" / "index.html",
+        data_root / "frontend" / "out" / "_next" / "build.js",
+        data_root / "resource" / "assets" / "logo.png",
+        data_root / "resource" / "fonts" / "NotoSansSC-Regular.ttf",
+        data_root / "resource" / "subtitle_style" / "ass-default.json",
+        data_root / "resource" / "bin" / "ffmpeg.exe",
+        data_root / "resource" / "bin" / "ffprobe.exe",
+        data_root / "resource" / "bin" / "whisper-cli.exe",
+    ]
+    for path in required:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"test")
+    monkeypatch.setattr(build_desktop, "ROOT", tmp_path)
+    monkeypatch.setattr(build_desktop.platform, "system", lambda: "Windows")
+
+    with pytest.raises(RuntimeError, match="silero_vad_v6.onnx"):
+        build_desktop._verify_data_root(data_root, "test bundle")
+
+    vad_asset = data_root / "faster_whisper" / "assets" / "silero_vad_v6.onnx"
+    vad_asset.parent.mkdir(parents=True)
+    vad_asset.write_bytes(b"onnx")
+    build_desktop._verify_data_root(data_root, "test bundle")

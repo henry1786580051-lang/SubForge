@@ -8,7 +8,7 @@ bundled `SubForge` executable without installing Python or FFmpeg.
 
 ```bash
 uv sync --frozen
-uv run --with pyinstaller --with static-ffmpeg python scripts/build_desktop.py --clean
+uv run --with static-ffmpeg --with pyinstaller python scripts/build_desktop.py --clean
 uv run python scripts/smoke_desktop.py dist/SubForge
 ```
 

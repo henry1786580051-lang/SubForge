@@ -14,6 +14,7 @@ from ..utils.logger import setup_logger
 from .alignment_models import alignment_model_for_language
 from .asr_data import ASRData, ASRDataSeg, ASRWord, TimestampSource
 from .base import BaseASR
+from .faster_whisper import is_faster_whisper_model_dir, resolve_faster_whisper_runtime
 from .model_cache import SingleEntryModelCache
 from .status import ASRStatus
 
@@ -112,11 +113,12 @@ def _normalize_language(language: str | None) -> str | None:
 
 def _normalize_align_device(device: str | None) -> str:
     value = (device or "cpu").strip().lower()
-    if value == "auto":
+    if value in {"auto", "cuda"}:
         try:
             import torch
 
-            if torch.cuda.is_available():
+            torch_cuda_version = getattr(getattr(torch, "version", None), "cuda", None)
+            if torch_cuda_version is not None and torch.cuda.is_available():
                 return "cuda"
         except Exception:
             pass
@@ -124,7 +126,7 @@ def _normalize_align_device(device: str | None) -> str:
     if value == "mps":
         # MLX handles Apple Silicon acceleration; WhisperX alignment is more stable on CPU.
         return "cpu"
-    if value in {"cuda", "cpu"}:
+    if value == "cpu":
         return value
     return "cpu"
 
@@ -753,12 +755,34 @@ class WhisperXASR(BaseASR):
     ):
         super().__init__(audio_input, use_cache, need_word_time_stamp)
         self.uses_mlx = platform.system() == "Darwin" and platform.machine() == "arm64"
-        self.whisper_model = whisper_model or (default_mlx_model() if self.uses_mlx else "large-v3")
-        self.mlx_model = _mlx_model_repo(self.whisper_model) if self.uses_mlx else ""
         self.model_dir = model_dir or str(MODEL_PATH)
+        requested_model = whisper_model or (default_mlx_model() if self.uses_mlx else "large-v3")
+        if not self.uses_mlx:
+            models_root = Path(self.model_dir).expanduser()
+            requested_path = Path(requested_model).expanduser()
+            candidates = (
+                requested_path,
+                models_root,
+                models_root / f"faster-whisper-{requested_model}",
+                models_root / requested_model,
+            )
+            local_model = next(
+                (candidate for candidate in candidates if is_faster_whisper_model_dir(candidate)),
+                None,
+            )
+            if local_model is not None:
+                requested_model = str(local_model)
+        self.whisper_model = requested_model
+        self.mlx_model = _mlx_model_repo(self.whisper_model) if self.uses_mlx else ""
         self.language = _normalize_language(language)
+        if self.uses_mlx:
+            self.transcribe_device = "mlx"
+            self.compute_type = _normalize_compute_type("cpu", compute_type)
+        else:
+            self.transcribe_device, self.compute_type = resolve_faster_whisper_runtime(
+                device, compute_type
+            )
         self.align_device = _normalize_align_device(device)
-        self.compute_type = _normalize_compute_type(self.align_device, compute_type)
         self.align_model = _normalize_align_model(align_model)
         self.batch_size = max(1, int(batch_size or 4))
         self.segment_callback = segment_callback
@@ -819,14 +843,16 @@ class WhisperXASR(BaseASR):
             audio_path = self._write_audio_to_temp(Path(tmp))
             callback(15, "Loading WhisperX transcription model...")
             logger.info(
-                "Transcribing with standard WhisperX model=%s device=%s compute=%s",
+                "Transcribing with standard WhisperX model=%s transcribe_device=%s "
+                "align_device=%s compute=%s",
                 self.whisper_model,
+                self.transcribe_device,
                 self.align_device,
                 self.compute_type,
             )
             model = load_model(
                 self.whisper_model,
-                self.align_device,
+                self.transcribe_device,
                 compute_type=self.compute_type,
                 language=self.language,
                 vad_method="silero",

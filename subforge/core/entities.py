@@ -2,7 +2,7 @@ import datetime
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 if TYPE_CHECKING:
     from subforge.core.translate.types import TargetLanguage
@@ -574,6 +574,7 @@ class TranscribeConfig:
     diarization_model: str = "pyannote/speaker-diarization-community-1"
     diarization_token: str = ""
     diarization_model_dir: str = ""
+    cancel_event: Any = None
 
     def _mask_key(self, key: Optional[str]) -> str:
         """Mask sensitive key for display"""

@@ -377,6 +377,7 @@ def _build_faster_whisper_kwargs(config: TranscribeConfig, use_cache: bool = Tru
         "one_word": config.faster_whisper_one_word,
         "prompt": config.faster_whisper_prompt,
         "compute_type": getattr(config, "faster_whisper_compute_type", "default"),
+        "cancel_event": getattr(config, "cancel_event", None),
     }
 
 

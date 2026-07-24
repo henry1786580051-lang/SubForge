@@ -1,4 +1,5 @@
 import sys
+import threading
 import wave
 from types import SimpleNamespace
 
@@ -101,3 +102,40 @@ def test_direct_runtime_keeps_segment_timestamps_when_word_mode_requested(
     assert not result.is_word_timestamp()
     assert calls["transcribe"]["word_timestamps"] is False
     assert calls["init"]["local_files_only"] is True
+
+
+def test_packaged_worker_is_terminated_when_task_is_cancelled(tmp_path, monkeypatch):
+    model_dir = tmp_path / "faster-whisper-base"
+    _write_model(model_dir)
+    audio_path = tmp_path / "audio.wav"
+    _write_audio(audio_path)
+    cancelled = threading.Event()
+    cancelled.set()
+    process_state = {"terminated": False}
+
+    class FakeProcess:
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            process_state["terminated"] = True
+            self.returncode = -15
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+    monkeypatch.setattr(module, "is_faster_whisper_cuda_available", lambda: True)
+    asr = module.FasterWhisperASR(
+        str(audio_path),
+        whisper_model=str(model_dir),
+        device="cuda",
+        cancel_event=cancelled,
+    )
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *_args, **_kwargs: FakeProcess())
+
+    with pytest.raises(RuntimeError, match="cancelled"):
+        asr._run_in_packaged_worker()
+
+    assert process_state["terminated"] is True

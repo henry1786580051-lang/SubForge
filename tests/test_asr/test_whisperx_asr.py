@@ -1,3 +1,5 @@
+import sys
+import wave
 from types import SimpleNamespace
 
 import pytest
@@ -202,6 +204,48 @@ def test_whisperx_prepares_model_safetensors_alias(tmp_path):
 
 def test_whisperx_alignment_uses_cpu_for_mps_device():
     assert _normalize_align_device("mps") == "cpu"
+
+
+def test_whisperx_alignment_falls_back_when_torch_cuda_is_unavailable(monkeypatch):
+    torch = SimpleNamespace(
+        version=SimpleNamespace(cuda=None),
+        cuda=SimpleNamespace(is_available=lambda: False),
+    )
+    monkeypatch.setitem(sys.modules, "torch", torch)
+
+    assert _normalize_align_device("cuda") == "cpu"
+
+
+def test_whisperx_reuses_managed_faster_whisper_model(tmp_path, monkeypatch):
+    model_dir = tmp_path / "models" / "faster-whisper-large-v3"
+    model_dir.mkdir(parents=True)
+    (model_dir / "config.json").write_text("{}" * 100, encoding="utf-8")
+    (model_dir / "model.bin").write_bytes(b"x" * (1024 * 1024))
+    (model_dir / "tokenizer.json").write_text("{}" * 1024, encoding="utf-8")
+    audio_path = tmp_path / "audio.wav"
+    with wave.open(str(audio_path), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(16_000)
+        output.writeframes(b"\0\0" * 1_600)
+    monkeypatch.setattr(
+        "subforge.core.asr.whisperx_asr.platform.system", lambda: "Windows"
+    )
+    monkeypatch.setattr(
+        "subforge.core.asr.whisperx_asr.resolve_faster_whisper_runtime",
+        lambda *_args: ("cpu", "int8"),
+    )
+
+    asr = WhisperXASR(
+        str(audio_path),
+        whisper_model="large-v3",
+        model_dir=str(tmp_path / "models"),
+        device="cuda",
+    )
+
+    assert asr.whisper_model == str(model_dir)
+    assert asr.transcribe_device == "cpu"
+    assert asr.align_device == "cpu"
 
 
 def test_whisperx_builds_alignment_segments_from_mlx_result():

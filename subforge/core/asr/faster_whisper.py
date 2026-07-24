@@ -5,11 +5,16 @@ from __future__ import annotations
 import ctypes
 import hashlib
 import importlib
+import json
 import logging
 import os
 import platform
+import subprocess
 import sys
 import tempfile
+import threading
+import time
+import traceback
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Union
 
@@ -19,6 +24,43 @@ from .status import ASRStatus
 
 logger = logging.getLogger(__name__)
 _CUDA_DLL_DIRECTORY_HANDLES: list[Any] = []
+_FASTER_WORKER_FLAG = "SUBFORGE_FASTER_WHISPER_WORKER"
+_FASTER_WORKER_REQUEST = "SUBFORGE_FASTER_WHISPER_REQUEST"
+_FASTER_WORKER_OUTPUT = "SUBFORGE_FASTER_WHISPER_OUTPUT"
+_FASTER_WORKER_PROGRESS = "SUBFORGE_FASTER_WHISPER_PROGRESS"
+_FASTER_WORKER_HEARTBEAT = "SUBFORGE_FASTER_WHISPER_HEARTBEAT"
+_FASTER_WORKER_IDLE_TIMEOUT = "SUBFORGE_FASTER_WHISPER_IDLE_TIMEOUT"
+
+
+def _atomic_json_write(path: Path, payload: Any) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(path)
+
+
+def _worker_idle_timeout() -> float:
+    try:
+        return max(30.0, float(os.environ.get(_FASTER_WORKER_IDLE_TIMEOUT, "180")))
+    except (TypeError, ValueError):
+        return 180.0
+
+
+def _stop_process(process: subprocess.Popen) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=10)
+
+
+def _log_tail(path: Path, limit: int = 4000) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")[-limit:].strip()
+    except OSError:
+        return ""
 
 
 def _candidate_cuda_runtime_dirs() -> list[Path]:
@@ -150,6 +192,7 @@ class FasterWhisperASR(BaseASR):
         max_comma_cent: int = 50,
         prompt: Optional[str] = None,
         compute_type: str = "default",
+        cancel_event: threading.Event | None = None,
     ):
         super().__init__(audio_input, use_cache)
         self.model_path = self._resolve_model_path(whisper_model, model_dir)
@@ -164,6 +207,7 @@ class FasterWhisperASR(BaseASR):
         self.need_word_time_stamp = bool(need_word_time_stamp)
         self.ff_mdx_kim2 = ff_mdx_kim2
         self.faster_whisper_program = faster_whisper_program
+        self.cancel_event = cancel_event
 
     @staticmethod
     def _resolve_model_path(whisper_model: str, model_dir: str) -> Path:
@@ -194,6 +238,133 @@ class FasterWhisperASR(BaseASR):
     def _run(
         self, callback: Optional[Callable[[int, str], None]] = None, **kwargs: Any
     ) -> list[dict[str, Any]]:
+        if (
+            platform.system() == "Windows"
+            and getattr(sys, "frozen", False)
+            and self.device == "cuda"
+            and os.environ.get(_FASTER_WORKER_FLAG) != "1"
+        ):
+            return self._run_in_packaged_worker(callback)
+        return self._run_direct(callback)
+
+    def _run_in_packaged_worker(
+        self, callback: Optional[Callable[[int, str], None]] = None
+    ) -> list[dict[str, Any]]:
+        """Run packaged Windows CUDA inference outside the desktop process."""
+        effective_callback = callback or (lambda _progress, _message: None)
+        with tempfile.TemporaryDirectory(prefix="subforge-faster-worker-") as temp_path:
+            temp_dir = Path(temp_path)
+            if isinstance(self.audio_input, str):
+                audio_path = self.audio_input
+            else:
+                worker_audio = temp_dir / "audio.wav"
+                worker_audio.write_bytes(self.file_binary or b"")
+                audio_path = str(worker_audio)
+
+            request_path = temp_dir / "request.json"
+            output_path = temp_dir / "output.json"
+            progress_path = temp_dir / "progress.json"
+            heartbeat_path = temp_dir / "heartbeat.json"
+            log_path = temp_dir / "worker.log"
+            _atomic_json_write(
+                request_path,
+                {
+                    "audio_input": audio_path,
+                    "whisper_model": str(self.model_path),
+                    "language": self.language,
+                    "device": self.device,
+                    "compute_type": self.compute_type,
+                    "vad_filter": self.vad_filter,
+                    "vad_threshold": self.vad_threshold,
+                    "need_word_time_stamp": self.need_word_time_stamp,
+                    "prompt": self.prompt,
+                },
+            )
+            env = os.environ.copy()
+            env.update(
+                {
+                    _FASTER_WORKER_FLAG: "1",
+                    _FASTER_WORKER_REQUEST: str(request_path),
+                    _FASTER_WORKER_OUTPUT: str(output_path),
+                    _FASTER_WORKER_PROGRESS: str(progress_path),
+                    _FASTER_WORKER_HEARTBEAT: str(heartbeat_path),
+                }
+            )
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            log_file = log_path.open("w", encoding="utf-8")
+            try:
+                process = subprocess.Popen(
+                    [sys.executable],
+                    env=env,
+                    stdin=subprocess.DEVNULL,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    creationflags=creationflags,
+                )
+                last_progress: tuple[int, str] | None = None
+                last_heartbeat_mtime = -1
+                last_heartbeat_at = time.monotonic()
+                idle_timeout = _worker_idle_timeout()
+                try:
+                    while process.poll() is None:
+                        if self.cancel_event is not None and self.cancel_event.is_set():
+                            raise RuntimeError("FasterWhisper transcription was cancelled")
+                        try:
+                            heartbeat_mtime = heartbeat_path.stat().st_mtime_ns
+                            if heartbeat_mtime != last_heartbeat_mtime:
+                                last_heartbeat_mtime = heartbeat_mtime
+                                last_heartbeat_at = time.monotonic()
+                        except OSError:
+                            pass
+                        if time.monotonic() - last_heartbeat_at > idle_timeout:
+                            raise RuntimeError(
+                                "FasterWhisper CUDA worker stopped responding for "
+                                f"{int(idle_timeout)} seconds"
+                            )
+                        if progress_path.is_file():
+                            try:
+                                progress_data = json.loads(
+                                    progress_path.read_text(encoding="utf-8")
+                                )
+                                current = (
+                                    int(progress_data["progress"]),
+                                    str(progress_data["message"]),
+                                )
+                                if current != last_progress:
+                                    effective_callback(*current)
+                                    last_progress = current
+                            except (OSError, ValueError, KeyError, TypeError):
+                                pass
+                        time.sleep(0.2)
+                finally:
+                    _stop_process(process)
+            finally:
+                log_file.close()
+
+            payload: dict[str, Any] | None = None
+            if output_path.is_file():
+                try:
+                    payload = json.loads(output_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    pass
+            if process.returncode != 0 or not payload or not payload.get("ok"):
+                detail = str((payload or {}).get("error") or "").strip()
+                if not detail:
+                    detail = _log_tail(log_path)
+                suffix = f": {detail}" if detail else ""
+                raise RuntimeError(
+                    f"FasterWhisper CUDA worker exited with code {process.returncode}{suffix}"
+                )
+            data = payload.get("data")
+            if not isinstance(data, list):
+                raise RuntimeError("FasterWhisper CUDA worker returned invalid data")
+            return data
+
+    def _run_direct(
+        self, callback: Optional[Callable[[int, str], None]] = None
+    ) -> list[dict[str, Any]]:
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            raise RuntimeError("FasterWhisper transcription was cancelled")
         try:
             faster_whisper = importlib.import_module("faster_whisper")
             whisper_model_class = getattr(faster_whisper, "WhisperModel")
@@ -228,6 +399,7 @@ class FasterWhisperASR(BaseASR):
                 compute_type=self.compute_type,
                 local_files_only=True,
             )
+            self._active_model = model
             segments, info = model.transcribe(
                 audio_path,
                 language=self.language or None,
@@ -240,6 +412,8 @@ class FasterWhisperASR(BaseASR):
             duration = max(float(getattr(info, "duration", 0.0) or 0.0), 0.01)
             output: list[dict[str, Any]] = []
             for segment in segments:
+                if self.cancel_event is not None and self.cancel_event.is_set():
+                    raise RuntimeError("FasterWhisper transcription was cancelled")
                 text = str(getattr(segment, "text", "")).strip()
                 start = float(getattr(segment, "start", 0.0))
                 end = float(getattr(segment, "end", start))
@@ -279,3 +453,55 @@ class FasterWhisperASR(BaseASR):
         )
         digest = hashlib.sha256(repr(settings).encode()).hexdigest()
         return f"{self.crc32_hex}-{digest}"
+
+
+def run_packaged_faster_whisper_worker() -> None:
+    """Execute one packaged FasterWhisper request and bypass native teardown."""
+    request_path = Path(os.environ[_FASTER_WORKER_REQUEST])
+    output_path = Path(os.environ[_FASTER_WORKER_OUTPUT])
+    progress_path = Path(os.environ[_FASTER_WORKER_PROGRESS])
+    heartbeat_path = Path(os.environ[_FASTER_WORKER_HEARTBEAT])
+    heartbeat_stop = threading.Event()
+
+    def publish_heartbeat() -> None:
+        while not heartbeat_stop.is_set():
+            try:
+                _atomic_json_write(heartbeat_path, {"time": time.time()})
+            except OSError:
+                pass
+            heartbeat_stop.wait(2.0)
+
+    heartbeat_thread = threading.Thread(target=publish_heartbeat, daemon=True)
+    heartbeat_thread.start()
+    try:
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+        asr = FasterWhisperASR(**request)
+
+        def report(progress: int, message: str) -> None:
+            try:
+                _atomic_json_write(
+                    progress_path,
+                    {"progress": int(progress), "message": str(message)},
+                )
+            except OSError:
+                pass
+
+        data = asr._run_direct(report)
+        _atomic_json_write(output_path, {"ok": True, "data": data})
+        exit_code = 0
+    except BaseException:
+        try:
+            _atomic_json_write(output_path, {"ok": False, "error": traceback.format_exc()})
+        except OSError:
+            pass
+        exit_code = 1
+    finally:
+        heartbeat_stop.set()
+        heartbeat_thread.join(timeout=3)
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream:
+                stream.flush()
+        except Exception:
+            pass
+    os._exit(exit_code)

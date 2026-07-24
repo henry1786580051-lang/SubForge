@@ -209,6 +209,22 @@ def test_build_transcribe_config_uses_auto_or_manual_alignment(tmp_path, monkeyp
     assert manual.whisperx_align_model == "example/custom-alignment"
 
 
+def test_build_transcribe_config_defaults_to_managed_model_root(tmp_path, monkeypatch):
+    values = _config_values(tmp_path)
+    values.pop("whisper_model_dir")
+    managed_root = tmp_path / "managed-models"
+    monkeypatch.setattr(
+        config_module,
+        "get_config_value",
+        lambda key, default=None: values.get(key, default),
+    )
+    monkeypatch.setattr(transcribe_api, "_get_models_dir", lambda: managed_root)
+
+    config = transcribe_api._build_transcribe_config("whisperx", "en")
+
+    assert config.faster_whisper_model_dir == str(managed_root)
+
+
 def test_model_self_test_returns_real_transcript_metadata(tmp_path, monkeypatch):
     audio = tmp_path / "en.mp3"
     audio.write_bytes(b"test")

@@ -36,6 +36,12 @@ if os.name == 'nt':
             optional_binaries += collect_dynamic_libs(runtime_pkg)
         except Exception:
             pass
+    # FasterWhisper loads its packaged Silero ONNX model lazily when VAD starts.
+    # Import-only checks pass without it, so collect package data explicitly.
+    try:
+        optional_datas += collect_data_files('faster_whisper', include_py_files=False)
+    except Exception:
+        pass
 
 whisperx_runtime_excludes = [] if os.name == 'nt' else [
     'whisperx.asr', 'whisperx.transcribe', 'whisperx.vads',

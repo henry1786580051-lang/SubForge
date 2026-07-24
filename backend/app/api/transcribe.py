@@ -293,8 +293,9 @@ def _build_transcribe_config(
     config.faster_whisper_ff_mdx_kim2 = bool(get_config_value("ff_mdx_kim2", False))
 
     model_dir = str(get_config_value("whisper_model_dir", "") or "").strip()
-    if model_dir:
-        config.faster_whisper_model_dir = str(Path(model_dir).expanduser())
+    config.faster_whisper_model_dir = (
+        str(Path(model_dir).expanduser()) if model_dir else str(_get_models_dir())
+    )
 
     model_size = str(get_config_value("whisper_model_size", "large-v3") or "large-v3")
     if model_id == "whisper_cpp":
@@ -351,6 +352,7 @@ async def start_transcription(req: TranscribeRequest):
 
 async def _run_transcription(task_id: str, req: TranscribeRequest):
     import tempfile
+    import threading
     from pathlib import Path as PathLib
 
     from app.api.config import get_config_value
@@ -364,6 +366,8 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
         _raise_if_cancelled(task_id)
 
         config = _build_transcribe_config(req.model, req.language)
+        cancel_event = threading.Event()
+        config.cancel_event = cancel_event
 
         # Extract audio from video to temp WAV file
         task_manager.update_progress(task_id, 10, "Extracting audio from video...")
@@ -402,7 +406,14 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
                 logger.warning(f"Failed to save partial segment: {e}")
 
         # Run transcription on the extracted audio
-        result = await run_blocking(transcribe, temp_audio_path, config, _on_progress, _on_segment)
+        result = await run_blocking(
+            transcribe,
+            temp_audio_path,
+            config,
+            _on_progress,
+            _on_segment,
+            on_cancel=cancel_event.set,
+        )
         _raise_if_cancelled(task_id)
 
         # Save subtitle file

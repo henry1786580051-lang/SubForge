@@ -270,6 +270,11 @@ def main():
 if __name__ == "__main__":
     multiprocessing.freeze_support()
 
+    if os.environ.get("SUBFORGE_FASTER_WHISPER_WORKER") == "1":
+        from subforge.core.asr.faster_whisper import run_packaged_faster_whisper_worker
+
+        run_packaged_faster_whisper_worker()
+
     if os.environ.get("SUBFORGE_CHECK_DENOISE") == "1":
         import traceback
 
@@ -293,13 +298,19 @@ if __name__ == "__main__":
             import av  # noqa: F401
             import ctranslate2  # noqa: F401
             import faster_whisper  # noqa: F401
+            import numpy as np
+            from faster_whisper.vad import get_speech_timestamps
 
             from subforge.core.asr.faster_whisper import (
                 resolve_faster_whisper_runtime,
             )
 
             device, compute_type = resolve_faster_whisper_runtime("auto", "default")
+            vad_segments = get_speech_timestamps(np.zeros(16_000, dtype=np.float32))
+            if not isinstance(vad_segments, list):
+                raise RuntimeError("Packaged FasterWhisper VAD returned an invalid result")
             print(f"FasterWhisper import: ok ({device}/{compute_type})")
+            print("FasterWhisper Silero VAD inference: ok")
             raise SystemExit(0)
         except Exception:
             traceback.print_exc()
