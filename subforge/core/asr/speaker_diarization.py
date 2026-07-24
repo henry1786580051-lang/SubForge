@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from subforge.core.asr.asr_data import ASRData
+from subforge.core.asr.asr_data import ASRData, ASRDataSeg
 from subforge.core.asr.model_cache import SingleEntryModelCache
 
 logger = logging.getLogger(__name__)
@@ -412,10 +412,70 @@ _BOUNDARY_PREFIX_WORDS = {
     "you've",
 }
 
+_CONTINUATION_START_WORDS = {
+    "because",
+    "but",
+    "does",
+    "for",
+    "how",
+    "if",
+    "that",
+    "then",
+    "what",
+    "when",
+    "where",
+    "which",
+    "while",
+    "who",
+    "why",
+}
+
+_SHORT_INTERJECTIONS = {
+    "ah",
+    "hmm",
+    "mm-hmm",
+    "no",
+    "okay",
+    "right",
+    "uh-huh",
+    "wow",
+    "yeah",
+    "yes",
+}
+
+_BOUNDARY_SUBJECT_WORDS = {
+    "he",
+    "i",
+    "it",
+    "she",
+    "they",
+    "we",
+    "who",
+    "you",
+}
+
 
 def _normalized_word(text: str) -> str:
     words = re.findall(r"[A-Za-z]+(?:['’][A-Za-z]+)?", text.lower())
     return words[-1].replace("’", "'") if words else ""
+
+
+def _is_short_interjection(segments: list[ASRDataSeg]) -> bool:
+    text = " ".join(segment.text.strip() for segment in segments if segment.text.strip())
+    words = re.findall(r"[A-Za-z]+(?:['’][A-Za-z]+)?", text.lower())
+    normalized = " ".join(word.replace("’", "'") for word in words)
+    return normalized in _SHORT_INTERJECTIONS
+
+
+def _is_incomplete_speaker_island(segments: list[ASRDataSeg]) -> bool:
+    """Identify a tiny grammatical continuation, not a complete short reply."""
+    text = " ".join(segment.text.strip() for segment in segments if segment.text.strip()).strip()
+    words = re.findall(r"[A-Za-z]+(?:['’][A-Za-z]+)?", text.lower())
+    if not words or len(words) > 3 or re.search(r"[.!?]\s*$", text):
+        return False
+    if _is_short_interjection(segments):
+        return False
+    return text[0].islower() or words[0] in _CONTINUATION_START_WORDS
 
 
 def smooth_speaker_assignments(
@@ -436,7 +496,7 @@ def smooth_speaker_assignments(
 
     labels = [segment.speaker_id for segment in segments]
     max_fill_duration = max(700, suppress_flip_ms * 2)
-    max_edge_gap = max(250, nearest_gap_ms * 2)
+    max_edge_gap = max(300, nearest_gap_ms * 2)
 
     index = 0
     while index < len(labels):
@@ -477,15 +537,27 @@ def smooth_speaker_assignments(
             previous = runs[run_index - 1][2]
             following = runs[run_index + 1][2]
             duration = segments[end - 1].end_time - segments[start].start_time
+            previous_gap = segments[start].start_time - segments[start - 1].end_time
+            following_gap = segments[end].start_time - segments[end - 1].end_time
+            standard_short_flip = (
+                duration <= max(700, suppress_flip_ms)
+                and previous_gap <= max_edge_gap
+                and following_gap <= max_edge_gap
+                and not _is_short_interjection(segments[start:end])
+            )
+            incomplete_continuation = (
+                duration <= 1200
+                and previous_gap <= 1200
+                and following_gap <= 450
+                and _is_incomplete_speaker_island(segments[start:end])
+            )
             if (
                 label
                 and previous
                 and previous == following
                 and label != previous
                 and end - start <= 3
-                and duration <= max(700, suppress_flip_ms)
-                and segments[start].start_time - segments[start - 1].end_time <= max_edge_gap
-                and segments[end].start_time - segments[end - 1].end_time <= max_edge_gap
+                and (standard_short_flip or incomplete_continuation)
             ):
                 labels[start:end] = [previous] * (end - start)
                 changed = True
@@ -506,6 +578,35 @@ def smooth_speaker_assignments(
             and segments[index + 1].start_time - segments[index].end_time <= max_edge_gap
         ):
             labels[index] = following
+
+    # A diarization boundary can land after an adverb and strand a tiny
+    # subject phrase ("He certainly / delivered...") on the prior speaker.
+    # Keep this deliberately narrow so complete replies and interruptions are
+    # not absorbed into the next turn.
+    for boundary in range(2, len(labels)):
+        previous = labels[boundary - 1]
+        following = labels[boundary]
+        next_text = segments[boundary].text.strip()
+        if not previous or not following or previous == following:
+            continue
+        if not next_text or not next_text[0].islower():
+            continue
+        for phrase_length in (3, 2):
+            start = boundary - phrase_length
+            if start < 0 or any(labels[index] != previous for index in range(start, boundary)):
+                continue
+            first_word = _normalized_word(segments[start].text)
+            phrase = " ".join(segment.text.strip() for segment in segments[start:boundary])
+            duration = segments[boundary - 1].end_time - segments[start].start_time
+            gap = segments[boundary].start_time - segments[boundary - 1].end_time
+            if (
+                first_word in _BOUNDARY_SUBJECT_WORDS
+                and duration <= 450
+                and gap <= 200
+                and not re.search(r"[.!?—]\s*$", phrase)
+            ):
+                labels[start:boundary] = [following] * phrase_length
+                break
 
     for segment, label in zip(segments, labels):
         segment.speaker_id = label

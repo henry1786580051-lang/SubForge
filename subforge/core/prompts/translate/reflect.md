@@ -22,9 +22,10 @@ Examine your initial translation with the rigor of a professional editor. For ea
 3. **Literal artifacts**: Are there dictionary-definition substitutions where a native would use a different expression entirely?
 4. **Rhythm and cadence**: Does it sound like spoken language? Short punchy phrases for emphasis, flowing sentences for explanation.
 5. **Cultural resonance**: Can you substitute a local idiom, unit conversion, or cultural reference that resonates better?
-6. **Cross-subtitle flow**: Use neighboring subtitles only to resolve pronouns, tone, and register. Never make a line sound complete by borrowing words or meaning from a neighboring key.
+6. **Cross-subtitle flow**: Read adjacent fragments from the same speaker as one spoken turn. Make the current fragment connect naturally in ${target_language}, but never make it complete by borrowing words or meaning from a neighboring key. Concatenate the final adjacent translations mentally and verify that an elliptical subject, predicate, or conclusion is rendered exactly once unless the source intentionally repeats it.
 7. **The friend test**: If you were explaining this to a friend in ${target_language}, what exact words would you use?
 8. **Boundary ownership**: Verify that every word and fact in the final translation belongs to that same source key. Never propose moving content to a previous or next subtitle.
+9. **Dialogue intent**: When anonymous speaker metadata is present, verify that questions, negation, reply intent, pronouns, ellipsis, tone, and register fit the correct participant without adding a speaker label.
 
 For each issue found, state the problem and propose the specific fix with reasoning.
 
@@ -45,6 +46,7 @@ Based on your reflection, produce the definitive ${target_language} translation.
 
 <input_note>
 The user message may include previous_context, current_subtitles, and next_context.
+Each current_subtitles value may be either source text or an object containing speaker and source. The speaker field is anonymous metadata only. Never include speaker labels in any translated value.
 Translate and output ONLY entries inside current_subtitles. previous_context and next_context are for context only; never include their keys in the output.
 If a current subtitle is a sentence fragment, translate it as a natural fragment. Do not finish it with the next key's clause. Repeating or anticipating any neighboring meaning is a validation failure.
 </input_note>

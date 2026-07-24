@@ -42,9 +42,24 @@ jobs:
           - name: Windows x64
             os: windows-latest
             uv-extra: "--extra denoise --extra whisperx"
+            artifact-name: desktop-Windows
+            build-flavor: ""
+            cuda: false
+          - name: Windows x64 CUDA 12.8
+            os: windows-latest
+            uv-extra: "--extra denoise --extra whisperx"
+            artifact-name: desktop-Windows-CUDA
+            build-flavor: cuda
+            cuda: true
           - name: macOS Intel
             os: macos-15-intel
             uv-extra: ""
+            artifact-name: desktop-macOS
+            build-flavor: ""
+            cuda: false
+
+    env:
+      SUBFORGE_BUILD_FLAVOR: ${{ matrix.build-flavor }}
 
     steps:
       - uses: actions/checkout@v6
@@ -68,23 +83,31 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen ${{ matrix.uv-extra }}
 
+      - name: Install CUDA 12.8 runtime
+        if: matrix.cuda
+        shell: pwsh
+        run: |
+          uv pip install --python .venv\Scripts\python.exe --index-url https://download.pytorch.org/whl/cu128 "torch==2.8.0+cu128" "torchaudio==2.8.0+cu128"
+          uv run --no-sync python -c "import torch; assert torch.version.cuda == '12.8', torch.version.cuda; print(f'PyTorch {torch.__version__} CUDA {torch.version.cuda}')"
+
       - name: Install frontend dependencies
         run: npm ci
         working-directory: frontend
 
       - name: Build desktop bundle
-        run: uv run ${{ matrix.uv-extra }} --with static-ffmpeg --with pyinstaller --with pywebview python scripts/build_desktop.py --clean
+        run: uv run --no-sync ${{ matrix.uv-extra }} --with static-ffmpeg --with pyinstaller --with pywebview python scripts/build_desktop.py --clean
 
       - name: Smoke test packaged app
-        run: uv run python scripts/smoke_desktop.py dist/SubForge
+        run: uv run --no-sync python scripts/smoke_desktop.py dist/SubForge
 
       - name: Build Windows installer
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           choco install innosetup --no-progress -y
-          $version = (uv run python -c "from subforge.config import VERSION; print(VERSION)").Trim()
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" "scripts\windows_installer.iss"
+          $version = (uv run --no-sync python -c "from subforge.config import VERSION; print(VERSION)").Trim()
+          $suffix = if ($env:SUBFORGE_BUILD_FLAVOR) { "-$($env:SUBFORGE_BUILD_FLAVOR)" } else { "" }
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" "/DMyAppSuffix=$suffix" "scripts\windows_installer.iss"
 
       - name: Smoke test installed Windows app
         if: runner.os == 'Windows'
@@ -93,12 +116,12 @@ jobs:
           $installer = Get-Item artifacts\*-setup.exe
           $installDir = Join-Path $env:RUNNER_TEMP "SubForge-installed"
           Start-Process -FilePath $installer.FullName -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$installDir" -Wait
-          uv run python scripts/smoke_desktop.py $installDir
+          uv run --no-sync python scripts/smoke_desktop.py $installDir
 
       - name: Upload desktop artifact
         uses: actions/upload-artifact@v7
         with:
-          name: desktop-${{ runner.os }}
+          name: ${{ matrix.artifact-name }}
           path: |
             artifacts/*.zip
             artifacts/*-setup.exe

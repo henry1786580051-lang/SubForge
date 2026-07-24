@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from subforge.core.entities import SubtitleProcessData
+from subforge.core.prompts import get_prompt
 from subforge.core.translate.context import TranslationContext
 from subforge.core.translate.llm_translator import LLMTranslator
 from subforge.core.translate.types import TargetLanguage
@@ -44,6 +45,18 @@ def _text_response(text):
 
 class TestValidateLLmResponse:
     """Test _validate_llm_response with standard and reflect modes."""
+
+    def test_reflect_prompt_requires_same_speaker_flow_and_dialogue_intent(self):
+        prompt = get_prompt(
+            "translate/reflect",
+            target_language="简体中文",
+            custom_prompt="",
+        )
+
+        assert "adjacent fragments from the same speaker as one spoken turn" in prompt
+        assert "questions, negation, reply intent" in prompt
+        assert "never make it complete by borrowing" in prompt
+        assert "rendered exactly once" in prompt
 
     def test_valid_standard_response(self):
         t = _make_translator()
@@ -613,11 +626,87 @@ class TestValidateLLmResponse:
         assert result["5"] == "正确五"
         assert result["6"] == "译文6"
 
-    def test_alignment_audit_is_disabled_for_other_models(self):
+    def test_alignment_audit_always_rechecks_dialogue_transition(self, monkeypatch):
+        translator = _make_minimax_reflect_translator()
+        translator._all_speaker_by_index = {1: "S1", 2: "S1", 3: "S2", 4: "S2"}
+        source = {
+            "1": "I cannot find an example.",
+            "2": "But the blood and soil—",
+            "3": "He certainly delivered a very",
+            "4": "strong message to the government.",
+        }
+        translated = {
+            "1": "我找不到这样的例子",
+            "2": "他当然传递了非常",
+            "3": "血与土那一套",
+            "4": "向政府发出了强烈信号",
+        }
+        payloads = []
+        responses = iter(
+            [
+                _llm_response({"misaligned_keys": []}),
+                _llm_response({"misaligned_keys": ["2", "3"]}),
+                _text_response("但是血与土那一套——"),
+                _text_response("他当然传递了非常"),
+            ]
+        )
+
+        def fake_call(**kwargs):
+            payloads.append(kwargs["messages"][1]["content"])
+            return next(responses)
+
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm",
+            fake_call,
+        )
+
+        result = translator._audit_reflective_alignment(source, translated)
+
+        assert result["2"] == "但是血与土那一套——"
+        assert result["3"] == "他当然传递了非常"
+        assert '\"speaker\": \"S2\"' in payloads[0]
+        assert len(payloads) == 4
+
+    def test_alignment_audit_uses_locked_recovery_when_sparse_fixes_repeat(self, monkeypatch):
+        translator = _make_minimax_reflect_translator()
+        source = {
+            "1": "He certainly delivered a very",
+            "2": "strong message to the government.",
+        }
+        translated = {
+            "1": "他当然传递了非常",
+            "2": "向政府发出了强烈信号",
+        }
+        responses = iter(
+            [
+                _llm_response({"misaligned_keys": ["1", "2"]}),
+                _text_response("向政府发出了强烈信号"),
+                _text_response("向政府发出了强烈信号"),
+                _llm_response(
+                    {
+                        "1": "他当然传递了一个非常",
+                        "2": "强烈的对政府表态",
+                    }
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm",
+            lambda **_kwargs: next(responses),
+        )
+
+        result = translator._audit_reflective_alignment(source, translated)
+
+        assert result == {
+            "1": "他当然传递了一个非常",
+            "2": "强烈的对政府表态",
+        }
+
+    def test_legacy_alignment_rewrite_is_disabled_for_all_models(self):
         translator = _make_translator(is_reflect=True)
         assert translator._needs_alignment_audit() is False
         translator.model = "MiniMax-M3"
-        assert translator._needs_alignment_audit() is True
+        assert translator._needs_alignment_audit() is False
 
     def test_allows_repeated_translation_when_source_is_also_repeated(self):
         t = _make_translator()
@@ -628,6 +717,78 @@ class TestValidateLLmResponse:
 
         assert ok is True
         assert msg == ""
+
+    def test_rejects_repeated_connector_at_same_speaker_boundary(self):
+        translator = _make_translator()
+        translator._all_speaker_by_index = {1: "S1", 2: "S1"}
+
+        ok, message = translator._validate_llm_response(
+            {"1": "但他的重要性真的怎么说都", "2": "都不为过"},
+            {"1": "it matters greatly", "2": "the importance cannot be overstated"},
+        )
+
+        assert ok is False
+        assert "1-2:都" in message
+
+    def test_allows_same_connector_across_different_speakers(self):
+        translator = _make_translator()
+        translator._all_speaker_by_index = {1: "S1", 2: "S2"}
+
+        ok, message = translator._validate_llm_response(
+            {"1": "我觉得也是", "2": "是的"},
+            {"1": "I think so too", "2": "Yes"},
+        )
+
+        assert ok is True
+        assert message == ""
+
+    def test_rejects_repeated_chinese_conclusion_for_same_speaker(self):
+        translator = _make_translator()
+        translator._all_speaker_by_index = {1: "S1", 2: "S1"}
+
+        ok, message = translator._validate_llm_response(
+            {"1": "但这一点再怎么强调都不为过", "2": "真的不为过"},
+            {"1": "it matters greatly", "2": "the importance cannot be overstated"},
+        )
+
+        assert ok is False
+        assert "1-2:不为过" in message
+
+    def test_rejects_equivalent_repeated_chinese_conclusions(self):
+        translator = _make_translator()
+        translator._all_speaker_by_index = {1: "S1", 2: "S1"}
+
+        ok, message = translator._validate_llm_response(
+            {"1": "怎么强调都不过分", "2": "怎么强调都不为过"},
+            {"1": "it matters greatly", "2": "the importance cannot be overstated"},
+        )
+
+        assert ok is False
+        assert "不为过" in message
+
+    def test_allows_repeated_chinese_conclusion_when_source_repeats_predicate(self):
+        translator = _make_translator()
+        translator._all_speaker_by_index = {1: "S1", 2: "S1"}
+
+        ok, message = translator._validate_llm_response(
+            {"1": "怎么强调都不过分", "2": "怎么强调都不为过"},
+            {"1": "but it really cannot", "2": "the importance cannot be overstated"},
+        )
+
+        assert ok is True
+        assert message == ""
+
+    def test_allows_repeated_ending_when_source_repeats_last_word(self):
+        translator = _make_translator()
+        translator._all_speaker_by_index = {1: "S1", 2: "S1"}
+
+        ok, message = translator._validate_llm_response(
+            {"1": "这就是特朗普", "2": "他还是特朗普"},
+            {"1": "That is Trump", "2": "He is still Trump"},
+        )
+
+        assert ok is True
+        assert message == ""
 
     def test_rejects_lowercase_english_function_word_in_chinese_translation(self):
         t = _make_translator()
@@ -723,6 +884,31 @@ class TestValidateLLmResponse:
         assert len(captured) == 2
         assert "previous answer was invalid" in captured[1][-1]["content"]
 
+    def test_single_fallback_keeps_individually_valid_repeated_phrasing(self, monkeypatch):
+        t = _make_translator()
+        chunk = [
+            SubtitleProcessData(index=1, original_text="This proposal changed everything."),
+            SubtitleProcessData(index=2, original_text="Nobody expected the backlash."),
+        ]
+        responses = iter(["这个提案彻底改变了一切", "这场反弹彻底改变了一切"])
+
+        monkeypatch.setattr(
+            t,
+            "_translate_locked_batch",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("retry singly")),
+        )
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm",
+            lambda **_kwargs: _text_response(next(responses)),
+        )
+
+        result = t._translate_chunk_single(chunk)
+
+        assert [item.translated_text for item in result] == [
+            "这个提案彻底改变了一切",
+            "这场反弹彻底改变了一切",
+        ]
+
     def test_single_fallback_strips_reasoning_and_sends_neighbor_context(self, monkeypatch):
         t = _make_translator()
         t._all_source_by_index = {1: "before", 2: "in a Q3", 3: "after"}
@@ -769,6 +955,26 @@ class TestValidateLLmResponse:
         t = _make_translator()
         resp = {"0": "宝马给这辆车做了专属调校。"}
         inp = {"0": "BMW gave this car a unique tune."}
+
+        ok, msg = t._validate_llm_response(resp, inp)
+
+        assert ok is True
+        assert msg == ""
+
+    def test_allows_standard_rem_translation_for_preserved_tokens(self):
+        t = _make_translator()
+        resp = {"0": "也会出现在非快速眼动睡眠阶段。"}
+        inp = {"0": "It also occurs during non-REM sleep."}
+
+        ok, msg = t._validate_llm_response(resp, inp)
+
+        assert ok is True
+        assert msg == ""
+
+    def test_does_not_treat_uppercase_pronoun_as_model_token(self):
+        t = _make_translator()
+        resp = {"0": "这给了我们一个理解梦境的模型。"}
+        inp = {"0": "Does that give US a model for understanding dreams?"}
 
         ok, msg = t._validate_llm_response(resp, inp)
 

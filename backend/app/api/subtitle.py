@@ -52,6 +52,7 @@ def _preview_segments(data) -> list[dict]:
             "translated": ""
             if BaseTranslator._looks_like_placeholder_translation(segment.translated_text or "")
             else segment.translated_text or "",
+            "speaker": segment.speaker_id or "",
         }
         for index, segment in enumerate(data.segments, 1)
     ]
@@ -208,6 +209,10 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
 
         # Load subtitle into ASRData
         asr_data = ASRData.from_subtitle_file(req.subtitle_file)
+        if any(segment.speaker_id for segment in asr_data.segments):
+            from subforge.core.asr.speaker_diarization import smooth_speaker_assignments
+
+            smooth_speaker_assignments(asr_data)
         task_manager.update_progress(task_id, 10, f"Loaded {len(asr_data.segments)} segments")
         _raise_if_cancelled(task_id)
 

@@ -1502,7 +1502,16 @@ function LiveSubtitleList({ subtitles }: { subtitles: SubtitleSegment[] }) {
               <span>→</span>
               <span>{sub.end}</span>
             </div>
-            <p className="text-[12px] leading-5 text-text-primary">{sub.text}</p>
+            <div className="flex items-start gap-2">
+              {sub.speaker && (
+                <span className="mt-0.5 shrink-0 rounded bg-accent-dim px-1.5 py-0.5 font-mono text-[10px] font-semibold text-accent">
+                  {sub.speaker.match(/(\d+)\s*$/)?.[1]
+                    ? `S${sub.speaker.match(/(\d+)\s*$/)?.[1]}`
+                    : sub.speaker}
+                </span>
+              )}
+              <p className="text-[12px] leading-5 text-text-primary">{sub.text}</p>
+            </div>
           </div>
         ))}
       </div>

@@ -209,6 +209,98 @@ def test_smooth_speaker_assignments_fills_short_unlabeled_edge():
     assert [segment.speaker_id for segment in data] == ["Speaker 2", "Speaker 2"]
 
 
+def test_smooth_speaker_assignments_repairs_longer_incomplete_island():
+    data = ASRData(
+        [
+            ASRDataSeg("that is helping us to", 0, 900, speaker_id="Speaker 1"),
+            ASRDataSeg("adapt and to", 940, 1_883, speaker_id="Speaker 2"),
+            ASRDataSeg("engage better tomorrow.", 2_204, 3_100, speaker_id="Speaker 1"),
+        ]
+    )
+
+    smooth_speaker_assignments(data)
+
+    assert [segment.speaker_id for segment in data] == ["Speaker 1"] * 3
+
+
+def test_smooth_speaker_assignments_preserves_complete_short_interjection():
+    data = ASRData(
+        [
+            ASRDataSeg("I kept explaining", 0, 900, speaker_id="Speaker 1"),
+            ASRDataSeg("Yeah.", 940, 1_500, speaker_id="Speaker 2"),
+            ASRDataSeg("until the end.", 1_540, 2_400, speaker_id="Speaker 1"),
+        ]
+    )
+
+    smooth_speaker_assignments(data)
+
+    assert [segment.speaker_id for segment in data] == [
+        "Speaker 1",
+        "Speaker 2",
+        "Speaker 1",
+    ]
+
+
+def test_smooth_speaker_assignments_repairs_near_boundary_question_island():
+    data = ASRData(
+        [
+            ASRDataSeg("Is he going to succeed?", 0, 599, speaker_id="Speaker 2"),
+            ASRDataSeg("Do you think?", 821, 1_197, speaker_id="Speaker 1"),
+            ASRDataSeg("I mean, can he?", 1_459, 2_000, speaker_id="Speaker 2"),
+        ]
+    )
+
+    smooth_speaker_assignments(data)
+
+    assert [segment.speaker_id for segment in data] == ["Speaker 2"] * 3
+
+
+def test_smooth_speaker_assignments_repairs_short_subject_phrase_at_boundary():
+    data = ASRData(
+        [
+            ASRDataSeg("blood and soil—", 0, 480, speaker_id="Speaker 1"),
+            ASRDataSeg("He", 500, 560, speaker_id="Speaker 1"),
+            ASRDataSeg("certainly", 580, 841, speaker_id="Speaker 1"),
+            ASRDataSeg("delivered", 881, 1_200, speaker_id="Speaker 2"),
+            ASRDataSeg("a strong message.", 1_220, 1_800, speaker_id="Speaker 2"),
+        ]
+    )
+
+    smooth_speaker_assignments(data)
+
+    assert [segment.speaker_id for segment in data] == [
+        "Speaker 1",
+        "Speaker 2",
+        "Speaker 2",
+        "Speaker 2",
+        "Speaker 2",
+    ]
+
+
+def test_smooth_speaker_assignments_preserves_demonstrative_turn_ending():
+    data = ASRData(
+        [
+            ASRDataSeg("in a whole weird", 0, 800, speaker_id="Speaker 2"),
+            ASRDataSeg("that", 820, 900, speaker_id="Speaker 2"),
+            ASRDataSeg("way,", 920, 1_020, speaker_id="Speaker 2"),
+            ASRDataSeg("yeah", 1_040, 1_220, speaker_id="Speaker 2"),
+            ASRDataSeg("yeah,", 1_420, 1_600, speaker_id="Speaker 1"),
+            ASRDataSeg("I mean", 1_620, 1_900, speaker_id="Speaker 1"),
+        ]
+    )
+
+    smooth_speaker_assignments(data)
+
+    assert [segment.speaker_id for segment in data] == [
+        "Speaker 2",
+        "Speaker 2",
+        "Speaker 2",
+        "Speaker 2",
+        "Speaker 1",
+        "Speaker 1",
+    ]
+
+
 def test_resolve_diarization_model_prefers_managed_snapshot(tmp_path: Path):
     local_model = tmp_path / "pyannote-speaker-diarization-community-1"
     _write_community_model(local_model)

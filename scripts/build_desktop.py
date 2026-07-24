@@ -521,10 +521,12 @@ def verify_bundle(version: str) -> None:
 def archive(version: str) -> None:
     bundle = DIST_DIR / "SubForge"
     tag = _platform_tag()
-    _archive_dir(bundle, ARTIFACT_DIR / f"SubForge-{version}-{tag}.zip")
+    flavor = os.environ.get("SUBFORGE_BUILD_FLAVOR", "").strip().lower()
+    suffix = f"-{flavor}" if flavor else ""
+    _archive_dir(bundle, ARTIFACT_DIR / f"SubForge-{version}-{tag}{suffix}.zip")
     app = DIST_DIR / "SubForge.app"
     if app.exists():
-        _archive_dir(app, ARTIFACT_DIR / f"SubForge-{version}-{tag}-app.zip")
+        _archive_dir(app, ARTIFACT_DIR / f"SubForge-{version}-{tag}{suffix}-app.zip")
 
 
 def main() -> int:

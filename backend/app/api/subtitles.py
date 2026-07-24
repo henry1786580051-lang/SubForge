@@ -221,7 +221,8 @@ async def export_subtitle(
         segments = [{"id": i + 1,
                       "start": _ms_to_srt(seg.start_time) if isinstance(seg.start_time, int) else str(seg.start_time),
                       "end": _ms_to_srt(seg.end_time) if isinstance(seg.end_time, int) else str(seg.end_time),
-                      "text": seg.text, "translated": getattr(seg, "translated_text", "")}
+                      "text": seg.text, "translated": getattr(seg, "translated_text", ""),
+                      "speaker": getattr(seg, "speaker_id", "")}
                      for i, seg in enumerate(asr_data.segments)]
     except ImportError:
         try:
@@ -274,6 +275,7 @@ class SegmentData(BaseModel):
     end: str = "00:00:00.000"
     text: str = ""
     translated: str = ""
+    speaker: str = ""
 
 
 class ExportRequest(BaseModel):
@@ -414,6 +416,7 @@ def segments_to_json(segments: list[dict]) -> str:
             "end": seg.get("end", "00:00:00.000"),
             "text": seg.get("text", ""),
             "translated": seg.get("translated", ""),
+            "speaker": seg.get("speaker", ""),
         })
     return json.dumps(data, ensure_ascii=False, indent=2)
 
@@ -430,6 +433,7 @@ def parse_srt(content: str) -> list[dict]:
             "end": _ms_to_timestamp(seg.end_time),
             "text": seg.text,
             "translated": seg.translated_text,
+            "speaker": seg.speaker_id,
         }
         for idx, seg in enumerate(asr_data.segments, 1)
     ]

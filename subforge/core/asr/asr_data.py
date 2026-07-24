@@ -376,15 +376,30 @@ class ASRData:
         """Replace Chinese commas and periods in translated subtitle lines.
 
         This is a display-only finalization pass for Chinese subtitle output.
-        It deliberately touches only ``translated_text`` entries containing Han
-        characters, leaving the source line and English punctuation unchanged.
+        It touches only ``translated_text`` and preserves punctuation inside
+        ASCII identifiers such as decimals, model names, and domain names.
         """
-        han_characters = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
         for seg in self.segments:
             translated = seg.translated_text
-            if not translated or not han_characters.search(translated):
+            if not translated:
                 continue
-            translated = re.sub(r"[，。]+", " ", translated)
+
+            has_han = bool(re.search(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", translated))
+            cleaned = []
+            for index, character in enumerate(translated):
+                if character in "，。":
+                    cleaned.append(" ")
+                    continue
+                if character in ",." and has_han:
+                    previous = translated[index - 1] if index > 0 else ""
+                    following = translated[index + 1] if index + 1 < len(translated) else ""
+                    if previous.isascii() and previous.isalnum() and following.isascii() and following.isalnum():
+                        cleaned.append(character)
+                    else:
+                        cleaned.append(" ")
+                    continue
+                cleaned.append(character)
+            translated = "".join(cleaned)
             seg.translated_text = re.sub(r"[ \t]{2,}", " ", translated).strip()
         return self
 
@@ -2147,6 +2162,17 @@ class ASRData:
                 left_family = _line_family(non_empty[0])
                 right_family = _line_family(non_empty[1])
                 short_latin_line = re.compile(r"^[A-Za-z][.!?]?$", re.IGNORECASE)
+                left_title = re.fullmatch(r"[《“\"'](.+?)[》”\"']?[。.]?", non_empty[0].strip())
+                right_title = re.fullmatch(r"[《“\"'](.+?)[》”\"']?[。.]?", non_empty[1].strip())
+                if left_family == right_family == "latin":
+                    if left_title and re.sub(r"\W+", "", left_title.group(1)).lower() == re.sub(
+                        r"\W+", "", non_empty[1]
+                    ).lower():
+                        return non_empty[1], non_empty[0]
+                    if right_title and re.sub(r"\W+", "", right_title.group(1)).lower() == re.sub(
+                        r"\W+", "", non_empty[0]
+                    ).lower():
+                        return non_empty[0], non_empty[1]
                 if (
                     left_family == "han"
                     and right_family == "other"

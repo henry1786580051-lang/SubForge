@@ -55,6 +55,7 @@ you should also recognize this 1986 Mercedes-Benz 420 SEL
             "end": "00:00:02.000",
             "text": "you should also recognize this 1986 Mercedes-Benz 420 SEL",
             "translated": "你肯定还认得出这辆1986年的梅赛德斯-奔驰420 SEL",
+            "speaker": "",
         }
     ]
 
@@ -234,10 +235,21 @@ def test_subtitle_pipeline_hides_speaker_markers_in_final_output(tmp_path, monke
     )
 
     output = subtitle_path.with_stem("input_processed").read_text(encoding="utf-8")
+    result = task_manager.get_task(task.id).result
     assert "Speaker 1" not in output
     assert not any(line.startswith("- ") for line in output.splitlines())
     assert "你好世界" in output
     assert "Hello world" in output
+    assert result["segments"][0]["speaker"] == "Speaker 1"
+
+
+def test_backend_parse_srt_exposes_speaker_as_metadata():
+    segments = parse_srt(
+        "1\n00:00:00,000 --> 00:00:01,000\n[Speaker 2] Yes, exactly.\n"
+    )
+
+    assert segments[0]["text"] == "Yes, exactly."
+    assert segments[0]["speaker"] == "Speaker 2"
 
 
 def test_subtitle_pipeline_does_not_split_bilingual_cues_after_translation(

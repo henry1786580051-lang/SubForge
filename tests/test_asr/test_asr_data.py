@@ -961,6 +961,37 @@ class TestChineseTranslationPunctuationFinalization:
         assert asr_data.segments[1].text == "中文原文，保留。"
         assert asr_data.segments[1].translated_text == "English, translation."
 
+    def test_replaces_ascii_sentence_punctuation_but_preserves_identifiers(self):
+        asr_data = ASRData(
+            [
+                ASRDataSeg(
+                    "Technical terms.",
+                    0,
+                    1000,
+                    translated_text="REM睡眠,很常见。 版本3.5见himss.com。",
+                ),
+                ASRDataSeg(
+                    "Nightmare Obscura.",
+                    1000,
+                    2000,
+                    translated_text="《Nightmare Obscura》。",
+                ),
+            ]
+        )
+
+        asr_data.replace_chinese_translation_punctuation()
+
+        assert asr_data.segments[0].translated_text == "REM睡眠 很常见 版本3.5见himss.com"
+        assert asr_data.segments[1].translated_text == "《Nightmare Obscura》"
+
+    def test_round_trip_latin_only_translated_title(self):
+        parsed = ASRData.from_srt(
+            "1\n00:00:00,000 --> 00:00:02,000\n《Nightmare Obscura》\nNightmare Obscura.\n"
+        )
+
+        assert parsed.segments[0].text == "Nightmare Obscura."
+        assert parsed.segments[0].translated_text == "《Nightmare Obscura》"
+
 
 class TestFormatConversionEdgeCases:
     """测试格式转换边缘情况"""

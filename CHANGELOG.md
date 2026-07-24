@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.1.0 - 2026-07-25
+
+### Added
+
+- Added dialogue-aware subtitle translation. Anonymous speaker metadata now helps the LLM resolve replies, pronouns, ellipsis, intent, tone, and register without leaking speaker labels into final subtitles.
+- Added conservative same-speaker boundary validation for duplicated connectors and repeated Chinese conclusions, with isolated recovery that preserves valid neighboring translations.
+- Added a dedicated Windows CUDA 12.8 installer using PyTorch and Torchaudio 2.8 CUDA wheels. The standard Windows installer remains available for broader hardware compatibility.
+
+### Changed
+
+- Improved multi-speaker assignment smoothing around incomplete question, subject, and continuation islands while preserving complete short interjections and genuine turn changes.
+- Improved dialogue-aware sentence grouping across hesitation pauses and stuttered continuations without merging complete replies across speaker boundaries.
+- Translation context and cache keys now include anonymous speaker turns, while single-speaker payloads retain the existing compact format.
+- Windows WhisperX now selects CTranslate2 transcription and PyTorch forced-alignment devices independently, reuses managed FasterWhisper models, and isolates packaged CUDA transcription workers for safer cancellation and failure recovery.
+
+### Fixed
+
+- Fixed sparse MiniMax M3 alignment corrections repeatedly failing without a conservative per-item recovery path.
+- Fixed speaker identifiers appearing in translated subtitle text and dialogue meaning drifting across speaker boundaries.
+- Fixed legitimate uppercase pronouns being mistaken for protected model identifiers and standard translations such as REM being rejected.
+- Fixed Windows desktop packages missing FasterWhisper's Silero VAD asset and failing when the FFmpeg download endpoint returned a transient gateway timeout.
+- Fixed base CI importing the optional Hugging Face runtime before alignment-download tests could install their isolated test substitute.
+
 ## v1.0.10 - 2026-07-24
 
 ### Added

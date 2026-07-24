@@ -598,6 +598,47 @@ class TestMergeShortSegment:
             "Speaker 2",
         ]
 
+    def test_merges_short_continuation_across_hesitation_pause(self):
+        segments = [
+            ASRDataSeg("I mean,", 0, 500, speaker_id="Speaker 1"),
+            ASRDataSeg(
+                "it sounds amazing, right?",
+                1_300,
+                2_500,
+                speaker_id="Speaker 1",
+            ),
+        ]
+        splitter = SubtitleSplitter(thread_num=1, model="gpt-4o-mini")
+
+        splitter.merge_short_segment(segments)
+
+        assert len(segments) == 1
+        assert segments[0].text == "I mean, it sounds amazing, right?"
+
+    def test_does_not_merge_short_complete_reply_across_hesitation_pause(self):
+        segments = [
+            ASRDataSeg("Yeah.", 0, 500, speaker_id="Speaker 1"),
+            ASRDataSeg("that is the idea.", 1_300, 2_500, speaker_id="Speaker 1"),
+        ]
+        splitter = SubtitleSplitter(thread_num=1, model="gpt-4o-mini")
+
+        splitter.merge_short_segment(segments)
+
+        assert len(segments) == 2
+
+    def test_merges_stuttered_i_before_capitalized_continuation(self):
+        segments = [
+            ASRDataSeg("I", 0, 60, speaker_id="Speaker 1"),
+            ASRDataSeg("I mean,", 1_020, 1_600, speaker_id="Speaker 1"),
+            ASRDataSeg("it sounds amazing, right?", 2_000, 3_200, speaker_id="Speaker 1"),
+        ]
+        splitter = SubtitleSplitter(thread_num=1, model="gpt-4o-mini")
+
+        splitter.merge_short_segment(segments)
+
+        assert len(segments) == 1
+        assert segments[0].text == "I I mean, it sounds amazing, right?"
+
     def test_merge_respects_max_word_count(self):
         """测试合并不超过最大字数"""
         segments = [

@@ -11,7 +11,7 @@ export function SubtitlePanel({
   showPrompt?: boolean;
   showTranslateActions?: boolean;
 } = {}) {
-  const { subtitles, setSubtitles, updateSubtitle, selectedIds, toggleSelect, selectAll, deselectAll, subtitleFile, config, setSeekToTime } = useAppStore();
+  const { subtitles, setSubtitles, updateSubtitle, selectedIds, toggleSelect, selectAll, deselectAll, subtitleFile, config, setSeekToTime, setError } = useAppStore();
   const [editingCell, setEditingCell] = useState<{ id: number; field: "text" | "translated" } | null>(null);
   const [editValue, setEditValue] = useState("");
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: number | null } | null>(null);
@@ -40,12 +40,25 @@ export function SubtitlePanel({
     const ids = useAppStore.getState().selectedIds;
     if (ids.size < 2) return;
     const selected = subtitles.filter((s) => ids.has(s.id));
+    const speakers = new Set(selected.map((s) => s.speaker || ""));
+    if (speakers.size > 1) {
+      setError("不能合并不同说话人的字幕");
+      return;
+    }
     const others = subtitles.filter((s) => !ids.has(s.id));
-    const merged = { id: selected[0].id, start: selected[0].start, end: selected[selected.length - 1].end, text: selected.map((s) => s.text).join(""), translated: selected.map((s) => s.translated).filter(Boolean).join("") };
+    const joinText = (values: string[]) => values.filter(Boolean).join(" ").replace(/\s+([,.;:!?，。！？；：、])/g, "$1");
+    const merged = {
+      id: selected[0].id,
+      start: selected[0].start,
+      end: selected[selected.length - 1].end,
+      text: joinText(selected.map((s) => s.text)),
+      translated: joinText(selected.map((s) => s.translated)),
+      speaker: selected[0].speaker || "",
+    };
     const result = [...others, merged].sort((a, b) => a.id - b.id).map((s, i) => ({ ...s, id: i + 1 }));
     setSubtitles(result);
     deselectAll();
-  }, [subtitles, setSubtitles, deselectAll]);
+  }, [subtitles, setSubtitles, deselectAll, setError]);
 
   const translateAll = useCallback(async () => {
     if (!subtitleFile) return;
@@ -367,7 +380,14 @@ export function SubtitlePanel({
                     {editingCell?.id === sub.id && editingCell?.field === "text" ? (
                       <input autoFocus className="inline-edit text-text-primary" value={editValue} onChange={(e) => setEditValue(e.target.value)} onBlur={commitEdit} onKeyDown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") setEditingCell(null); }} onClick={(e) => e.stopPropagation()} />
                     ) : (
-                      <span className="text-text-primary group-hover:text-text-primary transition-colors">{sub.text}</span>
+                      <span className="flex items-start gap-2 text-text-primary group-hover:text-text-primary transition-colors">
+                        {sub.speaker && (
+                          <span className="mt-0.5 shrink-0 rounded bg-accent-dim px-1.5 py-0.5 font-mono text-[10px] font-semibold text-accent" title={sub.speaker}>
+                            {formatSpeakerLabel(sub.speaker)}
+                          </span>
+                        )}
+                        <span>{sub.text}</span>
+                      </span>
                     )}
                   </td>
                   <td className="px-3 py-2 border-b border-[rgba(0,0,0,0.04)]" onDoubleClick={(e) => { e.stopPropagation(); startEdit(sub.id, "translated", sub.translated); }}>
@@ -407,4 +427,9 @@ export function SubtitlePanel({
       )}
     </div>
   );
+}
+
+function formatSpeakerLabel(speaker: string): string {
+  const match = speaker.match(/(\d+)\s*$/);
+  return match ? `S${match[1]}` : speaker;
 }

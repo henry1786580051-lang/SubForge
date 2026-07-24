@@ -98,7 +98,19 @@ def build_translation_context(
     The function is intentionally fail-open: translation should continue even
     if the provider rejects the context request or returns malformed JSON.
     """
-    transcript = _compact_transcript(seg.text for seg in asr_data.segments)
+    speaker_aliases: dict[str, str] = {}
+    transcript_segments = []
+    for segment in asr_data.segments:
+        source = segment.text.strip()
+        if not source:
+            continue
+        raw_speaker = str(segment.speaker_id or "").strip()
+        if raw_speaker:
+            alias = speaker_aliases.setdefault(raw_speaker, f"S{len(speaker_aliases) + 1}")
+            transcript_segments.append(f"<{alias}> {source}")
+        else:
+            transcript_segments.append(source)
+    transcript = _compact_transcript(transcript_segments)
     if not transcript:
         return TranslationContext(custom_prompt=custom_prompt)
 
@@ -107,7 +119,9 @@ def build_translation_context(
         "Extract only information useful for consistent translation. "
         "Return pure JSON with keys: summary, terminology, style. "
         "terminology must be a list of {source, target, note}. "
-        "Preserve proper nouns, model names, numbers, car trims, brands, and units."
+        "Preserve proper nouns, model names, numbers, car trims, brands, and units. "
+        "Tokens such as <S1> and <S2> are anonymous dialogue-turn metadata. Use them to "
+        "understand roles and tone, but never include them as terminology or translated text."
     )
     user_payload = {
         "target_language": target_language.value,

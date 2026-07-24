@@ -762,6 +762,25 @@ class SubtitleSplitter:
                 else self.max_word_count_english
             )
             same_speaker = current_seg.speaker_id == next_seg.speaker_id
+            current_text = current_seg.text.strip()
+            next_text = next_seg.text.strip()
+            current_first_word = next(
+                iter(re.findall(r"[A-Za-z']+", current_text.lower())), ""
+            )
+            has_continuation_shape = (
+                (bool(next_text) and next_text[0].islower())
+                or current_text.endswith((",", ";", ":"))
+                or current_first_word in {"and", "but", "or", "so"}
+                or current_text == "I"
+            )
+            current_is_short_continuation = (
+                current_words <= 3
+                and time_gap <= 1200
+                and not re.search(r"[.!?。！？]\s*$", current_text)
+                and bool(next_text)
+                and has_continuation_shape
+                and total_words <= max_word_count
+            )
 
             # 判断是否合并
             should_merge = same_speaker and (
@@ -778,6 +797,7 @@ class SubtitleSplitter:
                     )
                     and total_words <= max_word_count
                 )
+                or current_is_short_continuation
             )
 
             if should_merge:

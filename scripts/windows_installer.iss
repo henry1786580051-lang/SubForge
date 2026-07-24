@@ -1,6 +1,9 @@
 #ifndef MyAppVersion
   #define MyAppVersion "0.0.0-dev"
 #endif
+#ifndef MyAppSuffix
+  #define MyAppSuffix ""
+#endif
 
 [Setup]
 AppId={{D86D8B72-A76B-4F5D-BF36-B6781971C703}
@@ -12,7 +15,7 @@ DefaultDirName={autopf}\SubForge
 DefaultGroupName=SubForge
 DisableProgramGroupPage=yes
 OutputDir=..\artifacts
-OutputBaseFilename=SubForge-{#MyAppVersion}-windows-x64-setup
+OutputBaseFilename=SubForge-{#MyAppVersion}-windows-x64{#MyAppSuffix}-setup
 Compression=lzma2/ultra64
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible

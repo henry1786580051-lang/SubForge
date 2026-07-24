@@ -58,6 +58,7 @@ class LLMTranslator(BaseTranslator):
             custom_prompt=custom_prompt
         )
         self._all_source_by_index: Dict[int, str] = {}
+        self._all_speaker_by_index: Dict[int, str] = {}
         self.llm_client = llm_client
         self._fatal_provider_error = threading.Event()
         self._fatal_provider_message = ""
@@ -66,10 +67,19 @@ class LLMTranslator(BaseTranslator):
         self._fatal_provider_error.clear()
         self._fatal_provider_message = ""
         self._all_source_by_index = {i: seg.text for i, seg in enumerate(subtitle_data.segments, 1)}
+        speaker_aliases: Dict[str, str] = {}
+        self._all_speaker_by_index = {}
+        for index, segment in enumerate(subtitle_data.segments, 1):
+            raw_speaker = str(segment.speaker_id or "").strip()
+            if not raw_speaker:
+                continue
+            alias = speaker_aliases.setdefault(raw_speaker, f"S{len(speaker_aliases) + 1}")
+            self._all_speaker_by_index[index] = alias
         try:
             return super().translate_subtitle(subtitle_data)
         finally:
             self._all_source_by_index = {}
+            self._all_speaker_by_index = {}
 
     def _translate_chunk(
         self, subtitle_chunk: List[SubtitleProcessData]
@@ -146,9 +156,14 @@ class LLMTranslator(BaseTranslator):
             return self._translate_chunk_single(subtitle_chunk)
 
     def _needs_alignment_audit(self) -> bool:
-        """Use the extra semantic ownership pass only for MiniMax M3 reflection."""
-        normalized = re.sub(r"[^a-z0-9]+", "", self.model.lower())
-        return self.is_reflect and normalized == "minimaxm3"
+        """Keep the legacy single-key M3 rewrite disabled.
+
+        Real dialogue tests showed that retranslating an isolated source fragment can
+        degrade an already coherent batch, especially when ASR punctuation is damaged.
+        Dialogue flow now belongs to the full reflective batch prompt, while structural
+        ownership remains enforced by the deterministic response validators.
+        """
+        return False
 
     def _audit_reflective_alignment(
         self,
@@ -163,14 +178,23 @@ class LLMTranslator(BaseTranslator):
         structural validators. Audit failure keeps the already validated result.
         """
         try:
+            def audit_items(keys):
+                items = {}
+                for key in keys:
+                    item = {
+                        "source": subtitle_dict[key],
+                        "translation": translated_dict[key],
+                    }
+                    if str(key).isdigit():
+                        speaker = self._all_speaker_by_index.get(int(key), "")
+                        if speaker:
+                            item["speaker"] = speaker
+                    items[key] = item
+                return items
+
             misaligned_keys = self._request_alignment_flags(
-                {
-                    key: {"source": subtitle_dict[key], "translation": translated_dict[key]}
-                    for key in subtitle_dict
-                }
+                audit_items(subtitle_dict)
             )
-            if not misaligned_keys:
-                return translated_dict
 
             ordered_keys = list(subtitle_dict)
             flagged_positions = [ordered_keys.index(key) for key in misaligned_keys]
@@ -182,19 +206,35 @@ class LLMTranslator(BaseTranslator):
                     min(len(ordered_keys), flagged_position + 3),
                 )
             }
-            if focus_keys - set(misaligned_keys):
+            needs_focused_audit = bool(focus_keys - set(misaligned_keys))
+
+            for position in range(1, len(ordered_keys)):
+                previous_key = ordered_keys[position - 1]
+                current_key = ordered_keys[position]
+                if not previous_key.isdigit() or not current_key.isdigit():
+                    continue
+                previous_speaker = self._all_speaker_by_index.get(int(previous_key), "")
+                current_speaker = self._all_speaker_by_index.get(int(current_key), "")
+                if previous_speaker and current_speaker and previous_speaker != current_speaker:
+                    needs_focused_audit = True
+                    focus_keys.update(
+                        ordered_keys[
+                            max(0, position - 2) : min(len(ordered_keys), position + 3)
+                        ]
+                    )
+
+            if not misaligned_keys and not focus_keys:
+                return translated_dict
+
+            if needs_focused_audit:
                 focused_flags = self._request_alignment_flags(
-                    {
-                        key: {
-                            "source": subtitle_dict[key],
-                            "translation": translated_dict[key],
-                        }
-                        for key in ordered_keys
-                        if key in focus_keys
-                    },
+                    audit_items(key for key in ordered_keys if key in focus_keys),
                     focused=True,
                 )
                 misaligned_keys = list(dict.fromkeys([*misaligned_keys, *focused_flags]))
+
+            if not misaligned_keys:
+                return translated_dict
 
             candidate = dict(translated_dict)
             ordered_keys = list(subtitle_dict)
@@ -215,7 +255,32 @@ class LLMTranslator(BaseTranslator):
                 require_reflect=False,
             )
             if not valid:
-                raise ValueError(error)
+                recovery_chunk = [
+                    SubtitleProcessData(
+                        index=int(key),
+                        original_text=subtitle_dict[key],
+                    )
+                    for key in ordered_keys
+                    if key in set(misaligned_keys) and key.isdigit()
+                ]
+                if not recovery_chunk:
+                    raise ValueError(error)
+                recovered = self._translate_locked_batch(
+                    recovery_chunk,
+                    initial_feedback=(
+                        "Sparse alignment corrections were still invalid: " + error
+                    ),
+                )
+                candidate.update(
+                    {str(item.index): item.translated_text for item in recovered}
+                )
+                valid, error = self._validate_llm_response(
+                    candidate,
+                    subtitle_dict,
+                    require_reflect=False,
+                )
+                if not valid:
+                    raise ValueError(error)
             logger.info(
                 "MiniMax M3 alignment audit corrected keys: %s",
                 sorted(misaligned_keys, key=lambda key: int(key) if key.isdigit() else key),
@@ -238,7 +303,7 @@ class LLMTranslator(BaseTranslator):
             else ""
         )
         system_prompt = f"""You are a conservative bilingual subtitle alignment auditor for {self.target_language.value}.
-Compare each source with the translation under the SAME key. Flag a key only when the translation clearly contains meaning owned by a different item, omits the current key's core meaning, or is shifted from another key. Sentence fragments are valid and do not need to be completed. Do not judge writing style and do not write translations.{focus_instruction} Return ONLY {{\"misaligned_keys\": [\"key\"]}}. Return an empty list when every key is aligned."""
+Compare each source with the translation under the SAME key. Flag a key only when the translation clearly contains meaning owned by a different item, omits the current key's core meaning, or is shifted from another key. Sentence fragments are valid and do not need to be completed. The optional speaker field is anonymous metadata: a speaker change is a hard semantic boundary, so meaning must never drift across it. Do not judge writing style and do not write translations.{focus_instruction} Return ONLY {{\"misaligned_keys\": [\"key\"]}}. Return an empty list when every key is aligned."""
         response = call_llm(
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -322,6 +387,7 @@ Use neighboring English only to resolve word sense and references. Translate ONL
 
     def _agent_loop(self, system_prompt: str, subtitle_dict: Dict[str, str]) -> Dict[str, Any]:
         """Agent loop翻译字幕块"""
+        system_prompt += self._dialogue_prompt_rules(subtitle_dict)
         context_text = self.translation_context.render()
         if context_text:
             system_prompt = (
@@ -341,7 +407,7 @@ Use neighboring English only to resolve word sense and references. Translate ONL
                 "content": json.dumps(
                     {
                         "previous_context": self._neighbor_context(subtitle_dict, before=True),
-                        "current_subtitles": subtitle_dict,
+                        "current_subtitles": self._current_subtitles_payload(subtitle_dict),
                         "next_context": self._neighbor_context(subtitle_dict, before=False),
                     },
                     ensure_ascii=False,
@@ -426,11 +492,50 @@ Use neighboring English only to resolve word sense and references. Translate ONL
         else:
             end = numeric_keys[-1] + self.CONTEXT_AFTER
             indices = range(numeric_keys[-1] + 1, end + 1)
-        return [
-            {"index": str(index), "source": self._all_source_by_index[index]}
-            for index in indices
-            if index in self._all_source_by_index
-        ]
+        result = []
+        for index in indices:
+            if index not in self._all_source_by_index:
+                continue
+            item = {"index": str(index), "source": self._all_source_by_index[index]}
+            speaker = self._all_speaker_by_index.get(index)
+            if speaker:
+                item["speaker"] = speaker
+            result.append(item)
+        return result
+
+    def _current_subtitles_payload(self, subtitle_dict: Dict[str, str]) -> Dict[str, Any]:
+        """Attach anonymous dialogue turns without mixing labels into source text."""
+        if not any(
+            self._all_speaker_by_index.get(int(key))
+            for key in subtitle_dict
+            if str(key).isdigit()
+        ):
+            return dict(subtitle_dict)
+        return {
+            key: {
+                "speaker": self._all_speaker_by_index.get(int(key), ""),
+                "source": source,
+            }
+            for key, source in subtitle_dict.items()
+        }
+
+    def _dialogue_prompt_rules(self, subtitle_dict: Dict[str, str]) -> str:
+        has_speakers = any(
+            self._all_speaker_by_index.get(int(key))
+            for key in subtitle_dict
+            if str(key).isdigit()
+        )
+        if not has_speakers:
+            return ""
+        return (
+            "\n\n<dialogue_metadata>\n"
+            "current_subtitles values may be objects with anonymous speaker and source fields. "
+            "Use speaker changes and neighboring turns only to resolve who is responding, "
+            "pronouns, ellipsis, intent, tone, and register. The speaker value is metadata, "
+            "not subtitle text. Never translate, repeat, rename, or output speaker labels. "
+            "Never merge dialogue turns or move meaning between keys.\n"
+            "</dialogue_metadata>"
+        )
 
     def _validate_llm_response(
         self,
@@ -438,6 +543,7 @@ Use neighboring English only to resolve word sense and references. Translate ONL
         subtitle_dict: Dict[str, str],
         *,
         require_reflect: bool | None = None,
+        check_adjacent_repetition: bool = True,
     ) -> Tuple[bool, str]:
         """验证LLM翻译结果（支持普通和反思模式）
 
@@ -498,6 +604,24 @@ Use neighboring English only to resolve word sense and references. Translate ONL
                     f"Untranslated keys: {untranslated[:20]}",
                 )
 
+        if self._all_speaker_by_index:
+            speaker_label_pattern = re.compile(
+                r"(?:\[(?:speaker\s*\d+|s\d+)\]|【(?:说话人\s*\d+|s\d+)】|"
+                r"\b(?:speaker|说话人)\s*\d+\b|^\s*s\d+\s*[:：-])",
+                flags=re.IGNORECASE,
+            )
+            leaked_speakers = [
+                key
+                for key in sort_keys(actual_keys)
+                if speaker_label_pattern.search(_extract_text(response_dict[key]))
+            ]
+            if leaked_speakers:
+                return (
+                    False,
+                    "Speaker identifiers are metadata only and must not appear in translated "
+                    f"subtitle text. Remove speaker labels from keys: {leaked_speakers[:20]}",
+                )
+
         preserved_ok, preserved_error = self._validate_preserved_tokens(
             response_dict, subtitle_dict, _extract_text
         )
@@ -517,7 +641,10 @@ Use neighboring English only to resolve word sense and references. Translate ONL
             return False, residue_error
 
         boundary_ok, boundary_error = self._validate_cross_key_boundaries(
-            response_dict, subtitle_dict, _extract_text
+            response_dict,
+            subtitle_dict,
+            _extract_text,
+            check_adjacent_repetition=check_adjacent_repetition,
         )
         if not boundary_ok:
             return False, boundary_error
@@ -547,6 +674,8 @@ Use neighboring English only to resolve word sense and references. Translate ONL
         response_dict: Dict[str, Any],
         subtitle_dict: Dict[str, str],
         extract_text,
+        *,
+        check_adjacent_repetition: bool = True,
     ) -> Tuple[bool, str]:
         """Catch explicit boundary edits and duplicated neighbor-owned numeric facts."""
         boundary_edits: list[str] = []
@@ -601,10 +730,148 @@ Use neighboring English only to resolve word sense and references. Translate ONL
                 f"Cross-key duplicates: {leaks[:20]}",
             )
 
+        if not check_adjacent_repetition:
+            return True, ""
+
         ordered_keys = sorted(
             subtitle_dict,
             key=lambda key: int(key) if str(key).isdigit() else str(key),
         )
+
+        def source_repeats_meaning(left_key: str, right_key: str) -> bool:
+            stopwords = {
+                "a",
+                "an",
+                "and",
+                "as",
+                "at",
+                "but",
+                "for",
+                "from",
+                "in",
+                "is",
+                "it",
+                "of",
+                "on",
+                "or",
+                "that",
+                "the",
+                "this",
+                "to",
+                "with",
+            }
+            left_tokens = set(
+                self._normalized_source_text(subtitle_dict[left_key]).split()
+            ) - stopwords
+            right_tokens = set(
+                self._normalized_source_text(subtitle_dict[right_key]).split()
+            ) - stopwords
+            return bool(left_tokens & right_tokens)
+
+        duplicated_connectors: list[str] = []
+        cjk_connectors = set("都也但就又还而是的了在对和")
+        for left_key, right_key in zip(ordered_keys, ordered_keys[1:]):
+            if not left_key.isdigit() or not right_key.isdigit():
+                continue
+            if int(right_key) != int(left_key) + 1:
+                continue
+            left_speaker = self._all_speaker_by_index.get(int(left_key), "")
+            right_speaker = self._all_speaker_by_index.get(int(right_key), "")
+            if not left_speaker or left_speaker != right_speaker:
+                continue
+            left_target = re.sub(
+                r"[^A-Za-z0-9\u3400-\u9fff]+$",
+                "",
+                extract_text(response_dict.get(left_key, "")),
+            )
+            right_target = re.sub(
+                r"^[^A-Za-z0-9\u3400-\u9fff]+",
+                "",
+                extract_text(response_dict.get(right_key, "")),
+            )
+            if not left_target or not right_target:
+                continue
+            connector = left_target[-1]
+            if connector != right_target[0] or connector not in cjk_connectors:
+                continue
+            if source_repeats_meaning(left_key, right_key):
+                continue
+            left_source_tokens = self._normalized_source_text(
+                subtitle_dict[left_key]
+            ).split()
+            right_source_tokens = self._normalized_source_text(
+                subtitle_dict[right_key]
+            ).split()
+            if (
+                left_source_tokens
+                and right_source_tokens
+                and left_source_tokens[-1] == right_source_tokens[0]
+            ):
+                continue
+            duplicated_connectors.append(f"{left_key}-{right_key}:{connector}")
+        if duplicated_connectors:
+            return (
+                False,
+                "Adjacent same-speaker translations repeat a connector at the subtitle "
+                "boundary. Render the connector once while preserving every key and its "
+                f"meaning. Repeated boundaries: {duplicated_connectors[:10]}",
+            )
+
+        duplicated_endings: list[str] = []
+        for left_key, right_key in zip(ordered_keys, ordered_keys[1:]):
+            if not left_key.isdigit() or not right_key.isdigit():
+                continue
+            if int(right_key) != int(left_key) + 1:
+                continue
+            left_speaker = self._all_speaker_by_index.get(int(left_key), "")
+            right_speaker = self._all_speaker_by_index.get(int(right_key), "")
+            if not left_speaker or left_speaker != right_speaker:
+                continue
+            left_target = self._normalized_target_text(
+                extract_text(response_dict.get(left_key, ""))
+            )
+            right_target = self._normalized_target_text(
+                extract_text(response_dict.get(right_key, ""))
+            )
+            left_target = left_target.replace("不过分", "不为过")
+            right_target = right_target.replace("不过分", "不为过")
+            if min(len(left_target), len(right_target)) < 4:
+                continue
+            repeated_ending = ""
+            for length in range(min(6, len(left_target), len(right_target)), 2, -1):
+                candidate = left_target[-length:]
+                if candidate == right_target[-length:] and re.fullmatch(
+                    r"[\u3400-\u9fff]+", candidate
+                ):
+                    repeated_ending = candidate
+                    break
+            if not repeated_ending:
+                continue
+            if source_repeats_meaning(left_key, right_key):
+                continue
+            left_source_tokens = self._normalized_source_text(
+                subtitle_dict[left_key]
+            ).split()
+            right_source_tokens = self._normalized_source_text(
+                subtitle_dict[right_key]
+            ).split()
+            if (
+                left_source_tokens
+                and right_source_tokens
+                and left_source_tokens[-1] == right_source_tokens[-1]
+            ):
+                continue
+            duplicated_endings.append(
+                f"{left_key}-{right_key}:{repeated_ending}"
+            )
+        if duplicated_endings:
+            return (
+                False,
+                "Adjacent same-speaker translations repeat the same Chinese conclusion. "
+                "Render that conclusion once unless the source intentionally repeats it. "
+                f"Repeated endings: {duplicated_endings[:10]}",
+            )
+
         duplicate_pairs: list[str] = []
         for left_key, right_key in zip(ordered_keys, ordered_keys[1:]):
             if left_key.isdigit() and right_key.isdigit():
@@ -618,6 +885,22 @@ Use neighboring English only to resolve word sense and references. Translate ONL
             )
             shorter_target = min(len(left_target), len(right_target))
             if shorter_target < 6:
+                continue
+            left_speaker = (
+                self._all_speaker_by_index.get(int(left_key), "")
+                if left_key.isdigit()
+                else ""
+            )
+            right_speaker = (
+                self._all_speaker_by_index.get(int(right_key), "")
+                if right_key.isdigit()
+                else ""
+            )
+            if (
+                left_speaker
+                and left_speaker == right_speaker
+                and source_repeats_meaning(left_key, right_key)
+            ):
                 continue
             target_ratio = difflib.SequenceMatcher(None, left_target, right_target).ratio()
             left_source = self._normalized_source_text(subtitle_dict[left_key])
@@ -822,6 +1105,24 @@ Use neighboring English only to resolve word sense and references. Translate ONL
 
         def important_tokens(text: str) -> set[str]:
             tokens = set()
+            uppercase_stopwords = {
+                "AM",
+                "AS",
+                "AT",
+                "BE",
+                "DO",
+                "IF",
+                "IN",
+                "IS",
+                "IT",
+                "NO",
+                "OF",
+                "ON",
+                "OR",
+                "TO",
+                "US",
+                "WE",
+            }
             collapsed_large_numbers = re.sub(r"(?<=\d),(?=\d{3}\b)", "", text)
             pattern = (
                 r"\b[A-Za-z]+\d+[A-Za-z0-9.-]*\b"
@@ -832,7 +1133,7 @@ Use neighboring English only to resolve word sense and references. Translate ONL
             )
             for match in re.finditer(pattern, collapsed_large_numbers):
                 token = match.group().strip(".,;:!?()[]{}")
-                if len(token) >= 2:
+                if len(token) >= 2 and token not in uppercase_stopwords:
                     tokens.add(token)
             return tokens
 
@@ -846,6 +1147,7 @@ Use neighboring English only to resolve word sense and references. Translate ONL
             "Lexus": {"雷克萨斯"},
             "Honda": {"本田"},
             "Acura": {"讴歌"},
+            "REM": {"快速眼动"},
         }
 
         def _is_decade_token(token: str) -> bool:
@@ -953,6 +1255,7 @@ Use neighboring English only to resolve word sense and references. Translate ONL
             target_language=self.target_language.value,
             custom_prompt=self.custom_prompt,
         )
+        system_prompt += self._dialogue_prompt_rules(subtitle_dict)
         context_text = self.translation_context.render()
         if context_text:
             system_prompt += f"\n\n<global_context>\n{context_text}\n</global_context>"
@@ -971,7 +1274,7 @@ Use neighboring English only to resolve word sense and references. Translate ONL
                 "content": json.dumps(
                     {
                         "previous_context": self._neighbor_context(subtitle_dict, before=True),
-                        "current_subtitles": subtitle_dict,
+                        "current_subtitles": self._current_subtitles_payload(subtitle_dict),
                         "next_context": self._neighbor_context(subtitle_dict, before=False),
                     },
                     ensure_ascii=False,
@@ -1091,13 +1394,16 @@ Use neighboring English only to resolve word sense and references. Translate ONL
                 raise RuntimeError(self._fatal_provider_message or "LLM provider request rejected")
             current = {str(data.index): data.original_text}
             messages = [
-                {"role": "system", "content": single_prompt},
+                {
+                    "role": "system",
+                    "content": single_prompt + self._dialogue_prompt_rules(current),
+                },
                 {
                     "role": "user",
                     "content": json.dumps(
                         {
                             "previous_context": self._neighbor_context(current, before=True),
-                            "current_subtitle": current,
+                            "current_subtitle": self._current_subtitles_payload(current),
                             "next_context": self._neighbor_context(current, before=False),
                         },
                         ensure_ascii=False,
@@ -1181,6 +1487,11 @@ Use neighboring English only to resolve word sense and references. Translate ONL
             fallback_response,
             fallback_source,
             require_reflect=False,
+            # Every fallback item has already passed isolated ownership and
+            # language validation. Re-running the similarity heuristic across
+            # independently generated lines can reject legitimate repeated
+            # phrasing and discard the entire recovered batch.
+            check_adjacent_repetition=False,
         )
         if not fallback_ok and len(subtitle_chunk) > 1:
             try:
@@ -1207,7 +1518,10 @@ Use neighboring English only to resolve word sense and references. Translate ONL
                 "custom_prompt": self.custom_prompt,
                 "reflect": self.is_reflect,
                 "context": self.translation_context.fingerprint(),
-                "prompt_version": "context-v3-boundary-ownership",
+                "dialogue_speakers": {
+                    data.index: self._all_speaker_by_index.get(data.index, "") for data in chunk
+                },
+                "prompt_version": "context-v4-dialogue-aware",
             }
         )
         return f"{class_name}:{chunk_key}:{lang}:{model}:{prompt_key}"
