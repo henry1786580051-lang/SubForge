@@ -1,6 +1,7 @@
 import asyncio
 import importlib
 import sys
+import types
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
@@ -159,8 +160,6 @@ def test_huggingface_alignment_cache_is_reported_ready(tmp_path):
 
 
 def test_huggingface_alignment_download_uses_whisperx_cache_layout(tmp_path, monkeypatch):
-    import huggingface_hub
-
     models_dir = tmp_path / "models"
     model_id = "whisperx-align-ko"
     completed = {}
@@ -174,8 +173,10 @@ def test_huggingface_alignment_download_uses_whisperx_cache_layout(tmp_path, mon
         (snapshot / "pytorch_model.bin").write_bytes(b"weights")
         return str(snapshot)
 
+    huggingface_hub = types.ModuleType("huggingface_hub")
+    huggingface_hub.snapshot_download = fake_snapshot_download
+    monkeypatch.setitem(sys.modules, "huggingface_hub", huggingface_hub)
     monkeypatch.setattr(transcribe_api, "_get_models_dir", lambda: models_dir)
-    monkeypatch.setattr(huggingface_hub, "snapshot_download", fake_snapshot_download)
     monkeypatch.setattr(
         transcribe_api.task_manager, "update_progress", lambda *_args, **_kwargs: None
     )
