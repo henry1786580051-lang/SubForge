@@ -40,7 +40,7 @@ class DummyTranslator(BaseTranslator):
 
     def _translate_chunk(self, subtitle_chunk):
         for item in subtitle_chunk:
-            item.translated_text = f"fresh:{item.original_text}"
+            item.translated_text = f"新译文:{item.original_text}"
         return subtitle_chunk
 
 
@@ -65,7 +65,7 @@ class PartiallyFailingTranslator(DummyTranslator):
             for item in subtitle_chunk[:-1]
         ]
         raise PartialTranslationError(
-            "one item failed",
+            "Single item translation failed for one entry",
             completed=completed,
             failed_indices=[subtitle_chunk[-1].index],
         )
@@ -74,7 +74,7 @@ class PartiallyFailingTranslator(DummyTranslator):
 def test_translator_does_not_read_or_write_cache_when_disabled(monkeypatch):
     fake_cache = FakeCache()
     fake_cache.values["DummyTranslator:any:简体中文"] = [
-        SubtitleProcessData(index=1, original_text="Hello", translated_text="old")
+        SubtitleProcessData(index=1, original_text="Hello", translated_text="旧译文")
     ]
     monkeypatch.setattr(translate_base, "get_translate_cache", lambda: fake_cache)
     monkeypatch.setattr(translate_base, "is_cache_enabled", lambda: True)
@@ -86,7 +86,7 @@ def test_translator_does_not_read_or_write_cache_when_disabled(monkeypatch):
         [SubtitleProcessData(index=1, original_text="Hello")]
     )
 
-    assert result[0].translated_text == "fresh:Hello"
+    assert result[0].translated_text == "新译文:Hello"
     assert fake_cache.get_calls == 0
     assert fake_cache.set_calls == 0
 
@@ -94,7 +94,7 @@ def test_translator_does_not_read_or_write_cache_when_disabled(monkeypatch):
 def test_translator_uses_cache_when_enabled(monkeypatch):
     fake_cache = FakeCache()
     fake_cache.values["DummyTranslator:any:简体中文"] = [
-        SubtitleProcessData(index=1, original_text="Hello", translated_text="old")
+        SubtitleProcessData(index=1, original_text="Hello", translated_text="旧译文")
     ]
     monkeypatch.setattr(translate_base, "get_translate_cache", lambda: fake_cache)
     monkeypatch.setattr(translate_base, "is_cache_enabled", lambda: True)
@@ -106,7 +106,7 @@ def test_translator_uses_cache_when_enabled(monkeypatch):
         [SubtitleProcessData(index=1, original_text="Hello")]
     )
 
-    assert result[0].translated_text == "old"
+    assert result[0].translated_text == "旧译文"
     assert fake_cache.get_calls == 1
     assert fake_cache.set_calls == 0
 
@@ -147,7 +147,10 @@ def test_partial_chunk_failure_preserves_completed_items_and_counts_exact_failur
         for index in range(1, 11)
     ]
 
-    with pytest.raises(RuntimeError, match=r"1/10 segments failed"):
+    with pytest.raises(
+        RuntimeError,
+        match=r"1/10 segments failed.*provider responded.*quality validation",
+    ):
         translator._parallel_translate([chunk])
 
     assert [item.index for item in progress] == list(range(1, 10))

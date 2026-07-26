@@ -139,13 +139,36 @@ class BaseTranslator(ABC):
                 else:
                     failed_count += len(future_to_chunk[future])
 
-        # Raise if all or most translations failed
+        # Never return a mixed-language result as complete. Recovery output is
+        # handled by the API layer, but distinguish provider errors from local
+        # quality-gate rejection in the user-facing failure reason.
         if failed_count > 0 and total_segments > 0:
             fail_rate = failed_count / total_segments
             detail = f" First error: {failed_errors[0]}" if failed_errors else ""
+            quality_markers = (
+                "failed validation",
+                "translation incomplete",
+                "missing keys",
+                "untranslated",
+                "placeholder",
+                "single item translation failed",
+                "boundary",
+                "preserve model names",
+            )
+            quality_failure = any(
+                marker in error.lower()
+                for error in failed_errors
+                for marker in quality_markers
+            )
+            guidance = (
+                "The translation provider responded, but the result did not pass subtitle "
+                "quality validation."
+                if quality_failure
+                else "Check your API key, model limits, and network connection."
+            )
             raise RuntimeError(
                 f"Translation failed: {failed_count}/{total_segments} segments failed "
-                f"({fail_rate:.0%}). Check your API key, model limits, and network connection."
+                f"({fail_rate:.0%}). {guidance}"
                 + detail
             )
 
@@ -258,9 +281,22 @@ class BaseTranslator(ABC):
         if not source_words:
             # Numbers, symbols, and punctuation can legitimately be identical.
             return False
-        if len(source_words) <= 3 and all(
-            re.search(r"\d", token) or token.isupper() or token[:1].isupper()
-            for token in re.findall(r"[A-Za-z0-9.+#&/-]+", source)
+        source_tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9.+#&/-]*", source)
+
+        def is_identifier_like(token: str) -> bool:
+            token = token.strip(".")
+            letters = re.sub(r"[^A-Za-z]", "", token)
+            return bool(
+                re.search(r"\d", token)
+                or (len(letters) >= 2 and letters.isupper())
+                or re.search(r"[a-z][A-Z]", letters)
+                or re.search(r"[.+#&/-]", token)
+            )
+
+        # Acronyms and product identifiers can legitimately remain in Latin
+        # script. Merely title-cased words such as "Area" or "Okay" cannot.
+        if source_tokens and len(source_tokens) <= 3 and all(
+            is_identifier_like(token) for token in source_tokens
         ):
             return False
         return bool(source_words)

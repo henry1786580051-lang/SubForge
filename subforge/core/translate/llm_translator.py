@@ -27,6 +27,7 @@ class LLMTranslator(BaseTranslator):
 
     MAX_STEPS = 3
     SINGLE_FALLBACK_MAX_ATTEMPTS = 3
+    TRANSLATION_TEMPERATURE = 0.2
     CONTEXT_BEFORE = 3
     CONTEXT_AFTER = 2
 
@@ -156,19 +157,16 @@ class LLMTranslator(BaseTranslator):
             return self._translate_chunk_single(subtitle_chunk)
 
     def _needs_alignment_audit(self) -> bool:
-        """Keep the legacy single-key M3 rewrite disabled.
-
-        Real dialogue tests showed that retranslating an isolated source fragment can
-        degrade an already coherent batch, especially when ASR punctuation is damaged.
-        Dialogue flow now belongs to the full reflective batch prompt, while structural
-        ownership remains enforced by the deterministic response validators.
-        """
-        return False
+        """Run sparse alignment checks only for reflective MiniMax M3 batches."""
+        normalized_model = re.sub(r"[^a-z0-9]+", "", self.model.lower())
+        return self.is_reflect and "minimaxm3" in normalized_model
 
     def _audit_reflective_alignment(
         self,
         subtitle_dict: Dict[str, str],
         translated_dict: Dict[str, str],
+        *,
+        initial_focus_keys: Optional[List[str]] = None,
     ) -> Dict[str, str]:
         """Correct only translations that clearly belong to a neighboring key.
 
@@ -178,12 +176,12 @@ class LLMTranslator(BaseTranslator):
         structural validators. Audit failure keeps the already validated result.
         """
         try:
-            def audit_items(keys):
+            def audit_items(keys, translations=translated_dict):
                 items = {}
                 for key in keys:
                     item = {
                         "source": subtitle_dict[key],
-                        "translation": translated_dict[key],
+                        "translation": translations[key],
                     }
                     if str(key).isdigit():
                         speaker = self._all_speaker_by_index.get(int(key), "")
@@ -192,12 +190,17 @@ class LLMTranslator(BaseTranslator):
                     items[key] = item
                 return items
 
-            misaligned_keys = self._request_alignment_flags(
-                audit_items(subtitle_dict)
-            )
-
             ordered_keys = list(subtitle_dict)
-            flagged_positions = [ordered_keys.index(key) for key in misaligned_keys]
+            first_flags = self._request_alignment_flags(audit_items(ordered_keys))
+            strong_outliers = self._strong_alignment_length_outliers(
+                subtitle_dict,
+                translated_dict,
+            )
+            initial_flags = list(dict.fromkeys([*first_flags, *strong_outliers]))
+            if not initial_flags:
+                return translated_dict
+
+            flagged_positions = [ordered_keys.index(key) for key in initial_flags]
             focus_keys = {
                 ordered_keys[position]
                 for flagged_position in flagged_positions
@@ -206,34 +209,27 @@ class LLMTranslator(BaseTranslator):
                     min(len(ordered_keys), flagged_position + 3),
                 )
             }
-            needs_focused_audit = bool(focus_keys - set(misaligned_keys))
-
-            for position in range(1, len(ordered_keys)):
-                previous_key = ordered_keys[position - 1]
-                current_key = ordered_keys[position]
-                if not previous_key.isdigit() or not current_key.isdigit():
-                    continue
-                previous_speaker = self._all_speaker_by_index.get(int(previous_key), "")
-                current_speaker = self._all_speaker_by_index.get(int(current_key), "")
-                if previous_speaker and current_speaker and previous_speaker != current_speaker:
-                    needs_focused_audit = True
-                    focus_keys.update(
-                        ordered_keys[
-                            max(0, position - 2) : min(len(ordered_keys), position + 3)
-                        ]
-                    )
-
-            if not misaligned_keys and not focus_keys:
-                return translated_dict
-
-            if needs_focused_audit:
-                focused_flags = self._request_alignment_flags(
-                    audit_items(key for key in ordered_keys if key in focus_keys),
-                    focused=True,
-                )
-                misaligned_keys = list(dict.fromkeys([*misaligned_keys, *focused_flags]))
-
+            if initial_focus_keys:
+                focus_keys.update(key for key in initial_focus_keys if key in subtitle_dict)
+            confirmed_flags = self._request_alignment_flags(
+                audit_items(key for key in ordered_keys if key in focus_keys),
+                focused=True,
+            )
+            confirmed = (set(first_flags) & set(confirmed_flags)) | set(strong_outliers)
+            misaligned_keys = self._expand_confirmed_alignment_keys(
+                ordered_keys,
+                confirmed,
+            )
+            misaligned_keys = [
+                key
+                for key in misaligned_keys
+                if not self._is_disfluent_alignment_fragment(subtitle_dict[key])
+            ]
             if not misaligned_keys:
+                logger.info(
+                    "MiniMax M3 alignment flags were not confirmed: %s",
+                    sorted(initial_flags),
+                )
                 return translated_dict
 
             candidate = dict(translated_dict)
@@ -281,6 +277,40 @@ class LLMTranslator(BaseTranslator):
                 )
                 if not valid:
                     raise ValueError(error)
+
+            residual_flags = self._request_alignment_flags(
+                audit_items(
+                    misaligned_keys,
+                    candidate,
+                ),
+                focused=True,
+            )
+            unresolved_repairs = sorted(set(residual_flags) & set(misaligned_keys))
+            if unresolved_repairs:
+                for key in unresolved_repairs:
+                    candidate[key] = self._clean_alignment_item(
+                        subtitle_dict[key],
+                        candidate[key],
+                    )
+                valid, error = self._validate_llm_response(
+                    candidate,
+                    subtitle_dict,
+                    require_reflect=False,
+                )
+                if not valid:
+                    raise ValueError(error)
+                fallback_flags = self._request_alignment_flags(
+                    audit_items(unresolved_repairs, candidate),
+                    focused=True,
+                )
+                unresolved_fallbacks = sorted(
+                    set(fallback_flags) & set(unresolved_repairs)
+                )
+                if unresolved_fallbacks:
+                    raise ValueError(
+                        "alignment corrections did not pass source-only verification: "
+                        f"{unresolved_fallbacks}"
+                    )
             logger.info(
                 "MiniMax M3 alignment audit corrected keys: %s",
                 sorted(misaligned_keys, key=lambda key: int(key) if key.isdigit() else key),
@@ -289,6 +319,87 @@ class LLMTranslator(BaseTranslator):
         except Exception as error:
             logger.warning("MiniMax M3 alignment audit was ignored: %s", error)
             return translated_dict
+
+    def _expand_confirmed_alignment_keys(
+        self,
+        ordered_keys: List[str],
+        confirmed: set[str],
+    ) -> List[str]:
+        """Fill one-key holes inside a twice-confirmed local shift."""
+        positions = [index for index, key in enumerate(ordered_keys) if key in confirmed]
+        if len(positions) < 2:
+            return [key for key in ordered_keys if key in confirmed]
+
+        expanded = set(confirmed)
+        cluster = [positions[0]]
+        clusters: list[list[int]] = []
+        for position in positions[1:]:
+            if position - cluster[-1] <= 2:
+                cluster.append(position)
+            else:
+                clusters.append(cluster)
+                cluster = [position]
+        clusters.append(cluster)
+
+        for positions_in_cluster in clusters:
+            if len(positions_in_cluster) < 2:
+                continue
+            start, end = positions_in_cluster[0], positions_in_cluster[-1]
+            span = ordered_keys[start : end + 1]
+            speakers = {
+                self._all_speaker_by_index.get(int(key), "")
+                for key in span
+                if key.isdigit() and self._all_speaker_by_index.get(int(key), "")
+            }
+            if len(speakers) <= 1:
+                expanded.update(span)
+        return [key for key in ordered_keys if key in expanded]
+
+    def _strong_alignment_length_outliers(
+        self,
+        subtitle_dict: Dict[str, str],
+        translated_dict: Dict[str, str],
+    ) -> List[str]:
+        """Find only extreme Chinese expansions likely to contain a neighbor clause."""
+        if self.target_language.value not in {"简体中文", "繁体中文", "粤语"}:
+            return []
+        outliers = []
+        for key, source in subtitle_dict.items():
+            source_words = re.findall(r"[A-Za-z0-9']+", source)
+            target = translated_dict.get(key, "")
+            han_count = len(re.findall(r"[\u3400-\u9fff]", target))
+            target_units = han_count + len(re.findall(r"[A-Za-z0-9]", target))
+            has_internal_proper_noun = any(
+                token[:1].isupper() and not token.isupper()
+                for token in source_words[1:]
+            )
+            extreme_expansion = bool(
+                source_words
+                and (
+                    han_count > max(18, len(source_words) * 3)
+                    or (len(source_words) <= 1 and han_count >= 4)
+                )
+            )
+            extreme_compression = bool(
+                (len(source_words) >= 6 or (len(source_words) >= 5 and has_internal_proper_noun))
+                and target_units < len(source_words) * 0.6
+            )
+            if extreme_expansion or extreme_compression:
+                outliers.append(key)
+        return outliers
+
+    @staticmethod
+    def _is_disfluent_alignment_fragment(source: str) -> bool:
+        """Avoid rewriting short ASR fragments dominated by repeated words."""
+        tokens = re.findall(r"[A-Za-z0-9']+", source.lower())
+        if len(tokens) < 3 or len(tokens) > 6:
+            return False
+        repeated_bigram = any(
+            tokens[index : index + 2] == tokens[index + 2 : index + 4]
+            for index in range(len(tokens) - 3)
+        )
+        low_unique_ratio = len(set(tokens)) / len(tokens) <= 0.6
+        return repeated_bigram or low_unique_ratio
 
     def _request_alignment_flags(
         self,
@@ -303,7 +414,7 @@ class LLMTranslator(BaseTranslator):
             else ""
         )
         system_prompt = f"""You are a conservative bilingual subtitle alignment auditor for {self.target_language.value}.
-Compare each source with the translation under the SAME key. Flag a key only when the translation clearly contains meaning owned by a different item, omits the current key's core meaning, or is shifted from another key. Sentence fragments are valid and do not need to be completed. The optional speaker field is anonymous metadata: a speaker change is a hard semantic boundary, so meaning must never drift across it. Do not judge writing style and do not write translations.{focus_instruction} Return ONLY {{\"misaligned_keys\": [\"key\"]}}. Return an empty list when every key is aligned."""
+Compare every source with the translation under the SAME key. Read the ordered items as a continuous transcript so you can detect a run shifted forward or backward by one key. Flag a key only when its translation clearly omits material source meaning, contains a clause owned by another key, or belongs to a neighboring key. A sentence fragment can have a fragmentary translation and is not an error. Different word order, natural compression, pronoun omission, and stylistic quality are not alignment errors. Names, numbers, negation, comparisons, and conclusions are strong ownership anchors. The optional speaker field is anonymous metadata and speaker changes are hard boundaries. Do not write translations or judge style.{focus_instruction} You MUST evaluate every input key and return ONLY {{\"alignment\": {{\"key\": true_or_false}}, \"misaligned_keys\": [\"key\"]}}. The alignment object must contain every input key exactly once; true means ownership is correct. misaligned_keys must contain exactly the keys marked false."""
         response = call_llm(
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -315,12 +426,25 @@ Compare each source with the translation under the SAME key. Flag a key only whe
             client=self.llm_client,
         )
         audit = parse_json_object(get_response_text(response))
+        alignment = audit.get("alignment")
+        if isinstance(alignment, dict):
+            normalized_alignment = {str(key): value for key, value in alignment.items()}
+            if set(normalized_alignment) != set(items) or not all(
+                isinstance(value, bool) for value in normalized_alignment.values()
+            ):
+                raise ValueError("alignment audit must evaluate every input key with a boolean")
+            alignment_flags = [key for key in items if not normalized_alignment[key]]
+        else:
+            # Accept old cached/provider responses while the new prompt rolls out.
+            alignment_flags = None
         misaligned_keys = audit.get("misaligned_keys")
         if not isinstance(misaligned_keys, list) or not all(
             isinstance(key, (str, int)) for key in misaligned_keys
         ):
             raise ValueError("alignment audit must return a misaligned_keys list")
         normalized = list(dict.fromkeys(str(key) for key in misaligned_keys))
+        if alignment_flags is not None and normalized != alignment_flags:
+            raise ValueError("alignment verdicts and misaligned_keys disagree")
         unknown = set(normalized) - set(items)
         if unknown:
             raise ValueError(f"alignment audit returned unknown keys: {sorted(unknown)}")
@@ -333,9 +457,134 @@ Compare each source with the translation under the SAME key. Flag a key only whe
         previous_source: str = "",
         next_source: str = "",
     ) -> str:
-        """Translate one flagged key with source-only context for disambiguation."""
+        """Translate one flagged key with read-only context, then verify it separately."""
         system_prompt = f"""Translate the exact source text into {self.target_language.value}.
-Use neighboring English only to resolve word sense and references. Translate ONLY current_source and never include words or clauses owned by previous_source or next_source. If current_source is a sentence fragment, return a natural fragment without completing it. Preserve names, model identifiers, numbers, and technical terms. Return only the translation with no JSON, labels, reasoning, markdown, or notes."""
+Translate ONLY current_source. Use previous_source and next_source solely to resolve references, word sense, and terminology. They are read-only: never include one of their clauses unless it is also present in current_source. If current_source is a sentence fragment, return a natural fragment without completing it. Preserve names, model identifiers, numbers, and technical terms. Do not infer or add any clause that is absent from current_source. Return only the translation with no JSON, labels, reasoning, markdown, or notes."""
+        context_text = self.translation_context.render()
+        if context_text:
+            system_prompt += (
+                "\n\nUse this read-only global context only for terminology and reference "
+                f"resolution:\n{context_text}"
+            )
+        system_prompt += (
+            "\nResolve an elliptical role title against the explicitly named organization "
+            "in nearby source or global context. Do not infer a government, school, or "
+            "corporate role merely from a nearby group of people."
+        )
+        role_hint = self._alignment_role_hint(source, previous_source, next_source)
+        payload = {
+            "previous_source": previous_source,
+            "current_source": source,
+            "next_source": next_source,
+        }
+        if role_hint:
+            payload["role_hint"] = role_hint
+        reference_hint = self._alignment_reference_hint(source, previous_source)
+        if reference_hint:
+            payload["reference_hint"] = reference_hint
+        title_hint = self._alignment_title_fragment_hint(source, previous_source)
+        if title_hint:
+            payload["title_fragment_hint"] = title_hint
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ]
+        last_error = "alignment item translation was invalid"
+        for attempt in range(2):
+            response = call_llm(
+                messages=messages,
+                model=self.model,
+                temperature=0.1,
+                use_cache=self.use_cache,
+                client=self.llm_client,
+            )
+            translated = get_response_text(response).strip()
+            if not translated or self._looks_like_placeholder_translation(translated):
+                last_error = "alignment item translation was empty or a placeholder"
+            else:
+                translated = self._apply_alignment_role_hint(translated, role_hint)
+                valid, error = self._validate_llm_response(
+                    {"1": translated},
+                    {"1": source},
+                    require_reflect=False,
+                )
+                if valid:
+                    return translated
+                last_error = error
+            if attempt == 0:
+                messages.extend(
+                    [
+                        {"role": "assistant", "content": translated},
+                        {
+                            "role": "user",
+                            "content": (
+                                f"Validation failed: {last_error}. Correct only that error. "
+                                "Preserve the exact current_source boundary and return only "
+                                "the complete corrected translation."
+                            ),
+                        },
+                    ]
+                )
+        raise ValueError(last_error)
+
+    @staticmethod
+    def _alignment_role_hint(source: str, previous_source: str, next_source: str) -> str:
+        """Provide a lexical role hint only when the nearby institution is explicit."""
+        if not re.search(r"\bpresident\b", source, flags=re.IGNORECASE):
+            return ""
+        context = f"{previous_source} {next_source}"
+        if re.search(r"\b(?:union|uaw|labor)\b", context, flags=re.IGNORECASE):
+            return "The role is president of the union (工会主席), not a head of state or school."
+        return ""
+
+    def _apply_alignment_role_hint(self, translated: str, role_hint: str) -> str:
+        """Canonicalize a role only after an explicit institution match."""
+        if "工会主席" not in role_hint:
+            return translated
+        if self.target_language == TargetLanguage.TRADITIONAL_CHINESE:
+            canonical = "工會主席"
+        else:
+            canonical = "工会主席"
+        if canonical in translated or re.search(r"工[会會](?:的)?主席", translated):
+            return translated
+        return re.sub(
+            r"(?:当地(?:的)?主席|那位主席|该主席|总统|總統|校长|校長|主席)",
+            canonical,
+            translated,
+            count=1,
+        )
+
+    @staticmethod
+    def _alignment_reference_hint(source: str, previous_source: str) -> str:
+        """Resolve a relative pronoun only when its antecedent is explicit."""
+        if re.match(r"^\s*who\b", source, flags=re.IGNORECASE) and re.search(
+            r"\bpresident\b", previous_source, flags=re.IGNORECASE
+        ):
+            return "Who refers to the president mentioned in previous_source, a person."
+        return ""
+
+    @staticmethod
+    def _alignment_title_fragment_hint(source: str, previous_source: str) -> str:
+        """Identify a title split across two subtitle boundaries."""
+        current = source.strip().strip(".,!?;:")
+        if not re.fullmatch(r"[A-Z][A-Za-z'-]*", current):
+            return ""
+        match = re.search(
+            r"\b((?:The|A|An)\s+[A-Z][A-Za-z'-]*(?:\s+[A-Z][A-Za-z'-]*)?)\s*$",
+            previous_source.strip(),
+        )
+        if not match:
+            return ""
+        title = f"{match.group(1)} {current}"
+        return (
+            f'current_source completes the title "{title}" from previous_source. '
+            "Translate only this title fragment consistently; it is not a reply from next_source."
+        )
+
+    def _clean_alignment_item(self, source: str, candidate: str) -> str:
+        """Remove context-borrowed clauses without losing valid disambiguation."""
+        system_prompt = f"""Edit candidate_translation into an exact translation of current_source in {self.target_language.value}.
+Delete every fact, action, object, name, number, or clause that current_source does not support. Keep correct contextual word-sense and reference choices already present in the candidate. Do not add replacement meaning. A fragment may remain a natural fragment. Return only the cleaned translation with no JSON, labels, reasoning, markdown, or notes."""
         response = call_llm(
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -343,31 +592,29 @@ Use neighboring English only to resolve word sense and references. Translate ONL
                     "role": "user",
                     "content": json.dumps(
                         {
-                            "previous_source": previous_source,
                             "current_source": source,
-                            "next_source": next_source,
+                            "candidate_translation": candidate,
                         },
                         ensure_ascii=False,
                     ),
                 },
             ],
             model=self.model,
-            temperature=0.1,
+            temperature=0.0,
             use_cache=self.use_cache,
             client=self.llm_client,
         )
-        translated = get_response_text(response).strip()
-        if not translated or self._looks_like_placeholder_translation(translated):
-            raise ValueError("alignment item translation was empty or a placeholder")
-        single_response = {"1": translated}
+        cleaned = get_response_text(response).strip()
+        if not cleaned or self._looks_like_placeholder_translation(cleaned):
+            raise ValueError("cleaned alignment translation was empty or a placeholder")
         valid, error = self._validate_llm_response(
-            single_response,
+            {"1": cleaned},
             {"1": source},
             require_reflect=False,
         )
         if not valid:
             raise ValueError(error)
-        return translated
+        return cleaned
 
     @staticmethod
     def _is_fatal_provider_error(error: Exception) -> bool:
@@ -420,6 +667,7 @@ Use neighboring English only to resolve word sense and references. Translate ONL
             response = call_llm(
                 messages=messages,
                 model=self.model,
+                temperature=self.TRANSLATION_TEMPERATURE,
                 use_cache=self.use_cache,
                 client=self.llm_client,
             )
@@ -1148,7 +1396,29 @@ Use neighboring English only to resolve word sense and references. Translate ONL
             "Honda": {"本田"},
             "Acura": {"讴歌"},
             "REM": {"快速眼动"},
+            "WWII": {"二战", "第二次世界大战"},
         }
+
+        def _world_war_roman_preserved(
+            original: str,
+            token: str,
+            translated_norm: str,
+        ) -> bool:
+            roman = token.upper()
+            if roman not in {"I", "II"}:
+                return False
+            if not re.search(
+                rf"\bWorld\s+War\s+{roman}\b",
+                original,
+                flags=re.IGNORECASE,
+            ):
+                return False
+            equivalents = (
+                {"一战", "第一次世界大战"}
+                if roman == "I"
+                else {"二战", "第二次世界大战"}
+            )
+            return any(normalized_text(value) in translated_norm for value in equivalents)
 
         def _is_decade_token(token: str) -> bool:
             return bool(re.fullmatch(r"(?:\d{2}|\d{4})s", token, flags=re.IGNORECASE))
@@ -1224,6 +1494,8 @@ Use neighboring English only to resolve word sense and references. Translate ONL
             translated_norm = normalized_text(translated)
             for token in important_tokens(original):
                 token_norm = normalized_text(token)
+                if _world_war_roman_preserved(original, token, translated_norm):
+                    continue
                 if _decade_preserved(token, translated, translated_norm):
                     continue
                 if _ordinal_preserved(token, translated_norm):
@@ -1416,7 +1688,7 @@ Use neighboring English only to resolve word sense and references. Translate ONL
                     response = call_llm(
                         messages=messages,
                         model=self.model,
-                        temperature=0.7,
+                        temperature=self.TRANSLATION_TEMPERATURE,
                         use_cache=self.use_cache,
                         client=self.llm_client,
                     )
@@ -1521,7 +1793,7 @@ Use neighboring English only to resolve word sense and references. Translate ONL
                 "dialogue_speakers": {
                     data.index: self._all_speaker_by_index.get(data.index, "") for data in chunk
                 },
-                "prompt_version": "context-v4-dialogue-aware",
+                "prompt_version": "context-v19-title-fragment",
             }
         )
         return f"{class_name}:{chunk_key}:{lang}:{model}:{prompt_key}"

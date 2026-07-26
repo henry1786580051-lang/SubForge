@@ -120,6 +120,9 @@ def build_translation_context(
         "Return pure JSON with keys: summary, terminology, style. "
         "terminology must be a list of {source, target, note}. "
         "Preserve proper nouns, model names, numbers, car trims, brands, and units. "
+        "When surrounding transcript makes an ASR error unambiguous, include the heard form "
+        "and intended form as a terminology item and label it probable ASR correction. Never "
+        "guess from weak evidence. "
         "Tokens such as <S1> and <S2> are anonymous dialogue-turn metadata. Use them to "
         "understand roles and tone, but never include them as terminology or translated text."
     )

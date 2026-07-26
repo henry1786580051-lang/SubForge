@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.1.1 - 2026-07-26
+
+### Improved
+
+- Strengthened reflective MiniMax M3 translation with conservative, source-grounded alignment audits that repair only repeatedly confirmed subtitle mismatches.
+- Improved dialogue translation fidelity for pronouns, titles, names, quantities, units, and probable ASR corrections while preserving natural Chinese phrasing across clause boundaries.
+- Added focused revalidation after local repairs so corrected subtitles cannot silently retain neighboring content or unsupported details.
+- Improved translation failure messages to distinguish provider and network failures from local subtitle quality-gate rejection.
+
+### Fixed
+
+- Fixed isolated untranslated English words being accepted as valid Chinese translations merely because they used title case.
+- Fixed occasional translation expansion, compression, sentence ownership drift, and invented unit conversions in reflective batches.
+- Fixed alignment repair accepting its own first-pass judgment without independent confirmation.
+
+### Packaging
+
+- Windows releases now provide the standard x64 installer only. The CUDA installer is not produced for this release.
+
 ## v1.1.0 - 2026-07-25
 
 ### Added

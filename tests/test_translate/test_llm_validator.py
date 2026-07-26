@@ -46,17 +46,65 @@ def _text_response(text):
 class TestValidateLLmResponse:
     """Test _validate_llm_response with standard and reflect modes."""
 
-    def test_reflect_prompt_requires_same_speaker_flow_and_dialogue_intent(self):
+    def test_reflect_prompt_prioritizes_fidelity_and_boundary_ownership(self):
         prompt = get_prompt(
             "translate/reflect",
             target_language="简体中文",
             custom_prompt="",
         )
 
-        assert "adjacent fragments from the same speaker as one spoken turn" in prompt
-        assert "questions, negation, reply intent" in prompt
-        assert "never make it complete by borrowing" in prompt
-        assert "rendered exactly once" in prompt
+        assert "locked semantic boundary" in prompt
+        assert "Do not convert currencies" in prompt
+        assert "Do not invent context" in prompt
+        assert "appears exactly once under the correct key" in prompt
+
+    def test_translation_prompts_do_not_encourage_unrequested_conversions(self):
+        for name in ("translate/standard", "translate/reflect"):
+            prompt = get_prompt(
+                name,
+                target_language="简体中文",
+                custom_prompt="",
+            )
+            assert "Do not convert currencies" in prompt
+            assert "miles → kilometers" not in prompt
+            assert "dollars → local currency" not in prompt
+
+    def test_minimax_reflect_chunk_always_runs_independent_alignment_audit(
+        self, monkeypatch
+    ):
+        translator = _make_minimax_reflect_translator()
+        chunk = [
+            SubtitleProcessData(index=23, original_text="And how could an alliance"),
+            SubtitleProcessData(
+                index=24,
+                original_text="between white-collar and blue-collar workers",
+            ),
+            SubtitleProcessData(index=25, original_text="transform American politics?"),
+        ]
+        initial = {
+            "23": {"native_translation": "而这样的联盟会如何"},
+            "24": {"native_translation": "连接白领与蓝领工人"},
+            "25": {"native_translation": "改变美国政治？"},
+        }
+        audited = {
+            "23": "而这样的联盟会如何",
+            "24": "连接白领与蓝领工人",
+            "25": "改变美国政治？",
+        }
+        calls = []
+
+        monkeypatch.setattr(translator, "_agent_loop", lambda *_args: initial)
+
+        def fake_audit(source, translated, **kwargs):
+            calls.append((source, translated, kwargs))
+            return audited
+
+        monkeypatch.setattr(translator, "_audit_reflective_alignment", fake_audit)
+
+        result = translator._translate_chunk(chunk)
+
+        assert len(calls) == 1
+        assert [item.translated_text for item in result] == list(audited.values())
 
     def test_valid_standard_response(self):
         t = _make_translator()
@@ -145,6 +193,15 @@ class TestValidateLLmResponse:
         ok, msg = t._validate_llm_response(resp, inp)
         assert ok is True
         assert msg == ""
+
+    @pytest.mark.parametrize("source", ["Area.", "Okay", "Welcome"])
+    def test_cjk_target_rejects_untranslated_titlecase_words(self, source):
+        t = _make_translator()
+
+        ok, msg = t._validate_llm_response({"0": source}, {"0": source})
+
+        assert ok is False
+        assert "Untranslated keys" in msg
 
     def test_cjk_target_rejects_threshold_boundary_english(self):
         """The old percentage threshold must not allow untranslated full lines."""
@@ -561,8 +618,10 @@ class TestValidateLLmResponse:
         responses = iter(
             [
                 _llm_response({"misaligned_keys": ["33", "34"]}),
+                _llm_response({"misaligned_keys": ["33", "34"]}),
                 _text_response("我们首次用这些摄影机拍了剧情片 但问题也随之而来"),
                 _text_response("这些年来我们用得越来越多"),
+                _llm_response({"misaligned_keys": []}),
             ]
         )
         monkeypatch.setattr(
@@ -575,7 +634,7 @@ class TestValidateLLmResponse:
         assert result["33"].endswith("问题也随之而来")
         assert result["34"] == "这些年来我们用得越来越多"
 
-    def test_alignment_item_receives_source_only_neighbor_context(self, monkeypatch):
+    def test_alignment_item_marks_neighbor_source_as_read_only_context(self, monkeypatch):
         translator = _make_minimax_reflect_translator()
         captured = {}
 
@@ -598,7 +657,141 @@ class TestValidateLLmResponse:
         payload = json.loads(captured["messages"][1]["content"])
         assert payload["current_source"] == "in so many ways"
         assert payload["previous_source"] == "Because it was so challenging"
+        assert payload["next_source"] == "not only for me, for everybody"
+        assert "read-only" in captured["messages"][0]["content"]
         assert "translation" not in captured["messages"][1]["content"]
+
+    def test_alignment_audit_requests_an_exhaustive_per_key_verdict(self, monkeypatch):
+        translator = _make_minimax_reflect_translator()
+        captured = {}
+
+        def fake_call(**kwargs):
+            captured.update(kwargs)
+            return _llm_response(
+                {
+                    "alignment": {"1": True, "2": False},
+                    "misaligned_keys": ["2"],
+                }
+            )
+
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm",
+            fake_call,
+        )
+
+        result = translator._request_alignment_flags(
+            {
+                "1": {"source": "one", "translation": "一"},
+                "2": {"source": "two", "translation": "错位"},
+            }
+        )
+
+        assert result == ["2"]
+        assert "evaluate every input key" in captured["messages"][0]["content"]
+
+    def test_alignment_audit_rejects_incomplete_per_key_verdict(self, monkeypatch):
+        translator = _make_minimax_reflect_translator()
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm",
+            lambda **_kwargs: _llm_response(
+                {"alignment": {"1": True}, "misaligned_keys": []}
+            ),
+        )
+
+        with pytest.raises(ValueError, match="evaluate every input key"):
+            translator._request_alignment_flags(
+                {
+                    "1": {"source": "one", "translation": "一"},
+                    "2": {"source": "two", "translation": "二"},
+                }
+            )
+
+    def test_alignment_repair_fills_single_key_hole_in_confirmed_shift(self):
+        translator = _make_minimax_reflect_translator()
+        ordered = ["616", "617", "618", "619", "620"]
+
+        result = translator._expand_confirmed_alignment_keys(
+            ordered,
+            {"616", "618", "619", "620"},
+        )
+
+        assert result == ordered
+
+    def test_alignment_repair_does_not_expand_across_speaker_boundary(self):
+        translator = _make_minimax_reflect_translator()
+        translator._all_speaker_by_index = {616: "S1", 617: "S2", 618: "S2"}
+
+        result = translator._expand_confirmed_alignment_keys(
+            ["616", "617", "618"],
+            {"616", "618"},
+        )
+
+        assert result == ["616", "618"]
+
+    def test_alignment_repair_skips_short_repeated_asr_fragment(self):
+        translator = _make_minimax_reflect_translator()
+
+        assert translator._is_disfluent_alignment_fragment("of that of that struggle")
+        assert not translator._is_disfluent_alignment_fragment(
+            "that can actually just create a podcast"
+        )
+
+    def test_alignment_length_outlier_only_flags_extreme_chinese_expansion(self):
+        translator = _make_minimax_reflect_translator()
+        source = {
+            "618": "who end up supporting the president there",
+            "619": "who led to the nationwide strike a couple years ago",
+        }
+        translated = {
+            "618": "最终支持了那位工会主席由其带领在几年前发起了一场全国性罢工",
+            "619": "几年前领导了全国性罢工",
+            "620": "对吧",
+            "621": "好谢谢你",
+        }
+        source.update(
+            {
+                "620": "in Minnesota called Elina right",
+                "621": "Area",
+            }
+        )
+
+        assert translator._strong_alignment_length_outliers(source, translated) == [
+            "618",
+            "620",
+            "621",
+        ]
+
+    def test_alignment_role_hint_uses_explicit_union_context_only(self):
+        translator = _make_minimax_reflect_translator()
+
+        assert "工会主席" in translator._alignment_role_hint(
+            "who end up supporting the president there",
+            "graduate students who joined the UAW",
+            "who led a nationwide strike",
+        )
+        assert translator._alignment_role_hint(
+            "who end up supporting the president there",
+            "graduate students attended the university",
+            "at the event",
+        ) == ""
+        hint = "The role is president of the union (工会主席), not a head of state or school."
+        assert translator._apply_alignment_role_hint("最终支持当地主席的人", hint) == (
+            "最终支持工会主席的人"
+        )
+        assert translator._alignment_reference_hint(
+            "who led to the nationwide strike",
+            "who supported the president there",
+        ).endswith("a person.")
+        assert translator._alignment_reference_hint(
+            "which led to the nationwide strike",
+            "who supported the president there",
+        ) == ""
+        title_hint = translator._alignment_title_fragment_hint(
+            "Area.",
+            "thank you for coming on The Gray",
+        )
+        assert "The Gray Area" in title_hint
+        assert "not a reply" in title_hint
 
     def test_alignment_audit_focuses_on_neighbors_of_detected_shift(self, monkeypatch):
         translator = _make_minimax_reflect_translator()
@@ -609,8 +802,7 @@ class TestValidateLLmResponse:
                 _llm_response({"misaligned_keys": ["3"]}),
                 _llm_response({"misaligned_keys": ["3", "4", "5"]}),
                 _text_response("正确三"),
-                _text_response("正确四"),
-                _text_response("正确五"),
+                _llm_response({"misaligned_keys": []}),
             ]
         )
         monkeypatch.setattr(
@@ -622,11 +814,11 @@ class TestValidateLLmResponse:
 
         assert result["2"] == "译文2"
         assert result["3"] == "正确三"
-        assert result["4"] == "正确四"
-        assert result["5"] == "正确五"
+        assert result["4"] == "译文4"
+        assert result["5"] == "译文5"
         assert result["6"] == "译文6"
 
-    def test_alignment_audit_always_rechecks_dialogue_transition(self, monkeypatch):
+    def test_alignment_audit_rechecks_confirmed_dialogue_shift(self, monkeypatch):
         translator = _make_minimax_reflect_translator()
         translator._all_speaker_by_index = {1: "S1", 2: "S1", 3: "S2", 4: "S2"}
         source = {
@@ -644,10 +836,11 @@ class TestValidateLLmResponse:
         payloads = []
         responses = iter(
             [
-                _llm_response({"misaligned_keys": []}),
+                _llm_response({"misaligned_keys": ["2", "3"]}),
                 _llm_response({"misaligned_keys": ["2", "3"]}),
                 _text_response("但是血与土那一套——"),
                 _text_response("他当然传递了非常"),
+                _llm_response({"misaligned_keys": []}),
             ]
         )
 
@@ -665,7 +858,7 @@ class TestValidateLLmResponse:
         assert result["2"] == "但是血与土那一套——"
         assert result["3"] == "他当然传递了非常"
         assert '\"speaker\": \"S2\"' in payloads[0]
-        assert len(payloads) == 4
+        assert len(payloads) == 5
 
     def test_alignment_audit_uses_locked_recovery_when_sparse_fixes_repeat(self, monkeypatch):
         translator = _make_minimax_reflect_translator()
@@ -680,6 +873,7 @@ class TestValidateLLmResponse:
         responses = iter(
             [
                 _llm_response({"misaligned_keys": ["1", "2"]}),
+                _llm_response({"misaligned_keys": ["1", "2"]}),
                 _text_response("向政府发出了强烈信号"),
                 _text_response("向政府发出了强烈信号"),
                 _llm_response(
@@ -688,6 +882,7 @@ class TestValidateLLmResponse:
                         "2": "强烈的对政府表态",
                     }
                 ),
+                _llm_response({"misaligned_keys": []}),
             ]
         )
         monkeypatch.setattr(
@@ -706,7 +901,214 @@ class TestValidateLLmResponse:
         translator = _make_translator(is_reflect=True)
         assert translator._needs_alignment_audit() is False
         translator.model = "MiniMax-M3"
-        assert translator._needs_alignment_audit() is False
+        assert translator._needs_alignment_audit() is True
+
+    def test_alignment_audit_requires_two_matching_flags(self, monkeypatch):
+        translator = _make_minimax_reflect_translator()
+        source = {
+            "23": "And how could an alliance",
+            "24": "between white-collar and blue-collar workers",
+            "25": "transform American politics?",
+        }
+        translated = {
+            "23": "而一旦白领和蓝领工人联手",
+            "24": "会怎样改变美国政治的格局",
+            "25": "诺姆 欢迎来到灰色地带",
+        }
+        responses = iter(
+            [
+                _llm_response({"misaligned_keys": ["25"]}),
+                _llm_response({"misaligned_keys": []}),
+            ]
+        )
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm",
+            lambda **_kwargs: next(responses),
+        )
+
+        result = translator._audit_reflective_alignment(
+            source,
+            translated,
+            initial_focus_keys=["25"],
+        )
+
+        assert result == translated
+
+    def test_alignment_audit_corrects_twice_confirmed_shift(self, monkeypatch):
+        translator = _make_minimax_reflect_translator()
+        source = {
+            "23": "And how could an alliance",
+            "24": "between white-collar and blue-collar workers",
+            "25": "transform American politics?",
+        }
+        translated = {
+            "23": "而一旦结成联盟",
+            "24": "白领与蓝领工人之间",
+            "25": "诺姆 欢迎来到灰色地带",
+        }
+        responses = iter(
+            [
+                _llm_response({"misaligned_keys": ["25"]}),
+                _llm_response({"misaligned_keys": ["25"]}),
+                _text_response("会怎样改变美国政治？"),
+                _llm_response({"misaligned_keys": []}),
+            ]
+        )
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm",
+            lambda **_kwargs: next(responses),
+        )
+
+        result = translator._audit_reflective_alignment(
+            source,
+            translated,
+            initial_focus_keys=["25"],
+        )
+
+        assert result["25"] == "会怎样改变美国政治？"
+
+    def test_alignment_audit_repairs_confirmed_multi_key_shift_from_manual_benchmark(
+        self, monkeypatch
+    ):
+        translator = _make_minimax_reflect_translator()
+        source = {
+            "119": "The kind of bohemian bourgeois was",
+            "120": "this idea that it",
+            "121": "really kind of epitomized the 90s",
+            "122": "when tech was becoming ascendant",
+        }
+        translated = {
+            "119": "所谓波西米亚资产阶级 就是这个概念",
+            "120": "它几乎概括了90年代",
+            "121": "当时科技产业开始崛起",
+            "122": "自由贸易协定也接连签署",
+        }
+        responses = iter(
+            [
+                _llm_response({"misaligned_keys": ["120", "121", "122"]}),
+                _llm_response({"misaligned_keys": ["120", "121", "122"]}),
+                _text_response("这个概念认为"),
+                _text_response("它几乎就是90年代的缩影"),
+                _text_response("当时科技产业开始崛起"),
+                _llm_response({"misaligned_keys": []}),
+            ]
+        )
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm",
+            lambda **_kwargs: next(responses),
+        )
+
+        result = translator._audit_reflective_alignment(source, translated)
+
+        assert result == {
+            "119": "所谓波西米亚资产阶级 就是这个概念",
+            "120": "这个概念认为",
+            "121": "它几乎就是90年代的缩影",
+            "122": "当时科技产业开始崛起",
+        }
+
+    def test_alignment_audit_discards_repair_that_still_borrows_neighbor_meaning(
+        self, monkeypatch
+    ):
+        translator = _make_minimax_reflect_translator()
+        source = {
+            "844": "that can actually just create a podcast",
+            "845": "from a set of academic articles.",
+        }
+        translated = {
+            "844": "可以直接生成一档播客",
+            "845": "素材是一组学术论文",
+        }
+        responses = iter(
+            [
+                _llm_response({"misaligned_keys": ["844"]}),
+                _llm_response({"misaligned_keys": ["844"]}),
+                _text_response("可以根据一组学术论文生成播客"),
+                _llm_response({"misaligned_keys": ["844"]}),
+                _text_response("可以根据一组学术论文生成播客"),
+                _llm_response({"misaligned_keys": ["844"]}),
+            ]
+        )
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm",
+            lambda **_kwargs: next(responses),
+        )
+
+        result = translator._audit_reflective_alignment(source, translated)
+
+        assert result == translated
+
+    def test_alignment_audit_trims_borrowed_context_from_contextual_repair(
+        self, monkeypatch
+    ):
+        translator = _make_minimax_reflect_translator()
+        source = {
+            "844": "that can actually just create a podcast",
+            "845": "from a set of academic articles.",
+        }
+        translated = {
+            "844": "素材是一组学术论文",
+            "845": "素材是一组学术论文",
+        }
+        payloads = []
+        responses = iter(
+            [
+                _llm_response({"misaligned_keys": ["844"]}),
+                _llm_response({"misaligned_keys": ["844"]}),
+                _text_response("可以根据一组学术论文生成播客"),
+                _llm_response({"misaligned_keys": ["844"]}),
+                _text_response("可以直接生成一档播客"),
+                _llm_response({"misaligned_keys": []}),
+            ]
+        )
+
+        def fake_call(**kwargs):
+            payloads.append(kwargs["messages"][1]["content"])
+            return next(responses)
+
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm",
+            fake_call,
+        )
+
+        result = translator._audit_reflective_alignment(source, translated)
+
+        assert result["844"] == "可以直接生成一档播客"
+        fallback_payload = json.loads(payloads[-2])
+        assert fallback_payload["current_source"] == source["844"]
+        assert fallback_payload["candidate_translation"] == "可以根据一组学术论文生成播客"
+        assert "previous_source" not in fallback_payload
+        assert "next_source" not in fallback_payload
+
+    def test_alignment_audit_keeps_repair_verified_in_isolation(
+        self, monkeypatch
+    ):
+        translator = _make_minimax_reflect_translator()
+        source = {
+            "844": "that can actually just create a podcast",
+            "845": "from a set of academic articles.",
+        }
+        translated = {
+            "844": "素材是一组学术论文",
+            "845": "素材是一组学术论文",
+        }
+        responses = iter(
+            [
+                _llm_response({"misaligned_keys": ["844"]}),
+                _llm_response({"misaligned_keys": ["844"]}),
+                _text_response("可以直接生成一档播客"),
+                _llm_response({"misaligned_keys": []}),
+            ]
+        )
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm",
+            lambda **_kwargs: next(responses),
+        )
+
+        result = translator._audit_reflective_alignment(source, translated)
+
+        assert result["844"] == "可以直接生成一档播客"
+        assert result["845"] == translated["845"]
 
     def test_allows_repeated_translation_when_source_is_also_repeated(self):
         t = _make_translator()
@@ -970,6 +1372,26 @@ class TestValidateLLmResponse:
 
         assert ok is True
         assert msg == ""
+
+    def test_allows_world_war_ii_to_be_translated_semantically(self):
+        t = _make_translator()
+        resp = {"865": "一直到二战及40年代后期"}
+        inp = {"865": "up through World War II, the late 40s"}
+
+        ok, msg = t._validate_llm_response(resp, inp)
+
+        assert ok is True
+        assert msg == ""
+
+    def test_still_requires_roman_numeral_for_product_model(self):
+        t = _make_translator()
+        resp = {"1": "这是新款捷豹Mark车型"}
+        inp = {"1": "This is the new Jaguar Mark II."}
+
+        ok, msg = t._validate_llm_response(resp, inp)
+
+        assert ok is False
+        assert "II" in msg
 
     def test_does_not_treat_uppercase_pronoun_as_model_token(self):
         t = _make_translator()

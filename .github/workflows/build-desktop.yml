@@ -45,12 +45,6 @@ jobs:
             artifact-name: desktop-Windows
             build-flavor: ""
             cuda: false
-          - name: Windows x64 CUDA 12.8
-            os: windows-latest
-            uv-extra: "--extra denoise --extra whisperx"
-            artifact-name: desktop-Windows-CUDA
-            build-flavor: cuda
-            cuda: true
           - name: macOS Intel
             os: macos-15-intel
             uv-extra: ""
@@ -83,13 +77,6 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen ${{ matrix.uv-extra }}
 
-      - name: Install CUDA 12.8 runtime
-        if: matrix.cuda
-        shell: pwsh
-        run: |
-          uv pip install --python .venv\Scripts\python.exe --index-url https://download.pytorch.org/whl/cu128 "torch==2.8.0+cu128" "torchaudio==2.8.0+cu128"
-          uv run --no-sync python -c "import torch; assert torch.version.cuda == '12.8', torch.version.cuda; print(f'PyTorch {torch.__version__} CUDA {torch.version.cuda}')"
-
       - name: Install frontend dependencies
         run: npm ci
         working-directory: frontend
@@ -107,9 +94,7 @@ jobs:
           choco install innosetup --no-progress -y
           $version = (uv run --no-sync python -c "from subforge.config import VERSION; print(VERSION)").Trim()
           $suffix = if ($env:SUBFORGE_BUILD_FLAVOR) { "-$($env:SUBFORGE_BUILD_FLAVOR)" } else { "" }
-          $compression = if ($env:SUBFORGE_BUILD_FLAVOR -eq "cuda") { "lzma2/normal" } else { "lzma2/ultra64" }
-          $diskSpanning = if ($env:SUBFORGE_BUILD_FLAVOR -eq "cuda") { "yes" } else { "no" }
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" "/DMyAppSuffix=$suffix" "/DMyCompression=$compression" "/DMyDiskSpanning=$diskSpanning" "scripts\windows_installer.iss"
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" "/DMyAppSuffix=$suffix" "/DMyCompression=lzma2/ultra64" "/DMyDiskSpanning=no" "scripts\windows_installer.iss"
 
       - name: Smoke test installed Windows app
         if: runner.os == 'Windows'
@@ -141,9 +126,5 @@ jobs:
           gh release view "$TAG" >/dev/null 2>&1 || \
             gh release create "$TAG" --title "$TAG" --generate-notes
           if [ "$RUNNER_OS" = "Windows" ]; then
-            if [ "$SUBFORGE_BUILD_FLAVOR" = "cuda" ]; then
-              gh release upload "$TAG" artifacts/*-setup.exe artifacts/*-setup-*.bin --clobber
-            else
-              gh release upload "$TAG" artifacts/*-setup.exe --clobber
-            fi
+            gh release upload "$TAG" artifacts/*-setup.exe --clobber
           fi
