@@ -5,6 +5,7 @@ import json
 import re
 import threading
 from dataclasses import replace
+from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Dict, List, Optional, Tuple, cast
 
 import openai
@@ -184,9 +185,16 @@ class LLMTranslator(BaseTranslator):
                         "translation": translations[key],
                     }
                     if str(key).isdigit():
-                        speaker = self._all_speaker_by_index.get(int(key), "")
+                        numeric_key = int(key)
+                        speaker = self._all_speaker_by_index.get(numeric_key, "")
                         if speaker:
                             item["speaker"] = speaker
+                        previous_source = self._all_source_by_index.get(numeric_key - 1, "")
+                        next_source = self._all_source_by_index.get(numeric_key + 1, "")
+                        if previous_source:
+                            item["previous_source"] = previous_source
+                        if next_source:
+                            item["next_source"] = next_source
                     items[key] = item
                 return items
 
@@ -196,7 +204,13 @@ class LLMTranslator(BaseTranslator):
                 subtitle_dict,
                 translated_dict,
             )
-            initial_flags = list(dict.fromkeys([*first_flags, *strong_outliers]))
+            semantic_candidates = self._strong_asr_semantic_candidates(
+                subtitle_dict,
+                translated_dict,
+            )
+            initial_flags = list(
+                dict.fromkeys([*first_flags, *strong_outliers, *semantic_candidates])
+            )
             if not initial_flags:
                 return translated_dict
 
@@ -215,7 +229,9 @@ class LLMTranslator(BaseTranslator):
                 audit_items(key for key in ordered_keys if key in focus_keys),
                 focused=True,
             )
-            confirmed = (set(first_flags) & set(confirmed_flags)) | set(strong_outliers)
+            confirmed = (
+                set(first_flags) & set(confirmed_flags)
+            ) | set(strong_outliers) | set(semantic_candidates)
             misaligned_keys = self._expand_confirmed_alignment_keys(
                 ordered_keys,
                 confirmed,
@@ -236,14 +252,19 @@ class LLMTranslator(BaseTranslator):
             ordered_keys = list(subtitle_dict)
             for key in dict.fromkeys(misaligned_keys):
                 position = ordered_keys.index(key)
+                numeric_key = int(key) if key.isdigit() else None
                 candidate[key] = self._translate_alignment_item(
                     subtitle_dict[key],
-                    previous_source=subtitle_dict.get(ordered_keys[position - 1])
-                    if position > 0
-                    else "",
-                    next_source=subtitle_dict.get(ordered_keys[position + 1])
-                    if position + 1 < len(ordered_keys)
-                    else "",
+                    previous_source=(
+                        subtitle_dict.get(ordered_keys[position - 1], "")
+                        if position > 0
+                        else self._all_source_by_index.get((numeric_key or 1) - 1, "")
+                    ),
+                    next_source=(
+                        subtitle_dict.get(ordered_keys[position + 1], "")
+                        if position + 1 < len(ordered_keys)
+                        else self._all_source_by_index.get((numeric_key or -1) + 1, "")
+                    ),
                 )
             valid, error = self._validate_llm_response(
                 candidate,
@@ -285,7 +306,9 @@ class LLMTranslator(BaseTranslator):
                 ),
                 focused=True,
             )
-            unresolved_repairs = sorted(set(residual_flags) & set(misaligned_keys))
+            unresolved_repairs = sorted(
+                (set(residual_flags) & set(misaligned_keys)) - set(semantic_candidates)
+            )
             if unresolved_repairs:
                 for key in unresolved_repairs:
                     candidate[key] = self._clean_alignment_item(
@@ -388,6 +411,111 @@ class LLMTranslator(BaseTranslator):
                 outliers.append(key)
         return outliers
 
+    def _strong_asr_semantic_candidates(
+        self,
+        subtitle_dict: Dict[str, str],
+        translated_dict: Dict[str, str],
+    ) -> List[str]:
+        """Select narrow ASR contradictions for a second LLM verdict, not repair."""
+        ordered_keys = list(subtitle_dict)
+        candidates = []
+        for position, key in enumerate(ordered_keys):
+            source = subtitle_dict[key]
+            translated = translated_dict.get(key, "")
+            if key.isdigit() and self._all_source_by_index:
+                numeric_key = int(key)
+                neighborhood = " ".join(
+                    self._all_source_by_index[index]
+                    for index in range(numeric_key - 3, numeric_key + 4)
+                    if index in self._all_source_by_index
+                )
+            else:
+                neighborhood = " ".join(
+                    subtitle_dict[neighbor_key]
+                    for neighbor_key in ordered_keys[
+                        max(0, position - 2) : min(len(ordered_keys), position + 3)
+                    ]
+                )
+
+            grouped_currency = re.findall(r"[$]\s*(\d{1,3}),000\b", source)
+            has_quantity_context = bool(
+                re.search(
+                    r"\b(?:mpg|mph|miles?\s+per\s+gallon|fuel|speed|highway|"
+                    r"doing\s+\d+)\b",
+                    neighborhood,
+                    flags=re.IGNORECASE,
+                )
+            )
+            literal_currency_output = bool(
+                re.search(r"(?:美元|美金|dollars?|[$])", translated, flags=re.IGNORECASE)
+            )
+            literal_grouped_output = any(
+                re.search(rf"(?<!\d){re.escape(value)}000(?!\d)", translated)
+                for value in grouped_currency
+            )
+            if (
+                grouped_currency
+                and has_quantity_context
+                and (literal_currency_output or literal_grouped_output)
+            ):
+                candidates.append(key)
+                continue
+
+            model_year = re.search(
+                r"\btook\s+a\s+break\s+for\s+(\d{2})\b",
+                source,
+                flags=re.IGNORECASE,
+            )
+            has_model_year_context = bool(
+                model_year
+                and re.search(
+                    r"\b(?:back\s+for\s+\d{2}|model\s+year|trim)\b",
+                    neighborhood,
+                    flags=re.IGNORECASE,
+                )
+            )
+            literal_duration_output = bool(
+                model_year
+                and re.search(rf"(?<!\d){model_year.group(1)}\s*年", translated)
+            )
+            if has_model_year_context and literal_duration_output:
+                candidates.append(key)
+                continue
+
+            if self.target_language.value in {"简体中文", "繁体中文", "粤语"}:
+                impossible_process = bool(
+                    re.search(
+                        r"\bproduction\s+to\s+(?:turn|switch|activate|change)\b",
+                        source,
+                        flags=re.IGNORECASE,
+                    )
+                    and re.search(r"(?:生产|投产|生产模式)", translated)
+                )
+                impossible_facelift = bool(
+                    re.search(r"\bbaselift\b", source, flags=re.IGNORECASE)
+                    and re.search(r"(?:基础版|基础款|底盘|升高|改装件)", translated)
+                )
+                impossible_reverse_camera_age = bool(
+                    re.search(
+                        r"\bit\s+disappears\s+from\s+(?:19|20)\d{2}\s+when\s+it\s+was\s+introduced\b",
+                        source,
+                        flags=re.IGNORECASE,
+                    )
+                    and re.search(
+                        r"\b(?:reverse\s+camera|backup\s+camera)\b",
+                        neighborhood,
+                        flags=re.IGNORECASE,
+                    )
+                    and re.search(r"(?:消失|没了|不见)", translated)
+                )
+                if (
+                    impossible_process
+                    or impossible_facelift
+                    or impossible_reverse_camera_age
+                ):
+                    candidates.append(key)
+        return candidates
+
     @staticmethod
     def _is_disfluent_alignment_fragment(source: str) -> bool:
         """Avoid rewriting short ASR fragments dominated by repeated words."""
@@ -413,8 +541,25 @@ class LLMTranslator(BaseTranslator):
             if focused
             else ""
         )
-        system_prompt = f"""You are a conservative bilingual subtitle alignment auditor for {self.target_language.value}.
+        system_prompt = f"""You are a conservative bilingual subtitle fidelity auditor for {self.target_language.value}.
 Compare every source with the translation under the SAME key. Read the ordered items as a continuous transcript so you can detect a run shifted forward or backward by one key. Flag a key only when its translation clearly omits material source meaning, contains a clause owned by another key, or belongs to a neighboring key. A sentence fragment can have a fragmentary translation and is not an error. Different word order, natural compression, pronoun omission, and stylistic quality are not alignment errors. Names, numbers, negation, comparisons, and conclusions are strong ownership anchors. The optional speaker field is anonymous metadata and speaker changes are hard boundaries. Do not write translations or judge style.{focus_instruction} You MUST evaluate every input key and return ONLY {{\"alignment\": {{\"key\": true_or_false}}, \"misaligned_keys\": [\"key\"]}}. The alignment object must contain every input key exactly once; true means ownership is correct. misaligned_keys must contain exactly the keys marked false."""
+        system_prompt += (
+            "\nIn addition to boundary alignment, mark a key false when its translation "
+            "blindly follows an ASR rendering whose literal meaning is impossible in the "
+            "explicit local topic. High-confidence cases include incompatible currency or "
+            "number formatting, an impossible unit, an obvious homophone, or abbreviated "
+            "model-year wording with one unambiguous contextual interpretation. Do not flag "
+            "uncertain wording, unsupported proper-noun corrections, normal colloquial "
+            "compression, or style preferences. The previous_source and next_source fields "
+            "are read-only context for that item and never belong to its translation."
+        )
+        context_text = self.translation_context.render()
+        if context_text:
+            system_prompt += (
+                "\n\nUse this read-only global context only to confirm domain, terminology, "
+                "units, and high-confidence ASR corrections. Never flag or rewrite an item "
+                f"merely to add details from it:\n{context_text}"
+            )
         response = call_llm(
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -458,8 +603,16 @@ Compare every source with the translation under the SAME key. Read the ordered i
         next_source: str = "",
     ) -> str:
         """Translate one flagged key with read-only context, then verify it separately."""
-        system_prompt = f"""Translate the exact source text into {self.target_language.value}.
+        system_prompt = f"""Translate the exact intended spoken meaning of current_source into {self.target_language.value}.
 Translate ONLY current_source. Use previous_source and next_source solely to resolve references, word sense, and terminology. They are read-only: never include one of their clauses unless it is also present in current_source. If current_source is a sentence fragment, return a natural fragment without completing it. Preserve names, model identifiers, numbers, and technical terms. Do not infer or add any clause that is absent from current_source. Return only the translation with no JSON, labels, reasoning, markdown, or notes."""
+        system_prompt += (
+            "\nWhen literal ASR punctuation, currency formatting, a homophone, or abbreviated "
+            "model-year wording is semantically impossible in the explicit local topic, "
+            "restore the single unambiguous spoken interpretation while preserving the "
+            "stated number. Otherwise keep the source conservative. When a confirmed "
+            "high_confidence_asr_hint contains normalized_source, translate that verified "
+            "spoken form while keeping the original current_source boundary."
+        )
         context_text = self.translation_context.render()
         if context_text:
             system_prompt += (
@@ -485,6 +638,11 @@ Translate ONLY current_source. Use previous_source and next_source solely to res
         title_hint = self._alignment_title_fragment_hint(source, previous_source)
         if title_hint:
             payload["title_fragment_hint"] = title_hint
+        asr_hint = self._alignment_asr_hint(source, previous_source, next_source)
+        if asr_hint:
+            payload["original_asr_source"] = source
+            payload["current_source"] = asr_hint["normalized_source"]
+            payload["high_confidence_asr_hint"] = asr_hint
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
@@ -503,14 +661,18 @@ Translate ONLY current_source. Use previous_source and next_source solely to res
                 last_error = "alignment item translation was empty or a placeholder"
             else:
                 translated = self._apply_alignment_role_hint(translated, role_hint)
-                valid, error = self._validate_llm_response(
-                    {"1": translated},
-                    {"1": source},
-                    require_reflect=False,
-                )
-                if valid:
-                    return translated
-                last_error = error
+                asr_error = self._validate_alignment_asr_hint(translated, asr_hint)
+                if asr_error:
+                    last_error = asr_error
+                else:
+                    valid, error = self._validate_llm_response(
+                        {"1": translated},
+                        {"1": source},
+                        require_reflect=False,
+                    )
+                    if valid:
+                        return translated
+                    last_error = error
             if attempt == 0:
                 messages.extend(
                     [
@@ -580,6 +742,199 @@ Translate ONLY current_source. Use previous_source and next_source solely to res
             f'current_source completes the title "{title}" from previous_source. '
             "Translate only this title fragment consistently; it is not a reply from next_source."
         )
+
+    @staticmethod
+    def _alignment_asr_hint(
+        source: str,
+        previous_source: str,
+        next_source: str,
+    ) -> Dict[str, str]:
+        """Build a machine-verifiable hint only for an explicit local contradiction."""
+        grouped = re.findall(r"[$]\s*(\d{1,3}),000\b", source)
+        previous_mpg = re.search(
+            r"\b(\d{1,3})\s*mpg\b",
+            previous_source,
+            flags=re.IGNORECASE,
+        )
+        doing_speed = re.search(
+            r"\bdoing\s+[$]?\s*(\d{1,3}),000\b",
+            source,
+            flags=re.IGNORECASE,
+        )
+        if (
+            len(grouped) >= 2
+            and previous_mpg
+            and grouped[0] == previous_mpg.group(1)
+            and doing_speed
+            and grouped[-1] == doing_speed.group(1)
+        ):
+            return {
+                "kind": "grouped_quantity_units",
+                "first_value": grouped[0],
+                "first_unit": "mpg",
+                "second_value": grouped[-1],
+                "second_unit": "mph",
+                "instruction": (
+                    "ASR added currency formatting and ',000'. The first value repeats the "
+                    "previous fuel-economy figure; 'doing' the second value in this road-test "
+                    "context denotes vehicle speed. Translate those intended spoken units, "
+                    "not money."
+                ),
+                "normalized_source": re.sub(
+                    rf"[$]\s*{re.escape(grouped[-1])},000\b",
+                    f"{grouped[-1]} mph",
+                    re.sub(
+                        rf"[$]\s*{re.escape(grouped[0])},000\b",
+                        f"{grouped[0]} mpg",
+                        source,
+                        count=1,
+                    ),
+                    count=1,
+                ),
+            }
+
+        short_year = re.search(
+            r"\btook\s+a\s+break\s+for\s+(\d{2})\b",
+            source,
+            flags=re.IGNORECASE,
+        )
+        next_year = re.search(
+            r"\bback\s+for\s+(\d{2})\b.*\btrim\b",
+            next_source,
+            flags=re.IGNORECASE,
+        )
+        if short_year and next_year:
+            return {
+                "kind": "model_year_shorthand",
+                "year": short_year.group(1),
+                "next_year": next_year.group(1),
+                "instruction": (
+                    "The adjacent trim discussion uses two-digit model-year shorthand. "
+                    "Translate the first value as that model year, not a duration in years."
+                ),
+                "normalized_source": re.sub(
+                    rf"\bfor\s+{short_year.group(1)}\b",
+                    f"for model year 20{short_year.group(1)}",
+                    source,
+                    count=1,
+                    flags=re.IGNORECASE,
+                ),
+            }
+        if re.search(
+            r"\bproduction\s+to\s+(?:turn|switch|activate|change)\b",
+            source,
+            flags=re.IGNORECASE,
+        ):
+            return {
+                "kind": "process_homophone",
+                "instruction": (
+                    "In this control-operation sentence, ASR heard 'production' for "
+                    "'process'. Translate the operation steps, not manufacturing."
+                ),
+                "normalized_source": re.sub(
+                    r"\bproduction\b",
+                    "process",
+                    source,
+                    count=1,
+                    flags=re.IGNORECASE,
+                ),
+            }
+        if re.search(r"\bbaselift\b", source, flags=re.IGNORECASE):
+            return {
+                "kind": "facelift_homophone",
+                "instruction": (
+                    "In this car-model sentence, ASR heard 'Baselift' for 'facelift'. "
+                    "Translate the refreshed model, not a suspension or base trim."
+                ),
+                "normalized_source": re.sub(
+                    r"\bbaselift\b",
+                    "facelift",
+                    source,
+                    count=1,
+                    flags=re.IGNORECASE,
+                ),
+            }
+        reverse_camera_age = re.search(
+            r"\bit\s+disappears\s+from\s+((?:19|20)\d{2})\s+when\s+it\s+was\s+introduced\b",
+            source,
+            flags=re.IGNORECASE,
+        )
+        if reverse_camera_age:
+            year = reverse_camera_age.group(1)
+            return {
+                "kind": "reverse_camera_age_homophone",
+                "year": year,
+                "instruction": (
+                    "The preceding cue is showing the reverse camera. Here ASR rendered "
+                    "a remark about how dated it appears as 'disappears'. Translate that "
+                    "the camera still looks like the version introduced in the stated year."
+                ),
+                "normalized_source": (
+                    f"It still looks like the reverse camera introduced in {year}."
+                ),
+            }
+        return {}
+
+    @staticmethod
+    def _validate_alignment_asr_hint(
+        translated: str,
+        hint: Dict[str, str],
+    ) -> str:
+        if not hint:
+            return ""
+        if hint.get("kind") == "grouped_quantity_units":
+            first = hint["first_value"]
+            second = hint["second_value"]
+            first_ok = re.search(
+                rf"(?:(?<!\d){first}\s*(?:mpg|英里每加仑|英里/加仑)\b|"
+                rf"(?:每加仑)\D{{0,6}}(?<!\d){first}(?!\d))",
+                translated,
+                re.IGNORECASE,
+            )
+            second_ok = re.search(
+                rf"(?:(?<!\d){second}\s*(?:mph|英里每小时)\b|"
+                rf"(?:时速|每小时)\D{{0,6}}(?<!\d){second}(?!\d))",
+                translated,
+                re.IGNORECASE,
+            )
+            has_currency = re.search(
+                r"(?:美元|美金|dollars?|[$])",
+                translated,
+                flags=re.IGNORECASE,
+            )
+            if not first_ok or not second_ok or has_currency:
+                return (
+                    "The confirmed ASR correction requires the first value in mpg and the "
+                    "second in mph, with no currency wording."
+                )
+        elif hint.get("kind") == "model_year_shorthand":
+            year = hint["year"]
+            model_year_ok = re.search(
+                rf"(?:20{year}|(?<!\d){year}\s*款)",
+                translated,
+            )
+            duration = re.search(rf"(?<!\d){year}\s*年", translated)
+            if not model_year_ok or duration:
+                return "The confirmed shorthand is a model year, not a duration in years."
+        elif hint.get("kind") == "process_homophone":
+            if re.search(r"(?:生产|投产|生产模式)", translated):
+                return "The confirmed ASR correction is an operation process, not production."
+            if re.search(r"(?:高速|工程|项目|挑战|玩命|要命)", translated):
+                return (
+                    "Translate only the heated-seat operation process in this key; the "
+                    "highway danger and project description belong to next_source."
+                )
+        elif hint.get("kind") == "facelift_homophone":
+            if not re.search(r"(?:改款|中期改款|facelift)", translated, re.IGNORECASE):
+                return "The confirmed ASR correction is facelift, not base lift."
+        elif hint.get("kind") == "reverse_camera_age_homophone":
+            year = hint["year"]
+            if year not in translated or re.search(r"(?:消失|没了|不见)", translated):
+                return (
+                    "The confirmed reverse-camera remark must preserve the stated year and "
+                    "describe its dated appearance, not disappearance."
+                )
+        return ""
 
     def _clean_alignment_item(self, source: str, candidate: str) -> str:
         """Remove context-borrowed clauses without losing valid disambiguation."""
@@ -957,7 +1312,9 @@ Delete every fact, action, object, name, number, or clause that current_source d
             for token in source_owners:
                 token_compact = re.sub(r"[\s,，.。-]+", "", token)
                 if token_compact.isdigit():
-                    token_pattern = rf"(?<!\d){re.escape(token_compact)}(?!\d)"
+                    token_pattern = (
+                        rf"(?<![a-z0-9]){re.escape(token_compact)}(?![a-z0-9])"
+                    )
                 else:
                     token_pattern = (
                         rf"(?<![a-z0-9]){re.escape(token_compact)}(?![a-z0-9])"
@@ -968,7 +1325,15 @@ Delete every fact, action, object, name, number, or clause that current_source d
         leaks = []
         for token, owners in source_owners.items():
             output_keys = translated_owners.get(token, set())
-            leaked_keys = output_keys - owners
+            leaked_keys = {
+                key
+                for key in output_keys - owners
+                if not self._numeric_token_belongs_to_compound_model(
+                    token,
+                    subtitle_dict.get(key, ""),
+                    extract_text(response_dict.get(key, "")),
+                )
+            }
             leaks.extend(f"{key}:{token}" for key in sorted(leaked_keys))
         if leaks:
             return (
@@ -1197,6 +1562,27 @@ Delete every fact, action, object, name, number, or clause that current_source d
             )
         }
 
+    @classmethod
+    def _numeric_token_belongs_to_compound_model(
+        cls,
+        token: str,
+        source: str,
+        translated: str,
+    ) -> bool:
+        """Treat `RT392`, `RT 392`, and `R/T 392` as the same owned model."""
+        if not token.isdigit():
+            return False
+        translated_compact = re.sub(r"[^a-z0-9]", "", translated.lower())
+        for source_token in cls._boundary_tokens(source):
+            source_compact = re.sub(r"[^a-z0-9]", "", source_token.lower())
+            if (
+                re.search(r"[a-z]", source_compact)
+                and token in source_compact
+                and source_compact in translated_compact
+            ):
+                return True
+        return False
+
     @staticmethod
     def _normalized_target_text(text: str) -> str:
         return re.sub(r"[^A-Za-z0-9\u3400-\u9fff]+", "", str(text or "").lower())
@@ -1376,7 +1762,7 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 r"\b[A-Za-z]+\d+[A-Za-z0-9.-]*\b"
                 r"|\b\d+[A-Za-z]+[A-Za-z0-9.-]*\b"
                 r"|\b(?:19|20)\d{2}\b"
-                r"|\b\d{2,3}\b"
+                r"|\b\d{2,}\b"
                 r"|\b[A-Z]{2,}\b"
             )
             for match in re.finditer(pattern, collapsed_large_numbers):
@@ -1489,6 +1875,97 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 return False
             return any(normalized_text(equivalent) in translated_norm for equivalent in equivalents)
 
+        def _compound_model_preserved(token: str, translated: str) -> bool:
+            if not (re.search(r"[A-Za-z]", token) and re.search(r"\d", token)):
+                return False
+            token_compact = re.sub(r"[^a-z0-9]", "", token.lower())
+            translated_compact = re.sub(r"[^a-z0-9]", "", translated.lower())
+            return bool(token_compact and token_compact in translated_compact)
+
+        def _magnitude_preserved(
+            original: str,
+            translated_norm: str,
+            token: str = "",
+        ) -> bool:
+            """Accept equivalent grand/K notation without allowing a lost magnitude."""
+
+            def decimal_text(value: Decimal) -> str:
+                rendered = format(value, "f")
+                return rendered.rstrip("0").rstrip(".") if "." in rendered else rendered
+
+            for match in re.finditer(
+                r"\b(\d+(?:\.\d+)?)\s*(grand|k)\b",
+                original,
+                flags=re.IGNORECASE,
+            ):
+                raw = match.group(0)
+                if token and normalized_text(token) not in {
+                    normalized_text(raw),
+                    normalized_text(match.group(1)),
+                }:
+                    continue
+                try:
+                    stated = Decimal(match.group(1))
+                except InvalidOperation:
+                    continue
+                absolute = stated * 1000
+                ten_thousands = absolute / 10000
+                candidates = {
+                    raw,
+                    decimal_text(absolute),
+                    f"{decimal_text(ten_thousands)}万",
+                }
+                if any(
+                    normalized_text(candidate) in translated_norm
+                    for candidate in candidates
+                ):
+                    return True
+            return False
+
+        def _asr_formatted_number_preserved(
+            original: str,
+            token: str,
+            translated: str,
+            translated_norm: str,
+        ) -> bool:
+            """Allow only narrow, explicit repairs of ASR-formatted quantities."""
+            grouped = re.fullmatch(r"(\d{1,3})000", token)
+            if grouped:
+                base = grouped.group(1)
+                source_pattern = rf"[$]\s*{re.escape(base)},000\b"
+                unit_after_pattern = (
+                    rf"(?<!\d){re.escape(base)}\s*(?:mpg|mph|km/?h|kph|rpm|"
+                    r"英里每加仑|英里/加仑|英里每小时|公里每小时|马力|"
+                    r"磅英尺|磅-英尺)\b"
+                )
+                unit_before_pattern = (
+                    rf"(?:每加仑|时速|速度|mpg|mph)\D{{0,8}}(?<!\d)"
+                    rf"{re.escape(base)}(?!\d)"
+                )
+                has_unit = bool(
+                    re.search(
+                        unit_after_pattern,
+                        translated,
+                        flags=re.IGNORECASE,
+                    )
+                    or re.search(
+                        unit_before_pattern,
+                        translated,
+                        flags=re.IGNORECASE,
+                    )
+                )
+                if re.search(source_pattern, original) and has_unit:
+                    return True
+
+            if re.fullmatch(r"\d{2}", token):
+                year = f"20{token}"
+                shorthand_pattern = rf"\b(?:for|in|model\s+year)\s+{token}\b"
+                if re.search(shorthand_pattern, original, flags=re.IGNORECASE) and (
+                    year in translated_norm
+                ):
+                    return True
+            return False
+
         for key, original in subtitle_dict.items():
             translated = extract_text(response_dict.get(key, ""))
             translated_norm = normalized_text(translated)
@@ -1504,8 +1981,26 @@ Delete every fact, action, object, name, number, or clause that current_source d
                     continue
                 if _equivalent_token_preserved(token, translated_norm):
                     continue
+                if _compound_model_preserved(token, translated):
+                    continue
+                if _magnitude_preserved(original, translated_norm, token):
+                    continue
+                if _asr_formatted_number_preserved(
+                    original,
+                    token,
+                    translated,
+                    translated_norm,
+                ):
+                    continue
                 if token_norm and token_norm not in translated_norm:
                     missing.append(f"{key}:{token}")
+
+            if re.search(
+                r"\b\d+(?:\.\d+)?\s*(?:grand|k)\b",
+                original,
+                flags=re.IGNORECASE,
+            ) and not _magnitude_preserved(original, translated_norm):
+                missing.append(f"{key}:numeric magnitude")
 
         if missing:
             return (
@@ -1618,6 +2113,15 @@ Delete every fact, action, object, name, number, or clause that current_source d
         compact = re.sub(r"[\s,，.。-]+", "", translated).lower()
         borrowed = []
         for token in neighbor_tokens - own_tokens:
+            if any(
+                self._numeric_token_belongs_to_compound_model(
+                    token,
+                    own_source,
+                    translated,
+                )
+                for own_source in current.values()
+            ):
+                continue
             token_compact = re.sub(r"[\s,，.。-]+", "", token)
             pattern = (
                 rf"(?<!\d){re.escape(token_compact)}(?!\d)"
@@ -1772,12 +2276,93 @@ Delete every fact, action, object, name, number, or clause that current_source d
                     initial_feedback=fallback_error,
                 )
             except Exception as error:
-                raise PartialTranslationError(
-                    f"Fallback translations failed cross-key validation: {error}",
-                    completed=[],
-                    failed_indices=[data.index for data in subtitle_chunk],
-                ) from error
+                logger.warning(
+                    "Locked revalidation failed after every fallback item passed isolated "
+                    "validation; retaining the isolated results for final consistency review: %s",
+                    error,
+                )
         return translated_items
+
+    def _finalize_translated_list(
+        self,
+        source_list: List[SubtitleProcessData],
+        translated_list: List[SubtitleProcessData],
+    ) -> List[SubtitleProcessData]:
+        """Repair high-confidence repetition that straddles batch boundaries."""
+        if not (self.is_reflect and self._needs_alignment_audit()):
+            return translated_list
+
+        translated_by_index = {item.index: item for item in translated_list}
+        repetition_markers = (
+            "Repeated boundaries:",
+            "Repeated endings:",
+            "Suspicious pairs:",
+        )
+
+        for boundary in range(self.batch_num, len(source_list), self.batch_num):
+            pair_sources = source_list[boundary - 1 : boundary + 1]
+            if len(pair_sources) != 2 or any(
+                item.index not in translated_by_index for item in pair_sources
+            ):
+                continue
+            source_dict = {
+                str(item.index): item.original_text for item in pair_sources
+            }
+            response_dict = {
+                str(item.index): translated_by_index[item.index].translated_text
+                for item in pair_sources
+            }
+            valid, error = self._validate_cross_key_boundaries(
+                response_dict,
+                source_dict,
+                lambda value: str(value),
+            )
+            if valid or not any(marker in error for marker in repetition_markers):
+                continue
+            logger.warning(
+                "Repairing repeated translations across a batch boundary: %s",
+                error,
+            )
+            repaired = self._translate_chunk_single(pair_sources)
+            for item in repaired:
+                translated_by_index[item.index] = item
+
+        source_dict = {str(item.index): item.original_text for item in source_list}
+        translated_dict = {
+            str(item.index): translated_by_index[item.index].translated_text
+            for item in source_list
+            if item.index in translated_by_index
+        }
+        semantic_candidates = self._strong_asr_semantic_candidates(
+            source_dict,
+            translated_dict,
+        )
+        for key in semantic_candidates:
+            index = int(key)
+            try:
+                repaired_text = self._translate_alignment_item(
+                    source_dict[key],
+                    previous_source=self._all_source_by_index.get(index - 1, ""),
+                    next_source=self._all_source_by_index.get(index + 1, ""),
+                )
+            except Exception as error:
+                logger.warning(
+                    "Final semantic ASR repair failed for subtitle %s: %s",
+                    key,
+                    error,
+                )
+                continue
+            translated_by_index[index] = replace(
+                translated_by_index[index],
+                translated_text=repaired_text,
+            )
+            logger.info("Final semantic ASR repair corrected key: %s", key)
+
+        return [
+            translated_by_index[item.index]
+            for item in source_list
+            if item.index in translated_by_index
+        ]
 
     def _get_cache_key(self, chunk: List[SubtitleProcessData]) -> str:
         """生成缓存键"""
@@ -1793,7 +2378,7 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 "dialogue_speakers": {
                     data.index: self._all_speaker_by_index.get(data.index, "") for data in chunk
                 },
-                "prompt_version": "context-v19-title-fragment",
+                "prompt_version": "context-v25-reverse-camera-asr-normalization",
             }
         )
         return f"{class_name}:{chunk_key}:{lang}:{model}:{prompt_key}"

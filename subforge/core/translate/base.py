@@ -82,6 +82,10 @@ class BaseTranslator(ABC):
 
             # 多线程翻译
             translated_list = self._parallel_translate(chunks)
+            translated_list = self._finalize_translated_list(
+                translate_data_list,
+                translated_list,
+            )
             self._validate_translated_list(translate_data_list, translated_list)
 
             # 设置Subtitle segment的翻译文本
@@ -105,6 +109,14 @@ class BaseTranslator(ABC):
             translate_data_list[i : i + self.batch_num]
             for i in range(0, len(translate_data_list), self.batch_num)
         ]
+
+    def _finalize_translated_list(
+        self,
+        source_list: List[SubtitleProcessData],
+        translated_list: List[SubtitleProcessData],
+    ) -> List[SubtitleProcessData]:
+        """Allow translators to run whole-document consistency checks."""
+        return translated_list
 
     def _parallel_translate(
         self, chunks: List[List[SubtitleProcessData]]

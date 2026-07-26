@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.1.2 - 2026-07-27
+
+### Improved
+
+- Expanded long-video translation context from head/tail excerpts to representative windows across the full transcript, improving terminology and subject continuity in middle batches.
+- Added conservative MiniMax M3 semantic checks for unambiguous ASR formatting and homophone errors, including spoken units, abbreviated model years, automotive controls, and model-facelift wording.
+- Added whole-document translation finalization so recovery batches and normal batches receive the same semantic and cross-batch repetition checks.
+- Strengthened numeric validation for `grand`/`K` magnitudes, grouped ASR numbers, model identifiers, and equivalent Chinese quantity notation.
+
+### Fixed
+
+- Fixed correct `mpg`/`mph` repairs being rejected when MiniMax returned equivalent Chinese unit wording.
+- Fixed isolated fallback translations bypassing final semantic alignment checks and retaining a small number of wrong or neighboring meanings.
+- Fixed repeated translations that crossed a batch boundary and survived otherwise valid per-batch responses.
+- Fixed Chinese commas and periods only being removed at line endings instead of being replaced throughout translated subtitle lines while preserving decimals, identifiers, and English source text.
+
+### Packaging
+
+- Windows releases continue to provide the standard x64 installer only. No CUDA installer is produced for this release.
+
 ## v1.1.1 - 2026-07-26
 
 ### Improved

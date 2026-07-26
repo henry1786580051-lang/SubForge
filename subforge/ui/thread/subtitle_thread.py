@@ -222,8 +222,8 @@ class SubtitleThread(QThread):
                 asr_data = translator.translate_subtitle(asr_data)
                 validate_bilingual_result(asr_data, source_lock)
 
-                # 移除末尾标点符号
-                asr_data.remove_punctuation()
+                # 中文译文使用空格分隔，英文原文与数字格式保持不变。
+                asr_data.replace_chinese_translation_punctuation()
                 validate_bilingual_result(asr_data)
                 self.update_all.emit(asr_data.to_json())
 

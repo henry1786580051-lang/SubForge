@@ -17,6 +17,7 @@ logger = setup_logger("translation_context")
 
 MAX_CONTEXT_CHARS = 12_000
 MAX_TERMS = 80
+CONTEXT_WINDOWS = 5
 
 
 @dataclass(frozen=True)
@@ -56,9 +57,35 @@ def _compact_transcript(segments: Iterable[str], limit: int = MAX_CONTEXT_CHARS)
     text = re.sub(r"\s+", " ", text).strip()
     if len(text) <= limit:
         return text
-    head = text[: limit // 2].rsplit(" ", 1)[0]
-    tail = text[-limit // 2 :].split(" ", 1)[-1]
-    return f"{head}\n...\n{tail}"
+
+    # Translation terminology can first appear anywhere in a long video. Sampling
+    # several coherent windows gives the context pass whole-document coverage while
+    # retaining a fixed token budget.
+    separator = "\n...\n"
+    window_size = max(
+        16,
+        (limit - len(separator) * (CONTEXT_WINDOWS - 1)) // CONTEXT_WINDOWS,
+    )
+    max_start = len(text) - window_size
+    starts = [
+        round(max_start * index / (CONTEXT_WINDOWS - 1))
+        for index in range(CONTEXT_WINDOWS)
+    ]
+    windows = []
+    for index, start in enumerate(starts):
+        end = min(len(text), start + window_size)
+        if index > 0:
+            next_space = text.find(" ", start)
+            if next_space != -1 and next_space < end:
+                start = next_space + 1
+        if index < len(starts) - 1:
+            previous_space = text.rfind(" ", start, end)
+            if previous_space > start:
+                end = previous_space
+        snippet = text[start:end].strip()
+        if snippet and snippet not in windows:
+            windows.append(snippet)
+    return separator.join(windows)[:limit].strip()
 
 
 def _format_terms(value) -> str:
@@ -122,7 +149,13 @@ def build_translation_context(
         "Preserve proper nouns, model names, numbers, car trims, brands, and units. "
         "When surrounding transcript makes an ASR error unambiguous, include the heard form "
         "and intended form as a terminology item and label it probable ASR correction. Never "
-        "guess from weak evidence. "
+        "guess from weak evidence. Treat punctuation, currency symbols, and number separators "
+        "as potentially noisy ASR formatting when they make the utterance semantically "
+        "impossible; infer the intended spoken unit only when the surrounding topic makes it "
+        "unambiguous. Record recurring spelling corrections and domain-specific word senses. "
+        "The summary must state the subject domain so later batches can disambiguate short "
+        "fragments. The style must describe the speakers' actual register and concise native "
+        "subtitle phrasing, not generic translation advice. "
         "Tokens such as <S1> and <S2> are anonymous dialogue-turn metadata. Use them to "
         "understand roles and tone, but never include them as terminology or translated text."
     )

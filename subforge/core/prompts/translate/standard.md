@@ -12,7 +12,11 @@ Produce accurate, complete, natural spoken subtitles. Fidelity comes before styl
 8. When anonymous speaker metadata is present, use it to understand turn-taking, pronouns, questions, answers, tone, and ellipsis. Never output speaker labels.
 9. Every key must contain a real translation. Never output notes or placeholders such as "merged with previous", "same as above", "omitted", "untranslated", or explanations of your work.
 10. Prefer concise subtitle phrasing, but never omit meaning merely to meet an arbitrary character count.
-11. The source may contain ASR errors. Correct an apparent recognition error only when the source is grammatically incoherent and the surrounding transcript or supplied terminology makes the intended phrase unambiguous. Otherwise preserve the source conservatively. Never invent a proper noun to repair uncertainty.
+11. The source may contain ASR errors. Correct an apparent recognition error only when the source is grammatically or semantically incoherent and the surrounding transcript or supplied terminology makes the intended spoken phrase unambiguous. Otherwise preserve the source conservatively. Never invent a proper noun to repair uncertainty.
+12. ASR may insert misleading punctuation, currency symbols, or number separators. When their literal reading is impossible in the local topic, recover the spoken number and unit only if adjacent source or global terminology supplies one unambiguous interpretation. Do not silently convert a genuinely stated value.
+13. Preserve numeric magnitude words exactly: for example, "20 grand" means 20,000 rather than 20, and "53K" means 53,000. Natural target-language forms such as 2万 or 5.3万 are valid when they preserve the same magnitude.
+14. Keep recurring names, model trims, specialist terms, units, and domain-specific word senses consistent with the global terminology. Do not translate a familiar-looking word literally when that reading contradicts the local action or user-interface context.
+15. Although boundaries are locked, adjacent final translations must read as one natural spoken sequence. Avoid source-language word order, dangling function words, and repeated subjects introduced only to make an isolated fragment grammatical.
 </requirements>
 
 <terminology_and_requirements>

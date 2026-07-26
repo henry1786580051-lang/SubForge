@@ -261,7 +261,7 @@ def run(args: Namespace, config: dict) -> int:
             )
             asr_data = translator.translate_subtitle(asr_data)
             validate_bilingual_result(asr_data, source_lock)
-            asr_data.remove_punctuation()
+            asr_data.replace_chinese_translation_punctuation()
             validate_bilingual_result(asr_data)
 
         asr_data.extend_sentence_tails_conservatively()
