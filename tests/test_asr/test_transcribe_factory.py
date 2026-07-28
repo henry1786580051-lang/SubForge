@@ -1,5 +1,7 @@
 import importlib
 
+import pytest
+
 from subforge.core.asr.asr_data import ASRData, ASRDataSeg
 from subforge.core.entities import (
     FasterWhisperModelEnum,
@@ -309,6 +311,43 @@ def test_transcribe_multispeaker_always_skips_enhancement(monkeypatch):
     assert "Using original audio to preserve all speakers..." in progress_messages
 
 
+@pytest.mark.parametrize("source_language", ["", "auto"])
+def test_transcribe_whisperx_auto_language_skips_enhancement(monkeypatch, source_language):
+    enhancer = importlib.import_module("subforge.core.asr.audio_enhancer")
+    speech_vad = importlib.import_module("subforge.core.asr.speech_vad")
+    asr_paths = []
+    progress_messages = []
+
+    monkeypatch.setattr(
+        transcribe_module,
+        "_create_asr_instance",
+        lambda audio_path, *_args, **_kwargs: (
+            asr_paths.append(audio_path) or DummyWordTimestampASR()
+        ),
+    )
+
+    def _unexpected_enhancement(*_args, **_kwargs):
+        raise AssertionError("WhisperX auto-language mode must retain the original audio")
+
+    monkeypatch.setattr(enhancer, "enhance_audio", _unexpected_enhancement)
+    monkeypatch.setattr(speech_vad, "is_available", lambda: False)
+    config = TranscribeConfig(
+        transcribe_model=TranscribeModelEnum.WHISPERX,
+        transcribe_language=source_language,
+        need_word_time_stamp=True,
+        enable_audio_enhancement=True,
+    )
+
+    transcribe_module.transcribe(
+        "original.wav",
+        config,
+        callback=lambda _progress, message: progress_messages.append(message),
+    )
+
+    assert asr_paths == ["original.wav"]
+    assert "Using original audio to preserve language switches..." in progress_messages
+
+
 def test_transcribe_maps_engine_progress_without_regressing(monkeypatch):
     speech_vad = importlib.import_module("subforge.core.asr.speech_vad")
     progress_updates = []
@@ -393,7 +432,9 @@ def test_create_single_asr_whisperx_prefers_explicit_mlx_model_path(monkeypatch)
 
     asr = transcribe_module._create_single_asr("audio.wav", config)
 
-    assert asr.kwargs["whisper_model"] == "/Users/guwenhan/Desktop/YouTube/model/whisper-large-v3-fp16"
+    assert (
+        asr.kwargs["whisper_model"] == "/Users/guwenhan/Desktop/YouTube/model/whisper-large-v3-fp16"
+    )
 
 
 def test_create_single_asr_whisper_cpp(monkeypatch):

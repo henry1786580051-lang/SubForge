@@ -210,6 +210,22 @@ def test_build_transcribe_config_uses_auto_or_manual_alignment(tmp_path, monkeyp
     assert manual.whisperx_align_model == "example/custom-alignment"
 
 
+def test_auto_source_language_never_forces_manual_alignment_model(tmp_path, monkeypatch):
+    values = _config_values(tmp_path)
+    values["whisperx_alignment_strategy"] = "manual"
+    values["whisperx_align_model"] = "example/english-only-alignment"
+    monkeypatch.setattr(
+        config_module,
+        "get_config_value",
+        lambda key, default=None: values.get(key, default),
+    )
+
+    config = transcribe_api._build_transcribe_config("whisperx", "auto")
+
+    assert config.transcribe_language == "auto"
+    assert config.whisperx_align_model == ""
+
+
 def test_build_transcribe_config_defaults_to_managed_model_root(tmp_path, monkeypatch):
     values = _config_values(tmp_path)
     values.pop("whisper_model_dir")

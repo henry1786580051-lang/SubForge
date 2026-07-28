@@ -88,6 +88,11 @@ export const transcribeApi = {
       method: "POST",
       body: JSON.stringify({ model_id }),
     }),
+  resolveAlignmentDecision: (task_id: string, action: "retry" | "continue" | "ignore") =>
+    request<{ status: string; action: string }>(`/api/transcribe/${task_id}/alignment-decision`, {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    }),
 };
 
 // Subtitle processing
@@ -166,11 +171,30 @@ export interface TaskInfo {
   subtitle_file?: string | null;
   preview_segments?: SubtitleSegment[] | null;
   preview_revision?: number;
+  attention?: TaskAttention | null;
   preview_delta?: {
     mode: "append" | "patch" | "replace";
     segments: SubtitleSegment[];
     total: number;
   } | null;
+}
+
+export interface MissingAlignmentModel {
+  language: string;
+  language_name: string;
+  model_id: string;
+  model_name: string;
+  size: string;
+  source: string;
+  confidence: number;
+  ranges: { start: number; end: number }[];
+}
+
+export interface TaskAttention {
+  type: "missing_alignment_models" | string;
+  source_mode?: "auto" | string;
+  message: string;
+  models: MissingAlignmentModel[];
 }
 
 export interface FileInfo {

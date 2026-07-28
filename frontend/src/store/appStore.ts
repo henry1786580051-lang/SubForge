@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { FileInfo, SubtitleSegment } from "@/lib/api";
+import type { FileInfo, SubtitleSegment, TaskAttention } from "@/lib/api";
 
 export type WorkflowStep = "import" | "transcribe" | "subtitle";
 
@@ -43,6 +43,8 @@ interface AppState {
   taskMessage: string;
   taskStatus: "idle" | "running" | "completed" | "failed";
   setTaskState: (progress: number, message: string, status: AppState["taskStatus"]) => void;
+  taskAttention: TaskAttention | null;
+  setTaskAttention: (attention: TaskAttention | null) => void;
 
   // Processing state
   isProcessing: boolean;
@@ -144,6 +146,8 @@ export const useAppStore = create<AppState>((set) => ({
   taskStatus: "idle",
   setTaskState: (progress, message, status) =>
     set({ taskProgress: progress, taskMessage: message, taskStatus: status }),
+  taskAttention: null,
+  setTaskAttention: (attention) => set({ taskAttention: attention }),
 
   isProcessing: false,
   setIsProcessing: (v) => set({ isProcessing: v }),

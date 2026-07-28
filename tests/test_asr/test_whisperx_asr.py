@@ -7,6 +7,8 @@ import pytest
 from subforge.core.asr.whisperx_asr import (
     WhisperXASR,
     _install_offline_sentence_tokenizer,
+    _LanguageProbe,
+    _LanguageRange,
     _mlx_model_repo,
     _normalize_align_device,
     _prepare_mlx_model_path,
@@ -14,9 +16,159 @@ from subforge.core.asr.whisperx_asr import (
     _refine_words_with_char_alignments,
     _restore_display_alignment,
     _segments_for_alignment,
+    _select_foreign_language_ranges,
     _spoken_token,
+    _subtract_language_ranges,
     default_mlx_model,
 )
+
+
+def test_whisperx_selects_only_confident_supported_language_switches():
+    probes = [
+        _LanguageProbe(0.0, 4.0, "en", 0.99, 0.99),
+        _LanguageProbe(10.0, 13.0, "es", 0.96, 0.02),
+        _LanguageProbe(13.4, 17.0, "es", 0.91, 0.04),
+        _LanguageProbe(30.0, 34.0, "es", 0.70, 0.20),
+        _LanguageProbe(40.0, 44.0, "pt", 0.92, 0.30),
+        _LanguageProbe(50.0, 51.5, "fr", 0.85, 0.05),
+    ]
+
+    ranges = _select_foreign_language_ranges(probes, "en")
+
+    assert [(item.start, item.end, item.language) for item in ranges] == [(10.0, 17.0, "es")]
+
+
+def test_whisperx_language_support_can_come_from_overlapping_probe_cores():
+    probes = [
+        _LanguageProbe(10.0, 12.5, "es", 0.91, 0.04),
+        _LanguageProbe(12.5, 15.0, "es", 0.92, 0.03),
+    ]
+
+    ranges = _select_foreign_language_ranges(probes, "en")
+
+    assert [(item.start, item.end, item.language) for item in ranges] == [(10.0, 15.0, "es")]
+
+
+def test_whisperx_subtracts_only_foreign_parts_from_broad_primary_segment():
+    ranges = [
+        _LanguageRange(10.0, 15.0, "es", 0.95),
+        _LanguageRange(18.0, 20.0, "es", 0.92),
+    ]
+
+    assert _subtract_language_ranges(5.0, 25.0, ranges) == [
+        (5.0, 10.0),
+        (15.0, 18.0),
+        (20.0, 25.0),
+    ]
+
+
+def test_whisperx_multilingual_alignment_groups_languages_and_restores_time_order(
+    monkeypatch,
+):
+    asr = WhisperXASR.__new__(WhisperXASR)
+    calls = []
+
+    def fake_align(result, _audio, language, _callback, _module):
+        calls.append((language, [item["text"] for item in result["segments"]]))
+        return {
+            "segments": [
+                {
+                    **item,
+                    "words": [
+                        {
+                            "word": item["text"],
+                            "start": item["start"],
+                            "end": item["end"],
+                        }
+                    ],
+                }
+                for item in result["segments"]
+            ],
+            "align_model": f"align-{language}",
+        }
+
+    monkeypatch.setattr(asr, "_align_result", fake_align)
+    aligned = asr._align_multilingual_result(
+        {
+            "segments": [
+                {"text": "Hello", "start": 0.0, "end": 1.0, "language": "en"},
+                {"text": "Hola", "start": 1.1, "end": 2.0, "language": "es"},
+                {"text": "Again", "start": 2.1, "end": 3.0, "language": "en"},
+            ]
+        },
+        object(),
+        "en",
+        lambda *_args: None,
+        object(),
+    )
+
+    assert calls == [("en", ["Hello", "Again"]), ("es", ["Hola"])]
+    assert [item["text"] for item in aligned["segments"]] == ["Hello", "Hola", "Again"]
+    assert aligned["languages"] == ["en", "es"]
+    assert aligned["align_models"] == {"en": "align-en", "es": "align-es"}
+
+
+def test_auto_language_missing_alignment_models_can_continue_with_native_timing(
+    monkeypatch, tmp_path
+):
+    asr = WhisperXASR.__new__(WhisperXASR)
+    asr.language = None
+    asr.model_dir = str(tmp_path)
+    requests = []
+    asr.missing_alignment_model_callback = lambda models: requests.append(models) or "continue"
+    monkeypatch.setattr(
+        "subforge.core.asr.whisperx_asr.is_alignment_model_ready",
+        lambda *_args: False,
+    )
+    ranges = [_LanguageRange(10.0, 15.0, "es", 0.94)]
+
+    retained, skipped = asr._resolve_missing_alignment_models("en", ranges)
+
+    assert retained == ranges
+    assert skipped == {"en", "es"}
+    assert {item["language"] for item in requests[0]} == {"en", "es"}
+    assert all(item["model_id"].startswith("whisperx-align-") for item in requests[0])
+
+
+def test_explicit_source_language_does_not_request_missing_alignment_models(tmp_path):
+    asr = WhisperXASR.__new__(WhisperXASR)
+    asr.language = "en"
+    asr.model_dir = str(tmp_path)
+    asr.missing_alignment_model_callback = lambda _models: pytest.fail(
+        "Explicit source language must not enter the auto-language prompt"
+    )
+    ranges = [_LanguageRange(10.0, 15.0, "es", 0.94)]
+
+    retained, skipped = asr._resolve_missing_alignment_models("en", ranges)
+
+    assert retained == ranges
+    assert skipped == set()
+
+
+def test_skipped_single_language_alignment_preserves_sentence_timestamps(monkeypatch):
+    asr = WhisperXASR.__new__(WhisperXASR)
+    monkeypatch.setattr(
+        asr,
+        "_align_result",
+        lambda *_args, **_kwargs: pytest.fail("Skipped language must not load an aligner"),
+    )
+
+    aligned = asr._align_multilingual_result(
+        {"segments": [{"text": "Hello", "start": 1.0, "end": 2.2, "language": "en"}]},
+        object(),
+        "en",
+        lambda *_args: None,
+        object(),
+        {"en"},
+    )
+    asr.need_word_time_stamp = True
+    segments = asr._make_segments(aligned)
+
+    assert [(item.text, item.start_time, item.end_time) for item in segments] == [
+        ("Hello", 1000, 2200)
+    ]
+    assert segments[0].timestamp_granularity == "sentence"
+    assert segments[0].timing_source == "native"
 
 
 def test_whisperx_uses_offline_sentence_tokenizer_when_punkt_is_missing():
@@ -228,9 +380,7 @@ def test_whisperx_reuses_managed_faster_whisper_model(tmp_path, monkeypatch):
         output.setsampwidth(2)
         output.setframerate(16_000)
         output.writeframes(b"\0\0" * 1_600)
-    monkeypatch.setattr(
-        "subforge.core.asr.whisperx_asr.platform.system", lambda: "Windows"
-    )
+    monkeypatch.setattr("subforge.core.asr.whisperx_asr.platform.system", lambda: "Windows")
     monkeypatch.setattr(
         "subforge.core.asr.whisperx_asr.resolve_faster_whisper_runtime",
         lambda *_args: ("cpu", "int8"),

@@ -18,6 +18,8 @@ from subforge.core.asr.alignment_models import (
     ALIGNMENT_MODEL_BY_ID,
     ALIGNMENT_MODELS,
     alignment_model_for_language,
+    alignment_model_path,
+    is_alignment_model_ready,
     normalize_alignment_language,
 )
 from subforge.core.asr.faster_whisper import (
@@ -226,6 +228,10 @@ class TranscribeRequest(BaseModel):
     compute_type: str = Field(default="default", max_length=32)
 
 
+class AlignmentDecisionRequest(BaseModel):
+    action: Literal["retry", "continue", "ignore"]
+
+
 def _build_transcribe_config(
     model_id: str,
     language: str = "auto",
@@ -274,12 +280,13 @@ def _build_transcribe_config(
         configured_enhancement if enable_audio_enhancement is None else enable_audio_enhancement
     )
     alignment_strategy = get_config_value("whisperx_alignment_strategy", "auto")
+    automatic_source_language = normalize_alignment_language(language) in {"", "auto"}
     config.whisperx_align_model = (
         get_config_value(
             "whisperx_align_model",
             "WAV2VEC2_ASR_LARGE_LV60K_960H",
         )
-        if alignment_strategy == "manual"
+        if alignment_strategy == "manual" and not automatic_source_language
         else ""
     )
     config.whisperx_batch_size = int(get_config_value("whisperx_batch_size", 8) or 8)
@@ -350,6 +357,21 @@ async def start_transcription(req: TranscribeRequest):
     return {"task_id": task.id, "status": "started"}
 
 
+@router.post("/{task_id}/alignment-decision")
+async def resolve_alignment_decision(task_id: str, req: AlignmentDecisionRequest):
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.type != "transcribe":
+        raise HTTPException(status_code=409, detail="Task is not a transcription task")
+    attention = task.attention or {}
+    if attention.get("type") != "missing_alignment_models":
+        raise HTTPException(status_code=409, detail="Task is not waiting for alignment models")
+    if not task_manager.resolve_attention(task_id, req.action):
+        raise HTTPException(status_code=409, detail="Alignment decision is no longer active")
+    return {"status": "resuming", "action": req.action}
+
+
 async def _run_transcription(task_id: str, req: TranscribeRequest):
     import tempfile
     import threading
@@ -368,6 +390,27 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
         config = _build_transcribe_config(req.model, req.language)
         cancel_event = threading.Event()
         config.cancel_event = cancel_event
+
+        if req.model == "whisperx" and normalize_alignment_language(req.language) in {"", "auto"}:
+
+            def _wait_for_alignment_models(models: list[dict]) -> str:
+                attention = {
+                    "type": "missing_alignment_models",
+                    "source_mode": "auto",
+                    "message": "检测到尚未安装对齐模型的语言，等待选择处理方式",
+                    "models": models,
+                }
+                if not task_manager.request_attention(task_id, attention):
+                    raise RuntimeError(
+                        "Transcription task ended while waiting for alignment models"
+                    )
+                while not cancel_event.is_set() and not task_manager.is_cancelled(task_id):
+                    resolution = task_manager.wait_for_attention_resolution(task_id, timeout=0.5)
+                    if resolution is not None:
+                        return resolution
+                raise RuntimeError("Transcription cancelled while waiting for alignment models")
+
+            config.missing_alignment_model_callback = _wait_for_alignment_models
 
         # Extract audio from video to temp WAV file
         task_manager.update_progress(task_id, 10, "Extracting audio from video...")
@@ -483,29 +526,12 @@ def _get_models_dir() -> Path:
 
 def _alignment_model_path(model_id: str, models_dir: Path) -> Path:
     spec = ALIGNMENT_MODEL_BY_ID[model_id]
-    if spec.source == "torchaudio":
-        return models_dir / spec.filename
-    return models_dir / f"models--{spec.model_name.replace('/', '--')}"
+    return alignment_model_path(spec, models_dir)
 
 
 def _alignment_model_ready(model_id: str, models_dir: Path) -> bool:
     spec = ALIGNMENT_MODEL_BY_ID[model_id]
-    path = _alignment_model_path(model_id, models_dir)
-    if spec.source == "torchaudio":
-        return path.is_file() and path.stat().st_size > 0
-    snapshots = path / "snapshots"
-    if not snapshots.is_dir():
-        return False
-    for snapshot in snapshots.iterdir():
-        if not snapshot.is_dir() or not (snapshot / "config.json").is_file():
-            continue
-        has_weights = any(
-            (snapshot / filename).is_file()
-            for filename in ("model.safetensors", "pytorch_model.bin")
-        )
-        if has_weights:
-            return True
-    return False
+    return is_alignment_model_ready(spec, models_dir)
 
 
 def _current_model_status() -> dict:

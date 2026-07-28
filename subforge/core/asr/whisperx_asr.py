@@ -7,11 +7,11 @@ import tempfile
 import types
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Union
+from typing import Any, Callable, List, Optional, Union, cast
 
 from ...config import MODEL_PATH
 from ..utils.logger import setup_logger
-from .alignment_models import alignment_model_for_language
+from .alignment_models import alignment_model_for_language, is_alignment_model_ready
 from .asr_data import ASRData, ASRDataSeg, ASRWord, TimestampSource
 from .base import BaseASR
 from .faster_whisper import is_faster_whisper_model_dir, resolve_faster_whisper_runtime
@@ -20,6 +20,14 @@ from .status import ASRStatus
 
 logger = setup_logger("whisperx_asr")
 _ALIGNMENT_MODEL_CACHE = SingleEntryModelCache()
+
+MIXED_LANGUAGE_MIN_CONFIDENCE = 0.80
+MIXED_LANGUAGE_MAX_PRIMARY_CONFIDENCE = 0.20
+MIXED_LANGUAGE_MAX_GAP_SECONDS = 1.25
+MIXED_LANGUAGE_CONTEXT_SECONDS = 0.40
+MIXED_LANGUAGE_WINDOW_SECONDS = 4.0
+MIXED_LANGUAGE_WINDOW_STRIDE_SECONDS = 2.0
+MIXED_LANGUAGE_MIN_LANGUAGE_SUPPORT_SECONDS = 3.0
 
 
 DEFAULT_EN_ALIGN_MODEL = "WAV2VEC2_ASR_LARGE_LV60K_960H"
@@ -257,6 +265,107 @@ class _AlignmentSegmentPlan:
     start: float
     end: float
     tokens: tuple[_AlignmentToken, ...]
+
+
+@dataclass(frozen=True)
+class _LanguageProbe:
+    start: float
+    end: float
+    language: str
+    confidence: float
+    primary_confidence: float
+
+
+@dataclass(frozen=True)
+class _LanguageRange:
+    start: float
+    end: float
+    language: str
+    confidence: float
+
+
+def _select_foreign_language_ranges(
+    probes: list[_LanguageProbe],
+    primary_language: str,
+) -> list[_LanguageRange]:
+    """Keep only high-confidence foreign speech and merge adjacent runs."""
+    candidates = [
+        probe
+        for probe in probes
+        if probe.language != primary_language
+        and probe.confidence >= MIXED_LANGUAGE_MIN_CONFIDENCE
+        and probe.primary_confidence <= MIXED_LANGUAGE_MAX_PRIMARY_CONFIDENCE
+        and alignment_model_for_language(probe.language) is not None
+    ]
+    if not candidates:
+        return []
+
+    support_by_language: dict[str, float] = {}
+    peak_by_language: dict[str, float] = {}
+    for probe in candidates:
+        support_by_language[probe.language] = support_by_language.get(probe.language, 0.0) + max(
+            0.0, probe.end - probe.start
+        )
+        peak_by_language[probe.language] = max(
+            peak_by_language.get(probe.language, 0.0), probe.confidence
+        )
+    supported_languages = {
+        language
+        for language, duration in support_by_language.items()
+        if duration >= MIXED_LANGUAGE_MIN_LANGUAGE_SUPPORT_SECONDS
+        or peak_by_language[language] >= 0.95
+    }
+    candidates = [probe for probe in candidates if probe.language in supported_languages]
+
+    ranges: list[_LanguageRange] = []
+    for probe in sorted(candidates, key=lambda item: (item.start, item.end)):
+        if (
+            ranges
+            and ranges[-1].language == probe.language
+            and probe.start - ranges[-1].end <= MIXED_LANGUAGE_MAX_GAP_SECONDS
+        ):
+            previous = ranges[-1]
+            ranges[-1] = _LanguageRange(
+                start=previous.start,
+                end=max(previous.end, probe.end),
+                language=previous.language,
+                confidence=max(previous.confidence, probe.confidence),
+            )
+            continue
+        ranges.append(
+            _LanguageRange(
+                start=probe.start,
+                end=probe.end,
+                language=probe.language,
+                confidence=probe.confidence,
+            )
+        )
+    return ranges
+
+
+def _subtract_language_ranges(
+    start: float,
+    end: float,
+    ranges: list[_LanguageRange],
+) -> list[tuple[float, float]]:
+    """Return portions of an ASR segment not covered by replacement ranges."""
+    if end <= start:
+        return []
+    remaining: list[tuple[float, float]] = []
+    cursor = start
+    for item in sorted(ranges, key=lambda value: (value.start, value.end)):
+        if item.end <= cursor:
+            continue
+        if item.start >= end:
+            break
+        if item.start > cursor:
+            remaining.append((cursor, min(end, item.start)))
+        cursor = max(cursor, min(end, item.end))
+        if cursor >= end:
+            break
+    if cursor < end:
+        remaining.append((cursor, end))
+    return [(part_start, part_end) for part_start, part_end in remaining if part_end > part_start]
 
 
 def _integer_to_english(value: int) -> str:
@@ -750,6 +859,7 @@ class WhisperXASR(BaseASR):
         align_model: str = "",
         batch_size: int = 4,
         segment_callback: Optional[Callable[[ASRData], None]] = None,
+        missing_alignment_model_callback: Optional[Callable[[list[dict[str, Any]]], str]] = None,
         use_cache: bool = False,
         need_word_time_stamp: bool = True,
     ):
@@ -786,6 +896,7 @@ class WhisperXASR(BaseASR):
         self.align_model = _normalize_align_model(align_model)
         self.batch_size = max(1, int(batch_size or 4))
         self.segment_callback = segment_callback
+        self.missing_alignment_model_callback = missing_alignment_model_callback
         self.need_word_time_stamp = need_word_time_stamp
 
     def _write_audio_to_temp(self, tmp_dir: Path) -> str:
@@ -875,12 +986,19 @@ class WhisperXASR(BaseASR):
                     self.segment_callback(ASRData(raw_segments))
 
             language_code = str(result.get("language") or self.language or "en").lower()
-            aligned = self._align_result(
+            skip_alignment_languages: set[str] = set()
+            if self.language is None:
+                _, skip_alignment_languages = self._resolve_missing_alignment_models(
+                    language_code,
+                    [],
+                )
+            aligned = self._align_multilingual_result(
                 result,
                 audio,
                 language_code,
                 callback,
                 whisperx_alignment,
+                skip_alignment_languages,
             )
             aligned["asr_backend"] = "faster-whisper"
             aligned["whisper_model"] = self.whisper_model
@@ -985,6 +1103,382 @@ class WhisperXASR(BaseASR):
 
         return aligned
 
+    def _detect_mlx_language_ranges(
+        self,
+        audio_path: str,
+        mlx_model_path: str,
+        result: dict,
+        primary_language: str,
+    ) -> list[_LanguageRange]:
+        """Detect confident language switches without decoding correct primary speech again."""
+        try:
+            import mlx.core as mx
+            from mlx_whisper.audio import (
+                N_FRAMES,
+                SAMPLE_RATE,
+                log_mel_spectrogram,
+                pad_or_trim,
+            )
+            from mlx_whisper.audio import (
+                load_audio as load_mlx_audio,
+            )
+            from mlx_whisper.transcribe import ModelHolder
+        except (ImportError, RuntimeError) as exc:
+            logger.info("Mixed-language probing is unavailable: %s", exc)
+            return []
+
+        source_segments = _segments_for_alignment(result)
+        if not source_segments:
+            return []
+
+        audio = load_mlx_audio(audio_path)
+        model = ModelHolder.get_model(mlx_model_path, mx.float16)
+        audio_duration = float(audio.shape[0]) / SAMPLE_RATE
+        full_mel = log_mel_spectrogram(cast(Any, audio), n_mels=model.dims.n_mels)
+        frames_per_second = 100
+        probes: list[_LanguageProbe] = []
+
+        def _probe(
+            start: float,
+            end: float,
+            *,
+            range_start: Optional[float] = None,
+            range_end: Optional[float] = None,
+        ) -> None:
+            if end - start < 0.75:
+                return
+            frame_start = max(0, int(start * frames_per_second))
+            frame_end = min(int(full_mel.shape[-2]), int(end * frames_per_second))
+            mel_segment = pad_or_trim(full_mel[frame_start:frame_end], N_FRAMES, axis=-2).astype(
+                mx.float16
+            )
+            _, raw_probabilities = model.detect_language(mel_segment)
+            probabilities = cast(dict[str, float], raw_probabilities)
+            if not probabilities:
+                return
+            language, confidence = max(probabilities.items(), key=lambda item: item[1])
+            probes.append(
+                _LanguageProbe(
+                    start=start if range_start is None else range_start,
+                    end=end if range_end is None else range_end,
+                    language=str(language).lower(),
+                    confidence=float(confidence),
+                    primary_confidence=float(probabilities.get(primary_language, 0.0)),
+                )
+            )
+
+        window_start = 0.0
+        while window_start < audio_duration:
+            window_end = min(audio_duration, window_start + MIXED_LANGUAGE_WINDOW_SECONDS)
+            # Probe the complete recording. Forced-primary ASR can omit foreign speech,
+            # so its segment boundaries are not a reliable VAD gate here. Use only the
+            # center of each overlapping window as the candidate replacement range to
+            # avoid pulling adjacent primary-language speech into local re-decoding.
+            core_margin = min(
+                MIXED_LANGUAGE_WINDOW_STRIDE_SECONDS / 2,
+                max(0.0, (window_end - window_start) / 2 - 0.05),
+            )
+            _probe(
+                window_start,
+                window_end,
+                range_start=window_start + core_margin,
+                range_end=window_end - core_margin,
+            )
+            window_start += MIXED_LANGUAGE_WINDOW_STRIDE_SECONDS
+
+        # Fixed windows find switches even when forced-primary ASR omitted the
+        # foreign speech. Refine only near those candidates with the ASR's more
+        # precise speech boundaries; probing every primary segment roughly
+        # doubles this stage on long recordings without improving recall.
+        preliminary_ranges = _select_foreign_language_ranges(probes, primary_language)
+        for segment in source_segments:
+            start = max(0.0, segment["start"])
+            end = min(audio_duration, segment["end"])
+            if any(
+                end >= item.start - MIXED_LANGUAGE_WINDOW_STRIDE_SECONDS
+                and start <= item.end + MIXED_LANGUAGE_WINDOW_STRIDE_SECONDS
+                for item in preliminary_ranges
+            ):
+                _probe(start, end)
+
+        ranges = _select_foreign_language_ranges(probes, primary_language)
+        if ranges:
+            logger.info(
+                "Detected mixed-language ranges: %s",
+                [
+                    {
+                        "start": round(item.start, 2),
+                        "end": round(item.end, 2),
+                        "language": item.language,
+                        "confidence": round(item.confidence, 3),
+                    }
+                    for item in ranges
+                ],
+            )
+        return ranges
+
+    def _retranscribe_mlx_language_ranges(
+        self,
+        audio_path: str,
+        mlx_model_path: str,
+        result: dict,
+        ranges: list[_LanguageRange],
+        primary_language: str,
+    ) -> dict:
+        """Replace only confirmed foreign ranges with original-language decoding."""
+        if not ranges:
+            tagged = dict(result)
+            tagged["segments"] = [
+                {**segment, "language": primary_language}
+                for segment in result.get("segments") or []
+                if isinstance(segment, dict)
+            ]
+            return tagged
+
+        import mlx_whisper
+        from mlx_whisper.audio import SAMPLE_RATE
+        from mlx_whisper.audio import load_audio as load_mlx_audio
+
+        audio = load_mlx_audio(audio_path)
+        audio_duration = float(audio.shape[0]) / SAMPLE_RATE
+        replacements: list[tuple[_LanguageRange, list[dict]]] = []
+        for language_range in ranges:
+            context_start = max(0.0, language_range.start - MIXED_LANGUAGE_CONTEXT_SECONDS)
+            context_end = min(
+                audio_duration,
+                language_range.end + MIXED_LANGUAGE_CONTEXT_SECONDS,
+            )
+            clip = audio[int(context_start * SAMPLE_RATE) : int(context_end * SAMPLE_RATE)]
+            local_result = mlx_whisper.transcribe(
+                clip,
+                path_or_hf_repo=mlx_model_path,
+                language=language_range.language,
+                task="transcribe",
+                word_timestamps=False,
+                condition_on_previous_text=False,
+                verbose=None,
+            )
+            localized: list[dict] = []
+            for segment in local_result.get("segments") or []:
+                if not isinstance(segment, dict):
+                    continue
+                shifted = dict(segment)
+                shifted["start"] = float(segment.get("start", 0.0)) + context_start
+                shifted["end"] = float(segment.get("end", 0.0)) + context_start
+                midpoint = (shifted["start"] + shifted["end"]) / 2
+                if not language_range.start <= midpoint <= language_range.end:
+                    continue
+                shifted["start"] = max(language_range.start, shifted["start"])
+                shifted["end"] = min(language_range.end, shifted["end"])
+                shifted["language"] = language_range.language
+                if str(shifted.get("text") or "").strip() and shifted["end"] > shifted["start"]:
+                    localized.append(shifted)
+            if localized:
+                replacements.append((language_range, localized))
+            else:
+                logger.warning(
+                    "Foreign-language re-transcription returned no speech for %.2f-%.2f (%s)",
+                    language_range.start,
+                    language_range.end,
+                    language_range.language,
+                )
+
+        original_segments = [
+            {**segment, "language": primary_language}
+            for segment in result.get("segments") or []
+            if isinstance(segment, dict)
+        ]
+        replaced_ranges = [item[0] for item in replacements]
+        kept: list[dict] = []
+        primary_replacements: list[dict] = []
+        for segment in original_segments:
+            start = segment.get("start")
+            end = segment.get("end")
+            if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+                continue
+            segment_start = float(start)
+            segment_end = float(end)
+            overlapping = [
+                item
+                for item in replaced_ranges
+                if item.end > segment_start and item.start < segment_end
+            ]
+            if not overlapping:
+                kept.append(segment)
+                continue
+
+            # Initial MLX segments can span both languages. Removing an entire
+            # segment by midpoint drops valid primary speech on either side of a
+            # short language switch. Re-decode only the uncovered portions.
+            for part_start, part_end in _subtract_language_ranges(
+                segment_start,
+                segment_end,
+                overlapping,
+            ):
+                if part_end - part_start < 0.75:
+                    continue
+                context_start = max(0.0, part_start - MIXED_LANGUAGE_CONTEXT_SECONDS)
+                context_end = min(audio_duration, part_end + MIXED_LANGUAGE_CONTEXT_SECONDS)
+                clip = audio[int(context_start * SAMPLE_RATE) : int(context_end * SAMPLE_RATE)]
+                local_result = mlx_whisper.transcribe(
+                    clip,
+                    path_or_hf_repo=mlx_model_path,
+                    language=primary_language,
+                    task="transcribe",
+                    word_timestamps=False,
+                    condition_on_previous_text=False,
+                    verbose=None,
+                )
+                for local_segment in local_result.get("segments") or []:
+                    if not isinstance(local_segment, dict):
+                        continue
+                    shifted = dict(local_segment)
+                    shifted["start"] = float(local_segment.get("start", 0.0)) + context_start
+                    shifted["end"] = float(local_segment.get("end", 0.0)) + context_start
+                    midpoint = (shifted["start"] + shifted["end"]) / 2
+                    if not part_start <= midpoint <= part_end:
+                        continue
+                    shifted["start"] = max(part_start, shifted["start"])
+                    shifted["end"] = min(part_end, shifted["end"])
+                    shifted["language"] = primary_language
+                    if str(shifted.get("text") or "").strip() and shifted["end"] > shifted["start"]:
+                        primary_replacements.append(shifted)
+
+        combined = (
+            kept
+            + primary_replacements
+            + [segment for _, segments in replacements for segment in segments]
+        )
+        combined.sort(key=lambda item: (float(item.get("start", 0.0)), float(item.get("end", 0.0))))
+        updated = dict(result)
+        updated["segments"] = combined
+        updated["languages"] = sorted(
+            {str(item.get("language") or primary_language) for item in combined}
+        )
+        return updated
+
+    def _resolve_missing_alignment_models(
+        self,
+        primary_language: str,
+        ranges: list[_LanguageRange],
+    ) -> tuple[list[_LanguageRange], set[str]]:
+        """Pause auto-language jobs for missing models and apply the user's decision."""
+        if self.language is not None or self.missing_alignment_model_callback is None:
+            return ranges, set()
+
+        range_by_language: dict[str, list[_LanguageRange]] = {}
+        for item in ranges:
+            range_by_language.setdefault(item.language, []).append(item)
+        detected_languages = {primary_language, *range_by_language}
+
+        while True:
+            missing: list[dict[str, Any]] = []
+            for language in sorted(detected_languages):
+                spec = alignment_model_for_language(language)
+                if spec is None or is_alignment_model_ready(spec, self.model_dir):
+                    continue
+                language_ranges = range_by_language.get(language, [])
+                missing.append(
+                    {
+                        "language": language,
+                        "language_name": spec.language_name,
+                        "model_id": spec.id,
+                        "model_name": spec.model_name,
+                        "size": spec.size,
+                        "source": spec.source,
+                        "confidence": max(
+                            (item.confidence for item in language_ranges),
+                            default=1.0 if language == primary_language else 0.0,
+                        ),
+                        "ranges": [
+                            {"start": item.start, "end": item.end} for item in language_ranges
+                        ],
+                    }
+                )
+            if not missing:
+                return ranges, set()
+
+            decision = self.missing_alignment_model_callback(missing)
+            if decision == "retry":
+                continue
+            missing_languages = {str(item["language"]) for item in missing}
+            if decision == "ignore":
+                return (
+                    [item for item in ranges if item.language not in missing_languages],
+                    {primary_language} & missing_languages,
+                )
+            if decision == "continue":
+                return ranges, missing_languages
+            raise RuntimeError(f"Unsupported alignment model decision: {decision}")
+
+    def _align_multilingual_result(
+        self,
+        result: dict,
+        audio: Any,
+        primary_language: str,
+        callback: Callable[[int, str], None],
+        whisperx_alignment: Any,
+        skip_alignment_languages: Optional[set[str]] = None,
+    ) -> dict:
+        """Align each detected language with its own acoustic model, then restore order."""
+        grouped: dict[str, list[dict]] = {}
+        for segment in result.get("segments") or []:
+            if not isinstance(segment, dict):
+                continue
+            language = str(segment.get("language") or primary_language).lower()
+            grouped.setdefault(language, []).append(segment)
+
+        skip_alignment_languages = skip_alignment_languages or set()
+        if len(grouped) <= 1 and not (set(grouped) & skip_alignment_languages):
+            return self._align_result(
+                result,
+                audio,
+                primary_language,
+                callback,
+                whisperx_alignment,
+            )
+
+        aligned_segments: list[dict] = []
+        aligned_words: list[dict] = []
+        align_models: dict[str, str] = {}
+        for language, segments in grouped.items():
+            if language in skip_alignment_languages:
+                aligned_segments.extend(
+                    {**segment, "language": language, "alignment_skipped": True}
+                    for segment in segments
+                )
+                align_models[language] = ""
+                continue
+            callback(65, f"Loading {language} forced alignment model...")
+            aligned = self._align_result(
+                {"segments": segments},
+                audio,
+                language,
+                callback,
+                whisperx_alignment,
+            )
+            align_models[language] = str(aligned.get("align_model") or "")
+            for segment in aligned.get("segments") or []:
+                if isinstance(segment, dict):
+                    aligned_segments.append({**segment, "language": language})
+            for word in aligned.get("word_segments") or []:
+                if isinstance(word, dict):
+                    aligned_words.append({**word, "language": language})
+
+        aligned_segments.sort(
+            key=lambda item: (float(item.get("start", 0.0)), float(item.get("end", 0.0)))
+        )
+        aligned_words.sort(
+            key=lambda item: (float(item.get("start", 0.0)), float(item.get("end", 0.0)))
+        )
+        return {
+            "segments": aligned_segments,
+            "word_segments": aligned_words,
+            "language": primary_language,
+            "languages": sorted(grouped),
+            "align_models": align_models,
+        }
+
     def _run_mlx(
         self,
         callback: Optional[Callable[[int, str], None]] = None,
@@ -1061,12 +1555,34 @@ class WhisperXASR(BaseASR):
             audio = load_audio(audio_path)
 
             language_code = str(result.get("language") or self.language or "en").lower()
-            aligned = self._align_result(
+            if self.language is None:
+                callback(48, "Checking for language switches...")
+                language_ranges = self._detect_mlx_language_ranges(
+                    audio_path,
+                    mlx_model_path,
+                    result,
+                    language_code,
+                )
+                language_ranges, skip_alignment_languages = self._resolve_missing_alignment_models(
+                    language_code,
+                    language_ranges,
+                )
+                result = self._retranscribe_mlx_language_ranges(
+                    audio_path,
+                    mlx_model_path,
+                    result,
+                    language_ranges,
+                    language_code,
+                )
+            else:
+                skip_alignment_languages = set()
+            aligned = self._align_multilingual_result(
                 result,
                 audio,
                 language_code,
                 callback,
                 whisperx_alignment,
+                skip_alignment_languages,
             )
             aligned["asr_backend"] = "mlx-whisper"
             aligned["mlx_model"] = self.mlx_model
@@ -1096,6 +1612,20 @@ class WhisperXASR(BaseASR):
                     continue
                 words = item.get("words")
                 if not isinstance(words, list):
+                    if item.get("alignment_skipped"):
+                        text = str(item.get("text") or "").strip()
+                        start = _float_seconds(item.get("start"))
+                        end = _float_seconds(item.get("end"))
+                        if text and start is not None and end is not None and end > start:
+                            segments.append(
+                                ASRDataSeg(
+                                    text,
+                                    max(0, int(round(start * 1000))),
+                                    max(0, int(round(end * 1000))),
+                                    timestamp_granularity="sentence",
+                                    timing_source="native",
+                                )
+                            )
                     continue
                 word_dicts = [word for word in words if isinstance(word, dict)]
                 chars = item.get("chars")
@@ -1108,6 +1638,7 @@ class WhisperXASR(BaseASR):
                 segments.extend(_words_to_segments(word_dicts, segment_start, segment_end))
 
             if segments:
+                segments.sort(key=lambda item: (item.start_time, item.end_time))
                 return segments
 
             words = resp_data.get("word_segments") or []
@@ -1145,6 +1676,7 @@ class WhisperXASR(BaseASR):
             "crc32": self.crc32_hex,
             "model": self.mlx_model,
             "language": self.language or "auto",
+            "mixed_language_revision": 5 if self.uses_mlx and self.language is None else 0,
             "align_device": self.align_device,
             "compute_type": self.compute_type,
             "align_model": self.align_model or "auto",

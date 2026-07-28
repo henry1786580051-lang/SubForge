@@ -28,7 +28,7 @@ from .anthropic_client import MiniMaxAnthropicClient
 from .request_logger import create_logging_http_client, log_llm_error, log_llm_response
 from .response import get_response_text
 
-_global_client: Optional[OpenAI] = None
+_global_client: Optional[Any] = None
 _client_lock = threading.Lock()
 
 logger = setup_logger("llm_client")
@@ -99,7 +99,7 @@ def set_client_log_context(client: Any, **context: str) -> None:
         target.update({key: value for key, value in context.items() if value})
 
 
-def get_llm_client() -> OpenAI:
+def get_llm_client() -> Any:
     """Get global LLM client instance (thread-safe singleton)."""
     global _global_client
 
@@ -115,12 +115,7 @@ def get_llm_client() -> OpenAI:
                         "OPENAI_BASE_URL and OPENAI_API_KEY environment variables must be set"
                     )
 
-                _global_client = OpenAI(
-                    base_url=base_url,
-                    api_key=api_key,
-                    timeout=LLM_TIMEOUT,
-                    http_client=create_logging_http_client(),
-                )
+                _global_client = create_client(base_url, api_key)
 
     return _global_client
 

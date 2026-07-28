@@ -8,6 +8,7 @@ PyTorch during startup.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -121,3 +122,31 @@ def normalize_alignment_language(language: str | None) -> str:
 
 def alignment_model_for_language(language: str | None) -> AlignmentModelSpec | None:
     return ALIGNMENT_MODEL_BY_LANGUAGE.get(normalize_alignment_language(language))
+
+
+def alignment_model_path(spec: AlignmentModelSpec, models_dir: str | Path) -> Path:
+    """Return the managed on-disk location for an alignment model."""
+    root = Path(models_dir).expanduser()
+    if spec.source == "torchaudio":
+        return root / spec.filename
+    return root / f"models--{spec.model_name.replace('/', '--')}"
+
+
+def is_alignment_model_ready(spec: AlignmentModelSpec, models_dir: str | Path) -> bool:
+    """Check whether a managed alignment model is complete enough to load offline."""
+    path = alignment_model_path(spec, models_dir)
+    if spec.source == "torchaudio":
+        return path.is_file() and path.stat().st_size > 0
+
+    snapshots = path / "snapshots"
+    if not snapshots.is_dir():
+        return False
+    for snapshot in snapshots.iterdir():
+        if not snapshot.is_dir() or not (snapshot / "config.json").is_file():
+            continue
+        if any(
+            (snapshot / filename).is_file()
+            for filename in ("model.safetensors", "pytorch_model.bin")
+        ):
+            return True
+    return False

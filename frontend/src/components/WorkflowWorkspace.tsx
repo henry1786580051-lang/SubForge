@@ -404,9 +404,12 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
     setStep,
     subtitles,
     taskMessage,
+    taskAttention,
     taskProgress,
     taskStatus,
     videoFile,
+    currentTaskId,
+    addToast,
   } = useAppStore();
   const [hardware, setHardware] = useState<{
     chip: string;
@@ -420,6 +423,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
   const [huggingfaceToken, setHuggingfaceToken] = useState("");
   const [huggingfaceTokenConfigured, setHuggingfaceTokenConfigured] = useState(false);
+  const [resolvingAlignment, setResolvingAlignment] = useState(false);
 
   useEffect(() => {
     void transcribeApi.hardware().then(setHardware).catch(() => {});
@@ -507,7 +511,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
   );
   const quality = useMemo(() => analyzeSubtitleQuality(subtitles), [subtitles]);
 
-  const downloadModel = useCallback(async (modelId: string) => {
+  const downloadModel = useCallback(async (modelId: string): Promise<boolean> => {
     setDownloadingModel(modelId);
     setDownloadProgress((prev) => ({ ...prev, [modelId]: 0 }));
     try {
@@ -520,36 +524,81 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
       const result = await transcribeApi.downloadModel(modelId);
       if (result.status === "already_exists") {
         setModels((prev) => prev.map((m) => (m.id === modelId ? { ...m, downloaded: true } : m)));
-        setDownloadingModel(null);
-        return;
+        return true;
       }
-      if (result.task_id) {
-        const timer = setInterval(async () => {
-          try {
-            const task = await tasksApi.get(result.task_id!);
-            setDownloadProgress((prev) => ({ ...prev, [modelId]: task.progress }));
-            if (task.status === "completed" || task.status === "failed") {
-              clearInterval(timer);
-              if (task.status === "completed") {
-                setModels((prev) => prev.map((m) => (m.id === modelId ? { ...m, downloaded: true } : m)));
-              } else {
-                setError(task.error || "模型下载失败");
-              }
-              setDownloadingModel(null);
-            }
-          } catch {
-            clearInterval(timer);
-            setDownloadingModel(null);
+      const downloadTaskId = result.task_id;
+      if (downloadTaskId) {
+        while (true) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          const task = await tasksApi.get(downloadTaskId);
+          setDownloadProgress((prev) => ({ ...prev, [modelId]: task.progress }));
+          if (task.status === "completed") {
+            setModels((prev) => prev.map((m) => (m.id === modelId ? { ...m, downloaded: true } : m)));
+            return true;
           }
-        }, 1000);
-        return;
+          if (task.status === "failed" || task.status === "cancelled") {
+            throw new Error(task.error || "模型下载失败");
+          }
+        }
       }
-      setDownloadingModel(null);
+      return result.status === "completed";
     } catch (err) {
       setError(err instanceof Error ? err.message : "模型下载失败");
+      return false;
+    } finally {
       setDownloadingModel(null);
     }
   }, [huggingfaceToken, models, setError]);
+
+  const resolveAlignmentDecision = useCallback(async (action: "continue" | "ignore") => {
+    if (!currentTaskId || resolvingAlignment) return;
+    setResolvingAlignment(true);
+    try {
+      await transcribeApi.resolveAlignmentDecision(currentTaskId, action);
+      addToast(
+        action === "continue"
+          ? "已保留该语种转录，并使用句段级时间轴继续"
+          : "已忽略缺少对齐模型的语种",
+        "info"
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "无法继续转录任务");
+    } finally {
+      setResolvingAlignment(false);
+    }
+  }, [addToast, currentTaskId, resolvingAlignment, setError]);
+
+  const downloadMissingAlignmentModels = useCallback(async () => {
+    if (
+      !currentTaskId ||
+      resolvingAlignment ||
+      taskAttention?.type !== "missing_alignment_models" ||
+      taskAttention.source_mode !== "auto"
+    ) return;
+    setResolvingAlignment(true);
+    try {
+      for (const model of taskAttention.models) {
+        const downloaded = await downloadModel(model.model_id);
+        if (!downloaded) return;
+      }
+      await transcribeApi.resolveAlignmentDecision(currentTaskId, "retry");
+      const refreshed = await transcribeApi.listModels();
+      setModels(refreshed);
+      addToast("对齐模型已就绪，正在继续生成词级时间轴", "success");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "模型下载完成后无法恢复任务");
+    } finally {
+      setResolvingAlignment(false);
+    }
+  }, [addToast, currentTaskId, downloadModel, resolvingAlignment, setError, taskAttention]);
+
+  const missingAlignmentModels =
+    taskAttention?.type === "missing_alignment_models" && taskAttention.source_mode === "auto"
+      ? taskAttention.models
+      : [];
+  const canIgnoreMissingLanguages =
+    missingAlignmentModels.length > 0 &&
+    missingAlignmentModels.every((model) => model.ranges.length > 0);
 
   return (
     <WorkspaceFrame meta={STEP_META.transcribe}>
@@ -830,6 +879,102 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
               <MetricTile label="计算" value={hardware?.compute_type || "--"} />
             </div>
           </Panel>
+
+          {missingAlignmentModels.length > 0 && (
+            <section
+              className="rounded-lg border border-amber-200 bg-amber-50 p-4"
+              aria-live="polite"
+              aria-label="缺少语言对齐模型"
+            >
+              <div className="flex items-start gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-amber-100 text-amber-700">
+                  <Icon icon="solar:download-minimalistic-bold-duotone" width={20} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-[13px] font-semibold text-amber-950">
+                    自动检测到新的语种
+                  </h3>
+                  <p className="mt-1 text-[10px] leading-4 text-amber-800">
+                    转录内容已经保留。下载对应的对齐模型可生成更准确的词级时间轴；直接继续则对这些语种使用句段时间轴。
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-3 space-y-2">
+                {missingAlignmentModels.map((model) => {
+                  const confidence = Math.round(Math.max(0, Math.min(1, model.confidence)) * 100);
+                  const ranges = model.ranges.slice(0, 3).map(
+                    (range) => `${formatDuration(range.start)}–${formatDuration(range.end)}`
+                  );
+                  return (
+                    <div
+                      key={model.model_id}
+                      className="rounded-md border border-amber-200 bg-white/75 px-3 py-2.5"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-[11px] font-semibold text-text-primary">
+                            {model.language_name}
+                            <span className="ml-1.5 font-normal text-text-muted">{model.language.toUpperCase()}</span>
+                          </p>
+                          <p className="mt-0.5 truncate text-[9px] text-text-muted">
+                            {model.model_name} · {model.size || "大小未知"}
+                          </p>
+                        </div>
+                        <span className="shrink-0 text-[10px] font-semibold text-amber-700">
+                          {model.ranges.length > 0 && confidence > 0
+                            ? `${confidence}%`
+                            : "主要语言"}
+                        </span>
+                      </div>
+                      <p className="mt-1.5 text-[9px] leading-4 text-text-muted">
+                        {ranges.length > 0
+                          ? `${ranges.join("、")}${model.ranges.length > ranges.length ? ` 等 ${model.ranges.length} 处` : ""}`
+                          : "主要语言的完整时间轴对齐"}
+                      </p>
+                      {downloadingModel === model.model_id && (
+                        <div className="mt-2 h-1 overflow-hidden rounded-full bg-amber-100">
+                          <div
+                            className="h-full bg-amber-500 transition-[width]"
+                            style={{ width: `${downloadProgress[model.model_id] || 0}%` }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  disabled={resolvingAlignment}
+                  onClick={() => void downloadMissingAlignmentModels()}
+                  className="h-9 rounded-md bg-amber-700 px-3 text-[10px] font-semibold text-white transition-colors hover:bg-amber-800 disabled:cursor-wait disabled:opacity-60"
+                >
+                  {resolvingAlignment && downloadingModel ? "正在下载" : "下载并继续"}
+                </button>
+                <button
+                  type="button"
+                  disabled={resolvingAlignment}
+                  onClick={() => void resolveAlignmentDecision("continue")}
+                  className="h-9 rounded-md border border-amber-300 bg-white px-3 text-[10px] font-semibold text-amber-900 transition-colors hover:bg-amber-100 disabled:cursor-wait disabled:opacity-60"
+                >
+                  使用句段时间轴
+                </button>
+                {canIgnoreMissingLanguages && (
+                  <button
+                    type="button"
+                    disabled={resolvingAlignment}
+                    onClick={() => void resolveAlignmentDecision("ignore")}
+                    className="col-span-2 h-8 text-[9px] font-medium text-text-muted transition-colors hover:text-amber-900 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    忽略这些外语片段
+                  </button>
+                )}
+              </div>
+            </section>
+          )}
 
           <TaskActionCard
             title="开始转录"

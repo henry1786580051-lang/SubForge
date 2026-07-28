@@ -17,6 +17,7 @@ Produce accurate, complete, natural spoken subtitles. Fidelity comes before styl
 13. Preserve numeric magnitude words exactly: for example, "20 grand" means 20,000 rather than 20, and "53K" means 53,000. Natural target-language forms such as 2万 or 5.3万 are valid when they preserve the same magnitude.
 14. Keep recurring names, model trims, specialist terms, units, and domain-specific word senses consistent with the global terminology. Do not translate a familiar-looking word literally when that reading contradicts the local action or user-interface context.
 15. Although boundaries are locked, adjacent final translations must read as one natural spoken sequence. Avoid source-language word order, dangling function words, and repeated subjects introduced only to make an isolated fragment grammatical.
+16. Source keys in the same batch may use different languages. Detect and translate each key from the language it actually uses; never normalize a foreign-language key into the surrounding primary source language or treat a language switch as an ASR error.
 </requirements>
 
 <terminology_and_requirements>

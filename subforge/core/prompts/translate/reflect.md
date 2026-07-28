@@ -16,6 +16,7 @@ Create a faithful native-quality translation, then audit it before returning the
 12. Preserve numeric magnitude words exactly: "20 grand" is 20,000, not 20, and "53K" is 53,000. Natural target-language forms may change notation only when the magnitude remains identical.
 13. Keep recurring names, model trims, specialist terms, units, and domain-specific word senses consistent with the global terminology. Reject literal wording that contradicts the described action, control, object, or measurement.
 14. Locked boundaries do not require translationese. Adjacent final translations must form a natural spoken sequence without adding repeated subjects or completing a fragment with meaning owned by another key.
+15. A batch may contain multiple source languages. Translate every key from the language actually spoken in that key; never rewrite a language switch into the surrounding primary source language or classify it as an ASR error.
 </non_negotiable_rules>
 
 <terminology_and_requirements>

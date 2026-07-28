@@ -135,19 +135,17 @@ class VadMethodEnum(Enum):
     """VAD方法"""
 
     SILERO_V3 = "silero_v3"  # 通常比 v4 准确性低，但没有 v4 的一些怪癖
-    SILERO_V4 = (
-        "silero_v4"  # 与 silero_v4_fw 相同。运行原始 Silero 的代码，而不是适配过的代码
-    )
-    SILERO_V5 = (
-        "silero_v5"  # 与 silero_v5_fw 相同。运行原始 Silero 的代码，而不是适配过的代码)
-    )
-    SILERO_V4_FW = (
-        "silero_v4_fw"  # 默认模型。最准确的 Silero 版本，有一些非致命的小问题
-    )
+    SILERO_V4 = "silero_v4"  # 与 silero_v4_fw 相同。运行原始 Silero 的代码，而不是适配过的代码
+    SILERO_V5 = "silero_v5"  # 与 silero_v5_fw 相同。运行原始 Silero 的代码，而不是适配过的代码)
+    SILERO_V4_FW = "silero_v4_fw"  # 默认模型。最准确的 Silero 版本，有一些非致命的小问题
     # SILERO_V5_FW = "silero_v5_fw"  # 准确性差。不是 VAD，而是某种语音的随机检测器，有各种致命的小问题。避免使用！
     PYANNOTE_V3 = "pyannote_v3"  # 最佳准确性，支持 CUDA
-    PYANNOTE_ONNX_V3 = "pyannote_onnx_v3"  # pyannote_v3 的轻量版。与 Silero v4 的准确性相似，可能稍好，支持 CUDA
-    WEBRTC = "webrtc"  # 准确性低，过时的 VAD。仅接受 'vad_min_speech_duration_ms' 和 'vad_speech_pad_ms'
+    PYANNOTE_ONNX_V3 = (
+        "pyannote_onnx_v3"  # pyannote_v3 的轻量版。与 Silero v4 的准确性相似，可能稍好，支持 CUDA
+    )
+    WEBRTC = (
+        "webrtc"  # 准确性低，过时的 VAD。仅接受 'vad_min_speech_duration_ms' 和 'vad_speech_pad_ms'
+    )
     AUDITOK = "auditok"  # 实际上这不是 VAD，而是 AAD - 音频活动检测
 
 
@@ -575,6 +573,7 @@ class TranscribeConfig:
     diarization_token: str = ""
     diarization_model_dir: str = ""
     cancel_event: Any = None
+    missing_alignment_model_callback: Any = None
 
     def _mask_key(self, key: Optional[str]) -> str:
         """Mask sensitive key for display"""
@@ -585,18 +584,14 @@ class TranscribeConfig:
     def print_config(self) -> str:
         """Print transcription configuration"""
         lines = ["=========== Transcription Task ==========="]
-        lines.append(
-            f"Model: {self.transcribe_model.value if self.transcribe_model else 'None'}"
-        )
+        lines.append(f"Model: {self.transcribe_model.value if self.transcribe_model else 'None'}")
         lines.append(f"Language: {self.transcribe_language or 'Auto'}")
         lines.append(f"Word Timestamp: {self.need_word_time_stamp}")
         lines.append(f"Audio Enhancement: {self.enable_audio_enhancement}")
         lines.append(f"Speaker Diarization: {self.speaker_diarization}")
         if self.speaker_diarization == "fixed":
             lines.append(f"Speaker Count: {self.speaker_count}")
-        lines.append(
-            f"Output Format: {self.output_format.value if self.output_format else 'None'}"
-        )
+        lines.append(f"Output Format: {self.output_format.value if self.output_format else 'None'}")
 
         if self.transcribe_model == TranscribeModelEnum.WHISPER_API:
             lines.append(f"API Base: {self.whisper_api_base}")
@@ -628,9 +623,7 @@ class TranscribeConfig:
             lines.append(f"Batch Size: {self.whisperx_batch_size}")
 
         elif self.transcribe_model == TranscribeModelEnum.WHISPER_CPP:
-            lines.append(
-                f"Model: {self.whisper_model.value if self.whisper_model else 'None'}"
-            )
+            lines.append(f"Model: {self.whisper_model.value if self.whisper_model else 'None'}")
 
         lines.append("=" * 42)
         return "\n".join(lines)

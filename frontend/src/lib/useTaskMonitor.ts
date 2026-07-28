@@ -29,6 +29,7 @@ export function useTaskMonitor() {
     currentTaskId,
     setCurrentTaskId,
     setTaskState,
+    setTaskAttention,
     setSubtitleFile,
     setSubtitles,
     setError,
@@ -58,6 +59,7 @@ export function useTaskMonitor() {
       task.message,
       uiStatus as "idle" | "running" | "completed" | "failed"
     );
+    setTaskAttention(task.attention || null);
 
     // Prefer the WebSocket snapshot. Reading an SRT while a worker is replacing
     // it can return stale or partially written content in packaged builds.
@@ -97,6 +99,7 @@ export function useTaskMonitor() {
     if (task.status === "completed") {
       if (pollRef.current) clearInterval(pollRef.current);
       setIsProcessing(false);
+      setTaskAttention(null);
 
       const result = task.result;
       if (task.type === "transcribe" && result?.subtitle_file) {
@@ -138,12 +141,14 @@ export function useTaskMonitor() {
     if (task.status === "failed") {
       if (pollRef.current) clearInterval(pollRef.current);
       setIsProcessing(false);
+      setTaskAttention(null);
       setError(task.error || "Task failed");
     }
 
     if (task.status === "cancelled") {
       if (pollRef.current) clearInterval(pollRef.current);
       setIsProcessing(false);
+      setTaskAttention(null);
       setCurrentTaskId(null);
     }
   }
@@ -234,6 +239,7 @@ export function useTaskMonitor() {
     ) => {
       setError(null);
       setTaskState(0, "Starting...", "running");
+      setTaskAttention(null);
       lastPartialKeyRef.current = null;
       previewRevisionRef.current = 0;
 
@@ -255,7 +261,7 @@ export function useTaskMonitor() {
         setIsProcessing(false);
       }
     },
-    [setCurrentTaskId, setError, setTaskState, setIsProcessing]
+    [setCurrentTaskId, setError, setTaskAttention, setTaskState, setIsProcessing]
   );
 
   const cancelTask = useCallback(async () => {
@@ -269,9 +275,10 @@ export function useTaskMonitor() {
     }
     if (pollRef.current) clearInterval(pollRef.current);
     setIsProcessing(false);
+    setTaskAttention(null);
     setTaskState(0, "", "idle");
     setCurrentTaskId(null);
-  }, [setIsProcessing, setTaskState, setCurrentTaskId]);
+  }, [setIsProcessing, setTaskAttention, setTaskState, setCurrentTaskId]);
 
   return { startTask, cancelTask };
 }

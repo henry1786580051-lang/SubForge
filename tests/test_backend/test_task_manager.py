@@ -93,6 +93,42 @@ def test_task_progress_carries_preview_segments():
     assert updated.preview_revision == 1
 
 
+def test_attention_request_can_be_resolved_without_ending_task():
+    manager = TaskManager()
+    task = manager.create_task("transcribe")
+    attention = {
+        "type": "missing_alignment_models",
+        "source_mode": "auto",
+        "message": "Waiting for alignment model",
+        "models": [{"language": "es"}],
+    }
+
+    assert manager.request_attention(task.id, attention) is True
+    waiting = manager.get_task(task.id)
+    assert waiting is not None
+    assert waiting.status == TaskStatus.RUNNING
+    assert waiting.attention == attention
+
+    assert manager.resolve_attention(task.id, "continue") is True
+    assert manager.wait_for_attention_resolution(task.id, timeout=0) == "continue"
+    resumed = manager.get_task(task.id)
+    assert resumed is not None
+    assert resumed.status == TaskStatus.RUNNING
+    assert resumed.attention is None
+
+
+def test_expired_attention_cannot_be_resolved():
+    manager = TaskManager()
+    task = manager.create_task("transcribe")
+    assert manager.request_attention(
+        task.id,
+        {"type": "missing_alignment_models", "models": []},
+    )
+
+    assert manager.cancel_task(task.id) is True
+    assert manager.resolve_attention(task.id, "retry") is False
+
+
 def test_preview_updates_emit_small_deltas_and_keep_full_snapshot():
     manager = TaskManager()
     task = manager.create_task("subtitle")
@@ -117,9 +153,7 @@ def test_preview_updates_emit_small_deltas_and_keep_full_snapshot():
     assert events[1]["preview_delta"]["mode"] == "append"
     assert events[1]["preview_delta"]["segments"] == [{"id": 3, "text": "three"}]
     assert events[2]["preview_delta"]["mode"] == "patch"
-    assert events[2]["preview_delta"]["segments"] == [
-        {"id": 2, "text": "translated"}
-    ]
+    assert events[2]["preview_delta"]["segments"] == [{"id": 2, "text": "translated"}]
     assert all("preview_segments" not in event for event in events)
     snapshot = manager.get_task(task.id)
     assert snapshot is not None

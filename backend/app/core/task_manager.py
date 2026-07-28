@@ -33,6 +33,7 @@ class TaskInfo(BaseModel):
     subtitle_file: str | None = None  # partial results during processing
     preview_segments: list[dict[str, Any]] | None = None
     preview_revision: int = 0
+    attention: dict[str, Any] | None = None
 
 
 class TaskManager:
@@ -45,6 +46,8 @@ class TaskManager:
         self._cancel_callbacks: dict[str, list[Callable[[], Any]]] = {}
         self._resource_owners: dict[str, str] = {}
         self._task_resources: dict[str, str] = {}
+        self._attention_conditions: dict[str, threading.Condition] = {}
+        self._attention_resolutions: dict[str, str] = {}
         self._lock = threading.RLock()
 
     def create_task(self, task_type: str, resource_key: str | None = None) -> TaskInfo:
@@ -130,9 +133,7 @@ class TaskManager:
                 TaskStatus.CANCELLED,
             }:
                 return
-            preview_delta = self._build_preview_delta(
-                task.preview_segments or [], preview_segments
-            )
+            preview_delta = self._build_preview_delta(task.preview_segments or [], preview_segments)
             task.preview_segments = preview_segments
             task.preview_revision += 1
             task.status = TaskStatus.RUNNING
@@ -161,11 +162,7 @@ class TaskManager:
             }
 
         if len(previous) == len(current):
-            changed = [
-                segment
-                for old, segment in zip(previous, current)
-                if old != segment
-            ]
+            changed = [segment for old, segment in zip(previous, current) if old != segment]
             if len(changed) <= max(20, len(current) // 2):
                 return {"mode": "patch", "segments": changed, "total": len(current)}
 
@@ -183,8 +180,11 @@ class TaskManager:
             task.status = TaskStatus.COMPLETED
             task.progress = 100
             task.result = result
+            task.attention = None
             self._running_tasks.pop(task_id, None)
             self._cancel_callbacks.pop(task_id, None)
+            self._attention_conditions.pop(task_id, None)
+            self._attention_resolutions.pop(task_id, None)
             self._release_resource(task_id)
         self._notify_listeners(task_id)
 
@@ -205,8 +205,11 @@ class TaskManager:
             task.status = TaskStatus.FAILED
             task.error = error
             task.result = result
+            task.attention = None
             self._running_tasks.pop(task_id, None)
             self._cancel_callbacks.pop(task_id, None)
+            self._attention_conditions.pop(task_id, None)
+            self._attention_resolutions.pop(task_id, None)
             self._release_resource(task_id)
         self._notify_listeners(task_id)
 
@@ -224,6 +227,53 @@ class TaskManager:
         with self._lock:
             if task_id in self._tasks:
                 self._cancel_callbacks.setdefault(task_id, []).append(callback)
+
+    def request_attention(self, task_id: str, attention: dict[str, Any]) -> bool:
+        """Publish a recoverable user decision without terminating the task."""
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if not task or task.status in {
+                TaskStatus.COMPLETED,
+                TaskStatus.FAILED,
+                TaskStatus.CANCELLED,
+            }:
+                return False
+            task.attention = attention
+            task.message = str(attention.get("message") or "Waiting for user action")
+            task.status = TaskStatus.RUNNING
+            self._attention_resolutions.pop(task_id, None)
+            self._attention_conditions.setdefault(task_id, threading.Condition())
+        self._notify_listeners(task_id)
+        return True
+
+    def resolve_attention(self, task_id: str, resolution: str) -> bool:
+        """Resolve the current attention request and wake its worker thread."""
+        with self._lock:
+            task = self._tasks.get(task_id)
+            condition = self._attention_conditions.get(task_id)
+            if not task or not task.attention or condition is None:
+                return False
+            if task.status not in {TaskStatus.PENDING, TaskStatus.RUNNING}:
+                return False
+            self._attention_resolutions[task_id] = resolution
+            task.attention = None
+            task.message = "Resuming transcription..."
+        with condition:
+            condition.notify_all()
+        self._notify_listeners(task_id)
+        return True
+
+    def wait_for_attention_resolution(self, task_id: str, timeout: float = 0.5) -> str | None:
+        """Wait briefly for a decision while allowing cancellation checks."""
+        with self._lock:
+            resolution = self._attention_resolutions.pop(task_id, None)
+            condition = self._attention_conditions.setdefault(task_id, threading.Condition())
+        if resolution is not None:
+            return resolution
+        with condition:
+            condition.wait(timeout=max(0.0, timeout))
+        with self._lock:
+            return self._attention_resolutions.pop(task_id, None)
 
     def unregister_cancel_callback(self, task_id: str, callback: Callable[[], Any]) -> None:
         with self._lock:
@@ -246,9 +296,15 @@ class TaskManager:
             }:
                 return False
             task.status = TaskStatus.CANCELLED
+            task.attention = None
             async_task = self._running_tasks.pop(task_id, None)
             callbacks = self._cancel_callbacks.pop(task_id, [])
+            condition = self._attention_conditions.pop(task_id, None)
+            self._attention_resolutions.pop(task_id, None)
             self._release_resource(task_id)
+        if condition is not None:
+            with condition:
+                condition.notify_all()
         for callback in callbacks:
             try:
                 callback()
@@ -276,6 +332,8 @@ class TaskManager:
                 self._tasks.pop(t.id, None)
                 self._running_tasks.pop(t.id, None)
                 self._cancel_callbacks.pop(t.id, None)
+                self._attention_conditions.pop(t.id, None)
+                self._attention_resolutions.pop(t.id, None)
                 self._release_resource(t.id)
 
     def add_listener(self, callback: Callable):
@@ -286,9 +344,7 @@ class TaskManager:
         with self._lock:
             self._listeners = [listener for listener in self._listeners if listener != callback]
 
-    def _notify_listeners(
-        self, task_id: str, *, preview_delta: dict[str, Any] | None = None
-    ):
+    def _notify_listeners(self, task_id: str, *, preview_delta: dict[str, Any] | None = None):
         with self._lock:
             task = self._tasks.get(task_id)
             if not task:

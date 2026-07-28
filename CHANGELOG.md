@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.1.3 - 2026-07-28
+
+### Added
+
+- Added conservative mixed-language detection for WhisperX automatic source-language mode on Apple Silicon, including local re-transcription of high-confidence language switches and language-specific forced alignment.
+- Added a recoverable missing-alignment-model prompt that shows the detected language, affected ranges, model details, and download progress without discarding the completed ASR pass.
+- Added explicit choices to download and resume word alignment, continue with native sentence timing, or ignore confirmed foreign-language ranges.
+
+### Improved
+
+- Automatic source-language transcription now retains the original audio instead of applying DeepFilterNet, protecting short foreign-language passages from over-suppression.
+- Mixed-language translation prompts now require each subtitle key to be translated from its actual spoken language rather than normalized to the surrounding primary language.
+- Windows WhisperX automatic-language jobs now use the same missing-alignment-model decision flow for the detected primary language.
+
+### Fixed
+
+- Fixed automatic source-language jobs being constrained by a manually configured single-language alignment model.
+- Fixed skipped alignment languages disappearing from word-timestamp output; they now retain the native sentence-level timestamps produced by ASR.
+- Fixed the global LLM client bypassing the provider-aware client factory, which could prevent the MiniMax Anthropic-compatible endpoint from being selected correctly.
+- Fixed the desktop fallback version label remaining on an older release number.
+
+### Packaging
+
+- This release publishes the macOS Apple Silicon DMG only. No Windows or CUDA installer is produced.
+
 ## v1.1.2 - 2026-07-27
 
 ### Improved
