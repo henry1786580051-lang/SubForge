@@ -1,246 +1,121 @@
-# SubForge
+<p align="center">
+  <img src="furnace_app_icon_v2.svg" alt="SubForge" width="108" />
+</p>
 
-![License](https://img.shields.io/badge/license-GPL--3.0-blue.svg)
-![Python](https://img.shields.io/badge/Python-3.10--3.12-3776AB?logo=python&logoColor=white)
-![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=next.js&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.136+-009688?logo=fastapi&logoColor=white)
-![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
+<h1 align="center">SubForge</h1>
 
 <p align="center">
-  <img src="furnace_app_icon_v2.svg" alt="SubForge Logo" width="120" />
+  <strong>从本地语音识别到可发布双语字幕的一体化工作台</strong><br />
+  WhisperX 精准时间轴 · 混合语言识别 · 多人分离 · 对话感知翻译
 </p>
 
 <p align="center">
-  <img src="docs/screenshot.png" alt="SubForge Screenshot" width="800" />
+  <a href="https://github.com/henry1786580051-lang/SubForge/actions/workflows/ci.yml"><img src="https://github.com/henry1786580051-lang/SubForge/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/henry1786580051-lang/SubForge/releases"><img src="https://img.shields.io/github/v/release/henry1786580051-lang/SubForge" alt="Release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue.svg" alt="GPL-3.0" /></a>
+  <img src="https://img.shields.io/badge/Python-3.10--3.12-3776AB?logo=python&logoColor=white" alt="Python 3.10-3.12" />
+  <img src="https://img.shields.io/badge/Next.js-16-000000?logo=next.js&logoColor=white" alt="Next.js 16" />
 </p>
 
-SubForge 是一个 AI 驱动的视频字幕工具，覆盖转录、断句、优化、翻译、字幕样式与视频合成等流程。它既可以作为桌面/网页工具使用，也可以通过 CLI 和 Python 模块集成到自己的工作流中。
+<p align="center">
+  <a href="https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.3/SubForge-1.1.3-macos-arm64.dmg"><strong>下载 macOS Apple Silicon 版</strong></a>
+  · <a href="https://github.com/henry1786580051-lang/SubForge/releases">全部版本</a>
+  · <a href="https://henry1786580051-lang.github.io/SubForge/">使用文档</a>
+  · <a href="https://github.com/henry1786580051-lang/SubForge/issues">问题反馈</a>
+</p>
 
-## 能做什么
+![SubForge 语音转录工作台](docs/screenshot.png)
 
-| 能力 | 说明 |
-| --- | --- |
-| 语音转文字 | WhisperX 在 Apple Silicon 使用 MLX、在 Windows 使用 CTranslate2，并通过 forced alignment 生成词级时间轴 |
-| 多人语音 | 可选 pyannote Community-1 说话人分离，支持双人、自动人数和 2–10 人精确约束；固定保留原始音轨以保护较弱说话人的内容 |
-| 智能断句 | 使用 LLM 按语义重排字幕，同时校验原文完整性、长度与时间轴 |
-| 字幕优化 | 保守修正明显 ASR 错误和标点，不允许 LLM 任意改写正确原文 |
-| 智能翻译 | 支持对话感知、全局上下文、反思翻译、MiniMax Anthropic 接口及 OpenAI 兼容接口 |
-| 双语字幕 | 可导出 SRT、VTT、ASS、TXT、JSON 等格式 |
-| 语音合成 | 支持字幕配音与视频合成相关工作流 |
-| Web 界面 | 拖拽上传、实时进度、在线编辑、请求日志查看 |
+SubForge 面向需要长期处理视频字幕的创作者和本地化工作流。它将媒体预检、本地 ASR、forced alignment、说话人分离、智能断句、上下文翻译、质量检查和多格式导出组织在同一个桌面与 Web 界面中。大模型只用于需要语义判断的环节；时间轴校验、格式检查和中文标点清理均在本地完成。
 
-## 当前工作流
+## 为什么选择 SubForge
 
-SubForge 的重点不只是把语音转成文字，而是尽量让时间轴、原文和译文都达到可发布状态。转录层按平台选择 MLX 或 CTranslate2，之后共享 WhisperX 对齐和带完整性校验的上下文翻译流程。
+| 精准转录 | 可控翻译 | 可恢复工作流 |
+| --- | --- | --- |
+| Apple Silicon 使用 MLX，Windows 使用 CTranslate2；WhisperX forced alignment 与 TEN-VAD 保守校准词级边界 | 按上下文和说话人轮次翻译，校验漏译、错位、重复、占位语和思考内容泄漏 | 实时进度、中间结果增量保存、失败条目局部重试、恢复字幕和聚合 LLM 日志 |
 
-### 转录优化
+### v1.1.3 新增
 
-单人模式可直接使用 DeepFilterNet3 增强音频。多人模式在原始音频上运行 pyannote Community-1，并固定使用原始音轨完成 ASR、时间轴校验和说话人归属，不执行候选降噪或额外的候选 ASR。已知参与人数的访谈建议使用“指定人数”，可减少自动聚类将同一人拆成多个标签的风险。
+- **混合语言转录**：自动语言模式会识别高置信度外语区间并局部复听，适合英语夹杂西班牙语等素材。
+- **逐语言强制对齐**：每个语言区间自动匹配对应的 forced alignment 模型，而不是用主语言模型覆盖整段视频。
+- **模型缺口提示**：缺少对齐模型时给出明确语言、模型和处理选项，可下载后续跑或保留句级时间轴继续。
+- **保守音频策略**：多人模式和自动语言模式保留原始音轨，避免降噪压制较弱说话人或短外语片段。
+- **混合语言翻译**：提示模型按每条字幕的实际源语言翻译，不把整批内容强制视为单一语言。
 
-转录文本会先将数字、单位和符号展开为 forced alignment 更容易识别的口语 token，对齐完成后再恢复原文显示。TEN-VAD 只修正可疑边界，不全局覆盖已经正确的 WhisperX 时间戳：
+## 工作流
 
-```text
-原始音频
-  -> [多人模式] pyannote Community-1 说话人分离
-  -> [单人模式] DeepFilterNet3 可选降噪
-  -> [多人模式] 固定保留原始音轨
-  -> MLX Whisper（Apple Silicon）/ Faster-Whisper（Windows）
-  -> 数字/单位/符号语音规范化
-  -> WhisperX forced alignment
-  -> TEN-VAD 时间轴保守校验（Silero VAD 回退）
-  -> 说话人归属与词级时间轴
-  -> 智能断句 -> 保守纠错 -> 对话/全局上下文生成 -> 翻译 -> 最终质量校验
+```mermaid
+flowchart LR
+    A["导入与预检"] --> B{"音频策略"}
+    B -->|单人固定语言| C["可选 DeepFilterNet3"]
+    B -->|多人或自动语言| D["保留原始音轨"]
+    C --> E["WhisperX ASR"]
+    D --> E
+    E --> F["混合语言区间复听"]
+    F --> G["逐语言 forced alignment"]
+    G --> H["TEN-VAD 保守边界校验"]
+    H --> I["可选 Community-1 说话人分离"]
+    I --> J["智能断句与保守纠错"]
+    J --> K["上下文 / 对话感知翻译"]
+    K --> L["质量检查与导出"]
 ```
 
-| 技术 | 作用 |
+### 核心能力
+
+| 能力 | 实现与边界 |
 | --- | --- |
-| [DeepFilterNet3](https://github.com/Rikorose/DeepFilterNet) | 单人模式可选增强；多人模式自动跳过，以避免压制较弱说话人的语音 |
-| [MLX Whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper) | Apple Silicon 专门优化的本地 Whisper 推理，默认使用本地 MLX 模型 |
-| [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper) | Windows 上为 WhisperX 提供 CTranslate2/CUDA 或 CPU 转录路径 |
-| [WhisperX forced alignment](https://github.com/m-bain/whisperX) | 按源语言自动匹配独立对齐模型，把转录文本落到词级时间轴；设置页可搜索、下载并检查各语言模型 |
-| 对齐前语音规范化 | 将 `350`、`mph`、`kg` 等数字与单位展开为口语 token，对齐后恢复原文展示 |
-| [TEN-VAD](https://github.com/TEN-framework/ten-vad) | 默认的语音活动检测器，用于校验可疑句首和句尾，不全局覆盖 WhisperX 的正确对齐 |
-| Silero VAD | TEN-VAD 不可用或运行失败时的回退方案，保证跨平台可用性 |
-| [pyannote Community-1](https://github.com/pyannote/pyannote-audio) | 可选的本地说话人分离；支持固定双人或自动人数，不把说话人标签写入最终字幕 |
-| [Whisper.cpp](https://github.com/ggml-org/whisper.cpp) 兼容通道 | 备用本地引擎，适合已有 GGML 模型的用户 |
+| 本地语音识别 | WhisperX：Apple Silicon 使用 MLX Whisper；Windows 使用 Faster-Whisper/CTranslate2，可选 CUDA 或 CPU |
+| 词级时间轴 | 对齐前展开数字、单位和符号；按语言选择 forced alignment 模型；TEN-VAD 只修正可疑边界 |
+| 混合语言 | 自动语言探测、高置信度外语区间局部复听、逐语言对齐与缺失模型提示；手动选择源语言时不改变原有固定语言流程 |
+| 多人语音 | pyannote Community-1，支持双人、自动人数或指定 2–10 人；标签只用于内部轮次，不写入最终字幕 |
+| 智能断句 | 语义重组后校验原文覆盖、字幕长度、键完整性和时间轴，不允许吞词或自由改写 |
+| 对话感知翻译 | 将可靠的说话人标签匿名化为临时轮次，结合前后文处理指代、问答和省略；单人任务不增加该开销 |
+| 结果质量门 | 检查空译文、跨条错位、相邻重复、编辑占位语、思考内容、数字和专有名词异常，仅重试失败条目 |
+| 导出 | SRT、VTT、ASS、TXT、JSON；中英双语默认中文在上、原文在下 |
 
-### 断句与翻译
+<details>
+<summary><strong>查看转录和翻译的技术细节</strong></summary>
 
-LLM 处理不是单次自由生成。每个阶段都有结构化输出、键完整性和内容约束，失败时只重试受影响的批次或单条字幕：
+#### 转录
+
+- 单人且源语言固定时可启用 [DeepFilterNet3](https://github.com/Rikorose/DeepFilterNet)；多人和自动语言模式会跳过增强，保护弱声纹与短外语片段。
+- [MLX Whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper) 为 Apple Silicon 提供本地加速；[Faster-Whisper](https://github.com/SYSTRAN/faster-whisper) 为 Windows 提供 CTranslate2 路径。
+- [WhisperX](https://github.com/m-bain/whisperX) 按检测语言选择独立对齐模型。设置页可搜索、下载和检查 41 种语言模型。
+- [TEN-VAD](https://github.com/TEN-framework/ten-vad) 只校验可疑句首和句尾；不可用时回退 Silero VAD，不全局覆盖正确的 WhisperX 时间戳。
+- [pyannote Community-1](https://github.com/pyannote/pyannote-audio) 只负责稳定的声纹聚类，不推断人物姓名或身份。
+
+#### 翻译
 
 ```text
-语义断句（原文字符完整性校验）
-  -> 保守纠错（数字、专有名词和原文覆盖校验）
-  -> 全局上下文摘要
-  -> 批量翻译（默认批量/并发均可设为 10）
-  -> 可选反思重写
-  -> 漏译、占位语、思考内容、跨条数字错配检查
-  -> 仅对失败条目回退重译
-  -> 中文译文逗号/句号无 LLM 清理
+语义断句 -> 保守纠错 -> 全局上下文 -> 批量翻译
+  -> 可选反思 -> 漏译/错位/重复/泄漏检查
+  -> 失败键局部恢复 -> 中文逗号和句号本地清理
 ```
 
-- MiniMax 使用官方 Anthropic 兼容协议，原生区分 `thinking` 与最终 `text`，防止思考内容进入字幕。
-- 其他模型继续使用 OpenAI 兼容协议；Base URL 和 API Key 按服务商分别保存。
-- 翻译结果不得出现“合并至上一条”“同上”“省略”等编辑占位语，也不能缺少批次中的任何索引。
-- 数字与专有名词校验以防止跨字幕错配为主，不要求中英文逐词对应，避免损害自然翻译质量。
-- MiniMax M3 遇到 HTTP 429 时保持任务存活并等待恢复；其他服务使用有上限的指数退避重试。
+- MiniMax 使用官方 Anthropic 兼容协议，原生区分 `thinking` 与最终 `text`；M3 遇到 HTTP 429 时保持任务存活并等待恢复。
+- 小米 MiMo、DeepSeek、OpenAI、通义千问及本地服务使用 OpenAI 兼容协议；Base URL、API Key 和模型按服务商独立保存。
+- 反思模式再次检查语气、称谓、指代和问答关系，但仍必须保持字幕键和内容所有权。
+- 中间结果持续写入恢复文件，最终质量检查失败不会清空已经完成的字幕。
 
-#### 对话感知翻译
+</details>
 
-对话感知只在字幕带有可靠的 `speaker_id` 时启用。单人视频和没有说话人信息的导入字幕继续使用原有紧凑请求，不增加无意义的说话人字段。
+## 界面
 
-```text
-Community-1 / 导入字幕中的 speaker_id
-  -> 任务内匿名化（原始标签映射为 S1、S2……）
-  -> 带匿名轮次的全局摘要、术语和风格提取
-  -> previous_context + current_subtitles + next_context
-  -> 按说话人边界翻译与可选反思
-  -> 键归属、重复、漏译、占位语和标签泄漏校验
-  -> 只重译明确失败的字幕，保留正确邻居
-```
-
-| 环节 | 实现方式 |
+| 导入与预检 | 字幕处理 |
 | --- | --- |
-| 匿名化 | 每个任务首次出现的声纹聚类依次映射为 `S1`、`S2` 等临时别名；它们只表示轮次，不推断人物姓名或身份 |
-| 全局上下文 | 生成摘要、术语表和表达风格时保留匿名轮次，使模型能区分主持人提问、嘉宾回应、语气和角色关系 |
-| 批次输入 | 当前字幕使用 `{speaker, source}` 结构；前后批次只作为上下文，用于消解代词、省略、否定、追问和词义 |
-| 边界所有权 | 说话人变化被视为强语义边界；同一说话人的相邻片段可以保持自然承接，但任何事实、数字或从句都不能移动到其他字幕键 |
-| 反思校验 | 反思模式检查语气、称谓、指代和问答关系，同时再次确认最终译文没有借用邻条内容或输出说话人标签 |
-| 局部恢复 | 键完整性、重复和对齐检查只标记明确异常的条目；重译时提供相邻原文辅助消歧，但只允许翻译当前键 |
-| 缓存隔离 | 匿名说话人轮次会进入翻译上下文和缓存键，避免文本相同但对话角色不同的请求错误复用结果 |
-
-匿名标签不会拼接进原文，也不会写入最终 SRT。标准翻译和反思提示均明确禁止输出 `S1`、`Speaker 1` 等内部标识；导出结果仍只包含译文和原文。该设计利用换人信息改善语义判断，但不把说话人分离结果当作人物身份识别。
-
-对于模型返回的错位结果，系统不会重新翻译整个批次。校验器先检查译文是否包含相邻字幕的含义、遗漏当前键核心语义或跨越说话人边界；只有被确认异常的键才进入带前后原文的单条恢复流程。这样可以修复局部错位，同时尽量避免改写已经正确、自然的译文。
-
-### 可靠性与桌面端
-
-- 转录、断句和翻译任务通过 WebSocket 实时推送进度与中间结果。
-- 上传文件、缩略图和导出结果使用独立路径与范围请求处理，避免同名文件或并发任务相互覆盖。
-- LLM 日志按任务和阶段聚合，仍可展开查看单次请求；并发翻译不会错配 prompt 和 response。
-- 翻译阶段增量保存中间结果，最终校验失败时不会丢失已经完成的字幕。
-- macOS 桌面包内置 FFmpeg、DeepFilterNet3 运行时和 TEN-VAD；Whisper、forced alignment 与说话人模型由用户按需管理，不重复打包大模型。词级对齐模型默认按源语言自动选择，无需手动记忆模型 ID。
-
-## Audi Q3 实测案例
-
-以下数据来自 2026 Audi Q3 英文试驾视频的完整处理：智能断句、保守纠错、上下文生成、翻译和反思模式。测试日期为 2026-07-19，API 的实时负载、限流与计费规则会变化，数据用于说明量级，不代表固定成本或速度。
-
-| 配置 | 实测值 |
-| --- | --- |
-| 原始视频 | [2026 Audi Q3 - New Turbo Compact SUV Real World City Commute](https://www.youtube.com/watch?v=dY6D-wNBEFM) |
-| 视频时长 | 34:47 |
-| 输入 | 5,803 条英语词级 SRT 片段 |
-| 模型 | `MiniMax-M3` |
-| 协议 / Base URL | Anthropic / `https://api.minimaxi.com/anthropic` |
-| 批量 / 并发 | 10 / 10 |
-| 目标语言 | 简体中文 |
-| LLM 请求日志跨度 | 约 5:16 |
-| 处理结果 | 629 条中英双语字幕 |
-
-### Token 与缓存统计
-
-| 阶段 | 请求尝试 | 成功响应 | 限流/重试 | 输入 Token | 缓存读取 | 读取占比 | 输出 Token |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 智能断句 | 38 | 38 | 0 | 44,120 | 18,546 | 42.04% | 12,168 |
-| 保守纠错 | 102 | 64 | 38 | 73,334 | 15,402 | 21.00% | 9,921 |
-| 上下文生成 | 1 | 1 | 0 | 3,014 | 128 | 4.25% | 1,372 |
-| 翻译与反思 | 117 | 114 | 3 | 395,311 | 141,647 | 35.83% | 98,249 |
-| **合计** | **258** | **217** | **41** | **515,779** | **175,723** | **34.07%** | **121,710** |
-
-输入与输出合计记录 **637,489 Token**。“限流/重试”是 HTTP 请求级尝试，不是 41 条字幕失败。MiniMax M3 的等待策略在 429 后继续任务，最终文件没有空译文。本次 API 返回的 `cache_creation_input_tokens` 为 **0**；表中的 34.07% 是服务端报告的 `cache_read_input_tokens / input_tokens`，主要来自自动复用和重试，不应理解为 M3 主动 Prompt Cache 的稳定命中率。当前显式 Prompt Cache 只对 MiniMax M2 系列启用，实际计费应以服务商账单口径为准。
-
-### 结果校验
-
-| 指标 | 当前 Anthropic 接入 |
-| --- | ---: |
-| 最终字幕数 | 629 |
-| 原文规范化序列相似度 | 99.72% |
-| 中文译文字符数 | 9,319 |
-| 缓存读取占比 | 34.07% |
-| 空译文 / 编辑占位语 / 思考泄漏 | 0 / 0 / 0 |
-| 时间轴重叠 / 非法区间 | 0 / 0 |
-| 超过 18 个英文词的字幕 | 0 |
-| 中文译文逗号/句号残留 | 0 |
-
-原文相似度由输入与输出英文合并后转为小写、移除非字母数字字符，再使用序列匹配计算。该指标用于发现断句/纠错阶段的吞词或增词，不代表 ASR 文本本身的语义准确率。
-
-完整文件可直接检查：
-
-- [输入：词级 ASR 字幕](examples/audi_q3_word_timestamps.srt)
-- [输出：MiniMax M3 Anthropic 双语字幕](examples/audi_q3_minimax_m3_anthropic_processed.srt)
-
-最终字幕保持中文在上、英文在下，并只移除中文译文中的逗号和句号；英文标点及时间轴不受影响。
-
-## 五人访谈实测案例
-
-以下数据来自 Matt Damon、Anne Hathaway、Tom Holland、Christopher Nolan 与主持人的完整访谈。测试日期为 2026-07-22，流程覆盖 MLX 转录、WhisperX forced alignment、pyannote Community-1 五人约束、智能断句、保守纠错、MiniMax M3 翻译和反思校验。片中包含电影原片段，因此这里的“五人”是对访谈参与者数量的约束，并不等同于声纹身份识别。该案例的候选比较最终选择了原音频；当前版本因此在多人模式中直接保留原音频。
-
-| 配置 | 实测值 |
-| --- | --- |
-| 原始视频 | [“How!” Matt Damon, Anne Hathaway & Tom Holland on Christopher Nolan’s Film Method](https://www.youtube.com/watch?v=9rO0FGivAvQ) |
-| 视频时长 | 18:03 |
-| ASR / 对齐 | MLX Large V3 FP16 / WhisperX forced alignment |
-| 说话人分离 | pyannote Community-1，指定 5 人 |
-| 多人音频策略 | 固定保留原音频，不执行候选降噪与额外候选 ASR |
-| 转录结果 | 3,777 条词级片段 / 3,785 个词 |
-| 翻译模型 | `MiniMax-M3` |
-| 协议 / Base URL | Anthropic / `https://api.minimaxi.com/anthropic` |
-| 批量 / 并发 | 10 / 10 |
-| 目标语言 | 简体中文 |
-| 最终处理日志跨度 | 约 14:43，包含限流等待与定向复核 |
-| 处理结果 | 443 条中英双语字幕 |
-
-### 多人分离结果
-
-Community-1 在指定五人模式下分配了 3,767 个词，另有 18 个词因置信度不足保持未分配。`Speaker 1–5` 只表示稳定的声纹聚类，不推断或展示人物姓名；最终双语字幕也不会写入说话人标签。
-
-| 聚类 | 词数 |
-| --- | ---: |
-| Speaker 1 | 1,044 |
-| Speaker 2 | 1,004 |
-| Speaker 3 | 542 |
-| Speaker 4 | 490 |
-| Speaker 5 | 687 |
-| 未可靠分配 | 18 |
-
-### Token 与缓存统计
-
-下表统计最终采用的完整处理轮次及随后针对可疑错位执行的定向校验，不包含此前被放弃的实验轮次。MiniMax M3 遇到 429 后保持任务存活，因而“请求尝试”包含限流后的重试。
-
-| 阶段 | 请求尝试 | 成功响应 | 限流/重试 | 输入 Token | 缓存读取 | 读取占比 | 输出 Token |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 智能断句 | 149 | 130 | 19 | 49,356 | 37,779 | 76.54% | 10,091 |
-| 保守纠错 | 77 | 47 | 30 | 43,455 | 15,877 | 36.54% | 6,705 |
-| 翻译、反思与定向复核 | 182 | 147 | 35 | 209,140 | 141,158 | 67.49% | 74,489 |
-| **合计** | **408** | **324** | **84** | **301,951** | **194,814** | **64.52%** | **91,285** |
-
-输入与输出合计记录 **393,236 Token**。缓存读取占比采用服务端返回的 `cache_read_input_tokens / input_tokens` 计算；`cache_creation_input_tokens` 为 0，因此该比例不代表显式 Prompt Cache 的固定命中率，也不应直接作为计费折扣估算。
-
-### 结果校验
-
-| 指标 | 实测值 |
-| --- | ---: |
-| 最终字幕数 | 443 |
-| 原始转录与最终英文的规范化序列相似度 | 98.58% |
-| 中文译文字符数 | 5,549 |
-| 空译文 / 编辑占位语 / 思考泄漏 | 0 / 0 / 0 |
-| 时间轴重叠 / 非法区间 | 0 / 0 |
-| 相邻译文包含式重复 | 0 |
-| 中文译文逗号/句号残留 | 0 |
-
-原文相似度用于监测断句和保守纠错是否吞词，不代表说话人识别率或 ASR 语义准确率。本次成品保留了转录主体内容；MiniMax M3 对选角语境中的 `pass` 有一处持续歧义，最终样例经过人工语义复核并修正，没有为该个例加入可能误伤其他视频的硬编码规则。
-
-完整文件可直接检查：
-
-- [输入：五人分离词级字幕](examples/five_speaker_interview_word_timestamps.srt)
-- [输出：MiniMax M3 五人访谈双语字幕](examples/five_speaker_interview_minimax_m3_processed.srt)
-- [报告：说话人词量与时间范围](examples/five_speaker_interview_report.json)
+| ![导入与预检](docs/screenshots/import-workspace.png) | ![智能断句与翻译](docs/screenshots/subtitle-workspace.png) |
 
 ## 快速开始
 
-### 运行 Web 版本
+### 桌面版
 
-需要 Python 3.10-3.12、[uv](https://docs.astral.sh/uv/) 和 Node.js 20+。Apple Silicon 用户如需使用默认的 WhisperX + MLX 转录流程，应安装 `whisperx` 和 `denoise` 可选依赖：
+- **macOS**：当前 v1.1.3 提供 [Apple Silicon DMG](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.3/SubForge-1.1.3-macos-arm64.dmg)。Whisper、forced alignment 和 Community-1 模型按需下载，不会重复打包进应用。
+- **Windows**：项目支持 WhisperX CTranslate2/CUDA 或 CPU、forced alignment 与 Community-1。请在 [Releases](https://github.com/henry1786580051-lang/SubForge/releases) 查看带 Windows 安装包的版本，或按下方源码方式运行。
+- **Linux**：当前以 Web/CLI 源码运行和开发验证为主，尚未提供正式桌面安装包。
+
+### Web 版
+
+需要 Python 3.10–3.12、[uv](https://docs.astral.sh/uv/) 和 Node.js 20+。
 
 ```bash
 git clone https://github.com/henry1786580051-lang/SubForge.git
@@ -250,125 +125,111 @@ uv sync --extra whisperx --extra denoise
 PYTHONPATH=backend uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Windows 使用 WhisperX、forced alignment 或 Community-1 时同样需要 `--extra whisperx`；只使用 Whisper.cpp 或云端 Whisper API 时可简化为 `uv sync`。
-
-另开一个终端启动前端：
+另开一个终端：
 
 ```bash
-cd frontend
+cd SubForge/frontend
 npm ci
 npm run dev
 ```
 
-打开 <http://localhost:3000> 即可使用。
+打开 <http://localhost:3000>。Windows 如需 WhisperX、forced alignment 或 Community-1，同样安装 `whisperx` 可选依赖；只使用 Whisper.cpp 或云端 API 时可执行 `uv sync`。
 
-### 使用 CLI
+### CLI
 
 ```bash
-uv run subforge --help
 uv run subforge doctor
-```
-
-常用命令包括：
-
-```bash
-# Apple Silicon 本地 MLX Whisper + WhisperX forced alignment
 uv run subforge transcribe input.mp4 --asr whisperx --language auto --word-timestamps
-
-# 使用已配置 API 的云端转录
-uv run subforge transcribe input.mp4 --asr whisper-api
-
 uv run subforge subtitle input.srt
-uv run subforge dub input.srt
 ```
 
-### 启动桌面版
+更多命令请运行 `uv run subforge --help`。当前桌面应用的源码入口是 `launcher.py`；`subforge-gui` 是旧版 PyQt 界面。
 
-普通用户应直接从 [GitHub Releases](https://github.com/henry1786580051-lang/SubForge/releases) 下载 DMG 或 Windows 安装包。源码运行当前桌面应用时，需要先生成前端静态文件：
+## 实测案例
 
-```bash
-cd frontend
-npm ci
-npm run build
-cd ..
+### 单人英文试驾：Audi Q3
 
-uv sync --extra whisperx --extra denoise
-uv run python launcher.py
-```
-
-`subforge-gui` 是旧版 PyQt 界面入口，不代表当前发布的桌面应用。
-
-## 推荐配置
-
-### LLM
-
-智能断句、优化和翻译支持 MiniMax Anthropic 协议及 OpenAI 兼容协议。设置页会按服务商保存 Base URL、API Key 和模型名称，切换服务商不会复用另一家的密钥。
-
-| 提供商 | 协议 | 示例模型 / 说明 |
-| --- | --- | --- |
-| MiniMax | Anthropic | `MiniMax-M3`；原生思考分离，429 持续等待；M2 系列支持显式 Prompt Cache |
-| 小米 MiMo | OpenAI 兼容 | `mimo-v2.5-pro` |
-| DeepSeek | OpenAI 兼容 | `deepseek-chat` |
-| OpenAI | OpenAI | 选择账户当前可用模型 |
-| 通义千问 | OpenAI 兼容 | `qwen-plus` |
-| 本地模型 | OpenAI 兼容 | LM Studio / Ollama 等服务 |
-
-MiniMax 推荐 Base URL 为 `https://api.minimaxi.com/anthropic`。SubForge 会自动使用 `/v1/messages`，不要在 Base URL 中重复添加该路径。
-
-### ASR
-
-| 引擎 | 适合场景 |
+| 项目 | 实测值 |
 | --- | --- |
-| WhisperX | Apple Silicon 使用 MLX，Windows 使用 CTranslate2/CUDA 或 CPU；均配合 forced alignment 生成词级时间轴 |
-| WhisperX Alignment | 按源语言管理 41 种 forced alignment 模型，支持自动匹配、下载状态、搜索和手动覆盖 |
-| Whisper.cpp | 备用本地转录通道，适合已有 ggml 模型的用户 |
-| Whisper API | 云端转录，配置简单 |
-| pyannote Community-1 | 多人模式；需先获得模型访问权限并在设置页下载到本地模型目录 |
+| 视频 | [2026 Audi Q3 - New Turbo Compact SUV Real World City Commute](https://www.youtube.com/watch?v=dY6D-wNBEFM)，34:47 |
+| 输入 / 输出 | 5,803 条词级片段 → 629 条中英双语字幕 |
+| 模型 | `MiniMax-M3`，Anthropic 协议，批量 / 并发 10 / 10 |
+| 质量 | 原文规范化相似度 99.72%；空译文、占位语、思考泄漏、时间轴重叠均为 0 |
+| Token | 输入 515,779；输出 121,710；服务端缓存读取占输入 34.07% |
 
-## 项目结构
+- [输入字幕](examples/audi_q3_word_timestamps.srt)
+- [输出字幕](examples/audi_q3_minimax_m3_anthropic_processed.srt)
+
+<details>
+<summary>查看 Audi Q3 分阶段 Token 数据</summary>
+
+| 阶段 | 请求尝试 | 成功 | 限流/重试 | 输入 Token | 缓存读取 | 输出 Token |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 智能断句 | 38 | 38 | 0 | 44,120 | 18,546 | 12,168 |
+| 保守纠错 | 102 | 64 | 38 | 73,334 | 15,402 | 9,921 |
+| 上下文生成 | 1 | 1 | 0 | 3,014 | 128 | 1,372 |
+| 翻译与反思 | 117 | 114 | 3 | 395,311 | 141,647 | 98,249 |
+| **合计** | **258** | **217** | **41** | **515,779** | **175,723** | **121,710** |
+
+“限流/重试”是 HTTP 尝试次数，不是字幕失败数。缓存比例来自服务端 `cache_read_input_tokens`，不等同于固定计费折扣。
+</details>
+
+### 五人访谈
+
+| 项目 | 实测值 |
+| --- | --- |
+| 视频 | [Matt Damon、Anne Hathaway、Tom Holland、Christopher Nolan 与主持人访谈](https://www.youtube.com/watch?v=9rO0FGivAvQ)，18:03 |
+| ASR | MLX Large V3 FP16 + WhisperX forced alignment + Community-1 指定 5 人 |
+| 输入 / 输出 | 3,777 条词级片段 → 443 条中英双语字幕 |
+| 翻译 | `MiniMax-M3`，Anthropic 协议，批量 / 并发 10 / 10 |
+| 质量 | 原文规范化相似度 98.58%；空译文、占位语、思考泄漏、相邻重复和时间轴重叠均为 0 |
+| Token | 输入 301,951；输出 91,285；服务端缓存读取占输入 64.52% |
+
+- [输入字幕](examples/five_speaker_interview_word_timestamps.srt)
+- [输出字幕](examples/five_speaker_interview_minimax_m3_processed.srt)
+- [说话人词量与时间范围](examples/five_speaker_interview_report.json)
+
+<details>
+<summary>查看五人访谈分阶段 Token 数据</summary>
+
+| 阶段 | 请求尝试 | 成功 | 限流/重试 | 输入 Token | 缓存读取 | 输出 Token |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 智能断句 | 149 | 130 | 19 | 49,356 | 37,779 | 10,091 |
+| 保守纠错 | 77 | 47 | 30 | 43,455 | 15,877 | 6,705 |
+| 翻译、反思与定向复核 | 182 | 147 | 35 | 209,140 | 141,158 | 74,489 |
+| **合计** | **408** | **324** | **84** | **301,951** | **194,814** | **91,285** |
+
+片中包含电影原片段。“指定 5 人”约束访谈参与者聚类数量，不代表人物身份识别；最终字幕不会输出说话人标签。
+</details>
+
+## 项目结构与开发
 
 ```text
 SubForge/
-├── frontend/        # Next.js Web 界面
+├── frontend/        # Next.js 界面
 ├── backend/         # FastAPI 服务
-├── subforge/        # Python 核心库、CLI、桌面端
+├── subforge/        # Python 核心库与 CLI
 ├── docs/            # VitePress 文档
-├── resource/        # 字体、图标、翻译、样式资源
+├── resource/        # 字体、图标、翻译和样式资源
 ├── tests/           # 自动化测试
-└── examples/        # 示例字幕
+└── examples/        # 可复核的字幕案例
 ```
-
-## 开发
 
 ```bash
 uv sync --group dev
 uv run pytest
 uv run ruff check .
-```
 
-前端：
-
-```bash
 cd frontend
 npm ci
 npm run lint
-npm run dev
+npm run build
 ```
 
-文档：
-
-```bash
-cd docs
-npm ci
-npm run docs:dev
-```
-
-## 文档与链接
-
-- 文档站点：<https://henry1786580051-lang.github.io/SubForge/>
-- 问题反馈：<https://github.com/henry1786580051-lang/SubForge/issues>
-- 贡献指南：[docs/dev/contributing.md](docs/dev/contributing.md)
+- [完整文档](https://henry1786580051-lang.github.io/SubForge/)
+- [贡献指南](docs/dev/contributing.md)
+- [问题反馈](https://github.com/henry1786580051-lang/SubForge/issues)
 
 ## 许可证
 
-本项目基于 [GPL-3.0 License](LICENSE) 发布。
+SubForge 基于 [GPL-3.0 License](LICENSE) 发布。
