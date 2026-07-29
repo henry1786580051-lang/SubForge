@@ -232,10 +232,10 @@ class Config(QConfig):
         EnumSerializer(TargetLanguage),
     )
     max_word_count_cjk = ConfigItem(
-        "Subtitle", "MaxWordCountCJK", 28, RangeValidator(8, 100)
+        "Subtitle", "MaxWordCountCJK", 25, RangeValidator(8, 100)
     )
     max_word_count_english = ConfigItem(
-        "Subtitle", "MaxWordCountEnglish", 20, RangeValidator(8, 100)
+        "Subtitle", "MaxWordCountEnglish", 18, RangeValidator(8, 100)
     )
     custom_prompt_text = ConfigItem("Subtitle", "CustomPromptText", "")
 

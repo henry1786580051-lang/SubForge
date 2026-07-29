@@ -416,6 +416,7 @@ def _build_whisperx_kwargs(
         "missing_alignment_model_callback": getattr(
             config, "missing_alignment_model_callback", None
         ),
+        "cancel_event": getattr(config, "cancel_event", None),
     }
 
 

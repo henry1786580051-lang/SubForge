@@ -5,9 +5,11 @@ import { Icon } from "@iconify/react";
 import { useAppStore } from "@/store/appStore";
 import { configApi, transcribeApi, tasksApi } from "@/lib/api";
 import type { AsrModelInfo, AsrModelStatus, AsrModelTestResult } from "@/lib/api";
+import { groupNvidiaModels } from "@/lib/llmModels";
 
 const LLM_PROVIDERS = [
   { id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1" },
+  { id: "nvidia", name: "NVIDIA", baseUrl: "https://integrate.api.nvidia.com/v1", groupedModels: true },
   { id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com" },
   { id: "mimo", name: "小米 MiMo", baseUrl: "https://token-plan-cn.xiaomimimo.com/v1" },
   { id: "qwen", name: "通义千问", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" },
@@ -22,6 +24,12 @@ const LLM_PROVIDERS = [
 ];
 
 type SettingsView = "llm" | "asr" | "subtitle" | "files";
+
+const ENGLISH_LENGTH_PRESETS = [
+  { label: "紧凑", value: 14, description: "目标 14 词 · 最多 18 词" },
+  { label: "均衡", value: 18, description: "目标 18 词 · 最多 22 词" },
+  { label: "宽松", value: 22, description: "目标 22 词 · 最多 26 词" },
+] as const;
 
 const SETTINGS_VIEWS: Array<{
   id: SettingsView;
@@ -85,6 +93,8 @@ export function SettingsPanel() {
   const [detectedModels, setDetectedModels] = useState<string[] | null>(null);
   const [detectingModels, setDetectingModels] = useState(false);
   const [detectError, setDetectError] = useState<string | null>(null);
+  const [modelSearch, setModelSearch] = useState("");
+  const [expandedModelCompany, setExpandedModelCompany] = useState<string | null>(null);
   const [testingLlm, setTestingLlm] = useState(false);
   const [llmTestResult, setLlmTestResult] = useState<{ ok: boolean; model?: string; error?: string } | null>(null);
   const [testingWhisper, setTestingWhisper] = useState(false);
@@ -154,11 +164,15 @@ export function SettingsPanel() {
     try {
       await configApi.update(key, value);
       const secretKey = ["llm_api_key", "whisper_api_key", "huggingface_token"].includes(key);
-      setSettings((prev) => ({
-        ...prev,
-        [key]: secretKey ? "" : value,
-        ...(secretKey ? { [`${key}_configured`]: true } : {}),
-      }));
+      if (["max_word_count_cjk", "max_word_count_english"].includes(key)) {
+        setSettings(await configApi.get());
+      } else {
+        setSettings((prev) => ({
+          ...prev,
+          [key]: secretKey ? "" : value,
+          ...(secretKey ? { [`${key}_configured`]: true } : {}),
+        }));
+      }
       const configKeyMap: Record<string, string> = {
         transcribe_model: "transcribeModel",
         source_language: "sourceLanguage",
@@ -221,6 +235,8 @@ export function SettingsPanel() {
 
     setDetectedModels(null);
     setDetectError(null);
+    setModelSearch("");
+    setExpandedModelCompany(null);
   };
 
   const handleDetectModels = async () => {
@@ -314,6 +330,7 @@ export function SettingsPanel() {
   if (loading) return <div className="flex items-center justify-center h-full"><div className="w-6 h-6 rounded-full border-2 border-accent/20 border-t-accent animate-spin" /></div>;
 
   const currentProvider = LLM_PROVIDERS.find((p) => p.id === selectedProvider);
+  const nvidiaModelGroups = groupNvidiaModels(detectedModels || [], modelSearch);
   const effectiveWhisperModel = modelStatus?.model_value || (settings.whisper_model_size as string) || "large-v3";
   const activeViewMeta = SETTINGS_VIEWS.find((view) => view.id === activeSettingsView) || SETTINGS_VIEWS[0];
 
@@ -406,7 +423,10 @@ export function SettingsPanel() {
               }}
               placeholder={settings.llm_api_key_configured ? "已安全保存，输入新值覆盖" : "sk-..."} className="input-field" />
           </SettingsField>
-          <SettingsField label="模型" description="点击「检测模型」从服务商获取可用模型列表">
+          <SettingsField
+            label="模型"
+            description={currentProvider?.groupedModels ? "检测后按模型公司分类管理" : "点击「检测模型」从服务商获取可用模型列表"}
+          >
             <div className="flex items-center gap-2 mb-2">
               <button onClick={handleDetectModels} disabled={detectingModels || !settings.llm_base_url}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] rounded-md bg-accent-dim text-accent hover:bg-accent/15 transition-all font-medium disabled:opacity-40 disabled:cursor-not-allowed btn-press">
@@ -436,23 +456,87 @@ export function SettingsPanel() {
               </div>
             )}
 
-            {detectedModels !== null && (
-              detectedModels.length > 0 ? (
-                <div className="flex flex-wrap gap-1.5 max-h-48 overflow-auto">
-                  {detectedModels.map((m) => (
-                    <button key={m} onClick={() => handleSave("llm_model", m)}
-                      className={`px-2.5 py-1 rounded-lg border text-[11px] transition-all ${
-                        (settings.llm_model as string) === m
-                          ? "border-accent bg-accent-dim text-accent font-medium"
-                          : "border-border text-text-secondary hover:border-[rgba(0,0,0,0.12)]"
-                      }`}>
-                      {m}
-                    </button>
-                  ))}
+            {detectedModels !== null && detectedModels.length > 0 && currentProvider?.groupedModels && (
+              <div className="mb-2 overflow-hidden rounded-lg border border-border bg-[rgba(0,0,0,0.01)]">
+                <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+                  <Icon icon="solar:magnifer-linear" className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                  <input
+                    type="search"
+                    value={modelSearch}
+                    onChange={(event) => setModelSearch(event.target.value)}
+                    placeholder={`搜索 ${detectedModels.length} 个模型`}
+                    className="min-w-0 flex-1 bg-transparent text-[11px] text-text-primary outline-none placeholder:text-text-muted"
+                  />
+                  <span className="shrink-0 text-[10px] text-text-muted">{nvidiaModelGroups.length} 家公司</span>
                 </div>
-              ) : (
-                !detectError && <p className="text-[11px] text-text-muted">未发现可用模型</p>
-              )
+                <div className="max-h-80 overflow-y-auto p-1.5">
+                  {nvidiaModelGroups.length > 0 ? nvidiaModelGroups.map((group) => {
+                    const expanded = expandedModelCompany === group.id || modelSearch.trim().length > 0;
+                    const selectedInGroup = group.models.includes((settings.llm_model as string) || "");
+                    return (
+                      <div key={group.id} className="border-b border-border last:border-b-0">
+                        <button
+                          type="button"
+                          aria-expanded={expanded}
+                          onClick={() => setExpandedModelCompany((current) => current === group.id ? null : group.id)}
+                          className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors hover:bg-surface-hover"
+                        >
+                          <Icon
+                            icon="solar:alt-arrow-right-linear"
+                            className={`h-3.5 w-3.5 shrink-0 text-text-muted transition-transform ${expanded ? "rotate-90" : ""}`}
+                          />
+                          <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-text-primary">{group.name}</span>
+                          {selectedInGroup && <span className="text-[9px] font-medium text-accent">当前</span>}
+                          <span className="min-w-6 text-right font-mono text-[9px] text-text-muted">{group.models.length}</span>
+                        </button>
+                        {expanded && (
+                          <div className="space-y-1 pb-2 pl-8 pr-2">
+                            {group.models.map((model) => {
+                              const selected = (settings.llm_model as string) === model;
+                              return (
+                                <button
+                                  key={model}
+                                  type="button"
+                                  onClick={() => void handleSave("llm_model", model)}
+                                  className={`flex w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-left text-[10px] transition-colors ${
+                                    selected
+                                      ? "border-accent bg-accent-dim font-medium text-accent"
+                                      : "border-transparent text-text-secondary hover:border-border hover:bg-surface"
+                                  }`}
+                                >
+                                  <span className="min-w-0 flex-1 break-all">{model}</span>
+                                  {selected && <Icon icon="solar:check-circle-bold" className="h-3.5 w-3.5 shrink-0" />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }) : (
+                    <p className="px-3 py-5 text-center text-[11px] text-text-muted">没有匹配的模型</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {detectedModels !== null && detectedModels.length > 0 && !currentProvider?.groupedModels && (
+              <div className="flex max-h-48 flex-wrap gap-1.5 overflow-auto">
+                {detectedModels.map((m) => (
+                  <button key={m} onClick={() => handleSave("llm_model", m)}
+                    className={`px-2.5 py-1 rounded-lg border text-[11px] transition-all ${
+                      (settings.llm_model as string) === m
+                        ? "border-accent bg-accent-dim text-accent font-medium"
+                        : "border-border text-text-secondary hover:border-[rgba(0,0,0,0.12)]"
+                    }`}>
+                    {m}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {detectedModels !== null && detectedModels.length === 0 && !detectError && (
+              <p className="text-[11px] text-text-muted">未发现可用模型</p>
             )}
 
             <input type="text" value={(settings.llm_model as string) || ""}
@@ -1034,7 +1118,7 @@ export function SettingsPanel() {
 
         {/* LLM Translation Fine-tuning */}
         <SettingsSection title="字幕处理调节" description="控制智能断句和翻译的细节参数">
-          <SettingsField label="中文字幕每行最多字数" description="每段字幕的长度上限，断句优先按语义拆分">
+          <SettingsField label="中文字幕硬上限" description="中文、日语、韩语字幕不可超过的字符数">
             <div className="flex items-center gap-3">
               <input type="range" min={10} max={40} value={(settings.max_word_count_cjk as number) || 25}
                 onChange={(e) => handleSave("max_word_count_cjk", parseInt(e.target.value))}
@@ -1042,12 +1126,32 @@ export function SettingsPanel() {
               <span className="text-[12px] text-text-primary font-mono w-8 text-right">{(settings.max_word_count_cjk as number) || 25}</span>
             </div>
           </SettingsField>
-          <SettingsField label="英文字幕每行最多字数" description="每段字幕的单词数上限">
-            <div className="flex items-center gap-3">
-              <input type="range" min={10} max={60} value={(settings.max_word_count_english as number) || 18}
+          <SettingsField
+            label="英文字幕目标长度"
+            description={`优先不超过 ${Number((settings.subtitle_length_policy as Record<string, unknown> | undefined)?.english_soft_limit || settings.max_word_count_english || 18)} 词；为保持语义完整，最多允许 ${Number((settings.subtitle_length_policy as Record<string, unknown> | undefined)?.english_hard_limit || Number(settings.max_word_count_english || 18) + 4)} 词`}
+          >
+            <div className="grid grid-cols-3 gap-2">
+              {ENGLISH_LENGTH_PRESETS.map((preset) => {
+                const selected = Number(settings.max_word_count_english || 18) === preset.value;
+                return (
+                  <button
+                    key={preset.value}
+                    type="button"
+                    onClick={() => handleSave("max_word_count_english", preset.value)}
+                    className={`min-h-[58px] border px-3 py-2 text-left transition-colors ${selected ? "border-accent bg-accent/5" : "border-border bg-surface hover:border-text-muted"}`}
+                  >
+                    <span className={`block text-[12px] font-medium ${selected ? "text-accent" : "text-text-primary"}`}>{preset.label}</span>
+                    <span className="mt-1 block text-[10px] text-text-muted">{preset.description}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-3 flex items-center gap-3">
+              <span className="w-12 text-[11px] text-text-muted">自定义</span>
+              <input type="range" min={10} max={40} value={Number(settings.max_word_count_english || 18)}
                 onChange={(e) => handleSave("max_word_count_english", parseInt(e.target.value))}
                 className="flex-1 accent-accent" />
-              <span className="text-[12px] text-text-primary font-mono w-8 text-right">{(settings.max_word_count_english as number) || 18}</span>
+              <span className="w-14 text-right font-mono text-[12px] text-text-primary">{Number(settings.max_word_count_english || 18)} 词</span>
             </div>
           </SettingsField>
           <SettingsField label="中文标点美化" description="完成中文翻译与断句后，将译文中的中文逗号、句号替换为空格；不调用 LLM，不影响英文原文">

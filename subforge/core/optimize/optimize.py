@@ -20,6 +20,19 @@ logger = setup_logger("subtitle_optimizer")
 
 MAX_STEPS = 3
 MIN_CROSS_KEY_COPY_TOKENS = 4
+_NUMBER_WORDS = {
+    "zero": "0",
+    "one": "1",
+    "two": "2",
+    "three": "3",
+    "four": "4",
+    "five": "5",
+    "six": "6",
+    "seven": "7",
+    "eight": "8",
+    "nine": "9",
+    "ten": "10",
+}
 
 
 def _ownership_tokens(text: str) -> List[str]:
@@ -97,6 +110,95 @@ def _cross_key_ownership_errors(
             optimized_chunk,
         )
     ]
+
+
+def _is_duplicate_variant(left: str, right: str) -> bool:
+    if left == right:
+        return True
+    return len(left) >= 3 and len(right) >= 3 and (
+        left.rstrip("s") == right.rstrip("s")
+    )
+
+
+def _allowed_deleted_tokens(tokens: List[str], start: int, end: int) -> bool:
+    deleted = tokens[start:end]
+    if not deleted:
+        return True
+    if deleted == ["you", "know"] or all(token in {"um", "uh", "ah", "er"} for token in deleted):
+        return True
+    previous = tokens[start - 1] if start > 0 else ""
+    following = tokens[end] if end < len(tokens) else ""
+    return all(
+        (previous and _is_duplicate_variant(token, previous))
+        or (following and _is_duplicate_variant(token, following))
+        for token in deleted
+    )
+
+
+def _allowed_replacement(original: List[str], optimized: List[str]) -> bool:
+    if len(original) != len(optimized):
+        return False
+    for source, target in zip(original, optimized):
+        if source == target:
+            continue
+        if _NUMBER_WORDS.get(source) == target or _NUMBER_WORDS.get(target) == source:
+            continue
+        if difflib.SequenceMatcher(None, source, target).ratio() >= 0.72:
+            continue
+        return False
+    return True
+
+
+def _is_safe_phrase_correction(
+    source_tokens: List[str],
+    target_tokens: List[str],
+    source_start: int,
+    source_end: int,
+    target_start: int,
+    target_end: int,
+) -> bool:
+    """Allow narrowly defined grammar repairs without opening semantic rewrites."""
+    source = source_tokens[source_start:source_end]
+    target = target_tokens[target_start:target_end]
+    if source != ["at"] or target != ["in"]:
+        return False
+    following = source_tokens[source_end : source_end + 2]
+    return len(following) == 2 and following[0] == "the" and following[1] in {
+        "last",
+        "past",
+    }
+
+
+def _lexical_edit_violations(original: str, optimized: str) -> List[str]:
+    """Reject semantic token edits while allowing explicit cleanup operations."""
+    source_tokens = _ownership_tokens(original)
+    target_tokens = _ownership_tokens(optimized)
+    violations: List[str] = []
+    for opcode, a0, a1, b0, b1 in difflib.SequenceMatcher(
+        None, source_tokens, target_tokens
+    ).get_opcodes():
+        if opcode == "equal":
+            continue
+        if opcode == "delete" and _allowed_deleted_tokens(source_tokens, a0, a1):
+            continue
+        if opcode == "replace" and _allowed_replacement(
+            source_tokens[a0:a1], target_tokens[b0:b1]
+        ):
+            continue
+        if opcode == "replace" and _is_safe_phrase_correction(
+            source_tokens,
+            target_tokens,
+            a0,
+            a1,
+            b0,
+            b1,
+        ):
+            continue
+        violations.append(
+            f"{opcode}: {' '.join(source_tokens[a0:a1])!r} -> "
+            f"{' '.join(target_tokens[b0:b1])!r}"
+        )
+    return violations
 
 
 class SubtitleOptimizer:
@@ -427,6 +529,22 @@ class SubtitleOptimizer:
                 ";\n".join(ownership_errors)
                 + "\nKeep every phrase in its original subtitle key. Do not copy text "
                 "from the previous or next key."
+            )
+
+        lexical_changes = []
+        for key in expected_keys:
+            violations = _lexical_edit_violations(
+                original_chunk[key], optimized_chunk[key]
+            )
+            if violations:
+                lexical_changes.append(
+                    f"Key '{key}' changed protected source words: {violations[:3]}"
+                )
+        if lexical_changes:
+            return False, (
+                ";\n".join(lexical_changes)
+                + "\nOnly punctuation, capitalization, explicit filler removal, adjacent "
+                "duplicate cleanup, number notation, and high-confidence spelling fixes are allowed."
             )
 
         return True, ""

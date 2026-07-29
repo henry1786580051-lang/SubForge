@@ -2,8 +2,11 @@ import json
 import os
 import platform
 import re
+import subprocess
 import sys
 import tempfile
+import time
+import traceback
 import types
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +23,10 @@ from .status import ASRStatus
 
 logger = setup_logger("whisperx_asr")
 _ALIGNMENT_MODEL_CACHE = SingleEntryModelCache()
+
+_MLX_WORKER_FLAG = "SUBFORGE_MLX_WHISPER_WORKER"
+_MLX_WORKER_REQUEST = "SUBFORGE_MLX_WHISPER_REQUEST"
+_MLX_WORKER_OUTPUT = "SUBFORGE_MLX_WHISPER_OUTPUT"
 
 MIXED_LANGUAGE_MIN_CONFIDENCE = 0.80
 MIXED_LANGUAGE_MAX_PRIMARY_CONFIDENCE = 0.20
@@ -200,6 +207,69 @@ def _prepare_mlx_model_path(model: str, tmp_dir: Path) -> str:
         except OSError:
             os.link(item, target)
     return str(alias_dir)
+
+
+def _atomic_json_write(path: Path, payload: Any) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(path)
+
+
+def _stop_worker_process(process: subprocess.Popen) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=10)
+
+
+def _worker_log_tail(path: Path, limit: int = 6000) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")[-limit:].strip()
+    except OSError:
+        return ""
+
+
+def run_packaged_mlx_whisper_worker() -> None:
+    """Run MLX decoding outside the desktop process so the UI remains responsive."""
+    request_path = Path(os.environ[_MLX_WORKER_REQUEST])
+    output_path = Path(os.environ[_MLX_WORKER_OUTPUT])
+    try:
+        import mlx_whisper
+
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+        kwargs: dict[str, Any] = {
+            "path_or_hf_repo": str(request["model"]),
+            "word_timestamps": False,
+            "condition_on_previous_text": False,
+            "verbose": False,
+        }
+        language = str(request.get("language") or "").strip()
+        if language:
+            kwargs["language"] = language
+        try:
+            result = mlx_whisper.transcribe(str(request["audio"]), **kwargs)
+        except TypeError:
+            kwargs.pop("condition_on_previous_text", None)
+            result = mlx_whisper.transcribe(str(request["audio"]), **kwargs)
+        _atomic_json_write(output_path, {"ok": True, "data": result})
+        exit_code = 0
+    except BaseException:
+        try:
+            _atomic_json_write(output_path, {"ok": False, "error": traceback.format_exc()})
+        except OSError:
+            pass
+        exit_code = 1
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream:
+                stream.flush()
+        except Exception:
+            pass
+    os._exit(exit_code)
 
 
 def _segments_for_alignment(result: dict) -> list[dict]:
@@ -860,6 +930,7 @@ class WhisperXASR(BaseASR):
         batch_size: int = 4,
         segment_callback: Optional[Callable[[ASRData], None]] = None,
         missing_alignment_model_callback: Optional[Callable[[list[dict[str, Any]]], str]] = None,
+        cancel_event: Any = None,
         use_cache: bool = False,
         need_word_time_stamp: bool = True,
     ):
@@ -897,7 +968,89 @@ class WhisperXASR(BaseASR):
         self.batch_size = max(1, int(batch_size or 4))
         self.segment_callback = segment_callback
         self.missing_alignment_model_callback = missing_alignment_model_callback
+        self.cancel_event = cancel_event
         self.need_word_time_stamp = need_word_time_stamp
+
+    def _transcribe_mlx_in_worker(
+        self,
+        audio_path: str,
+        mlx_model_path: str,
+        callback: Callable[[int, str], None],
+    ) -> dict:
+        """Decode MLX audio in a child process without starving the desktop backend."""
+        with tempfile.TemporaryDirectory(prefix="subforge-mlx-worker-") as temp_path:
+            temp_dir = Path(temp_path)
+            request_path = temp_dir / "request.json"
+            output_path = temp_dir / "output.json"
+            log_path = temp_dir / "worker.log"
+            _atomic_json_write(
+                request_path,
+                {
+                    "audio": audio_path,
+                    "model": mlx_model_path,
+                    "language": self.language or "",
+                },
+            )
+            env = os.environ.copy()
+            env.update(
+                {
+                    _MLX_WORKER_FLAG: "1",
+                    _MLX_WORKER_REQUEST: str(request_path),
+                    _MLX_WORKER_OUTPUT: str(output_path),
+                }
+            )
+            command = (
+                [sys.executable]
+                if getattr(sys, "frozen", False)
+                else [sys.executable, "-m", "subforge.core.asr.mlx_worker"]
+            )
+            started_at = time.monotonic()
+            last_status_second = -1
+            with log_path.open("w", encoding="utf-8") as log_file:
+                process = subprocess.Popen(
+                    command,
+                    env=env,
+                    stdin=subprocess.DEVNULL,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                )
+                try:
+                    while process.poll() is None:
+                        if self.cancel_event is not None and self.cancel_event.is_set():
+                            raise RuntimeError("MLX Whisper transcription was cancelled")
+                        elapsed = int(time.monotonic() - started_at)
+                        if elapsed // 5 != last_status_second // 5:
+                            callback(
+                                20,
+                                f"MLX Whisper is transcribing ({elapsed // 60}:{elapsed % 60:02d})...",
+                            )
+                            last_status_second = elapsed
+                        time.sleep(0.2)
+                finally:
+                    _stop_worker_process(process)
+
+            payload: dict[str, Any] | None = None
+            if output_path.is_file():
+                try:
+                    payload = json.loads(output_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    pass
+            if process.returncode != 0 or not payload or not payload.get("ok"):
+                detail = str((payload or {}).get("error") or "").strip()
+                if not detail:
+                    detail = _worker_log_tail(log_path)
+                suffix = f": {detail}" if detail else ""
+                raise RuntimeError(
+                    f"MLX Whisper worker exited with code {process.returncode}{suffix}"
+                )
+            result = payload.get("data")
+            if not isinstance(result, dict):
+                raise RuntimeError("MLX Whisper worker returned invalid transcription data")
+            logger.info(
+                "MLX Whisper worker completed in %.1fs",
+                time.monotonic() - started_at,
+            )
+            return result
 
     def _write_audio_to_temp(self, tmp_dir: Path) -> str:
         if isinstance(self.audio_input, str):
@@ -1491,8 +1644,6 @@ class WhisperXASR(BaseASR):
             callback = _default_callback
 
         try:
-            import mlx_whisper
-
             install_whisperx_runtime_stubs()
             import whisperx.alignment as whisperx_alignment
             from whisperx.audio import load_audio
@@ -1532,19 +1683,11 @@ class WhisperXASR(BaseASR):
                     "MLX Whisper model %s is not a local path. mlx-whisper may try to download it.",
                     mlx_model_path,
                 )
-            transcribe_kwargs: dict[str, Any] = {
-                "path_or_hf_repo": mlx_model_path,
-                "word_timestamps": False,
-                "condition_on_previous_text": False,
-                "verbose": False,
-            }
-            if self.language:
-                transcribe_kwargs["language"] = self.language
-            try:
-                result = mlx_whisper.transcribe(audio_path, **transcribe_kwargs)
-            except TypeError:
-                transcribe_kwargs.pop("condition_on_previous_text", None)
-                result = mlx_whisper.transcribe(audio_path, **transcribe_kwargs)
+            result = self._transcribe_mlx_in_worker(
+                audio_path,
+                mlx_model_path,
+                callback,
+            )
 
             if self.segment_callback:
                 raw_segments = self._make_segments(result)

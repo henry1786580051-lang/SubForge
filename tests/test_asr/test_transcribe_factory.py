@@ -394,6 +394,7 @@ def test_create_asr_instance_whisperx_uses_forced_alignment_backend(monkeypatch)
         whisperx_align_model="WAV2VEC2_ASR_LARGE_LV60K_960H",
         whisperx_batch_size=2,
     )
+    config.cancel_event = object()
 
     asr = transcribe_module._create_asr_instance("audio.wav", config)
 
@@ -402,6 +403,7 @@ def test_create_asr_instance_whisperx_uses_forced_alignment_backend(monkeypatch)
     assert asr.kwargs["asr_kwargs"]["model_dir"] == "/tmp/models"
     assert asr.kwargs["asr_kwargs"]["align_model"] == "WAV2VEC2_ASR_LARGE_LV60K_960H"
     assert asr.kwargs["asr_kwargs"]["batch_size"] == 2
+    assert asr.kwargs["asr_kwargs"]["cancel_event"] is config.cancel_event
     assert asr.kwargs["asr_kwargs"]["use_cache"] is False
     assert asr.kwargs["chunk_length"] == 60 * 60
 

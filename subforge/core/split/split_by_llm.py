@@ -6,10 +6,16 @@ from ..llm import call_llm, get_response_text
 from ..prompts import get_prompt
 from ..utils.logger import setup_logger
 from ..utils.text_utils import count_words, is_mainly_cjk
+from .boundary import assess_english_boundary
+from .length_policy import (
+    DEFAULT_CJK_HARD_LIMIT,
+    DEFAULT_ENGLISH_SOFT_LIMIT,
+    resolve_length_policy,
+)
 
 logger = setup_logger("split_by_llm")
 
-MAX_STEPS = 2  # Agent loop max retry count
+MAX_STEPS = 3  # Agent loop max retry count
 
 _DANGLING_ENGLISH_TAILS = {
     "a",
@@ -29,7 +35,7 @@ _DANGLING_ENGLISH_PHRASES = (
 )
 
 
-def _has_dangling_english_tail(text: str) -> bool:
+def _has_dangling_english_tail(text: str, following: str = "") -> bool:
     """Return whether a split leaves an obviously incomplete English tail."""
     raw = str(text or "").strip()
     if not raw or re.search(r"[.!?][\"')\]]*$", raw):
@@ -37,6 +43,8 @@ def _has_dangling_english_tail(text: str) -> bool:
     words = re.findall(r"[A-Za-z0-9']+", raw.lower())
     if not words:
         return False
+    if following and assess_english_boundary(raw, following).unstable:
+        return True
     if words[-1] in _DANGLING_ENGLISH_TAILS:
         return True
     normalized = " ".join(words)
@@ -46,8 +54,9 @@ def _has_dangling_english_tail(text: str) -> bool:
 def split_by_llm(
     text: str,
     model: str = "gpt-4o-mini",
-    max_word_count_cjk: int = 18,
-    max_word_count_english: int = 12,
+    max_word_count_cjk: int = DEFAULT_CJK_HARD_LIMIT,
+    max_word_count_english: int = DEFAULT_ENGLISH_SOFT_LIMIT,
+    hard_max_word_count_english: int | None = None,
     llm_client: Any = None,
 ) -> List[str]:
     """使用LLM进行文本断句（固定使用句子Segments）
@@ -55,15 +64,22 @@ def split_by_llm(
     Args:
         text: 待断句的文本
         model: LLM模型名称
-        max_word_count_cjk: 中文最大字符数
-        max_word_count_english: 英文最大单词数
+        max_word_count_cjk: CJK 硬上限字符数
+        max_word_count_english: 英文目标单词数（软限制）
+        hard_max_word_count_english: 英文硬上限；省略时使用统一策略
 
     Returns:
         断句后的文本列表
     """
     try:
+        policy = resolve_length_policy(max_word_count_cjk, max_word_count_english)
         return _split_with_agent_loop(
-            text, model, max_word_count_cjk, max_word_count_english, llm_client
+            text,
+            model,
+            policy.cjk_hard_limit,
+            policy.english_soft_limit,
+            hard_max_word_count_english or policy.english_hard_limit,
+            llm_client,
         )
     except Exception as e:
         logger.error(f"Sentence splitting failed: {e}")
@@ -75,6 +91,7 @@ def _split_with_agent_loop(
     model: str,
     max_word_count_cjk: int,
     max_word_count_english: int,
+    hard_max_word_count_english: int,
     llm_client: Any = None,
 ) -> List[str]:
     """使用agent loop 建立反馈循环进行文本断句，自动验证和修正"""
@@ -83,6 +100,7 @@ def _split_with_agent_loop(
         prompt_path,
         max_word_count_cjk=max_word_count_cjk,
         max_word_count_english=max_word_count_english,
+        hard_max_word_count_english=hard_max_word_count_english,
     )
 
     user_prompt = (
@@ -112,6 +130,7 @@ def _split_with_agent_loop(
             split_result=split_result,
             max_word_count_cjk=max_word_count_cjk,
             max_word_count_english=max_word_count_english,
+            hard_max_word_count_english=hard_max_word_count_english,
         )
 
         if is_valid:
@@ -174,6 +193,7 @@ def _validate_split_result(
     split_result: List[str],
     max_word_count_cjk: int,
     max_word_count_english: int,
+    hard_max_word_count_english: int | None = None,
 ) -> Tuple[bool, str]:
     """验证断句结果: 内容一致性、Segments数量、长度限制
 
@@ -284,7 +304,11 @@ def _validate_split_result(
     for i, segment in enumerate(split_result, 1):
         word_count = count_words(segment)
 
-        max_allowed = max_word_count_cjk if text_is_cjk else max_word_count_english
+        max_allowed = (
+            max_word_count_cjk
+            if text_is_cjk
+            else hard_max_word_count_english or max_word_count_english
+        )
 
         if word_count > max_allowed:
             segment_preview = segment[:40] + "..." if len(segment) > 40 else segment
@@ -301,7 +325,7 @@ def _validate_split_result(
         dangling = [
             f"Segment {index} ends with an incomplete phrase: '{segment}'"
             for index, segment in enumerate(split_result[:-1], 1)
-            if _has_dangling_english_tail(segment)
+            if _has_dangling_english_tail(segment, split_result[index])
         ]
         if dangling:
             return (

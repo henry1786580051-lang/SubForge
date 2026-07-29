@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.1.4 - 2026-07-30
+
+### Added
+
+- Added NVIDIA NIM as an isolated LLM provider with company-grouped model browsing, search, independent credentials, and persistent rate-limit recovery.
+- Added native desktop file selection for media and subtitle imports so multi-gigabyte local files no longer need to be copied through the browser upload layer.
+- Added a shared subtitle-length policy that exposes an English soft target and a semantic hard limit consistently across prompts, validation, boundary repair, desktop settings, and CLI processing.
+
+### Improved
+
+- Packaged Apple Silicon transcription now runs MLX Whisper in a monitored child process, keeping the desktop backend responsive and making cancellation deterministic.
+- Strengthened sentence-boundary repair for dangling subjects, conjunctions, relative clauses, time adverbials, modifiers, and short speaker-assignment flips while preserving every source word and timestamp order.
+- Strengthened translation ownership and document-level audits for shifted meanings, adjacent duplicates, untranslated residue, reasoning leakage, unsupported corrections, quantities, units, and model identifiers.
+- The subtitle settings page now offers compact, balanced, relaxed, and custom English length modes and displays both the effective target and hard maximum.
+- Video decoding pauses while transcription is active to reduce resource contention with ASR.
+
+### Fixed
+
+- Fixed browser and packaged desktop subtitle jobs ignoring the configured CJK and English length values.
+- Fixed the LLM split validator and final boundary normalizer calculating different English hard limits.
+- Fixed large desktop imports being duplicated into temporary upload storage and potentially freezing the interface.
+- Fixed packaged MLX inference competing with the web backend in the same process and making long transcription jobs appear permanently frozen.
+- Fixed macOS ad-hoc signing occasionally racing Finder metadata updates while assembling the app under Desktop.
+
+### Packaging
+
+- Publishes a locally built macOS Apple Silicon DMG and a standard Windows x64 installer built by GitHub Actions. No CUDA-specific installer is produced.
+
 ## v1.1.3 - 2026-07-28
 
 ### Added

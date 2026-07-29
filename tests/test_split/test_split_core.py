@@ -105,6 +105,7 @@ class TestSubtitleSplitterInit:
         assert splitter.model == "gpt-4o-mini"
         assert splitter.max_word_count_cjk == MAX_WORD_COUNT_CJK
         assert splitter.max_word_count_english == MAX_WORD_COUNT_ENGLISH
+        assert splitter.hard_max_word_count_english == MAX_WORD_COUNT_ENGLISH + 4
         assert splitter.is_running is True
         assert splitter.executor is not None
 
@@ -120,6 +121,7 @@ class TestSubtitleSplitterInit:
         assert splitter.model == "gpt-4"
         assert splitter.max_word_count_cjk == 30
         assert splitter.max_word_count_english == 20
+        assert splitter.hard_max_word_count_english == 24
 
     def test_thread_pool_created(self):
         """测试线程池正确创建"""
@@ -729,12 +731,11 @@ class TestEdgeCases:
             pass
 
     def test_negative_max_word_count(self):
-        """测试负数最大字数"""
+        """非法长度限制应被收敛为安全的最小值。"""
         splitter = SubtitleSplitter(
             thread_num=1, model="gpt-4o-mini", max_word_count_cjk=-1
         )
-        # 应该能够创建，但可能在使用时出问题
-        assert splitter.max_word_count_cjk == -1
+        assert splitter.max_word_count_cjk == 1
 
     def test_very_large_thread_num(self):
         """测试非常大的线程数"""

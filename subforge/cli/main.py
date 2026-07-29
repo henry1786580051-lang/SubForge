@@ -197,8 +197,8 @@ def _build_subtitle_parser(subparsers) -> None:
                        help="Enable reflective translation (LLM only, higher quality)")
 
     sub = p.add_argument_group("Subtitle options")
-    sub.add_argument("--max-cjk", type=int, metavar="N", help="Max characters per line for CJK text (default: 18)")
-    sub.add_argument("--max-english", type=int, metavar="N", help="Max words per line for English text (default: 12)")
+    sub.add_argument("--max-cjk", type=int, metavar="N", help="Hard character limit for CJK subtitles (default: 25)")
+    sub.add_argument("--max-english", type=int, metavar="N", help="Target word count for English subtitles (default: 18; hard limit: target + 4)")
     sub.add_argument("--max-chars-en", type=int, metavar="N", help="Max characters per line for English after translation (default: 42)")
     sub.add_argument("--max-chars-cjk", type=int, metavar="N", help="Max characters per line for CJK after translation (default: 16)")
     sub.add_argument("--prompt", metavar="TEXT", help="Custom prompt for LLM optimization/translation")

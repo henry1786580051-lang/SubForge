@@ -14,6 +14,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 import zipfile
@@ -38,7 +39,8 @@ WHISPER_CPP_WINDOWS_SHA256 = "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab60
 def _run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
     print("+ " + " ".join(cmd))
     kwargs.setdefault("cwd", str(ROOT))
-    return subprocess.run(cmd, check=True, **kwargs)
+    kwargs.setdefault("check", True)
+    return subprocess.run(cmd, **kwargs)
 
 
 def _npm_command() -> str:
@@ -111,7 +113,7 @@ def restore_version_file(original: bytes | None) -> None:
 
 
 def clean() -> None:
-    for path in [BUILD_DIR, DIST_DIR, ARTIFACT_DIR]:
+    for path in [BUILD_DIR, DIST_DIR, ARTIFACT_DIR, FRONTEND_DIR / ".next"]:
         if path.exists():
             print(f"Removing {path.relative_to(ROOT)}")
             shutil.rmtree(path)
@@ -416,8 +418,19 @@ def resign_macos_app() -> None:
     app = DIST_DIR / "SubForge.app"
     if not app.exists():
         return
-    _run(["codesign", "--force", "--deep", "--sign", "-", str(app)])
-    _run(["codesign", "--verify", "--deep", "--strict", str(app)])
+    # Finder continuously attaches FinderInfo to app bundles assembled below
+    # Desktop. Stage the bundle outside Finder's watched tree while signing so
+    # the attribute cannot race codesign.
+    with tempfile.TemporaryDirectory(prefix="subforge-codesign-", dir="/private/tmp") as temp:
+        staged_app = Path(temp) / app.name
+        shutil.move(app, staged_app)
+        try:
+            _run(["xattr", "-cr", str(staged_app)])
+            _run(["codesign", "--force", "--deep", "--sign", "-", str(staged_app)])
+            _run(["codesign", "--verify", "--deep", "--strict", str(staged_app)])
+        finally:
+            if staged_app.exists():
+                shutil.move(staged_app, app)
 
 
 def _platform_tag() -> str:

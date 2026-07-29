@@ -400,6 +400,7 @@ class ASRData:
                     continue
                 cleaned.append(character)
             translated = "".join(cleaned)
+            translated = re.sub(r"、+\s*$", "", translated)
             seg.translated_text = re.sub(r"[ \t]{2,}", " ", translated).strip()
         return self
 
@@ -2193,10 +2194,16 @@ class ASRData:
                     return non_empty[0], non_empty[1]
                 normalized_left = re.sub(r"\s+", "", non_empty[0])
                 normalized_right = re.sub(r"\s+", "", non_empty[1])
+                neutral_left = re.sub(r"[^\w]+", "", normalized_left)
+                neutral_right = re.sub(r"[^\w]+", "", normalized_right)
                 if (
                     left_family == right_family == "other"
                     and re.search(r"\d", normalized_left + normalized_right)
-                    and (dialogue_marked or normalized_left == normalized_right)
+                    and (
+                        dialogue_marked
+                        or normalized_left == normalized_right
+                        or neutral_left == neutral_right
+                    )
                 ):
                     return non_empty[1], non_empty[0]
 

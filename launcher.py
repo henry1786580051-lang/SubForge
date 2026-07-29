@@ -162,6 +162,36 @@ def check_backend_runtime(timeout_seconds: float = 30.0) -> None:
 class Api:
     """API exposed to the pywebview JavaScript context."""
 
+    def open_file(self, kind: str = "media"):
+        """Select a local input without copying multi-gigabyte media through HTTP."""
+        import traceback
+
+        import webview
+
+        try:
+            if not webview.windows:
+                return {"ok": False, "error": "No window available"}
+            file_types = (
+                ("Subtitle files (*.srt;*.vtt;*.ass)",)
+                if kind == "subtitle"
+                else (
+                    "Media files (*.mp4;*.mov;*.mkv;*.avi;*.webm;*.mp3;*.wav;*.m4a;*.flac)",
+                    "All files (*.*)",
+                )
+            )
+            result = webview.windows[0].create_file_dialog(
+                webview.OPEN_DIALOG,
+                allow_multiple=False,
+                file_types=file_types,
+            )
+            if not result:
+                return {"ok": False, "cancelled": True}
+            file_path = result if isinstance(result, str) else result[0]
+            return {"ok": True, "path": str(file_path)}
+        except Exception as exc:
+            traceback.print_exc()
+            return {"ok": False, "error": str(exc)}
+
     def save_file(self, base64_data: str, default_filename: str):
         """Save a base64-encoded file using native save dialog."""
         import traceback
@@ -274,6 +304,11 @@ if __name__ == "__main__":
         from subforge.core.asr.faster_whisper import run_packaged_faster_whisper_worker
 
         run_packaged_faster_whisper_worker()
+
+    if os.environ.get("SUBFORGE_MLX_WHISPER_WORKER") == "1":
+        from subforge.core.asr.whisperx_asr import run_packaged_mlx_whisper_worker
+
+        run_packaged_mlx_whisper_worker()
 
     if os.environ.get("SUBFORGE_CHECK_DENOISE") == "1":
         import traceback

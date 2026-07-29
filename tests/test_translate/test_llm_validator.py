@@ -525,6 +525,71 @@ class TestValidateLLmResponse:
         assert ok is False
         assert "Cross-key duplicates" in msg
 
+    def test_rejects_translated_small_quantity_anticipated_from_next_key(self):
+        t = _make_translator()
+        resp = {
+            "425": "只要手离开方向盘不到两秒 它就会提醒你",
+            "426": "超过两秒左右 它就会开始报警",
+        }
+        source = {
+            "425": "It gets annoyed if your hands leave the wheel for, I don't know,",
+            "426": "anything longer than two seconds or so.",
+        }
+
+        ok, msg = t._validate_llm_response(resp, source)
+
+        assert ok is False
+        assert "Repeated quantities" in msg
+
+    def test_allows_same_quantity_when_both_source_keys_repeat_it(self):
+        t = _make_translator()
+        resp = {"1": "等两秒", "2": "再等两秒"}
+        source = {"1": "Wait two seconds.", "2": "Wait another two seconds."}
+
+        ok, msg = t._validate_llm_response(resp, source)
+
+        assert ok is True
+        assert msg == ""
+
+    def test_rejects_condition_anticipated_from_following_key(self):
+        t = _make_translator()
+        resp = {
+            "64": "这里是供消防员在必要时切断混动线缆的位置",
+            "65": "如果需要 就在这块面板后面",
+        }
+        source = {
+            "64": "This is where a firefighter would cut the hybrid cables",
+            "65": "if they needed to, behind this panel.",
+        }
+
+        ok, msg = t._validate_llm_response(resp, source)
+
+        assert ok is False
+        assert "Anticipated conditions" in msg
+
+    def test_rejects_if_condition_omitted_from_its_own_key(self):
+        t = _make_translator()
+        resp = {"65": "就在这块面板后面"}
+        source = {"65": "If they needed to, behind this panel."}
+
+        ok, msg = t._validate_llm_response(resp, source)
+
+        assert ok is False
+        assert "Missing conditions" in msg
+
+    def test_rejects_repeated_chinese_conclusion_without_speaker_metadata(self):
+        t = _make_translator()
+        resp = {"135": "成年人坐这里完全没问题", "136": "完全没问题"}
+        source = {
+            "135": "You could put an adult in this middle seat",
+            "136": "and you would be completely fine.",
+        }
+
+        ok, msg = t._validate_llm_response(resp, source)
+
+        assert ok is False
+        assert "Repeated endings" in msg
+
     def test_numeric_boundary_check_does_not_match_larger_number_or_model(self):
         t = _make_translator()
         resp = {
@@ -542,6 +607,35 @@ class TestValidateLLmResponse:
 
         assert ok is True
         assert msg == ""
+
+    @pytest.mark.parametrize(
+        ("source", "translation"),
+        [
+            ("Five to 10 years would be quick.", "五到十年就算很快了"),
+            ("It was completed after 15 years.", "它历时十五年才建成"),
+            ("It happened in 2026.", "这件事发生在二零二六年"),
+        ],
+    )
+    def test_preserved_numbers_accept_exact_chinese_numerals(
+        self, source, translation
+    ):
+        t = _make_translator()
+
+        ok, msg = t._validate_llm_response({"1": translation}, {"1": source})
+
+        assert ok is True
+        assert msg == ""
+
+    def test_preserved_numbers_rejects_a_different_chinese_number(self):
+        t = _make_translator()
+
+        ok, msg = t._validate_llm_response(
+            {"1": "它历时十年才建成"},
+            {"1": "It was completed after 15 years."},
+        )
+
+        assert ok is False
+        assert "1:15" in msg
 
     def test_compound_model_separator_variants_are_preserved_and_not_leaked(self):
         t = _make_translator()
@@ -608,6 +702,22 @@ class TestValidateLLmResponse:
 
         assert ok is False
         assert "398-399" in msg
+
+    def test_rejects_repeated_restart_qualification_across_keys(self):
+        t = _make_translator()
+        source = {
+            "187": "There's potential in restarts, but there's only so many plants,",
+            "188": "I think, that are even in a condition or in the space to restart.",
+        }
+        response = {
+            "187": "重启确实有潜力 但适合重启的核电站也就那么多",
+            "188": "适合重启的核电站数量有限 还得处于合适状态和位置",
+        }
+
+        ok, msg = t._validate_llm_response(response, source)
+
+        assert ok is False
+        assert "187-188" in msg
 
     def test_rejects_short_translation_repeated_from_previous_key(self):
         t = _make_translator()
@@ -1211,11 +1321,21 @@ class TestValidateLLmResponse:
             "2": "强烈的对政府表态",
         }
 
-    def test_legacy_alignment_rewrite_is_disabled_for_all_models(self):
+    @pytest.mark.parametrize(
+        "model",
+        ["gpt-4o-mini", "deepseek-v4-pro", "MiniMax-M3", "nvidia/llama-3.3-70b"],
+    )
+    def test_alignment_audit_is_enabled_for_every_model_in_reflective_mode(self, model):
         translator = _make_translator(is_reflect=True)
-        assert translator._needs_alignment_audit() is False
-        translator.model = "MiniMax-M3"
+        translator.model = model
+
         assert translator._needs_alignment_audit() is True
+
+    def test_alignment_audit_is_disabled_outside_reflective_mode(self):
+        translator = _make_translator(is_reflect=False)
+        translator.model = "MiniMax-M3"
+
+        assert translator._needs_alignment_audit() is False
 
     def test_alignment_audit_requires_two_matching_flags(self, monkeypatch):
         translator = _make_minimax_reflect_translator()
@@ -1711,6 +1831,311 @@ class TestValidateLLmResponse:
             "最后一句",
         ]
 
+    def test_finalizer_repairs_repetition_inside_a_batch(self, monkeypatch):
+        t = _make_minimax_reflect_translator()
+        t.batch_num = 10
+        source = [
+            SubtitleProcessData(index=1, original_text="First line."),
+            SubtitleProcessData(index=2, original_text="Open the hood."),
+            SubtitleProcessData(index=3, original_text="Check the rear brakes."),
+            SubtitleProcessData(index=4, original_text="Last line."),
+        ]
+        translated = [
+            replace(source[0], translated_text="第一句"),
+            replace(source[1], translated_text="打开引擎盖检查刹车"),
+            replace(source[2], translated_text="打开引擎盖检查刹车"),
+            replace(source[3], translated_text="最后一句"),
+        ]
+
+        monkeypatch.setattr(
+            t,
+            "_translate_locked_batch",
+            lambda _pair, initial_feedback="": [
+                replace(source[1], translated_text="打开引擎盖"),
+                replace(source[2], translated_text="检查后轮刹车"),
+            ],
+        )
+
+        result = t._finalize_translated_list(source, translated)
+
+        assert [item.translated_text for item in result[1:3]] == [
+            "打开引擎盖",
+            "检查后轮刹车",
+        ]
+
+    def test_finalizer_repairs_queued_alignment_cluster_only(self, monkeypatch):
+        t = _make_minimax_reflect_translator()
+        source = [
+            SubtitleProcessData(index=1, original_text="Before."),
+            SubtitleProcessData(index=2, original_text="I had to cough"),
+            SubtitleProcessData(index=3, original_text="and sniff, but let's continue."),
+            SubtitleProcessData(index=4, original_text="Now the interior."),
+        ]
+        translated = [
+            replace(source[0], translated_text="前一句"),
+            replace(source[1], translated_text="我咳了咳也擤了鼻子"),
+            replace(source[2], translated_text="接下来看看内饰"),
+            replace(source[3], translated_text="现在看内饰"),
+        ]
+        t._pending_alignment_repair_keys.update({2, 3})
+
+        monkeypatch.setattr(
+            t,
+            "_translate_locked_batch",
+            lambda _items, initial_feedback="": [
+                replace(source[1], translated_text="我不得不停下来咳嗽"),
+                replace(source[2], translated_text="还擤了鼻子 不过我们继续"),
+            ],
+        )
+
+        result = t._finalize_translated_list(source, translated)
+
+        assert [item.translated_text for item in result] == [
+            "前一句",
+            "我不得不停下来咳嗽",
+            "还擤了鼻子 不过我们继续",
+            "现在看内饰",
+        ]
+
+    def test_finalizer_revalidates_a_still_repeated_repair(self, monkeypatch):
+        t = _make_minimax_reflect_translator()
+        t.batch_num = 2
+        source = [
+            SubtitleProcessData(index=1, original_text="First line."),
+            SubtitleProcessData(index=2, original_text="Open the hood."),
+            SubtitleProcessData(index=3, original_text="Check the rear brakes."),
+            SubtitleProcessData(index=4, original_text="Last line."),
+        ]
+        translated = [
+            replace(source[0], translated_text="第一句"),
+            replace(source[1], translated_text="打开引擎盖检查刹车"),
+            replace(source[2], translated_text="打开引擎盖检查刹车"),
+            replace(source[3], translated_text="最后一句"),
+        ]
+        repeated = [
+            replace(source[1], translated_text="打开引擎盖检查刹车"),
+            replace(source[2], translated_text="打开引擎盖检查刹车"),
+        ]
+        corrected = [
+            replace(source[1], translated_text="打开引擎盖"),
+            replace(source[2], translated_text="检查后轮刹车"),
+        ]
+        locked_calls = []
+
+        monkeypatch.setattr(t, "_translate_chunk_single", lambda _pair: repeated)
+
+        def locked_retry(_pair, initial_feedback=""):
+            locked_calls.append(initial_feedback)
+            return corrected
+
+        monkeypatch.setattr(t, "_translate_locked_batch", locked_retry)
+
+        result = t._finalize_translated_list(source, translated)
+
+        assert len(locked_calls) == 1
+        assert "repeat" in locked_calls[0].lower()
+        assert [item.translated_text for item in result[1:3]] == [
+            "打开引擎盖",
+            "检查后轮刹车",
+        ]
+
+    @pytest.mark.parametrize(
+        ("left", "right"),
+        [
+            (
+                "Another virtue for nuclear power plants",
+                "is that it tends to be one of the safest sources of electricity.",
+            ),
+            (
+                "There's potential in restarts, but there's only so many plants,",
+                "I think, that are even in a condition to restart.",
+            ),
+        ],
+    )
+    def test_finalizer_retranslates_dependent_batch_boundaries(
+        self, monkeypatch, left, right
+    ):
+        t = _make_minimax_reflect_translator()
+        t.batch_num = 1
+        source = [
+            SubtitleProcessData(index=1, original_text=left),
+            SubtitleProcessData(index=2, original_text=right),
+        ]
+        translated = [
+            replace(source[0], translated_text="重复的前半句"),
+            replace(source[1], translated_text="重复的后半句"),
+        ]
+        corrected = [
+            replace(source[0], translated_text="这种方案确实有其优势"),
+            replace(source[1], translated_text="但实际可行的对象十分有限"),
+        ]
+        locked_calls = []
+
+        def locked_retry(_pair, initial_feedback=""):
+            locked_calls.append(initial_feedback)
+            return corrected
+
+        monkeypatch.setattr(t, "_translate_locked_batch", locked_retry)
+
+        result = t._finalize_translated_list(source, translated)
+
+        assert len(locked_calls) == 1
+        assert [item.translated_text for item in result] == [
+            "这种方案确实有其优势",
+            "但实际可行的对象十分有限",
+        ]
+
+    def test_finalizer_keeps_clean_dependent_batch_boundary(self, monkeypatch):
+        t = _make_minimax_reflect_translator()
+        t.batch_num = 1
+        source = [
+            SubtitleProcessData(
+                index=1,
+                original_text="I went to Oswego to learn why it wants another plant",
+            ),
+            SubtitleProcessData(
+                index=2,
+                original_text="and what would happen next if it got one.",
+            ),
+        ]
+        translated = [
+            replace(source[0], translated_text="我前往奥斯威戈了解它为何想再建一座核电站"),
+            replace(source[1], translated_text="以及建成后会发生什么"),
+        ]
+
+        monkeypatch.setattr(
+            t,
+            "_translate_locked_batch",
+            lambda *_args, **_kwargs: pytest.fail("clean boundary must not be retranslated"),
+        )
+
+        result = t._finalize_translated_list(source, translated)
+
+        assert [item.translated_text for item in result] == [
+            "我前往奥斯威戈了解它为何想再建一座核电站",
+            "以及建成后会发生什么",
+        ]
+
+    def test_finalizer_repairs_repeated_meaning_after_sort_of(self, monkeypatch):
+        t = _make_minimax_reflect_translator()
+        source = [
+            SubtitleProcessData(
+                index=720,
+                original_text="echelon than they've been in and they're",
+            ),
+            SubtitleProcessData(
+                index=721,
+                original_text=(
+                    "sort of revamping the lineup they've got the Wagoneer "
+                    "which is very luxurious"
+                ),
+            ),
+        ]
+        translated = [
+            replace(source[0], translated_text="正在重塑产品线"),
+            replace(source[1], translated_text="算是重新整理了产品线 他们有豪华的Wagoneer"),
+        ]
+        repaired = [
+            replace(source[0], translated_text="进入了比以往更高端的市场 而且他们正在"),
+            replace(source[1], translated_text="调整产品线 其中Wagoneer非常豪华"),
+        ]
+
+        monkeypatch.setattr(
+            t,
+            "_translate_locked_batch",
+            lambda _pair, initial_feedback="": repaired,
+        )
+
+        result = t._finalize_translated_list(source, translated)
+
+        assert [item.translated_text for item in result] == [
+            "进入了比以往更高端的市场 而且他们正在",
+            "调整产品线 其中Wagoneer非常豪华",
+        ]
+
+    def test_finalizer_keeps_term_repeated_in_dependent_source(self, monkeypatch):
+        t = _make_minimax_reflect_translator()
+        source = [
+            SubtitleProcessData(
+                index=334,
+                original_text="This does not have air suspension,",
+            ),
+            SubtitleProcessData(
+                index=335,
+                original_text="but it has been making air suspension noises.",
+            ),
+        ]
+        translated = [
+            replace(source[0], translated_text="这辆车没有配备空气悬挂"),
+            replace(source[1], translated_text="但一直在发出很像空气悬挂的声响"),
+        ]
+
+        monkeypatch.setattr(
+            t,
+            "_translate_locked_batch",
+            lambda *_args, **_kwargs: pytest.fail(
+                "a term repeated in the source must not be repaired"
+            ),
+        )
+
+        result = t._finalize_translated_list(source, translated)
+
+        assert [item.translated_text for item in result] == [
+            "这辆车没有配备空气悬挂",
+            "但一直在发出很像空气悬挂的声响",
+        ]
+
+    def test_finalizer_expands_a_repeated_fragment_to_its_unfinished_predecessor(
+        self, monkeypatch
+    ):
+        t = _make_minimax_reflect_translator()
+        source = [
+            SubtitleProcessData(
+                index=719,
+                original_text="Jeep is aiming for this higher",
+            ),
+            SubtitleProcessData(
+                index=720,
+                original_text="echelon than before and they're",
+            ),
+            SubtitleProcessData(
+                index=721,
+                original_text="sort of revamping the lineup with the Grand",
+            ),
+            SubtitleProcessData(
+                index=722,
+                original_text="Cherokee in the top trim.",
+            ),
+        ]
+        translated = [
+            replace(source[0], translated_text="Jeep瞄准了比以往更高的市场 而且他们"),
+            replace(source[1], translated_text="正在重塑产品线"),
+            replace(source[2], translated_text="正在调整产品线 其中包括Grand Cherokee"),
+            replace(source[3], translated_text="Cherokee的高配车型"),
+        ]
+        captured = []
+
+        def repair(items, initial_feedback=""):
+            captured.append([item.index for item in items])
+            return [
+                replace(source[0], translated_text="Jeep正瞄准比以往更高端的市场"),
+                replace(source[1], translated_text="并且正在"),
+                replace(source[2], translated_text="调整产品阵容 其中包括Grand"),
+                replace(source[3], translated_text="Cherokee的高配车型"),
+            ]
+
+        monkeypatch.setattr(t, "_translate_locked_batch", repair)
+
+        result = t._finalize_translated_list(source, translated)
+
+        assert captured == [[719, 720, 721, 722]]
+        assert [item.translated_text for item in result] == [
+            "Jeep正瞄准比以往更高端的市场",
+            "并且正在",
+            "调整产品阵容 其中包括Grand",
+            "Cherokee的高配车型",
+        ]
+
     def test_finalizer_repairs_semantic_asr_errors_after_single_item_fallback(
         self, monkeypatch
     ):
@@ -1743,6 +2168,161 @@ class TestValidateLLmResponse:
         assert result[-1].translated_text == (
             "这套倒车影像看起来还是2014年刚推出时的样子"
         )
+
+    def test_finalizer_resolves_ambiguous_plant_from_nuclear_context(self):
+        t = _make_minimax_reflect_translator()
+        source = [
+            SubtitleProcessData(
+                index=34,
+                original_text="The fourth nuclear power plant would bring jobs.",
+            ),
+            SubtitleProcessData(
+                index=35,
+                original_text="Most people know somebody who works at the plants.",
+            ),
+        ]
+        translated = [
+            replace(source[0], translated_text="第四座核电站会带来就业"),
+            replace(source[1], translated_text="大多数人都认识在那些工厂工作的人"),
+        ]
+
+        result = t._finalize_translated_list(source, translated)
+
+        assert result[1].translated_text == "大多数人都认识在那些核电站工作的人"
+
+    def test_finalizer_keeps_factory_plant_outside_nuclear_context(self):
+        t = _make_minimax_reflect_translator()
+        source = [
+            SubtitleProcessData(
+                index=1,
+                original_text="These car plants employ thousands of workers.",
+            )
+        ]
+        translated = [replace(source[0], translated_text="这些汽车工厂雇用了数千名工人")]
+
+        result = t._finalize_translated_list(source, translated)
+
+        assert result[0].translated_text == "这些汽车工厂雇用了数千名工人"
+
+    @pytest.mark.parametrize(
+        ("left", "right", "expected"),
+        [
+            ("但问题是他们", "把尾灯设计成一条灯带", True),
+            ("采用锯齿一样的", "边缘方便装载物品", True),
+            ("过弯时车身很稳 所以", "你不会觉得车身失控", True),
+            ("后排空间很宽敞", "坐起来也很舒服", False),
+        ],
+    )
+    def test_chinese_boundary_signal_shortlists_only_structural_breaks(
+        self, left, right, expected
+    ):
+        signal = LLMTranslator._chinese_boundary_signal(left, right)
+
+        assert bool(signal) is expected
+
+    def test_chinese_fluency_candidates_stop_at_speaker_changes(self):
+        t = _make_minimax_reflect_translator()
+        source = [
+            SubtitleProcessData(index=1, original_text="The problem is they"),
+            SubtitleProcessData(index=2, original_text="made it too wide"),
+        ]
+        translated = {
+            1: replace(source[0], translated_text="但问题是他们"),
+            2: replace(source[1], translated_text="把它做得太宽了"),
+        }
+        t._all_speaker_by_index = {1: "S1", 2: "S2"}
+
+        assert t._chinese_fluency_candidates(source, translated) == []
+
+    def test_finalizer_repairs_confirmed_chinese_boundary_without_touching_timeline(
+        self, monkeypatch
+    ):
+        t = _make_minimax_reflect_translator()
+        source = [
+            SubtitleProcessData(index=1, original_text="The problem is they"),
+            SubtitleProcessData(index=2, original_text="made the taillights too narrow"),
+            SubtitleProcessData(index=3, original_text="There is plenty of cargo room."),
+        ]
+        translated = [
+            replace(source[0], translated_text="但问题是他们"),
+            replace(source[1], translated_text="把尾灯设计得太窄"),
+            replace(source[2], translated_text="后备厢空间很充足"),
+        ]
+        repaired = [
+            replace(source[0], translated_text="但设计上的问题在于"),
+            replace(source[1], translated_text="尾灯做得太窄了"),
+        ]
+        t._all_source_by_index = {item.index: item.original_text for item in source}
+        audit_calls = []
+
+        def flags(indices, *_args):
+            audit_calls.append(indices)
+            return [1] if len(audit_calls) == 1 else []
+
+        monkeypatch.setattr(t, "_request_chinese_fluency_flags", flags)
+        monkeypatch.setattr(t, "_request_alignment_flags", lambda *_args: [])
+        monkeypatch.setattr(
+            t,
+            "_rewrite_chinese_fluency_window",
+            lambda source_items, _current, **_kwargs: repaired
+            if [item.index for item in source_items] == [1, 2]
+            else pytest.fail("repair window must stay narrow"),
+        )
+
+        result = t._finalize_translated_list(source, translated)
+
+        assert [item.index for item in result] == [1, 2, 3]
+        assert [item.original_text for item in result] == [
+            item.original_text for item in source
+        ]
+        assert [item.translated_text for item in result] == [
+            "但设计上的问题在于",
+            "尾灯做得太窄了",
+            "后备厢空间很充足",
+        ]
+
+    def test_finalizer_rejects_chinese_fluency_repair_that_remains_broken(
+        self, monkeypatch
+    ):
+        t = _make_minimax_reflect_translator()
+        source = [
+            SubtitleProcessData(index=1, original_text="It is a very"),
+            SubtitleProcessData(index=2, original_text="comfortable seat."),
+        ]
+        translated = [
+            replace(source[0], translated_text="这是一个非常"),
+            replace(source[1], translated_text="舒适的座椅"),
+        ]
+        t._all_source_by_index = {item.index: item.original_text for item in source}
+        audit_calls = 0
+
+        def flags(*_args):
+            nonlocal audit_calls
+            audit_calls += 1
+            return [1]
+
+        monkeypatch.setattr(t, "_request_chinese_fluency_flags", flags)
+        monkeypatch.setattr(t, "_request_alignment_flags", lambda *_args: [])
+        rewrite_calls = []
+        monkeypatch.setattr(
+            t,
+            "_rewrite_chinese_fluency_window",
+            lambda *_args, **kwargs: rewrite_calls.append(kwargs.get("feedback", ""))
+            or [
+                    replace(source[0], translated_text="这辆座椅仍然非常"),
+                    replace(source[1], translated_text="舒适平稳"),
+                ],
+        )
+
+        result = t._finalize_translated_list(source, translated)
+
+        assert audit_calls == 1
+        assert len(rewrite_calls) == t.MAX_STEPS
+        assert "structural boundary signals" in rewrite_calls[-1]
+        assert [item.translated_text for item in result] == [
+            "这是一个非常",
+            "舒适的座椅",
+        ]
 
     def test_single_fallback_strips_reasoning_and_sends_neighbor_context(self, monkeypatch):
         t = _make_translator()

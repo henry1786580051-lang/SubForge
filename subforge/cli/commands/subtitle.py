@@ -92,8 +92,8 @@ def run(args: Namespace, config: dict) -> int:
 
     thread_num = get(config, "subtitle.thread_num", 4)
     batch_size = get(config, "subtitle.batch_size", 20)
-    max_cjk = get(config, "subtitle.max_word_count_cjk", 18)
-    max_english = get(config, "subtitle.max_word_count_english", 12)
+    max_cjk = get(config, "subtitle.max_word_count_cjk", 25)
+    max_english = get(config, "subtitle.max_word_count_english", 18)
 
     # Validate numeric ranges
     if thread_num < 1:

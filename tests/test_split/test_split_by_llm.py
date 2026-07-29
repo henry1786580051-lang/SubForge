@@ -288,3 +288,29 @@ class TestSplitByLLM:
         )
 
         assert result == ["the original text should stay", "exactly the same"]
+
+    def test_uses_shared_soft_and_hard_limits(self, monkeypatch):
+        captured = {}
+
+        def fake_get_prompt(_path, **kwargs):
+            captured.update(kwargs)
+            return "split"
+
+        def fake_call_llm(*args, **kwargs):
+            return _FakeResponse(
+                "one two three four five six seven eight nine ten eleven twelve "
+                "thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty"
+            )
+
+        monkeypatch.setattr(split_module, "get_prompt", fake_get_prompt)
+        monkeypatch.setattr(split_module, "call_llm", fake_call_llm)
+
+        result = split_by_llm(
+            "one two three four five six seven eight nine ten eleven twelve "
+            "thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty",
+            max_word_count_english=16,
+        )
+
+        assert captured["max_word_count_english"] == 16
+        assert captured["hard_max_word_count_english"] == 20
+        assert len(result) == 1

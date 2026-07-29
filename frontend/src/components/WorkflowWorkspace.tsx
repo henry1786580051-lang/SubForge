@@ -6,6 +6,7 @@ import { useAppStore, WorkflowStep } from "@/store/appStore";
 import {
   configApi,
   filesApi,
+  openNativeFile,
   subtitlesApi,
   tasksApi,
   transcribeApi,
@@ -159,6 +160,13 @@ function ImportWorkspace() {
     async (file: File) => {
       setUploading("media");
       try {
+        if (
+          file.size > 1024 * 1024 * 1024 &&
+          typeof window !== "undefined" &&
+          "pywebview" in window
+        ) {
+          throw new Error("大于 1GB 的素材请使用“选择素材”按钮导入，避免在应用内复制整份文件");
+        }
         const uploaded = await filesApi.upload(file);
         setVideoFile(uploaded.file_path);
         const info = await filesApi.info(uploaded.file_path);
@@ -194,6 +202,50 @@ function ImportWorkspace() {
     },
     [setSubtitleFile, setSubtitles]
   );
+
+  const chooseMedia = useCallback(async () => {
+    try {
+      const selected = await openNativeFile("media");
+      if (!selected.available) {
+        mediaInputRef.current?.click();
+        return;
+      }
+      if (!selected.path) return;
+      setUploading("media");
+      setVideoFile(selected.path);
+      const info = await filesApi.info(selected.path);
+      setFileInfo(info);
+      useAppStore.getState().addToast("素材已导入", "success");
+    } catch (err) {
+      useAppStore
+        .getState()
+        .setError(err instanceof Error ? err.message : "素材导入失败");
+    } finally {
+      setUploading(null);
+    }
+  }, [setFileInfo, setVideoFile]);
+
+  const chooseSubtitle = useCallback(async () => {
+    try {
+      const selected = await openNativeFile("subtitle");
+      if (!selected.available) {
+        subtitleInputRef.current?.click();
+        return;
+      }
+      if (!selected.path) return;
+      setUploading("subtitle");
+      const loaded = await subtitlesApi.load(selected.path);
+      setSubtitleFile(loaded.file_path);
+      setSubtitles(loaded.segments);
+      useAppStore.getState().addToast("字幕已导入", "success");
+    } catch (err) {
+      useAppStore
+        .getState()
+        .setError(err instanceof Error ? err.message : "字幕导入失败");
+    } finally {
+      setUploading(null);
+    }
+  }, [setSubtitleFile, setSubtitles]);
 
   const handleDrop = useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
@@ -276,7 +328,7 @@ function ImportWorkspace() {
                 </h2>
               </div>
               <button
-                onClick={() => mediaInputRef.current?.click()}
+                onClick={() => void chooseMedia()}
                 className="inline-flex shrink-0 items-center gap-2 rounded-full bg-accent px-4 py-2 text-[13px] font-medium text-white shadow-md transition hover:bg-accent-hover disabled:opacity-50"
                 disabled={uploading === "media"}
               >
@@ -332,7 +384,7 @@ function ImportWorkspace() {
                       </p>
                     </div>
                     <button
-                      onClick={() => subtitleInputRef.current?.click()}
+                      onClick={() => void chooseSubtitle()}
                       className="rounded-full border border-border bg-surface px-3 py-1.5 text-[12px] text-text-secondary transition hover:border-border-active hover:text-text-primary"
                     >
                       导入字幕

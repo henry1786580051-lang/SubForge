@@ -4,6 +4,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, List, Optional, Union
 
 from subforge.core.asr.asr_data import ASRData, ASRDataSeg
+from subforge.core.split.boundary import normalize_boundaries
+from subforge.core.split.length_policy import (
+    DEFAULT_CJK_HARD_LIMIT,
+    DEFAULT_ENGLISH_SOFT_LIMIT,
+    resolve_length_policy,
+)
 from subforge.core.split.split_by_llm import split_by_llm
 from subforge.core.utils.logger import setup_logger
 from subforge.core.utils.text_utils import (
@@ -18,8 +24,8 @@ logger = setup_logger("subtitle_splitter")
 # ==================== 配置常量 ====================
 
 # 字数限制
-MAX_WORD_COUNT_CJK = 25  # CJK文本单行最大字数
-MAX_WORD_COUNT_ENGLISH = 18  # 英文文本单行最大单词数
+MAX_WORD_COUNT_CJK = DEFAULT_CJK_HARD_LIMIT  # CJK文本单行硬上限
+MAX_WORD_COUNT_ENGLISH = DEFAULT_ENGLISH_SOFT_LIMIT  # 英文文本目标单词数
 
 # Segments阈值
 SEGMENT_WORD_THRESHOLD = 250  # 长文本Segments阈值(字数)
@@ -184,13 +190,18 @@ class SubtitleSplitter:
         Args:
             thread_num: 并发线程数
             model: LLM模型名称
-            max_word_count_cjk: CJK最大字数
-            max_word_count_english: 英文最大单词数
+            max_word_count_cjk: CJK硬上限字数
+            max_word_count_english: 英文目标单词数（软限制）
         """
         self.thread_num = thread_num
         self.model = model
-        self.max_word_count_cjk = max_word_count_cjk
-        self.max_word_count_english = max_word_count_english
+        length_policy = resolve_length_policy(
+            max_word_count_cjk=max_word_count_cjk,
+            max_word_count_english=max_word_count_english,
+        )
+        self.max_word_count_cjk = length_policy.cjk_hard_limit
+        self.max_word_count_english = length_policy.english_soft_limit
+        self.hard_max_word_count_english = length_policy.english_hard_limit
         self.update_callback = update_callback
         self.llm_client = llm_client
         self.is_running = True
@@ -255,6 +266,11 @@ class SubtitleSplitter:
 
             # 5. 合并并优化
             final_segments = self._merge_processed_segments(processed_segments)
+            final_segments = normalize_boundaries(
+                final_segments,
+                soft_max_words=self.max_word_count_english,
+                hard_max_words=self.hard_max_word_count_english,
+            )
             self.merge_short_segment(final_segments)
 
             return ASRData(final_segments)
@@ -396,6 +412,7 @@ class SubtitleSplitter:
             model=self.model,
             max_word_count_cjk=self.max_word_count_cjk,
             max_word_count_english=self.max_word_count_english,
+            hard_max_word_count_english=self.hard_max_word_count_english,
             llm_client=self.llm_client,
         )
 

@@ -9,6 +9,8 @@ from typing import TypeVar, cast
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from subforge.core.split.length_policy import resolve_length_policy
+
 router = APIRouter()
 
 _settings_lock = threading.RLock()
@@ -108,6 +110,7 @@ _WHISPERX_SUPPORTED = _IS_APPLE_SILICON or platform.system() in {"Windows", "Lin
 
 _LLM_PROVIDER_URLS = {
     "openai": "https://api.openai.com/v1",
+    "nvidia": "https://integrate.api.nvidia.com/v1",
     "deepseek": "https://api.deepseek.com",
     "mimo": "https://token-plan-cn.xiaomimimo.com/v1",
     "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -259,6 +262,15 @@ def _public_config(config: dict) -> dict:
         }
         for provider, profile in config.get("llm_profiles", {}).items()
         if isinstance(profile, dict)
+    }
+    length_policy = resolve_length_policy(
+        config.get("max_word_count_cjk", _DEFAULTS["max_word_count_cjk"]),
+        config.get("max_word_count_english", _DEFAULTS["max_word_count_english"]),
+    )
+    public["subtitle_length_policy"] = {
+        "cjk_hard_limit": length_policy.cjk_hard_limit,
+        "english_soft_limit": length_policy.english_soft_limit,
+        "english_hard_limit": length_policy.english_hard_limit,
     }
     return public
 

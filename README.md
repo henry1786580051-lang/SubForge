@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.3/SubForge-1.1.3-macos-arm64.dmg"><strong>下载 macOS Apple Silicon 版</strong></a>
+  <a href="https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.4/SubForge-1.1.4-macos-arm64.dmg"><strong>下载 macOS Apple Silicon 版</strong></a>
   · <a href="https://github.com/henry1786580051-lang/SubForge/releases">全部版本</a>
   · <a href="https://henry1786580051-lang.github.io/SubForge/">使用文档</a>
   · <a href="https://github.com/henry1786580051-lang/SubForge/issues">问题反馈</a>
@@ -34,13 +34,13 @@ SubForge 面向需要长期处理视频字幕的创作者和本地化工作流�
 | --- | --- | --- |
 | Apple Silicon 使用 MLX，Windows 使用 CTranslate2；WhisperX forced alignment 与 TEN-VAD 保守校准词级边界 | 按上下文和说话人轮次翻译，校验漏译、错位、重复、占位语和思考内容泄漏 | 实时进度、中间结果增量保存、失败条目局部重试、恢复字幕和聚合 LLM 日志 |
 
-### v1.1.3 新增
+### v1.1.4 新增
 
-- **混合语言转录**：自动语言模式会识别高置信度外语区间并局部复听，适合英语夹杂西班牙语等素材。
-- **逐语言强制对齐**：每个语言区间自动匹配对应的 forced alignment 模型，而不是用主语言模型覆盖整段视频。
-- **模型缺口提示**：缺少对齐模型时给出明确语言、模型和处理选项，可下载后续跑或保留句级时间轴继续。
-- **保守音频策略**：多人模式和自动语言模式保留原始音轨，避免降噪压制较弱说话人或短外语片段。
-- **混合语言翻译**：提示模型按每条字幕的实际源语言翻译，不把整批内容强制视为单一语言。
+- **稳定的 MLX 转录**：打包应用在独立工作进程中执行 MLX Whisper，长视频转录不再阻塞桌面界面，并可正常取消与回收资源。
+- **大文件原生导入**：桌面版通过系统文件选择器直接使用本地路径，避免多 GB 视频经浏览器上传层复制导致内存与磁盘压力。
+- **NVIDIA NIM**：新增独立服务商配置、按模型公司折叠的目录与搜索，并在限流时保持任务等待恢复。
+- **字幕质量增强**：加强跨条主语、时间状语、从句归属、相邻重复和翻译内容所有权检查，降低批量提前或延后。
+- **可解释长度策略**：英文字幕使用目标长度与硬上限，默认优先 18 词、语义完整时最多 22 词；设置值现在完整贯通前后端。
 
 ## 工作流
 
@@ -93,7 +93,9 @@ flowchart LR
 ```
 
 - MiniMax 使用官方 Anthropic 兼容协议，原生区分 `thinking` 与最终 `text`；M3 遇到 HTTP 429 时保持任务存活并等待恢复。
-- 小米 MiMo、DeepSeek、OpenAI、通义千问及本地服务使用 OpenAI 兼容协议；Base URL、API Key 和模型按服务商独立保存。
+- NVIDIA NIM、小米 MiMo、DeepSeek、OpenAI、通义千问及本地服务使用 OpenAI 兼容协议；Base URL、API Key 和模型按服务商独立保存。
+- NVIDIA 模型目录按开发公司折叠，并支持搜索，避免将大量聊天、推理、视觉和嵌入模型平铺在同一列表中。
+- NVIDIA API 与 MiniMax M3 一样在 HTTP 429 后保持任务存活，优先遵循 `Retry-After`，并持续等待服务恢复；认证错误等非限流故障仍会立即返回。
 - 反思模式再次检查语气、称谓、指代和问答关系，但仍必须保持字幕键和内容所有权。
 - 中间结果持续写入恢复文件，最终质量检查失败不会清空已经完成的字幕。
 
@@ -109,7 +111,7 @@ flowchart LR
 
 ### 桌面版
 
-- **macOS**：当前 v1.1.3 提供 [Apple Silicon DMG](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.3/SubForge-1.1.3-macos-arm64.dmg)。Whisper、forced alignment 和 Community-1 模型按需下载，不会重复打包进应用。
+- **macOS**：当前 v1.1.4 提供 [Apple Silicon DMG](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.4/SubForge-1.1.4-macos-arm64.dmg)。Whisper、forced alignment 和 Community-1 模型按需下载，不会重复打包进应用。
 - **Windows**：项目支持 WhisperX CTranslate2/CUDA 或 CPU、forced alignment 与 Community-1。请在 [Releases](https://github.com/henry1786580051-lang/SubForge/releases) 查看带 Windows 安装包的版本，或按下方源码方式运行。
 - **Linux**：当前以 Web/CLI 源码运行和开发验证为主，尚未提供正式桌面安装包。
 

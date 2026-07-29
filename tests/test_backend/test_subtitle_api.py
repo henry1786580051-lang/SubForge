@@ -80,6 +80,8 @@ def test_subtitle_pipeline_uses_explicit_llm_client_without_env_mutation(
         "llm_base_url": "https://example.test/v1",
         "thread_num": 1,
         "batch_size": 1,
+        "max_word_count_cjk": 31,
+        "max_word_count_english": 16,
     }
 
     monkeypatch.setattr(
@@ -99,6 +101,10 @@ def test_subtitle_pipeline_uses_explicit_llm_client_without_env_mutation(
     class FakeSplitter:
         def __init__(self, thread_num, model, llm_client=None, **_kwargs):
             created["splitter_client"] = llm_client
+            created["splitter_limits"] = (
+                _kwargs.get("max_word_count_cjk"),
+                _kwargs.get("max_word_count_english"),
+            )
 
         def split_subtitle(self, asr_data):
             return asr_data
@@ -120,6 +126,7 @@ def test_subtitle_pipeline_uses_explicit_llm_client_without_env_mutation(
         "base_url": "https://example.test/v1",
         "api_key": "task-key",
         "splitter_client": client,
+        "splitter_limits": (31, 16),
     }
     assert os.environ["OPENAI_API_KEY"] == "original-key"
     assert os.environ["OPENAI_BASE_URL"] == "https://original.test/v1"

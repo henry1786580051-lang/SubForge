@@ -14,6 +14,7 @@ from subforge.cli.config import (
     load_env_overrides,
     save_config_value,
 )
+from subforge.core.entities import SubtitleConfig
 
 
 def test_default_dubbing_uses_keyless_edge_tts():
@@ -21,6 +22,14 @@ def test_default_dubbing_uses_keyless_edge_tts():
     assert DEFAULTS["dubbing"]["preset"] == "edge-cn-female"
     assert DEFAULTS["dubbing"]["api_key"] == ""
     assert DEFAULTS["dubbing"]["voice"] == "zh-CN-XiaoxiaoNeural"
+
+
+def test_default_subtitle_lengths_match_desktop_policy():
+    assert DEFAULTS["subtitle"]["max_word_count_cjk"] == 25
+    assert DEFAULTS["subtitle"]["max_word_count_english"] == 18
+    config = SubtitleConfig()
+    assert config.max_word_count_cjk == 25
+    assert config.max_word_count_english == 18
 
 
 class TestDeepMerge:

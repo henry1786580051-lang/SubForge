@@ -50,6 +50,32 @@ export const filesApi = {
     `${API_BASE}/api/files/stream?path=${encodeURIComponent(path)}`,
 };
 
+type NativeOpenResult = {
+  ok: boolean;
+  path?: string;
+  cancelled?: boolean;
+  error?: string;
+};
+
+export async function openNativeFile(
+  kind: "media" | "subtitle"
+): Promise<{ available: boolean; path: string | null }> {
+  if (typeof window === "undefined" || !("pywebview" in window)) {
+    return { available: false, path: null };
+  }
+  const nativeWindow = window as unknown as {
+    pywebview?: { api?: { open_file?: (type: string) => Promise<NativeOpenResult> } };
+  };
+  for (let attempt = 0; attempt < 20 && !nativeWindow.pywebview?.api?.open_file; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const openFile = nativeWindow.pywebview?.api?.open_file;
+  if (!openFile) return { available: false, path: null };
+  const result = await openFile(kind);
+  if (!result.ok && result.error) throw new Error(result.error);
+  return { available: true, path: result.ok ? result.path || null : null };
+}
+
 // Subtitles
 export const subtitlesApi = {
   load: (path: string) =>

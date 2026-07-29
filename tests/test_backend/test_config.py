@@ -202,6 +202,22 @@ def test_public_config_reports_credentials_without_exposing_them():
     }
 
 
+def test_public_config_exposes_resolved_subtitle_length_policy():
+    public = config_module._public_config(
+        {
+            "max_word_count_cjk": 30,
+            "max_word_count_english": 16,
+            "llm_profiles": {},
+        }
+    )
+
+    assert public["subtitle_length_policy"] == {
+        "cjk_hard_limit": 30,
+        "english_soft_limit": 16,
+        "english_hard_limit": 20,
+    }
+
+
 def test_switch_provider_blank_key_does_not_erase_current_profile(tmp_path, monkeypatch):
     settings_path = tmp_path / "settings.json"
     monkeypatch.setattr(config_module, "_SETTINGS_CANDIDATES", [settings_path])
@@ -268,6 +284,48 @@ def test_detects_current_and_legacy_minimax_urls():
     assert config_module._detect_llm_provider("https://api.minimaxi.com/anthropic") == "minimax"
     assert config_module._detect_llm_provider("https://api.minimaxi.com/v1") == "minimax"
     assert config_module._detect_llm_provider("https://api.minimax.chat/v1") == "minimax"
+
+
+def test_detects_nvidia_provider_url():
+    assert (
+        config_module._detect_llm_provider("https://integrate.api.nvidia.com/v1")
+        == "nvidia"
+    )
+
+
+def test_switch_to_nvidia_uses_default_url_and_isolated_credentials(tmp_path, monkeypatch):
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setattr(config_module, "_SETTINGS_CANDIDATES", [settings_path])
+    config_module._write_settings(
+        {
+            "llm_provider": "deepseek",
+            "llm_base_url": "https://api.deepseek.com",
+            "llm_api_key": "deepseek-secret",
+            "llm_model": "deepseek-chat",
+        }
+    )
+
+    nvidia = asyncio.run(
+        config_module.switch_llm_provider(
+            config_module.LlmProviderSwitch(
+                provider="nvidia",
+                current_base_url="https://api.deepseek.com",
+                current_api_key="",
+                current_model="deepseek-chat",
+            )
+        )
+    )
+
+    assert nvidia == {
+        "status": "ok",
+        "provider": "nvidia",
+        "base_url": "https://integrate.api.nvidia.com/v1",
+        "api_key_configured": False,
+        "model": "",
+    }
+    stored = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert stored["llm_profiles"]["deepseek"]["api_key"] == "deepseek-secret"
+    assert stored["llm_profiles"]["nvidia"]["api_key"] == ""
 
 
 def test_effective_config_migrates_legacy_minimax_profile_url():

@@ -992,6 +992,22 @@ class TestChineseTranslationPunctuationFinalization:
         assert parsed.segments[0].text == "Nightmare Obscura."
         assert parsed.segments[0].translated_text == "《Nightmare Obscura》"
 
+    def test_removes_only_trailing_enumeration_comma(self):
+        asr_data = ASRData(
+            [
+                ASRDataSeg(
+                    "A, B, and C.",
+                    0,
+                    1000,
+                    translated_text="甲、乙、丙、",
+                )
+            ]
+        )
+
+        asr_data.replace_chinese_translation_punctuation()
+
+        assert asr_data.segments[0].translated_text == "甲、乙、丙"
+
 
 class TestFormatConversionEdgeCases:
     """测试格式转换边缘情况"""
@@ -1229,6 +1245,19 @@ D.
         assert len(asr_data.segments) == 1
         assert asr_data.segments[0].text == "D."
         assert asr_data.segments[0].translated_text == "D挡"
+
+    def test_parse_target_above_bilingual_with_numeric_punctuation_variant(self):
+        srt = """1
+00:00:00,000 --> 00:00:01,000
+32
+32.
+"""
+
+        asr_data = ASRData.from_srt(srt)
+
+        assert len(asr_data.segments) == 1
+        assert asr_data.segments[0].text == "32."
+        assert asr_data.segments[0].translated_text == "32"
 
     def test_parse_source_above_bilingual(self):
         """测试英文在上、中文在下的常规双语布局"""

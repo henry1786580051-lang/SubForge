@@ -1,3 +1,4 @@
+import json
 import sys
 import wave
 from types import SimpleNamespace
@@ -352,6 +353,63 @@ def test_whisperx_prepares_model_safetensors_alias(tmp_path):
     assert prepared == str(prepared_path)
     assert (prepared_path / "weights.safetensors").exists()
     assert (prepared_path / "config.json").exists()
+
+
+def test_whisperx_runs_mlx_decode_through_worker_protocol(monkeypatch, tmp_path):
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"audio")
+    model_path = tmp_path / "model"
+    model_path.mkdir()
+    observed = {}
+
+    class CompletedProcess:
+        returncode = 0
+
+        @staticmethod
+        def poll():
+            return 0
+
+        @staticmethod
+        def terminate():
+            raise AssertionError("completed worker must not be terminated")
+
+    def fake_popen(command, *, env, **_kwargs):
+        observed["command"] = command
+        request = json.loads(
+            open(env["SUBFORGE_MLX_WHISPER_REQUEST"], encoding="utf-8").read()
+        )
+        observed["request"] = request
+        with open(env["SUBFORGE_MLX_WHISPER_OUTPUT"], "w", encoding="utf-8") as output:
+            json.dump(
+                {
+                    "ok": True,
+                    "data": {
+                        "language": "en",
+                        "segments": [{"text": "hello", "start": 0.0, "end": 1.0}],
+                    },
+                },
+                output,
+            )
+        return CompletedProcess()
+
+    monkeypatch.setattr("subforge.core.asr.whisperx_asr.subprocess.Popen", fake_popen)
+    asr = WhisperXASR.__new__(WhisperXASR)
+    asr.language = "en"
+    asr.cancel_event = None
+
+    result = asr._transcribe_mlx_in_worker(
+        str(audio_path),
+        str(model_path),
+        lambda *_args: None,
+    )
+
+    assert result["segments"][0]["text"] == "hello"
+    assert observed["request"] == {
+        "audio": str(audio_path),
+        "model": str(model_path),
+        "language": "en",
+    }
+    assert "subforge.core.asr.mlx_worker" in observed["command"]
 
 
 def test_whisperx_alignment_uses_cpu_for_mps_device():

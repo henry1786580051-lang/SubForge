@@ -35,7 +35,7 @@ logger = setup_logger("llm_client")
 
 # Timeout for LLM API calls (seconds)
 LLM_TIMEOUT = 120.0
-MINIMAX_M3_MAX_RATE_LIMIT_WAIT = 60.0
+PERSISTENT_RATE_LIMIT_MAX_WAIT = 60.0
 
 
 def is_anthropic_base_url(base_url: str) -> bool:
@@ -89,6 +89,7 @@ def create_client(base_url: str, api_key: str) -> Any:
             http_client=http_client,
         )
     setattr(client, "_subforge_log_context", log_context)
+    setattr(client, "_subforge_base_url", base_url)
     return client
 
 
@@ -132,6 +133,18 @@ def _is_minimax_m3_model(model: str) -> bool:
     return normalized == "minimaxm3"
 
 
+def _is_nvidia_client(client: Any = None) -> bool:
+    """Return whether this request uses NVIDIA's OpenAI-compatible endpoint."""
+    if client is None:
+        base_url = os.getenv("OPENAI_BASE_URL", "")
+    else:
+        base_url = getattr(client, "_subforge_base_url", "")
+        if not base_url:
+            base_url = getattr(client, "base_url", "")
+    hostname = (urlparse(str(base_url or "").strip()).hostname or "").lower()
+    return hostname == "integrate.api.nvidia.com"
+
+
 def _retry_after_seconds(error: Exception) -> float | None:
     """Read Retry-After as seconds or an HTTP date."""
     response = getattr(error, "response", None)
@@ -153,12 +166,12 @@ def _retry_after_seconds(error: Exception) -> float | None:
             return None
 
 
-def _minimax_m3_wait_seconds(error: Exception, attempt: int) -> float:
+def _persistent_rate_limit_wait_seconds(error: Exception, attempt: int) -> float:
     retry_after = _retry_after_seconds(error)
     if retry_after is not None:
         return retry_after
-    base = min(MINIMAX_M3_MAX_RATE_LIMIT_WAIT, 5.0 * (2 ** min(attempt - 1, 4)))
-    return min(MINIMAX_M3_MAX_RATE_LIMIT_WAIT, base + random.uniform(0.0, 1.0))
+    base = min(PERSISTENT_RATE_LIMIT_MAX_WAIT, 5.0 * (2 ** min(attempt - 1, 4)))
+    return min(PERSISTENT_RATE_LIMIT_MAX_WAIT, base + random.uniform(0.0, 1.0))
 
 
 def _call_llm_once(
@@ -204,24 +217,26 @@ def _call_standard_llm_api(
     return _call_llm_once(messages, model, temperature, client=client, **kwargs)
 
 
-def _call_minimax_m3_until_available(
+def _call_until_provider_available(
     messages: List[dict],
     model: str,
     temperature: float = 1,
     client: Optional[OpenAI] = None,
+    provider_name: str = "LLM provider",
     **kwargs: Any,
 ) -> Any:
-    """Wait through MiniMax M3 rate limits until the provider accepts the request."""
+    """Wait through rate limits until a persistent provider accepts the request."""
     attempt = 0
     while True:
         try:
             return _call_llm_once(messages, model, temperature, client=client, **kwargs)
         except (openai.RateLimitError, anthropic.RateLimitError) as error:
             attempt += 1
-            wait_seconds = _minimax_m3_wait_seconds(error, attempt)
+            wait_seconds = _persistent_rate_limit_wait_seconds(error, attempt)
             logger.warning(
-                "MiniMax M3 is rate limited; waiting %.1fs before retry %d. "
+                "%s is rate limited; waiting %.1fs before retry %d. "
                 "The task will remain active until service recovers.",
+                provider_name,
                 wait_seconds,
                 attempt,
             )
@@ -236,12 +251,22 @@ def _call_llm_api(
     **kwargs: Any,
 ) -> Any:
     """Dispatch to the model-specific retry policy."""
-    if _is_minimax_m3_model(model):
-        return _call_minimax_m3_until_available(
+    if _is_nvidia_client(client):
+        return _call_until_provider_available(
             messages,
             model,
             temperature,
             client=client,
+            provider_name="NVIDIA API",
+            **kwargs,
+        )
+    if _is_minimax_m3_model(model):
+        return _call_until_provider_available(
+            messages,
+            model,
+            temperature,
+            client=client,
+            provider_name="MiniMax M3",
             **kwargs,
         )
     return _call_standard_llm_api(

@@ -35,6 +35,25 @@ def test_pyinstaller_receives_release_version(monkeypatch):
     assert captured["env"]["SUBFORGE_BUILD_VERSION"] == "9.8.7"
 
 
+def test_macos_resign_clears_bundle_metadata_before_codesign(tmp_path, monkeypatch):
+    app = tmp_path / "dist" / "SubForge.app"
+    app.mkdir(parents=True)
+    commands = []
+    monkeypatch.setattr(build_desktop, "DIST_DIR", tmp_path / "dist")
+    monkeypatch.setattr(build_desktop.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(build_desktop, "_run", lambda command, **_kwargs: commands.append(command))
+
+    build_desktop.resign_macos_app()
+
+    staged_app = commands[0][-1]
+    assert commands[0][:2] == ["xattr", "-cr"]
+    assert commands[1][:2] == ["codesign", "--force"]
+    assert commands[2][:2] == ["codesign", "--verify"]
+    assert commands[1][-1] == staged_app
+    assert commands[2][-1] == staged_app
+    assert app.exists()
+
+
 def test_packaged_mlx_whisper_gets_numba_fallback(tmp_path):
     package_dir = tmp_path / "mlx_whisper"
     package_dir.mkdir()

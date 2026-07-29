@@ -1,5 +1,5 @@
 from subforge.core.asr.asr_data import ASRData, ASRDataSeg, ASRWord
-from subforge.core.optimize.optimize import SubtitleOptimizer
+from subforge.core.optimize.optimize import SubtitleOptimizer, _lexical_edit_violations
 
 
 def test_repair_subtitle_preserves_original_keys_without_guessing_alignment():
@@ -104,6 +104,38 @@ def test_validation_allows_local_recognition_correction():
 
     assert valid
     assert not error
+
+
+def test_lexical_guard_rejects_deleting_meaningful_discourse_marker():
+    violations = _lexical_edit_violations(
+        "After World War II, basically in the aftermath of the war",
+        "After World War II, in the aftermath of the war",
+    )
+
+    assert violations
+
+
+def test_lexical_guard_allows_narrow_time_phrase_correction():
+    assert not _lexical_edit_violations(
+        "At the last 30 years",
+        "In the last 30 years",
+    )
+
+
+def test_lexical_guard_rejects_generic_short_preposition_change():
+    violations = _lexical_edit_violations(
+        "Meet me at the station",
+        "Meet me in the station",
+    )
+
+    assert violations
+
+
+def test_lexical_guard_allows_explicit_fillers_and_adjacent_duplicates():
+    assert not _lexical_edit_violations(
+        "You know the the plant plants are operating",
+        "The plants are operating",
+    )
 
 
 def test_global_ownership_check_repairs_copy_across_batch_boundary(monkeypatch):

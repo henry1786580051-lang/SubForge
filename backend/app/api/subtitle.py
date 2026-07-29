@@ -220,6 +220,8 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
         task_manager.update_progress(task_id, 15, "Splitting subtitle segments...")
         thread_num = get_config_value("thread_num", 3)
         batch_size = get_config_value("batch_size", 10)
+        max_word_count_cjk = get_config_value("max_word_count_cjk", 25)
+        max_word_count_english = get_config_value("max_word_count_english", 18)
 
         async def _run_stage(instance, function, *args):
             stop = getattr(instance, "stop", None)
@@ -243,6 +245,8 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
             thread_num=thread_num,
             model=llm_model,
             llm_client=llm_client,
+            max_word_count_cjk=max_word_count_cjk,
+            max_word_count_english=max_word_count_english,
             update_callback=_on_split_progress,
         )
         asr_data = await _run_stage(splitter, splitter.split_subtitle, asr_data)

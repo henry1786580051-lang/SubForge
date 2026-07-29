@@ -647,7 +647,7 @@ class SubtitleConfig:
     batch_size: int = 10
     # 字幕布局和分割
     subtitle_layout: SubtitleLayoutEnum = SubtitleLayoutEnum.ORIGINAL_ON_TOP
-    max_word_count_cjk: int = 12
+    max_word_count_cjk: int = 25
     max_word_count_english: int = 18
     need_split: bool = True
     # 重断句字符限制

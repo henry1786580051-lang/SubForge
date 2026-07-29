@@ -2,11 +2,11 @@
 
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useAppStore } from "@/store/appStore";
-import { filesApi, API_BASE } from "@/lib/api";
+import { filesApi, openNativeFile, API_BASE } from "@/lib/api";
 import { formatTime, formatDuration, formatSize, parseSrtTime } from "@/lib/format";
 
 export function VideoPanel() {
-  const { videoFile, setVideoFile, fileInfo, setFileInfo, subtitles, currentTime, setCurrentTime, isPlaying, setIsPlaying, seekToTime, setSeekToTime } = useAppStore();
+  const { videoFile, setVideoFile, fileInfo, setFileInfo, subtitles, currentTime, setCurrentTime, isPlaying, setIsPlaying, seekToTime, setSeekToTime, isProcessing } = useAppStore();
   const [isDragging, setIsDragging] = useState(false);
   const [urlInput, setUrlInput] = useState("");
   const [showUrlInput, setShowUrlInput] = useState(false);
@@ -20,6 +20,10 @@ export function VideoPanel() {
     filesApi.info(videoFile).then(setFileInfo).catch(() => {});
   }, [videoFile, setFileInfo]);
 
+  useEffect(() => {
+    if (isProcessing) setIsPlaying(false);
+  }, [isProcessing, setIsPlaying]);
+
   // Seek video when subtitle double-clicked
   useEffect(() => {
     if (seekToTime === null || !videoRef.current) return;
@@ -30,6 +34,13 @@ export function VideoPanel() {
   const handleFile = useCallback(async (file: File) => {
     setIsUploading(true);
     try {
+      if (
+        file.size > 1024 * 1024 * 1024 &&
+        typeof window !== "undefined" &&
+        "pywebview" in window
+      ) {
+        throw new Error("大于 1GB 的素材请点击导入按钮选择，避免在应用内复制整份文件");
+      }
       const { file_path } = await filesApi.upload(file);
       setVideoFile(file_path);
     } catch (err) { useAppStore.getState().setError(err instanceof Error ? err.message : "上传失败"); } finally { setIsUploading(false); }
@@ -41,7 +52,21 @@ export function VideoPanel() {
     e.preventDefault(); setIsDragging(false);
     if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
   }, [handleFile]);
-  const handleFileSelect = useCallback(() => { fileInputRef.current?.click(); }, []);
+  const handleFileSelect = useCallback(async () => {
+    try {
+      const selected = await openNativeFile("media");
+      if (!selected.available) {
+        fileInputRef.current?.click();
+        return;
+      }
+      if (!selected.path) return;
+      setVideoFile(selected.path);
+      const info = await filesApi.info(selected.path);
+      setFileInfo(info);
+    } catch (err) {
+      useAppStore.getState().setError(err instanceof Error ? err.message : "导入失败");
+    }
+  }, [setFileInfo, setVideoFile]);
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) handleFile(e.target.files[0]);
   }, [handleFile]);
@@ -113,7 +138,7 @@ export function VideoPanel() {
                 ? "border-accent/50 bg-accent-dim"
                 : "border-border hover:border-accent/30 hover:bg-accent-dim drop-zone-idle"
             }`}
-            onClick={handleFileSelect}
+            onClick={() => void handleFileSelect()}
           >
             <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-4 transition-all duration-300 ${isDragging ? "bg-accent-dim scale-110" : "bg-gradient-to-br from-[rgba(0,0,0,0.02)] to-[rgba(0,0,0,0.04)]"}`}>
               <svg className={`w-8 h-8 transition-colors ${isDragging ? "text-accent" : "text-text-muted"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -125,10 +150,11 @@ export function VideoPanel() {
           </div>
         ) : (
           <div className="relative flex aspect-video h-[90%] max-h-[90%] w-auto max-w-[85%] items-center justify-center overflow-hidden rounded-xl border border-border bg-black shadow-md">
-            {hasVideo && (
+            {hasVideo && !isProcessing && (
               <video
                 ref={videoRef}
                 src={`${API_BASE}/api/files/stream?path=${encodeURIComponent(videoFile)}`}
+                preload="metadata"
                 className="absolute inset-0 w-full h-full object-contain"
                 onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime || 0)}
                 onLoadedMetadata={() => setDuration(videoRef.current?.duration || 0)}
@@ -154,16 +180,22 @@ export function VideoPanel() {
                 </div>
               </div>
             )}
-            {thumbnailUrl && !isPlaying && (
+            {thumbnailUrl && (!isPlaying || isProcessing) && (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={thumbnailUrl} className="absolute inset-0 w-full h-full object-contain opacity-30" alt="" />
             )}
-            {!isPlaying && (
+            {!isPlaying && !isProcessing && (
               <div className="text-center relative z-10 cursor-pointer" onClick={togglePlay}>
                 <div className="w-16 h-16 mx-auto mb-3 rounded-full bg-white/10 flex items-center justify-center hover:bg-white/20 transition-colors backdrop-blur-sm">
                   <svg className="w-8 h-8 text-white/80" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
                 </div>
                 <p className="text-sm text-white/60 truncate max-w-xs">{videoFile.split("/").pop() || videoFile}</p>
+              </div>
+            )}
+            {isProcessing && (
+              <div className="relative z-10 flex flex-col items-center text-center">
+                <div className="h-9 w-9 rounded-full border-2 border-white/20 border-t-white/80 animate-spin" />
+                <p className="mt-3 text-sm text-white/75">转录期间已暂停视频解码</p>
               </div>
             )}
             {fileInfo && (
