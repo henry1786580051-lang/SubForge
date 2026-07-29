@@ -421,7 +421,9 @@ def resign_macos_app() -> None:
     # Finder continuously attaches FinderInfo to app bundles assembled below
     # Desktop. Stage the bundle outside Finder's watched tree while signing so
     # the attribute cannot race codesign.
-    with tempfile.TemporaryDirectory(prefix="subforge-codesign-", dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(
+        prefix="subforge-codesign-", dir=tempfile.gettempdir()
+    ) as temp:
         staged_app = Path(temp) / app.name
         shutil.move(app, staged_app)
         try:
