@@ -297,6 +297,8 @@ class TestSplitByLLM:
             return "split"
 
         def fake_call_llm(*args, **kwargs):
+            captured["reasoning_mode"] = kwargs.get("reasoning_mode")
+            captured["max_output_tokens"] = kwargs.get("max_output_tokens")
             return _FakeResponse(
                 "one two three four five six seven eight nine ten eleven twelve "
                 "thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty"
@@ -313,4 +315,6 @@ class TestSplitByLLM:
 
         assert captured["max_word_count_english"] == 16
         assert captured["hard_max_word_count_english"] == 20
+        assert captured["reasoning_mode"] == "disabled"
+        assert captured["max_output_tokens"] == 4096
         assert len(result) == 1

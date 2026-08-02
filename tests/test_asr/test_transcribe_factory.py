@@ -253,6 +253,41 @@ def test_transcribe_passes_fixed_speaker_count_to_diarization(monkeypatch):
     assert received["num_speakers"] == 5
 
 
+def test_transcribe_auto_diarization_failure_continues_without_labels(monkeypatch):
+    diarization = importlib.import_module("subforge.core.asr.speaker_diarization")
+    speech_vad = importlib.import_module("subforge.core.asr.speech_vad")
+    progress_messages = []
+
+    monkeypatch.setattr(
+        transcribe_module,
+        "_create_asr_instance",
+        lambda *_args, **_kwargs: DummyWordTimestampASR(),
+    )
+    monkeypatch.setattr(
+        diarization,
+        "require_local_diarization_model",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("model is a cloud placeholder")
+        ),
+    )
+    monkeypatch.setattr(speech_vad, "is_available", lambda: False)
+    config = TranscribeConfig(
+        transcribe_model=TranscribeModelEnum.WHISPERX,
+        need_word_time_stamp=True,
+        enable_audio_enhancement=False,
+        speaker_diarization="auto",
+    )
+
+    result = transcribe_module.transcribe(
+        "original.wav",
+        config,
+        callback=lambda _progress, message: progress_messages.append(message),
+    )
+
+    assert [segment.speaker_id for segment in result.segments] == [""] * 4
+    assert "Speaker analysis unavailable; continuing without speaker labels..." in progress_messages
+
+
 def test_transcribe_multispeaker_always_skips_enhancement(monkeypatch):
     enhancer = importlib.import_module("subforge.core.asr.audio_enhancer")
     diarization = importlib.import_module("subforge.core.asr.speaker_diarization")

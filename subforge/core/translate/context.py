@@ -16,7 +16,8 @@ from subforge.core.utils.logger import setup_logger
 logger = setup_logger("translation_context")
 
 MAX_CONTEXT_CHARS = 12_000
-MAX_TERMS = 80
+MAX_TERMS = 48
+MAX_TERMINOLOGY_CHARS = 4_000
 CONTEXT_WINDOWS = 5
 
 
@@ -95,7 +96,7 @@ def _format_terms(value) -> str:
             if isinstance(item, dict):
                 source = str(item.get("source") or item.get("term") or "").strip()
                 target = str(item.get("target") or item.get("translation") or "").strip()
-                note = str(item.get("note") or "").strip()
+                note = str(item.get("note") or "").strip()[:120]
                 if not source:
                     continue
                 rendered = source
@@ -108,8 +109,8 @@ def _format_terms(value) -> str:
                 term = str(item).strip()
                 if term:
                     terms.append(term)
-        return "\n".join(f"- {term}" for term in terms)
-    return str(value or "").strip()
+        return "\n".join(f"- {term}" for term in terms)[:MAX_TERMINOLOGY_CHARS].rstrip()
+    return str(value or "").strip()[:MAX_TERMINOLOGY_CHARS].rstrip()
 
 
 def build_translation_context(
@@ -166,18 +167,27 @@ def build_translation_context(
     }
 
     try:
-        response = call_llm(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
-            ],
-            model=model,
-            temperature=0.1,
-            use_cache=use_cache,
-            client=llm_client,
-        )
-        raw = get_response_text(response)
-        parsed = parse_json_object(raw)
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+        ]
+
+        def request_context() -> dict[str, Any]:
+            response = call_llm(
+                messages=messages,
+                model=model,
+                temperature=0.1,
+                use_cache=use_cache,
+                client=llm_client,
+                # Context extraction is structured summarization. DeepSeek thinking
+                # adds substantial latency here and can exhaust the output budget
+                # before emitting the required JSON.
+                reasoning_mode="disabled",
+                max_output_tokens=4096,
+            )
+            return parse_json_object(get_response_text(response))
+
+        parsed = request_context()
         if not isinstance(parsed, dict):
             raise ValueError(f"context response must be dict, got {type(parsed).__name__}")
         return TranslationContext(

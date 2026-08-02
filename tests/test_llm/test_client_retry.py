@@ -175,3 +175,90 @@ def test_nvidia_does_not_retry_authentication_errors(monkeypatch):
 
     with pytest.raises(openai.AuthenticationError):
         client_module._call_llm_api([], "nvidia/nemotron-3-nano-30b-a3b", client=client)
+
+
+class _CapturingCompletions:
+    def __init__(self):
+        self.kwargs = None
+
+    def create(self, **kwargs):
+        self.kwargs = kwargs
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))])
+
+
+def _capturing_client(base_url: str):
+    completions = _CapturingCompletions()
+    client = SimpleNamespace(
+        _subforge_base_url=base_url,
+        chat=SimpleNamespace(completions=completions),
+    )
+    return client, completions
+
+
+def test_deepseek_thinking_request_uses_official_controls(monkeypatch):
+    client, completions = _capturing_client("https://api.deepseek.com/v1")
+    monkeypatch.setattr(client_module, "log_llm_response", lambda _response: None)
+
+    client_module.call_llm(
+        [{"role": "user", "content": "translate"}],
+        "deepseek-v4-flash",
+        temperature=0.2,
+        client=client,
+        reasoning_mode="enabled",
+        max_output_tokens=8192,
+    )
+
+    assert completions.kwargs["extra_body"] == {"thinking": {"type": "enabled"}}
+    assert completions.kwargs["reasoning_effort"] == "high"
+    assert completions.kwargs["max_tokens"] == 8192
+    assert "temperature" not in completions.kwargs
+
+
+def test_deepseek_non_thinking_request_keeps_sampling(monkeypatch):
+    client, completions = _capturing_client("https://api.deepseek.com")
+    monkeypatch.setattr(client_module, "log_llm_response", lambda _response: None)
+
+    client_module.call_llm(
+        [{"role": "user", "content": "split"}],
+        "deepseek-v4-flash",
+        temperature=0.1,
+        client=client,
+        reasoning_mode="disabled",
+        max_output_tokens=4096,
+    )
+
+    assert completions.kwargs["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert completions.kwargs["max_tokens"] == 4096
+    assert completions.kwargs["temperature"] == 0.1
+    assert "reasoning_effort" not in completions.kwargs
+
+
+def test_deepseek_controls_are_not_sent_to_other_providers(monkeypatch):
+    client, completions = _capturing_client("https://integrate.api.nvidia.com/v1")
+    monkeypatch.setattr(client_module, "log_llm_response", lambda _response: None)
+
+    client_module.call_llm(
+        [{"role": "user", "content": "audit"}],
+        "deepseek-ai/deepseek-v4-pro",
+        temperature=0.3,
+        client=client,
+        reasoning_mode="enabled",
+        max_output_tokens=8192,
+    )
+
+    assert completions.kwargs["temperature"] == 0.3
+    assert "extra_body" not in completions.kwargs
+    assert "reasoning_effort" not in completions.kwargs
+    assert "max_tokens" not in completions.kwargs
+
+
+def test_call_llm_rejects_unknown_reasoning_mode():
+    client, _completions = _capturing_client("https://api.deepseek.com")
+
+    with pytest.raises(ValueError, match="Unsupported reasoning_mode"):
+        client_module.call_llm(
+            [],
+            "deepseek-v4-flash",
+            client=client,
+            reasoning_mode="turbo",  # type: ignore[arg-type]
+        )

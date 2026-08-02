@@ -4,9 +4,10 @@ import difflib
 import json
 import re
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from decimal import Decimal, InvalidOperation
-from typing import Any, Callable, Dict, List, Optional, Tuple, cast
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, cast
 
 import openai
 
@@ -580,17 +581,37 @@ Compare every source with the translation under the SAME key. Read the ordered i
                 "units, and high-confidence ASR corrections. Never flag or rewrite an item "
                 f"merely to add details from it:\n{context_text}"
             )
-        response = call_llm(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": json.dumps({"items": items}, ensure_ascii=False)},
-            ],
-            model=self.model,
-            temperature=0.1,
-            use_cache=self.use_cache,
-            client=self.llm_client,
-        )
-        audit = parse_json_object(get_response_text(response))
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": json.dumps({"items": items}, ensure_ascii=False)},
+        ]
+
+        def request_audit(
+            reasoning_mode: Literal["enabled", "disabled"],
+            max_output_tokens: int,
+        ) -> Dict[str, Any]:
+            response = call_llm(
+                messages=messages,
+                model=self.model,
+                temperature=0.1,
+                use_cache=self.use_cache,
+                client=self.llm_client,
+                reasoning_mode=reasoning_mode,
+                max_output_tokens=max_output_tokens,
+            )
+            return parse_json_object(get_response_text(response))
+
+        try:
+            audit = request_audit("enabled" if focused else "disabled", 4096)
+        except ValueError as error:
+            if not focused:
+                raise
+            logger.warning(
+                "Thinking alignment audit produced no usable verdict; retrying without "
+                "thinking: %s",
+                error,
+            )
+            audit = request_audit("disabled", 4096)
         alignment = audit.get("alignment")
         if isinstance(alignment, dict):
             normalized_alignment = {str(key): value for key, value in alignment.items()}
@@ -675,10 +696,17 @@ Translate ONLY current_source. Use previous_source and next_source solely to res
                 temperature=0.1,
                 use_cache=self.use_cache,
                 client=self.llm_client,
+                reasoning_mode="enabled" if attempt == 0 else "disabled",
+                max_output_tokens=4096,
             )
-            translated = get_response_text(response).strip()
+            try:
+                translated = get_response_text(response).strip()
+            except ValueError as error:
+                translated = ""
+                last_error = str(error)
             if not translated or self._looks_like_placeholder_translation(translated):
-                last_error = "alignment item translation was empty or a placeholder"
+                if translated:
+                    last_error = "alignment item translation was empty or a placeholder"
             else:
                 translated = self._apply_alignment_role_hint(translated, role_hint)
                 asr_error = self._validate_alignment_asr_hint(translated, asr_hint)
@@ -694,18 +722,17 @@ Translate ONLY current_source. Use previous_source and next_source solely to res
                         return translated
                     last_error = error
             if attempt == 0:
-                messages.extend(
-                    [
-                        {"role": "assistant", "content": translated},
-                        {
-                            "role": "user",
-                            "content": (
-                                f"Validation failed: {last_error}. Correct only that error. "
-                                "Preserve the exact current_source boundary and return only "
-                                "the complete corrected translation."
-                            ),
-                        },
-                    ]
+                if translated:
+                    messages.append({"role": "assistant", "content": translated})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Validation failed: {last_error}. Correct only that error. "
+                            "Preserve the exact current_source boundary and return only "
+                            "the complete corrected translation."
+                        ),
+                    }
                 )
         raise ValueError(last_error)
 
@@ -978,6 +1005,8 @@ Delete every fact, action, object, name, number, or clause that current_source d
             temperature=0.0,
             use_cache=self.use_cache,
             client=self.llm_client,
+            reasoning_mode="disabled",
+            max_output_tokens=2048,
         )
         cleaned = get_response_text(response).strip()
         if not cleaned or self._looks_like_placeholder_translation(cleaned):
@@ -1045,6 +1074,8 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 temperature=self.TRANSLATION_TEMPERATURE,
                 use_cache=self.use_cache,
                 client=self.llm_client,
+                reasoning_mode="disabled",
+                max_output_tokens=4096,
             )
             try:
                 content = get_response_text(response)
@@ -2303,6 +2334,8 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 temperature=0.2,
                 use_cache=self.use_cache,
                 client=self.llm_client,
+                reasoning_mode="disabled",
+                max_output_tokens=4096,
             )
             try:
                 response_dict = parse_json_object(get_response_text(response))
@@ -2434,6 +2467,8 @@ Delete every fact, action, object, name, number, or clause that current_source d
                         temperature=self.TRANSLATION_TEMPERATURE,
                         use_cache=self.use_cache,
                         client=self.llm_client,
+                        reasoning_mode="disabled",
+                        max_output_tokens=2048,
                     )
                     translated_text = get_response_text(response)
                     if _looks_untranslated(translated_text, data.original_text):
@@ -2960,24 +2995,23 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 and position_by_index[index] + 1 < len(source_list)
             }
         )
-        for window in self._chinese_fluency_windows(source_list, confirmed_positions):
-            current = [translated_by_index[item.index] for item in window]
-            repaired = None
-            repair_error: Exception | None = None
-            feedback = ""
-            for _attempt in range(self.MAX_STEPS):
-                try:
-                    candidate = self._rewrite_chinese_fluency_window(
-                        window,
-                        current,
-                        feedback=feedback,
-                    )
-                    self._validate_chinese_fluency_repair(window, current, candidate)
-                    repaired = candidate
-                    break
-                except Exception as error:
-                    repair_error = error
-                    feedback = str(error)
+        windows = self._chinese_fluency_windows(source_list, confirmed_positions)
+        workers = min(self.thread_num, len(windows), 8)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(
+                    self._repair_chinese_fluency_window_with_retries,
+                    window,
+                    [translated_by_index[item.index] for item in window],
+                ): window
+                for window in windows
+            }
+            results = [future.result() for future in as_completed(futures)]
+
+        for window, repaired, repair_error in sorted(
+            results,
+            key=lambda result: result[0][0].index,
+        ):
             if repaired is None:
                 logger.warning(
                     "Chinese boundary fluency repair failed for subtitles %s; retaining "
@@ -2992,6 +3026,32 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 "Chinese boundary fluency repair corrected subtitles: %s",
                 [item.index for item in window],
             )
+
+    def _repair_chinese_fluency_window_with_retries(
+        self,
+        window: List[SubtitleProcessData],
+        current: List[SubtitleProcessData],
+    ) -> tuple[
+        List[SubtitleProcessData],
+        Optional[List[SubtitleProcessData]],
+        Optional[Exception],
+    ]:
+        """Repair one independent window without mutating document state."""
+        repair_error: Exception | None = None
+        feedback = ""
+        for _attempt in range(self.MAX_STEPS):
+            try:
+                candidate = self._rewrite_chinese_fluency_window(
+                    window,
+                    current,
+                    feedback=feedback,
+                )
+                self._validate_chinese_fluency_repair(window, current, candidate)
+                return window, candidate, None
+            except Exception as error:
+                repair_error = error
+                feedback = str(error)
+        return window, None, repair_error
 
     def _chinese_fluency_candidates(
         self,
@@ -3068,7 +3128,10 @@ Delete every fact, action, object, name, number, or clause that current_source d
         if re.search(r"(?:我|你|他|她|它|我们|你们|他们)$", left) and len(
             re.sub(r"\s+", "", left)
         ) >= 5:
-            return "subject stranded from its predicate"
+            # A final pronoun may be either a stranded subject ("问题是他们")
+            # or a perfectly natural object ("我会立刻选他"). Let the
+            # context-aware audit decide instead of rejecting it as a hard rule.
+            return "possible pronoun boundary"
 
         if re.search(r"(?:这个|这些|那种)$", left) and len(re.sub(r"\s+", "", left)) <= 10:
             return "possible demonstrative split"
@@ -3143,6 +3206,8 @@ Delete every fact, action, object, name, number, or clause that current_source d
             temperature=0,
             use_cache=self.use_cache,
             client=self.llm_client,
+            reasoning_mode="disabled",
+            max_output_tokens=4096,
         )
         payload = parse_json_object(get_response_text(response))
         boundaries = payload.get("awkward_boundaries")
@@ -3216,7 +3281,9 @@ Rewrite only the provided translations. Keep every key, source subtitle, timesta
                     "source split like 'the problem is they' / 'made it', prefer '但这里有个问题' "
                     "/ '他们把它做成了' instead of preserving '他们' at the first key's end. "
                     "For 'a serrated' / 'edge', prefer '这里采用锯齿状设计' / '这样的边缘' "
-                    "instead of ending the first key with 的."
+                    "instead of ending the first key with 的. For 'I'd pick him in a second' "
+                    "/ 'as an appealing winner', prefer '我会立刻选他' / '他是个很有吸引力的赢家' "
+                    "instead of starting the second key with 作为."
                     + retry_instruction
                 ),
             },
@@ -3228,6 +3295,10 @@ Rewrite only the provided translations. Keep every key, source subtitle, timesta
             temperature=self.TRANSLATION_TEMPERATURE,
             use_cache=self.use_cache,
             client=self.llm_client,
+            # The boundary was already independently confirmed by the audit. This
+            # call only performs a narrow rewrite and is guarded by strict validation.
+            reasoning_mode="disabled",
+            max_output_tokens=4096,
         )
         result = parse_json_object(get_response_text(response)).get("translations")
         expected = set(payload)
@@ -3286,7 +3357,11 @@ Rewrite only the provided translations. Keep every key, source subtitle, timesta
             index: detail
             for index, detail in remaining_details.items()
             if detail["signal"]
-            not in {"possible function-word split", "possible demonstrative split"}
+            not in {
+                "possible function-word split",
+                "possible demonstrative split",
+                "possible pronoun boundary",
+            }
         }
         if hard_remaining:
             raise ValueError(

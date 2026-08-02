@@ -125,6 +125,33 @@ def _cleanup_desktop_session(server=None, *, cleanup_uploads: bool = True) -> No
         pass
 
 
+def _begin_desktop_shutdown(
+    server,
+    server_thread: threading.Thread,
+    exit_started: threading.Event,
+    *,
+    hard_exit=None,
+) -> bool:
+    """Start bounded backend shutdown without blocking the native UI thread."""
+    if exit_started.is_set():
+        return False
+    exit_started.set()
+
+    def finish_shutdown():
+        _cleanup_desktop_session(server, cleanup_uploads=False)
+        server_thread.join(timeout=1.5)
+        if not server_thread.is_alive():
+            _cleanup_desktop_session()
+        (hard_exit or os._exit)(0)
+
+    threading.Thread(
+        target=finish_shutdown,
+        name="subforge-desktop-shutdown",
+        daemon=True,
+    ).start()
+    return True
+
+
 def wait_for_server(url: str, server_errors: list[str], timeout_seconds: float = 30.0) -> bool:
     deadline = time.monotonic() + timeout_seconds
     health_url = f"{url}/api/health"
@@ -273,20 +300,14 @@ def main():
         # PyInstaller desktop builds can keep non-UI worker threads alive after
         # the native window closes. Clean this session first, then retain the
         # hard-exit fallback that prevents shutdown hangs.
-        if exit_started.is_set():
-            return
-        exit_started.set()
-        # Let FastAPI cancel background coroutines before the hard-exit fallback.
-        # If native ML work is still running, leave session uploads for the next
-        # startup's stale-file cleanup instead of deleting files under the worker.
-        _cleanup_desktop_session(
+        # Never block the native UI event thread on a model worker. Give the
+        # backend a short grace period, then terminate the frozen process;
+        # stale session files are removed safely on the next startup.
+        _begin_desktop_shutdown(
             server_holder[0] if server_holder else None,
-            cleanup_uploads=False,
+            server_thread,
+            exit_started,
         )
-        server_thread.join(timeout=5.0)
-        if not server_thread.is_alive():
-            _cleanup_desktop_session()
-        os._exit(0)
 
     try:
         window.events.closed += force_exit

@@ -11,7 +11,7 @@ export function SubtitlePanel({
   showPrompt?: boolean;
   showTranslateActions?: boolean;
 } = {}) {
-  const { subtitles, setSubtitles, updateSubtitle, selectedIds, toggleSelect, selectAll, deselectAll, subtitleFile, config, setSeekToTime, setError } = useAppStore();
+  const { subtitles, setSubtitles, updateSubtitle, selectedIds, toggleSelect, selectAll, deselectAll, subtitleFile, config, setError } = useAppStore();
   const [editingCell, setEditingCell] = useState<{ id: number; field: "text" | "translated" } | null>(null);
   const [editValue, setEditValue] = useState("");
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: number | null } | null>(null);
@@ -19,9 +19,6 @@ export function SubtitlePanel({
   const [promptExpanded, setPromptExpanded] = useState(false);
   const promptDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (promptDebounceRef.current) clearTimeout(promptDebounceRef.current); }, []);
-
-  const parseSrtTime = (t: string) => { const p = t.replace(",", ".").split(":"); return (parseFloat(p[0]) || 0) * 3600 + (parseFloat(p[1]) || 0) * 60 + (parseFloat(p[2]) || 0); };
-  const seekToSubtitle = useCallback((start: string) => { setSeekToTime(parseSrtTime(start)); }, [setSeekToTime]);
 
   const startEdit = useCallback((id: number, field: "text" | "translated", value: string) => { setEditingCell({ id, field }); setEditValue(value); }, []);
   const commitEdit = useCallback(() => { if (!editingCell) return; updateSubtitle(editingCell.id, editingCell.field, editValue); setEditingCell(null); }, [editingCell, editValue, updateSubtitle]);
@@ -369,7 +366,7 @@ export function SubtitlePanel({
                     <input type="checkbox" checked={selectedIds.has(sub.id)} onChange={() => toggleSelect(sub.id)} onClick={(e) => e.stopPropagation()} className="accent-accent w-3 h-3" />
                   </td>
                   <td className="px-3 py-2 text-[12px] text-text-muted font-mono border-b border-[rgba(0,0,0,0.04)]">{sub.id}</td>
-                  <td className="px-3 py-2 border-b border-[rgba(0,0,0,0.04)] cursor-pointer hover:bg-accent-dim transition-colors" onDoubleClick={(e) => { e.stopPropagation(); seekToSubtitle(sub.start); }} title="双击跳转到此时间">
+                  <td className="px-3 py-2 border-b border-[rgba(0,0,0,0.04)]">
                     <div className="flex items-center gap-1">
                       <span className="text-[12px] text-text-muted font-mono">{sub.start}</span>
                       <span className="text-[11px] text-text-muted">&rarr;</span>

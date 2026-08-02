@@ -22,8 +22,10 @@ class DummyResponse:
 def test_optimizer_can_bypass_llm_cache(monkeypatch):
     calls = []
 
-    def fake_call_llm(*, messages, model, temperature, use_cache=True, client=None):
-        calls.append(use_cache)
+    def fake_call_llm(
+        *, messages, model, temperature, use_cache=True, client=None, **_kwargs
+    ):
+        calls.append((use_cache, _kwargs.get("reasoning_mode")))
         return DummyResponse(json.dumps({"1": "Hello world"}))
 
     monkeypatch.setattr(optimize_module, "call_llm", fake_call_llm)
@@ -39,13 +41,15 @@ def test_optimizer_can_bypass_llm_cache(monkeypatch):
     result = optimizer.agent_loop({"1": "Hello world"})
 
     assert result == {"1": "Hello world"}
-    assert calls == [False]
+    assert calls == [(False, "disabled")]
 
 
 def test_optimizer_preserves_original_batch_after_invalid_retries(monkeypatch):
     calls = []
 
-    def fake_call_llm(*, messages, model, temperature, use_cache=True, client=None):
+    def fake_call_llm(
+        *, messages, model, temperature, use_cache=True, client=None, **_kwargs
+    ):
         calls.append(messages)
         return DummyResponse(
             json.dumps(

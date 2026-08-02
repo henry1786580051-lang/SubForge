@@ -7,6 +7,7 @@ import logging
 import os
 import platform
 import re
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -20,6 +21,7 @@ DEFAULT_DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"
 LOCAL_DIARIZATION_DIR = "pyannote-speaker-diarization-community-1"
 DIARIZATION_CACHE_VERSION = 1
 _DIARIZATION_MODEL_CACHE = SingleEntryModelCache()
+_DARWIN_DATALESS_FLAG = 0x40000000
 
 if platform.system() == "Darwin" and platform.machine() == "arm64":
     os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
@@ -34,6 +36,42 @@ class SpeakerTurn:
     speaker_id: str
 
 
+def _is_local_file_available(path: Path, minimum_size: int) -> bool:
+    """Reject cloud placeholders that have metadata but no readable local data."""
+    try:
+        metadata = path.stat()
+    except OSError:
+        return False
+    flags = int(getattr(metadata, "st_flags", 0) or 0)
+    return (
+        stat.S_ISREG(metadata.st_mode)
+        and metadata.st_size >= minimum_size
+        and not flags & _DARWIN_DATALESS_FLAG
+    )
+
+
+def _dataless_model_files(path: Path) -> list[Path]:
+    if platform.system() != "Darwin":
+        return []
+    required = (
+        "config.yaml",
+        "segmentation/pytorch_model.bin",
+        "embedding/pytorch_model.bin",
+        "plda/plda.npz",
+        "plda/xvec_transform.npz",
+    )
+    result = []
+    for name in required:
+        candidate = path / name
+        try:
+            flags = int(getattr(candidate.stat(), "st_flags", 0) or 0)
+        except OSError:
+            continue
+        if flags & _DARWIN_DATALESS_FLAG:
+            result.append(candidate)
+    return result
+
+
 def is_diarization_model_dir(path: str | Path) -> bool:
     """Return whether a local pyannote pipeline snapshot is usable."""
     model_dir = Path(path).expanduser()
@@ -45,8 +83,7 @@ def is_diarization_model_dir(path: str | Path) -> bool:
         "plda/xvec_transform.npz": 1024,
     }
     return model_dir.is_dir() and all(
-        (model_dir / name).is_file()
-        and (model_dir / name).stat().st_size >= minimum
+        _is_local_file_available(model_dir / name, minimum)
         for name, minimum in required.items()
     )
 
@@ -66,6 +103,17 @@ def resolve_diarization_model(model: str, model_dir: str | Path | None = None) -
 
 def require_local_diarization_model(model: str, model_dir: str | Path | None = None) -> str:
     """Resolve a local model or fail before the expensive ASR stage starts."""
+    candidates = [Path(str(model)).expanduser()]
+    if model_dir:
+        candidates.append(Path(model_dir).expanduser() / LOCAL_DIARIZATION_DIR)
+    for candidate in candidates:
+        dataless = _dataless_model_files(candidate)
+        if dataless:
+            raise RuntimeError(
+                "Community-1 model files are cloud placeholders and are not available "
+                "offline. In Finder, download the model folder or download the speaker "
+                "model again in WhisperX settings."
+            )
     resolved = resolve_diarization_model(model, model_dir)
     if not is_diarization_model_dir(resolved):
         raise RuntimeError(
@@ -239,6 +287,7 @@ def diarize_audio(
         pipeline_call: Any = active_pipeline
         return pipeline_call(audio, **kwargs)
 
+    model_loaded = False
     try:
         cache_key = (
             str(Path(resolved_model).resolve()),
@@ -246,8 +295,14 @@ def diarize_audio(
             id(Pipeline.from_pretrained),
         )
         with _DIARIZATION_MODEL_CACHE.acquire(cache_key, _load_pipeline) as pipeline:
+            model_loaded = True
             output = _run_pipeline(pipeline, selected_device)
     except Exception as exc:
+        if not model_loaded:
+            raise RuntimeError(
+                "Unable to load the local Community-1 model. Verify that every model "
+                "file is stored locally and readable."
+            ) from exc
         if selected_device != "mps":
             raise RuntimeError(
                 "Unable to load or run the speaker diarization model. Verify the local "
@@ -261,6 +316,7 @@ def diarize_audio(
         if callback:
             callback(94, "MPS unavailable; retrying speaker analysis on CPU...")
         try:
+            cpu_model_loaded = False
             cpu_cache_key = (
                 str(Path(resolved_model).resolve()),
                 "cpu",
@@ -269,9 +325,14 @@ def diarize_audio(
             with _DIARIZATION_MODEL_CACHE.acquire(
                 cpu_cache_key, _load_pipeline
             ) as pipeline:
+                cpu_model_loaded = True
                 output = _run_pipeline(pipeline, "cpu")
             selected_device = "cpu"
         except Exception as cpu_exc:
+            if not cpu_model_loaded:
+                raise RuntimeError(
+                    "Unable to reload the local Community-1 model for CPU fallback."
+                ) from cpu_exc
             raise RuntimeError(
                 "Speaker diarization failed on both Apple MPS and CPU"
             ) from cpu_exc

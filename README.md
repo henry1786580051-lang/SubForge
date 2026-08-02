@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.4/SubForge-1.1.4-macos-arm64.dmg"><strong>下载 macOS Apple Silicon 版</strong></a>
+  <a href="https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.5/SubForge-1.1.5-macos-arm64.dmg"><strong>下载 macOS Apple Silicon 版</strong></a>
   · <a href="https://github.com/henry1786580051-lang/SubForge/releases">全部版本</a>
   · <a href="https://henry1786580051-lang.github.io/SubForge/">使用文档</a>
   · <a href="https://github.com/henry1786580051-lang/SubForge/issues">问题反馈</a>
@@ -34,13 +34,13 @@ SubForge 面向需要长期处理视频字幕的创作者和本地化工作流�
 | --- | --- | --- |
 | Apple Silicon 使用 MLX，Windows 使用 CTranslate2；WhisperX forced alignment 与 TEN-VAD 保守校准词级边界 | 按上下文和说话人轮次翻译，校验漏译、错位、重复、占位语和思考内容泄漏 | 实时进度、中间结果增量保存、失败条目局部重试、恢复字幕和聚合 LLM 日志 |
 
-### v1.1.4 新增
+### v1.1.5 新增
 
-- **稳定的 MLX 转录**：打包应用在独立工作进程中执行 MLX Whisper，长视频转录不再阻塞桌面界面，并可正常取消与回收资源。
-- **大文件原生导入**：桌面版通过系统文件选择器直接使用本地路径，避免多 GB 视频经浏览器上传层复制导致内存与磁盘压力。
-- **NVIDIA NIM**：新增独立服务商配置、按模型公司折叠的目录与搜索，并在限流时保持任务等待恢复。
-- **字幕质量增强**：加强跨条主语、时间状语、从句归属、相邻重复和翻译内容所有权检查，降低批量提前或延后。
-- **可解释长度策略**：英文字幕使用目标长度与硬上限，默认优先 18 词、语义完整时最多 22 词；设置值现在完整贯通前后端。
+- **实时完整转录结果**：MLX Whisper 在解码过程中持续更新字幕，转录页可滚动查看全部结果，不再只显示最后数条。
+- **结果优先工作台**：移除转录页视频播放器，将主要空间用于实时字幕和时间轴质量，模型与多人模式保持独立配置区。
+- **DeepSeek 分阶段思考**：语义错位审计保留思考能力，结构化断句、上下文和翻译使用受控输出预算，降低长视频耗时与 Token 浪费。
+- **长视频并行修复**：互不冲突的中文边界流畅度窗口并行处理，并继续执行顺序、键和内容所有权验证。
+- **本地模型可靠性**：识别 macOS 云端占位文件，避免把尚未真正下载的 forced alignment 或 Community-1 模型标记为可用。
 
 ## 工作流
 
@@ -111,7 +111,7 @@ flowchart LR
 
 ### 桌面版
 
-- **macOS**：当前 v1.1.4 提供 [Apple Silicon DMG](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.4/SubForge-1.1.4-macos-arm64.dmg)。Whisper、forced alignment 和 Community-1 模型按需下载，不会重复打包进应用。
+- **macOS**：当前 v1.1.5 提供 [Apple Silicon DMG](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.5/SubForge-1.1.5-macos-arm64.dmg)。Whisper、forced alignment 和 Community-1 模型按需下载，不会重复打包进应用。
 - **Windows**：项目支持 WhisperX CTranslate2/CUDA 或 CPU、forced alignment 与 Community-1。请在 [Releases](https://github.com/henry1786580051-lang/SubForge/releases) 查看带 Windows 安装包的版本，或按下方源码方式运行。
 - **Linux**：当前以 Web/CLI 源码运行和开发验证为主，尚未提供正式桌面安装包。
 

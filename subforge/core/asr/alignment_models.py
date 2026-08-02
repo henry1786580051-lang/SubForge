@@ -7,8 +7,24 @@ PyTorch during startup.
 
 from __future__ import annotations
 
+import stat
 from dataclasses import dataclass
 from pathlib import Path
+
+_DARWIN_DATALESS_FLAG = 0x40000000
+
+
+def _is_local_file_ready(path: Path) -> bool:
+    try:
+        metadata = path.stat()
+    except OSError:
+        return False
+    flags = int(getattr(metadata, "st_flags", 0) or 0)
+    return (
+        stat.S_ISREG(metadata.st_mode)
+        and metadata.st_size > 0
+        and not flags & _DARWIN_DATALESS_FLAG
+    )
 
 
 @dataclass(frozen=True)
@@ -136,16 +152,16 @@ def is_alignment_model_ready(spec: AlignmentModelSpec, models_dir: str | Path) -
     """Check whether a managed alignment model is complete enough to load offline."""
     path = alignment_model_path(spec, models_dir)
     if spec.source == "torchaudio":
-        return path.is_file() and path.stat().st_size > 0
+        return _is_local_file_ready(path)
 
     snapshots = path / "snapshots"
     if not snapshots.is_dir():
         return False
     for snapshot in snapshots.iterdir():
-        if not snapshot.is_dir() or not (snapshot / "config.json").is_file():
+        if not snapshot.is_dir() or not _is_local_file_ready(snapshot / "config.json"):
             continue
         if any(
-            (snapshot / filename).is_file()
+            _is_local_file_ready(snapshot / filename)
             for filename in ("model.safetensors", "pytorch_model.bin")
         ):
             return True

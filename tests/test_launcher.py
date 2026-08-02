@@ -1,3 +1,5 @@
+import threading
+
 import launcher
 
 
@@ -79,6 +81,48 @@ def test_cleanup_desktop_session_can_leave_active_uploads_in_place(monkeypatch):
 
     assert server.should_exit is True
     assert calls == []
+
+
+def test_desktop_shutdown_runs_off_ui_thread_and_is_idempotent(monkeypatch):
+    cleanup_calls = []
+    exit_codes = []
+    finished = threading.Event()
+
+    class FakeServerThread:
+        def join(self, timeout):
+            assert timeout == 1.5
+
+        @staticmethod
+        def is_alive():
+            return True
+
+    monkeypatch.setattr(
+        launcher,
+        "_cleanup_desktop_session",
+        lambda server=None, **kwargs: cleanup_calls.append((server, kwargs)),
+    )
+    started = threading.Event()
+
+    def _hard_exit(code):
+        exit_codes.append(code)
+        finished.set()
+
+    server = object()
+    assert launcher._begin_desktop_shutdown(
+        server,
+        FakeServerThread(),
+        started,
+        hard_exit=_hard_exit,
+    )
+    assert not launcher._begin_desktop_shutdown(
+        server,
+        FakeServerThread(),
+        started,
+        hard_exit=_hard_exit,
+    )
+    assert finished.wait(timeout=1)
+    assert cleanup_calls == [(server, {"cleanup_uploads": False})]
+    assert exit_codes == [0]
 
 
 def test_start_server_disables_console_logging(monkeypatch):

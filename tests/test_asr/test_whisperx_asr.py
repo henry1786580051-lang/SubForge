@@ -12,6 +12,7 @@ from subforge.core.asr.whisperx_asr import (
     _LanguageRange,
     _mlx_model_repo,
     _normalize_align_device,
+    _parse_mlx_preview_lines,
     _prepare_mlx_model_path,
     _prepare_spoken_alignment,
     _refine_words_with_char_alignments,
@@ -22,6 +23,24 @@ from subforge.core.asr.whisperx_asr import (
     _subtract_language_ranges,
     default_mlx_model,
 )
+
+
+def test_mlx_verbose_lines_are_parsed_for_live_preview():
+    segments = _parse_mlx_preview_lines(
+        [
+            "Loading model...",
+            "[00:01.250 --> 00:03.500] Hello everyone.",
+            "[01:02:03.004 --> 01:02:05.600] Long recording segment",
+            "[00:09.000 --> 00:09.000] ",
+        ]
+    )
+
+    assert [(item.text, item.start_time, item.end_time) for item in segments] == [
+        ("Hello everyone.", 1250, 3500),
+        ("Long recording segment", 3_723_004, 3_725_600),
+    ]
+    assert all(item.timestamp_granularity == "sentence" for item in segments)
+    assert all(item.timing_source == "native" for item in segments)
 
 
 def test_whisperx_selects_only_confident_supported_language_switches():
@@ -364,16 +383,19 @@ def test_whisperx_runs_mlx_decode_through_worker_protocol(monkeypatch, tmp_path)
 
     class CompletedProcess:
         returncode = 0
+        poll_count = 0
 
-        @staticmethod
-        def poll():
+        def poll(self):
+            self.poll_count += 1
+            if self.poll_count == 1:
+                return None
             return 0
 
         @staticmethod
         def terminate():
             raise AssertionError("completed worker must not be terminated")
 
-    def fake_popen(command, *, env, **_kwargs):
+    def fake_popen(command, *, env, stdout, **_kwargs):
         observed["command"] = command
         request = json.loads(
             open(env["SUBFORGE_MLX_WHISPER_REQUEST"], encoding="utf-8").read()
@@ -390,12 +412,17 @@ def test_whisperx_runs_mlx_decode_through_worker_protocol(monkeypatch, tmp_path)
                 },
                 output,
             )
+        stdout.write("[00:00.100 --> 00:01.000] hello\n")
+        stdout.flush()
         return CompletedProcess()
 
     monkeypatch.setattr("subforge.core.asr.whisperx_asr.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("subforge.core.asr.whisperx_asr.time.sleep", lambda _seconds: None)
     asr = WhisperXASR.__new__(WhisperXASR)
     asr.language = "en"
     asr.cancel_event = None
+    previews = []
+    asr.segment_callback = lambda data: previews.append(data)
 
     result = asr._transcribe_mlx_in_worker(
         str(audio_path),
@@ -410,6 +437,7 @@ def test_whisperx_runs_mlx_decode_through_worker_protocol(monkeypatch, tmp_path)
         "language": "en",
     }
     assert "subforge.core.asr.mlx_worker" in observed["command"]
+    assert [[segment.text for segment in data.segments] for data in previews] == [["hello"]]
 
 
 def test_whisperx_alignment_uses_cpu_for_mps_device():

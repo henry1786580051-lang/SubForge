@@ -820,6 +820,47 @@ class TestValidateLLmResponse:
         assert result == ["2"]
         assert "evaluate every input key" in captured["messages"][0]["content"]
         assert "literal meaning is impossible" in captured["messages"][0]["content"]
+        assert captured["reasoning_mode"] == "disabled"
+        assert captured["max_output_tokens"] == 4096
+
+        translator._request_alignment_flags(
+            {
+                "1": {"source": "one", "translation": "一"},
+                "2": {"source": "two", "translation": "错位"},
+            },
+            focused=True,
+        )
+        assert captured["reasoning_mode"] == "enabled"
+        assert captured["max_output_tokens"] == 4096
+
+    def test_focused_alignment_audit_falls_back_when_thinking_has_no_verdict(
+        self, monkeypatch
+    ):
+        translator = _make_minimax_reflect_translator()
+        calls = []
+        responses = iter(
+            [
+                _text_response("<think>unfinished reasoning"),
+                _llm_response(
+                    {"alignment": {"1": True}, "misaligned_keys": []}
+                ),
+            ]
+        )
+
+        def fake_call(**kwargs):
+            calls.append(kwargs)
+            return next(responses)
+
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm",
+            fake_call,
+        )
+
+        assert translator._request_alignment_flags(
+            {"1": {"source": "one", "translation": "一"}},
+            focused=True,
+        ) == []
+        assert [call["reasoning_mode"] for call in calls] == ["enabled", "disabled"]
 
     def test_alignment_audit_receives_read_only_global_context(self, monkeypatch):
         translator = _make_minimax_reflect_translator()
@@ -1667,6 +1708,26 @@ class TestValidateLLmResponse:
 
         assert t._agent_loop("prompt", {"1": "hello"}) == {"1": "你好"}
 
+    def test_reflect_agent_loop_uses_structured_reflection_without_internal_thinking(
+        self, monkeypatch
+    ):
+        t = _make_translator(is_reflect=True)
+        calls = []
+
+        def fake_call_llm(**kwargs):
+            calls.append(kwargs)
+            return _llm_response({"1": {"native_translation": "你好"}})
+
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm", fake_call_llm
+        )
+
+        assert t._agent_loop("prompt", {"1": "hello"}) == {
+            "1": {"native_translation": "你好"}
+        }
+        assert [call["reasoning_mode"] for call in calls] == ["disabled"]
+        assert [call["max_output_tokens"] for call in calls] == [4096]
+
     def test_single_fallback_rejects_untranslated_cjk_result(self, monkeypatch):
         t = _make_translator()
         calls = []
@@ -2219,6 +2280,48 @@ class TestValidateLLmResponse:
         signal = LLMTranslator._chinese_boundary_signal(left, right)
 
         assert bool(signal) is expected
+
+    def test_pronoun_ending_remains_a_soft_contextual_signal(self):
+        assert LLMTranslator._chinese_boundary_signal(
+            "我会立刻选他",
+            "他是个很有吸引力的赢家",
+        ) == "possible pronoun boundary"
+
+    def test_chinese_fluency_rewrite_uses_non_thinking_request(self, monkeypatch):
+        translator = _make_minimax_reflect_translator()
+        source = [
+            SubtitleProcessData(index=1, original_text="I'd pick him in a second"),
+            SubtitleProcessData(index=2, original_text="as an appealing winner"),
+        ]
+        current = [
+            replace(source[0], translated_text="我会立刻选他"),
+            replace(source[1], translated_text="作为一个有吸引力的赢家"),
+        ]
+        captured = {}
+
+        def fake_call(**kwargs):
+            captured.update(kwargs)
+            return _llm_response(
+                {
+                    "translations": {
+                        "1": "我会立刻选他",
+                        "2": "他是个很有吸引力的赢家",
+                    }
+                }
+            )
+
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm",
+            fake_call,
+        )
+
+        repaired = translator._rewrite_chinese_fluency_window(source, current)
+
+        assert [item.translated_text for item in repaired] == [
+            "我会立刻选他",
+            "他是个很有吸引力的赢家",
+        ]
+        assert captured["reasoning_mode"] == "disabled"
 
     def test_chinese_fluency_candidates_stop_at_speaker_changes(self):
         t = _make_minimax_reflect_translator()

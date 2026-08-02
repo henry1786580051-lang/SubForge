@@ -15,7 +15,6 @@ import {
   type SubtitleSegment,
 } from "@/lib/api";
 import { formatDuration, formatSize, parseSrtTime } from "@/lib/format";
-import { VideoPanel } from "@/components/VideoPanel";
 import { SubtitlePanel } from "@/components/SubtitlePanel";
 
 type TaskStarter = (
@@ -654,19 +653,18 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
 
   return (
     <WorkspaceFrame meta={STEP_META.transcribe}>
-      <div className="grid h-full min-h-0 grid-cols-[minmax(420px,1fr)_minmax(360px,0.72fr)] gap-5 max-xl:grid-cols-1">
-        <section className="grid min-h-0 grid-rows-[minmax(300px,0.62fr)_minmax(250px,0.38fr)] gap-5">
-          <div className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
-            <VideoPanel />
-          </div>
-          <div className="grid min-h-0 grid-cols-2 gap-5 max-lg:grid-cols-1">
-            <Panel title="实时字幕预览" icon="solar:playlist-bold-duotone" fill>
-              <LiveSubtitleList subtitles={subtitles} />
-            </Panel>
-            <Panel title="时间轴质量" icon="solar:shield-warning-bold-duotone" fill>
-              <QualitySummary quality={quality} />
-            </Panel>
-          </div>
+      <div className="grid h-full min-h-0 grid-cols-[minmax(480px,1fr)_minmax(360px,0.72fr)] gap-5 max-xl:grid-cols-1">
+        <section className="grid min-h-0 grid-rows-[minmax(420px,1fr)_auto] gap-5">
+          <Panel
+            title={subtitles.length ? `转录结果 · ${subtitles.length} 条` : "实时转录结果"}
+            icon="solar:playlist-bold-duotone"
+            fill
+          >
+            <LiveSubtitleList subtitles={subtitles} isLive={taskStatus === "running"} />
+          </Panel>
+          <Panel title="时间轴质量" icon="solar:shield-warning-bold-duotone">
+            <QualitySummary quality={quality} compact />
+          </Panel>
         </section>
 
         <aside className="flex min-h-0 flex-col gap-5 overflow-auto pr-1">
@@ -1683,15 +1681,36 @@ function InfoLine({ label, value }: { label: string; value: string }) {
   );
 }
 
-function LiveSubtitleList({ subtitles }: { subtitles: SubtitleSegment[] }) {
-  const visible = subtitles.slice(-8);
-  if (!visible.length) {
+function LiveSubtitleList({
+  isLive = false,
+  subtitles,
+}: {
+  isLive?: boolean;
+  subtitles: SubtitleSegment[];
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const followTailRef = useRef(true);
+
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!container || !followTailRef.current) return;
+    container.scrollTop = container.scrollHeight;
+  }, [subtitles.length]);
+
+  if (!subtitles.length) {
     return <EmptyState icon="solar:playlist-bold-duotone" title="转录开始后会显示实时字幕" />;
   }
   return (
-    <div className="h-full min-h-0 overflow-auto pr-1">
+    <div
+      ref={scrollRef}
+      className="h-full min-h-0 overflow-auto pr-1"
+      onScroll={(event) => {
+        const target = event.currentTarget;
+        followTailRef.current = target.scrollHeight - target.scrollTop - target.clientHeight < 80;
+      }}
+    >
       <div className="space-y-2">
-        {visible.map((sub) => (
+        {subtitles.map((sub) => (
           <div key={sub.id} className="rounded-xl border border-border bg-background p-3">
             <div className="mb-1 flex items-center gap-2 font-mono text-[10px] text-text-muted">
               <span>{String(sub.id).padStart(3, "0")}</span>
@@ -1711,6 +1730,12 @@ function LiveSubtitleList({ subtitles }: { subtitles: SubtitleSegment[] }) {
             </div>
           </div>
         ))}
+        {isLive && (
+          <div className="flex h-9 items-center justify-center gap-2 text-[11px] text-text-muted">
+            <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
+            正在接收转录结果
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1725,7 +1750,7 @@ function QualitySummary({ compact, quality }: { compact?: boolean; quality: Subt
   ];
   return (
     <div className="space-y-3">
-      <div className={`grid ${compact ? "grid-cols-2" : "grid-cols-2"} gap-2`}>
+      <div className={`grid ${compact ? "grid-cols-4 max-sm:grid-cols-2" : "grid-cols-2"} gap-2`}>
         {items.map((item) => (
           <div key={item.label} className="rounded-xl border border-border bg-background p-3">
             <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-text-muted">{item.label}</p>

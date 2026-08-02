@@ -133,10 +133,10 @@ def _infer_stage(request_body: dict) -> str:
     ).lower()
     if "correct the following subtitles" in text or "keep the original language" in text:
         return "optimize"
-    if "current_subtitles" in text or "translate" in text or "target language" in text:
-        return "translate"
     if "summary" in text or "terminology" in text or "global context" in text:
         return "context"
+    if "current_subtitles" in text or "translate" in text or "target language" in text:
+        return "translate"
     if "split" in text or "sentence" in text:
         return "split"
     return "llm"
@@ -229,6 +229,10 @@ def log_llm_response(response: Any) -> None:
     _current_request_key.set(None)
     if pending is None:
         return
+
+    # HTTP response hooks run when headers arrive. The SDK may still spend most of
+    # the request reading and parsing a long generated body, so close the timer here.
+    pending["duration_ms"] = int((time.time() - pending["start_time"]) * 1000)
 
     log_level = pending.get("log_level", "summary")
     response_model, usage, response_data = _response_metadata(response, log_level)

@@ -2,6 +2,8 @@ import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
+import pytest
+
 import subforge.core.asr.speaker_diarization as diarization_module
 from subforge.core.asr.asr_data import ASRData, ASRDataSeg
 from subforge.core.asr.speaker_diarization import (
@@ -309,6 +311,44 @@ def test_resolve_diarization_model_prefers_managed_snapshot(tmp_path: Path):
     assert resolve_diarization_model("pyannote/speaker-diarization-community-1", tmp_path) == str(
         local_model
     )
+
+
+def test_diarization_model_rejects_dataless_cloud_placeholder(monkeypatch, tmp_path: Path):
+    local_model = tmp_path / "pyannote-speaker-diarization-community-1"
+    _write_community_model(local_model)
+    config_path = local_model / "config.yaml"
+
+    original_stat = Path.stat
+
+    def _stat(path: Path, *args, **kwargs):
+        metadata = original_stat(path, *args, **kwargs)
+        if path == config_path:
+            return SimpleNamespace(
+                st_size=metadata.st_size,
+                st_flags=diarization_module._DARWIN_DATALESS_FLAG,
+                st_mode=metadata.st_mode,
+            )
+        return metadata
+
+    monkeypatch.setattr(Path, "stat", _stat)
+
+    assert not is_diarization_model_dir(local_model)
+
+
+def test_require_local_diarization_model_explains_cloud_placeholder(monkeypatch, tmp_path: Path):
+    local_model = tmp_path / "pyannote-speaker-diarization-community-1"
+    _write_community_model(local_model)
+    monkeypatch.setattr(diarization_module.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(
+        diarization_module,
+        "_dataless_model_files",
+        lambda path: [path / "config.yaml"] if path == local_model else [],
+    )
+
+    with pytest.raises(RuntimeError, match="cloud placeholders"):
+        require_local_diarization_model(
+            "pyannote/speaker-diarization-community-1", tmp_path
+        )
 
 
 def test_require_local_diarization_model_fails_before_asr(tmp_path: Path):

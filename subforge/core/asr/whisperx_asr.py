@@ -27,6 +27,10 @@ _ALIGNMENT_MODEL_CACHE = SingleEntryModelCache()
 _MLX_WORKER_FLAG = "SUBFORGE_MLX_WHISPER_WORKER"
 _MLX_WORKER_REQUEST = "SUBFORGE_MLX_WHISPER_REQUEST"
 _MLX_WORKER_OUTPUT = "SUBFORGE_MLX_WHISPER_OUTPUT"
+_MLX_PREVIEW_LINE = re.compile(
+    r"^\[(?P<start>\d{2}(?::\d{2})?:\d{2}\.\d{3}) --> "
+    r"(?P<end>\d{2}(?::\d{2})?:\d{2}\.\d{3})\]\s*(?P<text>.+?)\s*$"
+)
 
 MIXED_LANGUAGE_MIN_CONFIDENCE = 0.80
 MIXED_LANGUAGE_MAX_PRIMARY_CONFIDENCE = 0.20
@@ -233,6 +237,41 @@ def _worker_log_tail(path: Path, limit: int = 6000) -> str:
         return ""
 
 
+def _mlx_preview_timestamp_ms(value: str) -> int:
+    parts = value.split(":")
+    if len(parts) == 2:
+        hours = 0
+        minutes, seconds = parts
+    elif len(parts) == 3:
+        hours, minutes, seconds = parts
+    else:
+        raise ValueError(f"Invalid MLX preview timestamp: {value}")
+    return round((int(hours) * 3600 + int(minutes) * 60 + float(seconds)) * 1000)
+
+
+def _parse_mlx_preview_lines(lines: list[str]) -> list[ASRDataSeg]:
+    """Parse MLX's stable verbose segment format for UI-only live previews."""
+    segments: list[ASRDataSeg] = []
+    for line in lines:
+        match = _MLX_PREVIEW_LINE.match(line.strip())
+        if not match:
+            continue
+        text = match.group("text").strip()
+        start_time = _mlx_preview_timestamp_ms(match.group("start"))
+        end_time = _mlx_preview_timestamp_ms(match.group("end"))
+        if text and end_time > start_time:
+            segments.append(
+                ASRDataSeg(
+                    text,
+                    start_time,
+                    end_time,
+                    timestamp_granularity="sentence",
+                    timing_source="native",
+                )
+            )
+    return segments
+
+
 def run_packaged_mlx_whisper_worker() -> None:
     """Run MLX decoding outside the desktop process so the UI remains responsive."""
     request_path = Path(os.environ[_MLX_WORKER_REQUEST])
@@ -240,12 +279,20 @@ def run_packaged_mlx_whisper_worker() -> None:
     try:
         import mlx_whisper
 
+        for stream in (sys.stdout, sys.stderr):
+            reconfigure = getattr(stream, "reconfigure", None)
+            if callable(reconfigure):
+                reconfigure(line_buffering=True, write_through=True)
+
         request = json.loads(request_path.read_text(encoding="utf-8"))
         kwargs: dict[str, Any] = {
             "path_or_hf_repo": str(request["model"]),
             "word_timestamps": False,
             "condition_on_previous_text": False,
-            "verbose": False,
+            # MLX emits each completed segment in a stable timestamped format.
+            # The parent process tails these lines for UI previews; the final
+            # result still comes from the structured JSON payload below.
+            "verbose": True,
         }
         language = str(request.get("language") or "").strip()
         if language:
@@ -978,6 +1025,7 @@ class WhisperXASR(BaseASR):
         callback: Callable[[int, str], None],
     ) -> dict:
         """Decode MLX audio in a child process without starving the desktop backend."""
+        segment_callback = getattr(self, "segment_callback", None)
         with tempfile.TemporaryDirectory(prefix="subforge-mlx-worker-") as temp_path:
             temp_dir = Path(temp_path)
             request_path = temp_dir / "request.json"
@@ -1014,6 +1062,22 @@ class WhisperXASR(BaseASR):
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                 )
+                preview_reader = log_path.open("r", encoding="utf-8", errors="replace")
+                preview_buffer = ""
+                preview_segments: list[ASRDataSeg] = []
+
+                def publish_new_preview_lines(*, include_tail: bool = False) -> None:
+                    nonlocal preview_buffer
+                    preview_buffer += preview_reader.read()
+                    lines = preview_buffer.split("\n")
+                    preview_buffer = "" if include_tail else lines.pop()
+                    parsed = _parse_mlx_preview_lines(lines)
+                    if not parsed:
+                        return
+                    preview_segments.extend(parsed)
+                    if segment_callback:
+                        segment_callback(ASRData(list(preview_segments)))
+
                 try:
                     while process.poll() is None:
                         if self.cancel_event is not None and self.cancel_event.is_set():
@@ -1025,8 +1089,13 @@ class WhisperXASR(BaseASR):
                                 f"MLX Whisper is transcribing ({elapsed // 60}:{elapsed % 60:02d})...",
                             )
                             last_status_second = elapsed
+                        if segment_callback:
+                            publish_new_preview_lines()
                         time.sleep(0.2)
+                    if segment_callback:
+                        publish_new_preview_lines(include_tail=True)
                 finally:
+                    preview_reader.close()
                     _stop_worker_process(process)
 
             payload: dict[str, Any] | None = None
@@ -1190,6 +1259,15 @@ class WhisperXASR(BaseASR):
         )
         callback(65, "Loading forced alignment model...")
         align_model_name = self._resolve_align_model_name(language_code)
+        align_spec = alignment_model_for_language(language_code)
+        if align_spec is not None and not is_alignment_model_ready(
+            align_spec, self.model_dir
+        ):
+            raise RuntimeError(
+                f"The {align_spec.language_name} forced alignment model is not "
+                "available locally. Download it again in WhisperX settings; cloud "
+                "placeholder files cannot be used for offline alignment."
+            )
         align_kwargs: dict[str, Any] = {
             "language_code": language_code,
             "device": self.align_device,

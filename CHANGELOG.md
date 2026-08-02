@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.1.5 - 2026-08-02
+
+### Added
+
+- Added live MLX Whisper subtitle previews by streaming completed decode segments through the existing task WebSocket without changing the final ASR or forced-alignment result.
+- Added provider-aware DeepSeek reasoning controls so focused semantic audits can use thinking while structured splitting, context extraction, translation, and constrained repair keep bounded output budgets.
+
+### Improved
+
+- Redesigned the transcription workspace around a full-height result list and compact timeline-quality summary after removing the unused video player.
+- The transcription result list now retains every subtitle, reports the total count, follows new results while live, and stops auto-scrolling when the user reviews earlier entries.
+- Parallelized independent Chinese boundary-fluency repair windows for long videos while preserving deterministic document order and validation.
+- Reduced oversized long-video context and terminology payloads and added no-thinking fallback when a focused DeepSeek audit exhausts its structured response budget.
+- Automatic speaker mode now degrades cleanly to normal transcription if diarization is unavailable, while explicit speaker modes still report configuration failures.
+
+### Fixed
+
+- Fixed the transcription workspace permanently showing only the last 6–8 subtitles.
+- Fixed Apple Silicon MLX transcription publishing no subtitle preview until the entire ASR pass completed.
+- Fixed macOS cloud-placeholder alignment and Community-1 model files being mistaken for usable offline models.
+- Fixed desktop shutdown blocking the native window thread and appearing frozen while background model workers were still exiting.
+- Fixed LLM duration logs stopping when response headers arrived instead of after the generated body had been consumed.
+- Fixed malformed or empty structured LLM output aborting constrained optimization and targeted recovery loops before validation feedback could run.
+
+### Packaging
+
+- Publishes a locally built macOS Apple Silicon DMG and a standard Windows x64 installer built by GitHub Actions. Models remain separate on-demand downloads.
+
 ## v1.1.4 - 2026-07-30
 
 ### Added

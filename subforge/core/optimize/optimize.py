@@ -415,16 +415,24 @@ class SubtitleOptimizer:
                 temperature=0.2,
                 use_cache=self.use_cache,
                 client=self.llm_client,
+                # This pass is a tightly constrained source-preserving edit. Internal
+                # reasoning frequently consumes DeepSeek's output budget before the
+                # required JSON, while the validator already supplies targeted feedback.
+                reasoning_mode="disabled",
+                max_output_tokens=4096,
             )
 
-            result_text = get_response_text(response)
-            parsed_result = parse_json_object(result_text)
-
-            result_dict: Dict[str, str] = parsed_result
-            # 验证结果
-            is_valid, error_message = self._validate_optimization_result(
-                original_chunk=subtitle_chunk, optimized_chunk=result_dict
-            )
+            try:
+                result_text = get_response_text(response)
+                parsed_result = parse_json_object(result_text)
+                result_dict: Dict[str, str] = parsed_result
+                is_valid, error_message = self._validate_optimization_result(
+                    original_chunk=subtitle_chunk, optimized_chunk=result_dict
+                )
+            except ValueError as error:
+                result_text = ""
+                is_valid = False
+                error_message = str(error)
 
             if is_valid:
                 return self._repair_subtitle(subtitle_chunk, result_dict)
@@ -433,7 +441,8 @@ class SubtitleOptimizer:
             logger.warning(
                 f"优化验证失败，开始反馈循环 (第{step + 1}次尝试): {error_message}"
             )
-            messages.append({"role": "assistant", "content": result_text})
+            if result_text:
+                messages.append({"role": "assistant", "content": result_text})
             messages.append(
                 {
                     "role": "user",

@@ -57,31 +57,43 @@ def transcribe(
             require_local_diarization_model,
         )
 
-        require_local_diarization_model(
-            getattr(config, "diarization_model", ""),
-            getattr(config, "diarization_model_dir", "") or None,
-        )
-        callback(2, "Analyzing speakers from the original audio...")
-        if diarization_mode == "two":
-            num_speakers = 2
-        elif diarization_mode == "fixed":
-            num_speakers = max(2, min(10, int(getattr(config, "speaker_count", 2))))
-        else:
-            num_speakers = None
+        try:
+            require_local_diarization_model(
+                getattr(config, "diarization_model", ""),
+                getattr(config, "diarization_model_dir", "") or None,
+            )
+            callback(2, "Analyzing speakers from the original audio...")
+            if diarization_mode == "two":
+                num_speakers = 2
+            elif diarization_mode == "fixed":
+                num_speakers = max(2, min(10, int(getattr(config, "speaker_count", 2))))
+            else:
+                num_speakers = None
 
-        def _diarization_progress(_progress: int, message: str) -> None:
-            callback(4, message)
+            def _diarization_progress(_progress: int, message: str) -> None:
+                callback(4, message)
 
-        diarization_turns = diarize_audio(
-            audio_path,
-            model=getattr(config, "diarization_model", ""),
-            token=getattr(config, "diarization_token", ""),
-            model_dir=getattr(config, "diarization_model_dir", "") or None,
-            num_speakers=num_speakers,
-            callback=_diarization_progress,
-        )
-        detected_speakers = len({turn.speaker_id for turn in diarization_turns})
-        callback(5, f"Detected {detected_speakers} speakers...")
+            diarization_turns = diarize_audio(
+                audio_path,
+                model=getattr(config, "diarization_model", ""),
+                token=getattr(config, "diarization_token", ""),
+                model_dir=getattr(config, "diarization_model_dir", "") or None,
+                num_speakers=num_speakers,
+                callback=_diarization_progress,
+            )
+            detected_speakers = len({turn.speaker_id for turn in diarization_turns})
+            callback(5, f"Detected {detected_speakers} speakers...")
+        except Exception as exc:
+            if diarization_mode != "auto":
+                raise
+            logger.warning(
+                "Automatic speaker analysis is unavailable; continuing without labels: %s",
+                exc,
+                exc_info=True,
+            )
+            callback(5, "Speaker analysis unavailable; continuing without speaker labels...")
+            diarization_mode = "off"
+            diarization_turns = None
 
     # Enhance single-language, single-speaker audio when the optional denoise
     # stack is installed. Preserve the original signal for speaker diarization

@@ -7,7 +7,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 from urllib.parse import urlparse, urlunparse
 
 import anthropic
@@ -26,7 +26,6 @@ from subforge.core.utils.logger import setup_logger
 
 from .anthropic_client import MiniMaxAnthropicClient
 from .request_logger import create_logging_http_client, log_llm_error, log_llm_response
-from .response import get_response_text
 
 _global_client: Optional[Any] = None
 _client_lock = threading.Lock()
@@ -36,6 +35,7 @@ logger = setup_logger("llm_client")
 # Timeout for LLM API calls (seconds)
 LLM_TIMEOUT = 120.0
 PERSISTENT_RATE_LIMIT_MAX_WAIT = 60.0
+ReasoningMode = Literal["default", "enabled", "disabled"]
 
 
 def is_anthropic_base_url(base_url: str) -> bool:
@@ -145,6 +145,23 @@ def _is_nvidia_client(client: Any = None) -> bool:
     return hostname == "integrate.api.nvidia.com"
 
 
+def _is_deepseek_client(client: Any = None) -> bool:
+    """Return whether this request uses DeepSeek's official API endpoint."""
+    if client is None:
+        base_url = os.getenv("OPENAI_BASE_URL", "")
+    else:
+        base_url = getattr(client, "_subforge_base_url", "")
+        if not base_url:
+            base_url = getattr(client, "base_url", "")
+    hostname = (urlparse(str(base_url or "").strip()).hostname or "").lower()
+    return hostname == "api.deepseek.com"
+
+
+def _is_deepseek_model(model: str) -> bool:
+    normalized = re.sub(r"[^a-z0-9]+", "", str(model or "").lower())
+    return normalized.startswith("deepseek")
+
+
 def _retry_after_seconds(error: Exception) -> float | None:
     """Read Retry-After as seconds or an HTTP date."""
     response = getattr(error, "response", None)
@@ -185,12 +202,29 @@ def _call_llm_once(
     if client is None:
         client = get_llm_client()
 
+    reasoning_mode = kwargs.pop("_subforge_reasoning_mode", "default")
+    max_output_tokens = kwargs.pop("_subforge_max_output_tokens", None)
+    request_kwargs = dict(kwargs)
+    deepseek_request = _is_deepseek_client(client) and _is_deepseek_model(model)
+    if deepseek_request and reasoning_mode != "default":
+        extra_body = dict(request_kwargs.pop("extra_body", {}) or {})
+        extra_body["thinking"] = {"type": reasoning_mode}
+        request_kwargs["extra_body"] = extra_body
+        if reasoning_mode == "enabled":
+            request_kwargs["reasoning_effort"] = "high"
+    if deepseek_request and max_output_tokens is not None:
+        request_kwargs["max_tokens"] = max(256, int(max_output_tokens))
+
+    # DeepSeek ignores sampling parameters in thinking mode. Omitting them keeps
+    # request logs honest and avoids relying on compatibility-only behavior.
+    if not (deepseek_request and reasoning_mode == "enabled"):
+        request_kwargs["temperature"] = temperature
+
     try:
         response = client.chat.completions.create(
             model=model,
             messages=messages,  # pyright: ignore[reportArgumentType]
-            temperature=temperature,
-            **kwargs,
+            **request_kwargs,
         )
     except Exception as exc:
         log_llm_error(exc)
@@ -284,6 +318,8 @@ def call_llm(
     temperature: float = 1,
     client: Optional[OpenAI] = None,
     use_cache: bool = True,
+    reasoning_mode: ReasoningMode = "default",
+    max_output_tokens: Optional[int] = None,
     **kwargs: Any,
 ) -> Any:
     """Call LLM API with optional caching.
@@ -295,6 +331,12 @@ def call_llm(
             Also bypasses cache (client object is not serializable).
         use_cache: Whether to use the disk LLM cache for global-client calls.
     """
+    if reasoning_mode not in {"default", "enabled", "disabled"}:
+        raise ValueError(f"Unsupported reasoning_mode: {reasoning_mode}")
+    kwargs["_subforge_reasoning_mode"] = reasoning_mode
+    if max_output_tokens is not None:
+        kwargs["_subforge_max_output_tokens"] = max_output_tokens
+
     if client is not None:
         # Explicit client: skip cache, call directly
         response = _call_llm_api(messages, model, temperature, client=client, **kwargs)
@@ -303,8 +345,6 @@ def call_llm(
     else:
         # Global singleton path: use cache
         response = _call_llm_cached(messages, model, temperature, **kwargs)
-
-    get_response_text(response)
 
     return response
 

@@ -118,6 +118,8 @@ def _split_with_agent_loop(
             model=model,
             temperature=0.1,
             client=llm_client,
+            reasoning_mode="disabled",
+            max_output_tokens=4096,
         )
 
         result_text = get_response_text(response)

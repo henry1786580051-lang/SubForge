@@ -111,6 +111,25 @@ def test_log_extracts_context_model_stage_and_tokens(tmp_path, monkeypatch):
     assert entry["timestamp"]
 
 
+def test_context_prompt_is_not_misclassified_as_translation():
+    assert (
+        request_logger._infer_stage(
+            {
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Prepare global context for professional subtitle translation. "
+                            "Return summary, terminology, and style."
+                        ),
+                    }
+                ]
+            }
+        )
+        == "context"
+    )
+
+
 def test_retry_releases_superseded_pending_request():
     request_logger._pending_requests.clear()
     request_logger._current_request_key.set(None)
