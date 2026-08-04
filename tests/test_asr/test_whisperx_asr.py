@@ -23,6 +23,7 @@ from subforge.core.asr.whisperx_asr import (
     _spoken_token,
     _subtract_language_ranges,
     default_mlx_model,
+    install_whisperx_runtime_stubs,
 )
 
 
@@ -693,3 +694,12 @@ def test_whisperx_checks_cancellation_between_native_stages():
 
     with pytest.raises(RuntimeError, match="cancelled during model loading"):
         asr._raise_if_cancelled("model loading")
+
+
+def test_whisperx_runtime_diarization_stub_exposes_vad_segment(monkeypatch):
+    monkeypatch.delitem(sys.modules, "whisperx.diarize", raising=False)
+
+    install_whisperx_runtime_stubs()
+
+    segment = sys.modules["whisperx.diarize"].Segment(1, 2, "speaker")
+    assert (segment.start, segment.end, segment.speaker) == (1, 2, "speaker")

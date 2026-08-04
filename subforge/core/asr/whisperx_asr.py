@@ -662,6 +662,14 @@ def install_whisperx_runtime_stubs() -> None:
     def _unsupported(*_args, **_kwargs):
         raise RuntimeError("This WhisperX feature is not bundled in SubForge")
 
+    class _DiarizationSegment:
+        """Compatibility value object imported by WhisperX's Pyannote VAD."""
+
+        def __init__(self, start: int, end: int, speaker: str | None = None):
+            self.start = start
+            self.end = end
+            self.speaker = speaker
+
     if "whisperx.transcribe" not in sys.modules:
         transcribe = types.ModuleType("whisperx.transcribe")
         setattr(transcribe, "load_model", _unsupported)
@@ -671,6 +679,7 @@ def install_whisperx_runtime_stubs() -> None:
         diarize = types.ModuleType("whisperx.diarize")
         setattr(diarize, "assign_word_speakers", _unsupported)
         setattr(diarize, "DiarizationPipeline", _unsupported)
+        setattr(diarize, "Segment", _DiarizationSegment)
         sys.modules["whisperx.diarize"] = diarize
 
 
