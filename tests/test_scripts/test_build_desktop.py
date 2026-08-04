@@ -174,6 +174,32 @@ def test_static_ffmpeg_download_raises_after_retry_limit(tmp_path, monkeypatch):
     assert attempts == [str(tmp_path)] * 3
 
 
+def test_windows_ffmpeg_runtime_includes_required_dlls(tmp_path, monkeypatch):
+    ffmpeg = tmp_path / "ffmpeg.exe"
+    ffprobe = tmp_path / "ffprobe.exe"
+    codec = tmp_path / "avcodec-59.dll"
+    for path in (ffmpeg, ffprobe, codec):
+        path.write_bytes(b"runtime")
+    monkeypatch.setattr(build_desktop.platform, "system", lambda: "Windows")
+
+    assert build_desktop._ffmpeg_runtime_files(ffmpeg, ffprobe) == [
+        ffmpeg,
+        ffprobe,
+        codec,
+    ]
+
+
+def test_windows_ffmpeg_runtime_rejects_missing_dlls(tmp_path, monkeypatch):
+    ffmpeg = tmp_path / "ffmpeg.exe"
+    ffprobe = tmp_path / "ffprobe.exe"
+    ffmpeg.write_bytes(b"runtime")
+    ffprobe.write_bytes(b"runtime")
+    monkeypatch.setattr(build_desktop.platform, "system", lambda: "Windows")
+
+    with pytest.raises(RuntimeError, match="required DLLs"):
+        build_desktop._ffmpeg_runtime_files(ffmpeg, ffprobe)
+
+
 def test_windows_bundle_requires_faster_whisper_vad_asset(tmp_path, monkeypatch):
     data_root = tmp_path / "bundle" / "_internal"
     required = [

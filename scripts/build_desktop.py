@@ -172,6 +172,19 @@ def _fetch_static_ffmpeg(
     raise RuntimeError("FFmpeg download retry loop exited unexpectedly")
 
 
+def _ffmpeg_runtime_files(ffmpeg: Path, ffprobe: Path) -> list[Path]:
+    """Return executables and the shared libraries required by the platform build."""
+    files = [ffmpeg, ffprobe]
+    if platform.system() == "Windows":
+        dlls = sorted(ffmpeg.parent.glob("*.dll"))
+        if not dlls:
+            raise RuntimeError(
+                "The downloaded Windows FFmpeg runtime does not contain its required DLLs"
+            )
+        files.extend(dlls)
+    return files
+
+
 def prepare_ffmpeg() -> None:
     """Download the current platform's static ffmpeg/ffprobe into runtime resources."""
     try:
@@ -188,11 +201,11 @@ def prepare_ffmpeg() -> None:
     # static-ffmpeg archives contain a top-level directory named exactly like
     # sys.platform, and the package extracts it next to this target directory.
     cache_dir = BUILD_DIR / "static-ffmpeg" / sys.platform
-    ffmpeg, ffprobe = _fetch_static_ffmpeg(
+    ffmpeg_path, ffprobe_path = _fetch_static_ffmpeg(
         get_or_fetch_platform_executables_else_raise,
         cache_dir,
     )
-    for src in [Path(ffmpeg), Path(ffprobe)]:
+    for src in _ffmpeg_runtime_files(Path(ffmpeg_path), Path(ffprobe_path)):
         dst = runtime_bin / src.name
         if dst.exists():
             dst.chmod(dst.stat().st_mode | stat.S_IWUSR)
