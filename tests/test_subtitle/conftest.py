@@ -1,22 +1,20 @@
-"""Test configuration for subtitle tests."""
+"""Subtitle test configuration.
+
+Most subtitle tests exercise pure parsing, rendering, and validation code and do
+not require a Qt application. Qt-dependent modules request the shared fixture
+explicitly so headless test runs cannot abort before unrelated tests execute.
+"""
 
 import sys
 
 import pytest
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtCore import QCoreApplication
 
 
 @pytest.fixture(scope="session")
 def qapp():
-    """Create QApplication instance for testing Qt components."""
-    app = QApplication.instance()
+    """Create the windowless event loop required by QThread signal tests."""
+    app = QCoreApplication.instance()
     if app is None:
-        app = QApplication(sys.argv)
+        app = QCoreApplication(sys.argv)
     yield app
-    # Don't quit - causes issues with pytest
-
-
-@pytest.fixture(autouse=True)
-def use_qapp(qapp):
-    """Automatically use QApplication for all tests in this module."""
-    return qapp

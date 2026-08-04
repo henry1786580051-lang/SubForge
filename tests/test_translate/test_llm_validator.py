@@ -2281,6 +2281,39 @@ class TestValidateLLmResponse:
 
         assert bool(signal) is expected
 
+    @pytest.mark.parametrize(
+        ("left_source", "right_source", "left_translation", "right_translation"),
+        [
+            (
+                "We actually saw this evolve",
+                "before our very eyes, from SRT8 to Hellcat.",
+                "我们确实看到它演变",
+                "在我们眼前 从SRT8一路发展到Hellcat",
+            ),
+            (
+                "Maybe you will go out after this video",
+                "and go purchase it.",
+                "也许你看完视频后",
+                "就去买下它",
+            ),
+            (
+                "So excited to take you on a city commute today",
+                "because I want to see what it is like to daily drive.",
+                "所以非常兴奋今天带大家城市通勤",
+                "因为我想看看它日常驾驶怎么样",
+            ),
+        ],
+    )
+    def test_source_boundary_signal_shortlists_translation_order_risks(
+        self, left_source, right_source, left_translation, right_translation
+    ):
+        assert LLMTranslator._source_boundary_signal(
+            left_source,
+            right_source,
+            left_translation,
+            right_translation,
+        )
+
     def test_pronoun_ending_remains_a_soft_contextual_signal(self):
         assert LLMTranslator._chinese_boundary_signal(
             "我会立刻选他",
@@ -2323,6 +2356,75 @@ class TestValidateLLmResponse:
         ]
         assert captured["reasoning_mode"] == "disabled"
 
+    def test_chinese_fluency_rewrite_uses_thinking_for_deepseek_v4(self, monkeypatch):
+        translator = _make_translator(is_reflect=True)
+        translator.model = "deepseek-v4-flash"
+        source = [
+            SubtitleProcessData(index=1, original_text="We saw it evolve"),
+            SubtitleProcessData(index=2, original_text="before our eyes."),
+        ]
+        current = [
+            replace(source[0], translated_text="我们看到它演变"),
+            replace(source[1], translated_text="在我们眼前"),
+        ]
+        captured = {}
+
+        def fake_call(**kwargs):
+            captured.update(kwargs)
+            return _llm_response(
+                {"translations": {"1": "我们亲眼见证了它的演变", "2": "整个过程"}}
+            )
+
+        monkeypatch.setattr("subforge.core.translate.llm_translator.call_llm", fake_call)
+
+        translator._rewrite_chinese_fluency_window(source, current)
+
+        assert captured["reasoning_mode"] == "enabled"
+        assert captured["max_output_tokens"] == 8192
+
+    def test_chinese_window_fidelity_accepts_complete_local_reordering(self, monkeypatch):
+        translator = _make_translator(is_reflect=True)
+        source = [
+            SubtitleProcessData(index=1, original_text="We saw it evolve"),
+            SubtitleProcessData(index=2, original_text="before our eyes."),
+        ]
+        repaired = [
+            replace(source[0], translated_text="我们亲眼见证了它的演变"),
+            replace(source[1], translated_text="整个过程"),
+        ]
+        captured = {}
+
+        def fake_call(**kwargs):
+            captured.update(kwargs)
+            return _llm_response({"valid": True, "issues": []})
+
+        monkeypatch.setattr("subforge.core.translate.llm_translator.call_llm", fake_call)
+
+        translator._validate_chinese_window_fidelity(source, repaired)
+
+        assert captured["reasoning_mode"] == "disabled"
+        assert captured["max_output_tokens"] == 2048
+
+    def test_chinese_window_fidelity_rejects_missing_meaning(self, monkeypatch):
+        translator = _make_translator(is_reflect=True)
+        source = [
+            SubtitleProcessData(index=1, original_text="It has 340 horsepower"),
+            SubtitleProcessData(index=2, original_text="and 390 pound-feet of torque."),
+        ]
+        repaired = [
+            replace(source[0], translated_text="它有340马力"),
+            replace(source[1], translated_text="动力很强"),
+        ]
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm",
+            lambda **_kwargs: _llm_response(
+                {"valid": False, "issues": ["遗漏390磅英尺扭矩"]}
+            ),
+        )
+
+        with pytest.raises(ValueError, match="390磅英尺扭矩"):
+            translator._validate_chinese_window_fidelity(source, repaired)
+
     def test_chinese_fluency_candidates_stop_at_speaker_changes(self):
         t = _make_minimax_reflect_translator()
         source = [
@@ -2363,7 +2465,7 @@ class TestValidateLLmResponse:
             return [1] if len(audit_calls) == 1 else []
 
         monkeypatch.setattr(t, "_request_chinese_fluency_flags", flags)
-        monkeypatch.setattr(t, "_request_alignment_flags", lambda *_args: [])
+        monkeypatch.setattr(t, "_validate_chinese_window_fidelity", lambda *_args: None)
         monkeypatch.setattr(
             t,
             "_rewrite_chinese_fluency_window",

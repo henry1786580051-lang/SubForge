@@ -89,6 +89,23 @@ def test_validation_allows_punctuation_only_changes_for_latin_text():
     assert message == ""
 
 
+def test_validation_allows_extensive_punctuation_removal_when_words_are_locked():
+    original = (
+        "Now, of course, this is clean. We've got buttons; that is nice. "
+        "Let's close the door, and we'll start."
+    )
+    split = [
+        "Now of course this is clean",
+        "We've got buttons that is nice",
+        "Let's close the door and we'll start",
+    ]
+
+    ok, message = _validate_split_result(original, split, 16, 16, 20)
+
+    assert ok is True
+    assert message == ""
+
+
 @pytest.mark.parametrize(
     "first",
     [
@@ -318,3 +335,95 @@ class TestSplitByLLM:
         assert captured["reasoning_mode"] == "disabled"
         assert captured["max_output_tokens"] == 4096
         assert len(result) == 1
+
+    def test_deepseek_v4_keeps_thinking_disabled_for_constrained_split(self, monkeypatch):
+        calls = []
+
+        def fake_call_llm(*args, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                return _FakeResponse("modified words")
+            return _FakeResponse("one two three<br>four five six")
+
+        monkeypatch.setattr(split_module, "call_llm", fake_call_llm)
+
+        result = split_by_llm(
+            "one two three four five six",
+            model="deepseek-v4-flash",
+            target_language="简体中文",
+        )
+
+        assert result == ["one two three", "four five six"]
+        assert [call["reasoning_mode"] for call in calls] == ["disabled", "disabled"]
+        assert [call["max_output_tokens"] for call in calls] == [4096, 4096]
+
+    def test_retries_reasoning_only_split_response_without_falling_back(self, monkeypatch):
+        calls = []
+
+        def fake_call_llm(*args, **kwargs):
+            calls.append((args, kwargs))
+            if len(calls) == 1:
+                return _FakeResponse("<think>analysis without a final answer</think>")
+            return _FakeResponse("one two three<br>four five six")
+
+        monkeypatch.setattr(split_module, "call_llm", fake_call_llm)
+
+        result = split_by_llm(
+            "one two three four five six",
+            model="deepseek-v4-flash",
+            target_language="简体中文",
+        )
+
+        assert result == ["one two three", "four five six"]
+        assert len(calls) == 2
+        assert "Do not reason" in calls[1][1]["messages"][-1]["content"]
+
+    def test_keeps_content_safe_split_when_only_boundary_feedback_remains(
+        self, monkeypatch
+    ):
+        calls = []
+
+        def fake_call_llm(*args, **kwargs):
+            calls.append((args, kwargs))
+            return _FakeResponse(
+                "I hope that gives you a good enough idea of<br>"
+                "what this car is like to drive"
+            )
+
+        monkeypatch.setattr(split_module, "call_llm", fake_call_llm)
+
+        result = split_by_llm(
+            "I hope that gives you a good enough idea of what this car is like to drive",
+            model="deepseek-v4-flash",
+            target_language="简体中文",
+        )
+
+        assert result == [
+            "I hope that gives you a good enough idea of",
+            "what this car is like to drive",
+        ]
+        assert len(calls) == 3
+
+    def test_keeps_content_safe_split_for_deterministic_length_normalization(
+        self, monkeypatch
+    ):
+        calls = []
+        original = (
+            "one two three four five six seven eight nine ten eleven twelve "
+            "thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty one"
+        )
+
+        def fake_call_llm(*args, **kwargs):
+            calls.append((args, kwargs))
+            return _FakeResponse(original)
+
+        monkeypatch.setattr(split_module, "call_llm", fake_call_llm)
+
+        result = split_by_llm(
+            original,
+            model="deepseek-v4-flash",
+            max_word_count_english=16,
+        )
+
+        assert result == [original]
+        assert len(calls) == 3

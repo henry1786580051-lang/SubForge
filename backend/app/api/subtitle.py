@@ -245,6 +245,7 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
             thread_num=thread_num,
             model=llm_model,
             llm_client=llm_client,
+            target_language=req.target_language if req.need_translate else "",
             max_word_count_cjk=max_word_count_cjk,
             max_word_count_english=max_word_count_english,
             update_callback=_on_split_progress,

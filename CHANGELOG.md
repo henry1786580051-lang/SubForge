@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.1.6 - 2026-08-04
+
+### Improved
+
+- Made semantic splitting aware of the downstream target language so English place names, relative clauses, temporal modifiers, subjects, and predicates are less likely to be separated into awkward Chinese cues.
+- Added a document-level Chinese boundary-fluency shortlist and conservative rewrite path for subject, adverbial, modifier, and neighboring-clause ownership problems while preserving subtitle keys, source text, and timestamps.
+- Reallocated DeepSeek V4 reasoning to semantic translation audits and first-pass boundary rewrites; constrained copy-only splitting now uses non-thinking output to avoid exhausting the response budget before emitting a final answer.
+- Kept content-safe LLM split results when only semantic-boundary or length feedback remains after retries, then applies deterministic normalization instead of replacing the entire batch with rule-based splitting.
+- Allowed punctuation-only changes after the Latin source word sequence has been locked exactly, reducing unnecessary retries without permitting dropped, inserted, or reordered words.
+
+### Fixed
+
+- Fixed DeepSeek V4 Flash returning reasoning-only split responses after consuming the complete output budget.
+- Fixed transient HTTP 429, 5xx, timeout, and connection failures immediately degrading subtitle batches instead of retrying with bounded exponential backoff.
+- Fixed Chinese translations placing locations, subjects, time adverbials, or short semantic completions on the wrong side of a subtitle boundary.
+- Fixed headless macOS test runs aborting near completion because subtitle tests created a windowed Qt application for thread-only behavior.
+
+### Packaging
+
+- Re-signs the exact staged app copy before DMG creation so Finder metadata cannot invalidate the distributed bundle.
+- Publishes a locally built macOS Apple Silicon DMG and a standard Windows x64 installer built by GitHub Actions. Models remain separate on-demand downloads.
+
 ## v1.1.5 - 2026-08-02
 
 ### Added

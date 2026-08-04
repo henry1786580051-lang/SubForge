@@ -23,6 +23,8 @@ from subforge.core.llm.check_llm import get_available_models
 from subforge.core.translate.types import TargetLanguage
 from subforge.ui.thread.subtitle_thread import SubtitleThread
 
+pytestmark = pytest.mark.usefixtures("qapp")
+
 # Load environment variables
 
 

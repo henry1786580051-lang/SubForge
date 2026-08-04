@@ -163,6 +163,12 @@ class SubtitleThread(QThread):
                 splitter = SubtitleSplitter(
                     thread_num=subtitle_config.thread_num,
                     model=subtitle_config.llm_model,
+                    target_language=(
+                        subtitle_config.target_language.value
+                        if subtitle_config.need_translate
+                        and subtitle_config.target_language
+                        else ""
+                    ),
                     max_word_count_cjk=subtitle_config.max_word_count_cjk,
                     max_word_count_english=subtitle_config.max_word_count_english,
                     update_callback=self.split_callback,

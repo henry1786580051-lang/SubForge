@@ -16,7 +16,7 @@ from openai import OpenAI
 from tenacity import (
     RetryCallState,
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_random_exponential,
 )
@@ -122,8 +122,24 @@ def get_llm_client() -> Any:
 
 
 def before_sleep_log(retry_state: RetryCallState) -> None:
+    error = retry_state.outcome.exception() if retry_state.outcome else None
     logger.warning(
-        "Rate Limit Error, sleeping and retrying... Please lower your thread concurrency or use better OpenAI API."
+        "Transient LLM API error (%s), sleeping before retry %d/10",
+        type(error).__name__ if error else "unknown",
+        retry_state.attempt_number + 1,
+    )
+
+
+def _is_retryable_standard_error(error: BaseException) -> bool:
+    """Retry temporary provider failures without masking bad requests or auth errors."""
+    return isinstance(
+        error,
+        (
+            openai.RateLimitError,
+            openai.InternalServerError,
+            openai.APITimeoutError,
+            openai.APIConnectionError,
+        ),
     )
 
 
@@ -160,6 +176,17 @@ def _is_deepseek_client(client: Any = None) -> bool:
 def _is_deepseek_model(model: str) -> bool:
     normalized = re.sub(r"[^a-z0-9]+", "", str(model or "").lower())
     return normalized.startswith("deepseek")
+
+
+def prefers_native_reasoning(model: str) -> bool:
+    """Return whether a model benefits from SubForge's selective thinking path.
+
+    DeepSeek V4 models expose native thinking controls.  Restricting the policy to
+    that family keeps OpenAI-compatible providers from receiving speculative
+    parameters and avoids increasing latency for models that do not support them.
+    """
+    normalized = re.sub(r"[^a-z0-9]+", "", str(model or "").lower())
+    return normalized.startswith("deepseek") and "v4" in normalized
 
 
 def _retry_after_seconds(error: Exception) -> float | None:
@@ -237,7 +264,7 @@ def _call_llm_once(
 @retry(
     stop=stop_after_attempt(10),
     wait=wait_random_exponential(multiplier=1, min=5, max=60),
-    retry=retry_if_exception_type(openai.RateLimitError),
+    retry=retry_if_exception(_is_retryable_standard_error),
     before_sleep=before_sleep_log,
 )
 def _call_standard_llm_api(

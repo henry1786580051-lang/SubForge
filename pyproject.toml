@@ -120,7 +120,7 @@ environments = [
 ]
 override-dependencies = [
     "PyQt5-Qt5==5.15.2; sys_platform == 'win32'",
-    "PyQt5-Qt5>=5.15.11; sys_platform != 'win32'",
+    "PyQt5-Qt5==5.15.14; sys_platform != 'win32'",
     # DeepFilterNet 0.5.6 declares numpy<2, but its inference path works with
     # NumPy 2.x. WhisperX 3.8.6 requires NumPy >=2.1.
     "numpy>=2.1,<3",

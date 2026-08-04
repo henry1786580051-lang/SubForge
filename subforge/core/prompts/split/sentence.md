@@ -10,6 +10,7 @@
 5. 倒计时（每个数字进行分割）、关键信息揭示前及需要强调的位置需要进行适当分割
 6. 英文不得在介词、冠词、连词或悬空修饰语后断开，例如 of、into、the、and、but、probably、a lot、kind of。若接近字数上限，应把断点前移到更早的自然语义边界
 7. 不得把从属连词、主语、时间状语、助动词、修饰语或固定搭配留在上一段末尾，例如 because / it can、they / either know、Now / our、really good / jobs、in / order to、flip the / switch。优先保证语法成分完整，再考虑目标长度
+8. ${target_language_guidance}
 </instructions>
 
 <output_format>

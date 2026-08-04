@@ -190,6 +190,7 @@ def run(args: Namespace, config: dict) -> int:
             splitter = SubtitleSplitter(
                 thread_num=thread_num,
                 model=llm_model,
+                target_language=target_lang_code if need_translate else "",
                 max_word_count_cjk=max_cjk,
                 max_word_count_english=max_english,
             )

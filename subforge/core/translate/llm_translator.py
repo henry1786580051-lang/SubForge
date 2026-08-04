@@ -11,8 +11,14 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, cast
 
 import openai
 
-from subforge.core.llm import call_llm, get_response_text, parse_json_object
+from subforge.core.llm import (
+    call_llm,
+    get_response_text,
+    parse_json_object,
+    prefers_native_reasoning,
+)
 from subforge.core.prompts import get_prompt
+from subforge.core.split.boundary import assess_english_boundary
 from subforge.core.translate.base import (
     BaseTranslator,
     PartialTranslationError,
@@ -3071,14 +3077,66 @@ Delete every fact, action, object, name, number, or clause that current_source d
             right_speaker = self._all_speaker_by_index.get(right_source.index, "")
             if left_speaker and right_speaker and left_speaker != right_speaker:
                 continue
-            if re.search(r"[.!?][\"')\]]*$", left_source.original_text.strip()):
-                continue
-            if self._chinese_boundary_signal(
+            target_signal = self._chinese_boundary_signal(
                 left_item.translated_text,
                 right_item.translated_text,
-            ):
+            )
+            source_signal = self._source_boundary_signal(
+                left_source.original_text,
+                right_source.original_text,
+                left_item.translated_text,
+                right_item.translated_text,
+            )
+            if target_signal or source_signal:
                 candidates.append(left_source.index)
         return candidates
+
+    @staticmethod
+    def _source_boundary_signal(
+        left_source: str,
+        right_source: str,
+        left_translation: str = "",
+        right_translation: str = "",
+    ) -> str:
+        """Shortlist cross-language boundaries that rules alone cannot judge.
+
+        This intentionally returns candidates rather than verdicts.  A separate
+        context-aware audit must confirm them before any text changes, which lets
+        us cover language-order differences without rewriting every continuing
+        English sentence.
+        """
+        left = str(left_source or "").strip()
+        right = str(right_source or "").strip()
+        if not left or not right or re.search(r"[.!?][\"')\]]*$", left):
+            return ""
+
+        assessment = assess_english_boundary(left, right)
+        if assessment.unstable:
+            return "; ".join(assessment.reasons) or "unstable source boundary"
+
+        right_lower = right.lower()
+        if re.match(
+            r"^(?:after|before|because|when|where|which|who|whose|as well\b|"
+            r"and\s+(?:go|see|test|buy|purchase)\b|is\b|are\b|was\b|were\b)",
+            right_lower,
+        ):
+            return "source continuation may require different target-language order"
+
+        if re.match(r"^(?:and|or)\b", right_lower) and not re.search(r"[,;:]\s*$", left):
+            return "coordinate phrase crosses the subtitle boundary"
+
+        left_target = re.sub(r"[\s，。！？；：、,.!?;:]+$", "", str(left_translation or ""))
+        right_target = re.sub(r"^[\s，。！？；：、,.!?;:]+", "", str(right_translation or ""))
+        if re.search(r"(?:之后|以前|以后|之前|期间|时候|大约|差不多|与其|为了|花)$", left_target):
+            return "target-language temporal or governing phrase is unfinished"
+        if right_target.startswith(("在", "当", "如今", "现在", "目前", "就去", "作为")):
+            return "target-language modifier may be stranded at the next cue"
+
+        left_words = re.findall(r"[A-Za-z0-9]+(?:['’][A-Za-z0-9]+)?", left)
+        right_words = re.findall(r"[A-Za-z0-9]+(?:['’][A-Za-z0-9]+)?", right)
+        if min(len(left_words), len(right_words)) <= 4:
+            return "short source fragment crosses an unfinished sentence"
+        return ""
 
     @staticmethod
     def _chinese_boundary_signal(left: str, right: str) -> str:
@@ -3114,7 +3172,9 @@ Delete every fact, action, object, name, number, or clause that current_source d
         if connector_pattern.search(left):
             return "connective stranded at previous subtitle end"
 
-        soft_tail = re.compile(r"(?:的|是|把|被|让|给|和|与|对|向|从|比|像)$")
+        soft_tail = re.compile(
+            r"(?:的|是|把|被|让|给|和|与|对|向|从|比|像|后|前|大约|差不多|与其|为了|花)$"
+        )
         if soft_tail.search(left):
             return "possible function-word split"
 
@@ -3167,7 +3227,13 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 "source_right": right.original_text,
                 "translation_left": left_translation.translated_text,
                 "translation_right": right_translation.translated_text,
-                "signal": self._chinese_boundary_signal(
+                "target_signal": self._chinese_boundary_signal(
+                    left_translation.translated_text,
+                    right_translation.translated_text,
+                ),
+                "source_signal": self._source_boundary_signal(
+                    left.original_text,
+                    right.original_text,
                     left_translation.translated_text,
                     right_translation.translated_text,
                 ),
@@ -3179,19 +3245,22 @@ Delete every fact, action, object, name, number, or clause that current_source d
             {
                 "role": "system",
                 "content": (
-                    "You are a conservative Chinese subtitle boundary auditor. Decide only "
-                    "whether the boundary creates an unsuitable Chinese subtitle break. Flag it "
-                    "when the left key strands a subject whose predicate starts in the right key, "
-                    "a modifier ending in 的 from its noun, 是 from its complement, a modal or "
-                    "adverb from its predicate, or a causal/contrast connective at the end of the "
-                    "previous key. Also flag standalone connectives and particles at the start of "
-                    "the right key. Continuous playback being understandable is not sufficient: "
-                    "each displayed key must still be a natural readable Chinese unit. Allow "
-                    "fragments only when neither side contains one of these grammatical breaks. "
+                    "You are a conservative Chinese subtitle boundary auditor. Decide whether "
+                    "each boundary creates an unsuitable Chinese subtitle break. Read both source "
+                    "keys as one continuous utterance and both translations as one display sequence. "
+                    "Flag city/state or model-name splits, a relative or adverbial clause separated "
+                    "from what it modifies, a subject separated from its predicate, a modifier from "
+                    "its noun, 是 from its complement, an auxiliary or adverb from its predicate, a "
+                    "coordinate noun phrase split in half, or a temporal/locative phrase placed after "
+                    "its Chinese predicate. Also flag a translation that is grammatically complete "
+                    "only during continuous playback but awkward when either cue is displayed alone, "
+                    "or that follows English word order so literally that the pair is unnatural. "
+                    "Do not flag a natural conjunction, reason, qualification, or continuation merely "
+                    "because the English sentence spans two cues. "
                     "Do not flag a sentence-final 的 when it naturally means 'the one that is' "
                     "or acts as a colloquial final particle, and do not treat a completed object "
                     "ending in 这个 as a stranded subject. "
-                    "Do not judge source fidelity or rewrite text. Return only JSON "
+                    "Do not rewrite text. Return only JSON "
                     "as {\"awkward_boundaries\": [\"left-right\"]}."
                 ),
             },
@@ -3200,16 +3269,36 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 "content": json.dumps(items, ensure_ascii=False),
             },
         ]
-        response = call_llm(
-            messages=messages,
-            model=self.model,
-            temperature=0,
-            use_cache=self.use_cache,
-            client=self.llm_client,
-            reasoning_mode="disabled",
-            max_output_tokens=4096,
-        )
-        payload = parse_json_object(get_response_text(response))
+        use_reasoning = prefers_native_reasoning(self.model)
+        try:
+            response = call_llm(
+                messages=messages,
+                model=self.model,
+                temperature=0,
+                use_cache=self.use_cache,
+                client=self.llm_client,
+                reasoning_mode="enabled" if use_reasoning else "disabled",
+                max_output_tokens=6144 if use_reasoning else 4096,
+            )
+            payload = parse_json_object(get_response_text(response))
+        except ValueError as error:
+            if not use_reasoning:
+                raise
+            logger.warning(
+                "Thinking fluency audit produced no usable verdict; retrying without "
+                "thinking: %s",
+                error,
+            )
+            response = call_llm(
+                messages=messages,
+                model=self.model,
+                temperature=0,
+                use_cache=self.use_cache,
+                client=self.llm_client,
+                reasoning_mode="disabled",
+                max_output_tokens=4096,
+            )
+            payload = parse_json_object(get_response_text(response))
         boundaries = payload.get("awkward_boundaries")
         if not isinstance(boundaries, list) or not all(
             isinstance(value, (str, int)) for value in boundaries
@@ -3295,10 +3384,19 @@ Rewrite only the provided translations. Keep every key, source subtitle, timesta
             temperature=self.TRANSLATION_TEMPERATURE,
             use_cache=self.use_cache,
             client=self.llm_client,
-            # The boundary was already independently confirmed by the audit. This
-            # call only performs a narrow rewrite and is guarded by strict validation.
-            reasoning_mode="disabled",
-            max_output_tokens=4096,
+            # Spend native reasoning only on the first rewrite. Formatting retries
+            # use the validator's concrete feedback and do not benefit from another
+            # long chain of thought.
+            reasoning_mode=(
+                "enabled"
+                if not feedback and prefers_native_reasoning(self.model)
+                else "disabled"
+            ),
+            max_output_tokens=(
+                8192
+                if not feedback and prefers_native_reasoning(self.model)
+                else 4096
+            ),
         )
         result = parse_json_object(get_response_text(response)).get("translations")
         expected = set(payload)
@@ -3337,11 +3435,17 @@ Rewrite only the provided translations. Keep every key, source subtitle, timesta
         if current_length and not (0.65 <= repaired_length / current_length <= 1.45):
             raise ValueError("fluency repair changed the combined translation length too much")
 
-        remaining = self._chinese_fluency_candidates(
-            source_items,
-            {item.index: item for item in repaired_items},
-        )
         repaired_by_index = {item.index: item for item in repaired_items}
+        remaining = [
+            item.index
+            for item, following in zip(source_items, source_items[1:])
+            if item.index in repaired_by_index
+            and following.index in repaired_by_index
+            and self._chinese_boundary_signal(
+                repaired_by_index[item.index].translated_text,
+                repaired_by_index[following.index].translated_text,
+            )
+        ]
         remaining_details = {
             index: {
                 "left": repaired_by_index[index].translated_text,
@@ -3379,18 +3483,68 @@ Rewrite only the provided translations. Keep every key, source subtitle, timesta
                     f"{confirmed_remaining}"
                 )
 
-        ownership_items = {
+        self._validate_chinese_window_fidelity(source_items, repaired_items)
+
+    def _validate_chinese_window_fidelity(
+        self,
+        source_items: List[SubtitleProcessData],
+        repaired_items: List[SubtitleProcessData],
+    ) -> None:
+        """Validate combined meaning while permitting minimal Chinese reordering.
+
+        Per-key ownership is too strict for English-to-Chinese adverbial and relative
+        clause order.  Hard anchors remain protected by the normal validator; this
+        independent check verifies that the small same-speaker window still contains
+        every source fact exactly once without introducing new meaning.
+        """
+        repaired_by_index = {item.index: item for item in repaired_items}
+        payload = {
             str(item.index): {
                 "source": item.original_text,
-                "translation": repaired_dict[str(item.index)],
+                "translation": repaired_by_index[item.index].translated_text,
             }
             for item in source_items
         }
-        ownership_errors = self._request_alignment_flags(ownership_items)
-        if ownership_errors:
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are an independent bilingual subtitle-window fidelity validator. "
+                    "The ordered keys are one short continuous utterance. Minimal Chinese "
+                    "surface reordering between adjacent keys is allowed when required by "
+                    "Chinese grammar, but every source fact, name, number, model, negation, "
+                    "comparison, qualification, and conclusion must appear exactly once in "
+                    "the combined translations. Hard facts must not move to an unrelated key, "
+                    "and no meaning may be invented, omitted, duplicated, anticipated from "
+                    "outside this window, or moved across a speaker turn. Judge combined "
+                    "fidelity and per-cue readability, not English word-order similarity. "
+                    "Return only {\"valid\": true_or_false, \"issues\": [\"brief issue\"]}."
+                ),
+            },
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ]
+        response = call_llm(
+            messages=messages,
+            model=self.model,
+            temperature=0,
+            use_cache=self.use_cache,
+            client=self.llm_client,
+            # The expensive reasoning budget was already spent on candidate
+            # confirmation and rewriting. Keep this independent gate compact.
+            reasoning_mode="disabled",
+            max_output_tokens=2048,
+        )
+        result = parse_json_object(get_response_text(response))
+        valid = result.get("valid")
+        issues = result.get("issues")
+        if not isinstance(valid, bool) or not isinstance(issues, list) or not all(
+            isinstance(issue, str) for issue in issues
+        ):
+            raise ValueError("window fidelity validator returned an invalid verdict")
+        if not valid:
             raise ValueError(
-                "fluency repair moved meaning outside its source key: "
-                f"{ownership_errors}"
+                "fluency repair failed window-level fidelity: "
+                + "; ".join(issue.strip() for issue in issues if issue.strip())
             )
 
     def _get_cache_key(self, chunk: List[SubtitleProcessData]) -> str:

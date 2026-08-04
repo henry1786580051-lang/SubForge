@@ -259,6 +259,16 @@ _PREFERRED_CLAUSE_HEADS = {
 }
 
 _RELATIVE_CLAUSE_HEADS = {"that", "which", "who", "whom", "whose"}
+_TRANSLATION_SENSITIVE_HEADS = {"after", "before", "when", "where"}
+_US_STATE_NAMES = {
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+    "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
+    "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana",
+    "maine", "maryland", "massachusetts", "michigan", "minnesota",
+    "mississippi", "missouri", "montana", "nebraska", "nevada",
+    "ohio", "oklahoma", "oregon", "pennsylvania", "tennessee", "texas",
+    "utah", "vermont", "virginia", "washington", "wisconsin", "wyoming",
+}
 _THAT_COMPLEMENT_TAILS = {
     ("find", "out"),
     ("found", "out"),
@@ -374,6 +384,43 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     ):
         risk += 30
         reasons.append(f"relative clause '{head}' separated from its antecedent")
+    if (
+        head in _TRANSLATION_SENSITIVE_HEADS
+        and right[:1].islower()
+        and not _CLAUSE_RE.search(left)
+    ):
+        risk += 26
+        reasons.append(f"dependent adverbial clause beginning with '{head}'")
+
+    # Keep location names such as "Ypsilanti, Michigan" in one cue.  This is
+    # deliberately limited to a capitalized comma-separated left tail and a
+    # known single-token state name to avoid treating ordinary sentence starts
+    # as entities.
+    left_name = re.search(r"\b([A-Z][A-Za-z'’-]+),\s*$", left)
+    if left_name and head in _US_STATE_NAMES and re.match(
+        rf"^{re.escape(right_tokens[0])}\s*,", right, flags=re.IGNORECASE
+    ):
+        risk += 38
+        reasons.append("place name split between city and state")
+
+    # Automotive speech commonly puts a trim before the model name ("RT392
+    # Durango").  Moving this boundary is safe only for a compact alphanumeric
+    # trim token followed by a capitalized model token.
+    if (
+        re.fullmatch(r"(?:rt|srt|amg|rs|m)\d{1,3}", tail, flags=re.IGNORECASE)
+        and re.match(r"^[A-Z][A-Za-z0-9-]+\b", right)
+    ):
+        risk += 34
+        reasons.append("vehicle trim separated from model name")
+
+    if (
+        head == "and"
+        and len(right_tokens) >= 2
+        and right_tokens[1] in {"go", "purchase", "buy"}
+        and re.search(r"\b(?:after|before)\b[^,;.!?]*$", left, flags=re.IGNORECASE)
+    ):
+        risk += 34
+        reasons.append("temporal phrase separated from its continuation")
 
     # A lowercase continuation makes a dangling tail more likely, but is not
     # sufficient by itself: natural subtitle clauses often continue lowercase.

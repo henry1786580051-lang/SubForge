@@ -19,6 +19,15 @@ def _rate_limit_error(retry_after: str | None = None) -> openai.RateLimitError:
     return openai.RateLimitError("rate limited", response=response, body={})
 
 
+def _status_error(status: int) -> openai.APIStatusError:
+    response = httpx.Response(
+        status,
+        request=httpx.Request("POST", "https://api.deepseek.com/chat/completions"),
+    )
+    error_type = openai.InternalServerError if status >= 500 else openai.APIStatusError
+    return error_type("provider error", response=response, body={})
+
+
 @pytest.mark.parametrize(
     ("model", "expected"),
     [
@@ -102,6 +111,15 @@ def test_other_models_keep_standard_retry_dispatch(monkeypatch):
 
     assert client_module._call_llm_api([], "MiniMax-M2.5") is sentinel
     assert len(calls) == 1
+
+
+def test_standard_retry_only_accepts_transient_provider_failures():
+    assert client_module._is_retryable_standard_error(_rate_limit_error()) is True
+    assert client_module._is_retryable_standard_error(_status_error(503)) is True
+    assert client_module._is_retryable_standard_error(
+        openai.APIConnectionError(request=httpx.Request("POST", "https://api.deepseek.com"))
+    ) is True
+    assert client_module._is_retryable_standard_error(_status_error(400)) is False
 
 
 @pytest.mark.parametrize(

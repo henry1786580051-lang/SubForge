@@ -184,6 +184,7 @@ class SubtitleSplitter:
         max_word_count_english: int = MAX_WORD_COUNT_ENGLISH,
         update_callback: Optional[Callable[[List[ASRDataSeg]], None]] = None,
         llm_client: Any = None,
+        target_language: str = "",
     ):
         """初始化分割器
 
@@ -204,6 +205,7 @@ class SubtitleSplitter:
         self.hard_max_word_count_english = length_policy.english_hard_limit
         self.update_callback = update_callback
         self.llm_client = llm_client
+        self.target_language = str(target_language or "").strip()
         self.is_running = True
         self._init_thread_pool()
 
@@ -414,6 +416,7 @@ class SubtitleSplitter:
             max_word_count_english=self.max_word_count_english,
             hard_max_word_count_english=self.hard_max_word_count_english,
             llm_client=self.llm_client,
+            target_language=self.target_language,
         )
 
         return self._merge_segments_based_on_sentences(segments, sentences)

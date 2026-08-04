@@ -97,6 +97,18 @@ def test_assessment_allows_complete_comma_clauses_ending_in_pronouns():
     )
 
 
+def test_assessment_rejects_cross_language_sensitive_vehicle_boundaries():
+    boundaries = [
+        ("Gene Buttman Ford in Ypsilanti,", "Michigan, we're driving this Charger."),
+        ("We actually saw this evolve", "before our very eyes, from SRT8 to Hellcat."),
+        ("what the Charger was like", "when it was reborn in 2006."),
+        ("these days 48 grand gets you an RT392", "Durango with more equipment."),
+        ("maybe you're going to go out after this video", "and go purchase it."),
+    ]
+
+    assert all(assess_english_boundary(left, right).unstable for left, right in boundaries)
+
+
 def test_normalizer_moves_because_to_the_following_clause():
     cues = _cues(
         [

@@ -58,6 +58,7 @@ def split_by_llm(
     max_word_count_english: int = DEFAULT_ENGLISH_SOFT_LIMIT,
     hard_max_word_count_english: int | None = None,
     llm_client: Any = None,
+    target_language: str = "",
 ) -> List[str]:
     """使用LLM进行文本断句（固定使用句子Segments）
 
@@ -80,6 +81,7 @@ def split_by_llm(
             policy.english_soft_limit,
             hard_max_word_count_english or policy.english_hard_limit,
             llm_client,
+            target_language,
         )
     except Exception as e:
         logger.error(f"Sentence splitting failed: {e}")
@@ -93,14 +95,26 @@ def _split_with_agent_loop(
     max_word_count_english: int,
     hard_max_word_count_english: int,
     llm_client: Any = None,
+    target_language: str = "",
 ) -> List[str]:
     """使用agent loop 建立反馈循环进行文本断句，自动验证和修正"""
     prompt_path = "split/sentence"
+    normalized_target = str(target_language or "").strip()
+    target_language_guidance = (
+        "The downstream target language is "
+        f"{normalized_target}. Prefer source boundaries that remain independently readable "
+        "after translation. For Chinese targets, keep place-name units, model names, temporal "
+        "and locative modifiers, relative clauses, and their governing predicates together "
+        "when the hard length limit permits."
+        if normalized_target
+        else "Prefer boundaries that preserve complete names, clauses, and grammatical units."
+    )
     system_prompt = get_prompt(
         prompt_path,
         max_word_count_cjk=max_word_count_cjk,
         max_word_count_english=max_word_count_english,
         hard_max_word_count_english=hard_max_word_count_english,
+        target_language_guidance=target_language_guidance,
     )
 
     user_prompt = (
@@ -118,11 +132,33 @@ def _split_with_agent_loop(
             model=model,
             temperature=0.1,
             client=llm_client,
+            # Splitting is a constrained copy task: the model may only insert
+            # <br> markers. Native reasoning can consume the entire output
+            # budget before emitting those markers, so reserve it for the
+            # later translation and boundary-audit stages.
             reasoning_mode="disabled",
             max_output_tokens=4096,
         )
 
-        result_text = get_response_text(response)
+        try:
+            result_text = get_response_text(response)
+        except ValueError as error:
+            if "no final answer" not in str(error).lower() or step == MAX_STEPS - 1:
+                raise
+            logger.warning(
+                "Split response had no final answer; retrying with an explicit "
+                "output-only instruction"
+            )
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Return the COMPLETE original text now with only <br> tags "
+                        "inserted. Do not reason, explain, summarize, or use markdown."
+                    ),
+                }
+            )
+            continue
 
         split_result = _parse_split_response(result_text)
 
@@ -142,6 +178,18 @@ def _split_with_agent_loop(
         logger.warning(
             f"Split validation failed. Feedback loop (第{step + 1}次尝试):\n {error_message}\n\n"
         )
+        if step == MAX_STEPS - 1 and error_message.startswith(
+            ("Unnatural split boundaries:", "Length violations:")
+        ):
+            # The lexical sequence and hard limits have already passed. Keep
+            # this safe LLM result and let the deterministic boundary
+            # normalizer make the final adjustment instead of replacing an
+            # entire batch with the lower-fidelity rule fallback.
+            logger.warning(
+                "Split boundary or length feedback remained unresolved after retries; "
+                "keeping the content-safe result for deterministic normalization"
+            )
+            return split_result
         messages.append({"role": "assistant", "content": result_text})
         messages.append(
             {
@@ -220,6 +268,7 @@ def _validate_split_result(
     original_has_cjk = bool(
         re.search(r"[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]", original_cleaned)
     )
+    latin_lexical_sequence_locked = False
     if not text_is_cjk and not original_has_cjk:
         original_tokens = re.findall(
             r"[A-Za-z0-9]+(?:['’][A-Za-z0-9]+)?", original_cleaned.lower()
@@ -244,13 +293,14 @@ def _validate_split_result(
                 "Source words were modified. Only punctuation, whitespace, and <br> "
                 "placement may change:\n- " + "\n- ".join(token_differences),
             )
+        latin_lexical_sequence_locked = True
 
     # 使用SequenceMatcher计算相似度和差异
     matcher = difflib.SequenceMatcher(None, original_cleaned, merged_cleaned)
     similarity_ratio = matcher.ratio()
 
     # 允许98%以上的相似度（容忍少量标点或空格差异）
-    if similarity_ratio < 0.96:
+    if similarity_ratio < 0.96 and not latin_lexical_sequence_locked:
         differences = []
         context_size = 5 if text_is_cjk else 20
 

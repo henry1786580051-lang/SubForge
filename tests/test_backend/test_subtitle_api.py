@@ -105,6 +105,7 @@ def test_subtitle_pipeline_uses_explicit_llm_client_without_env_mutation(
                 _kwargs.get("max_word_count_cjk"),
                 _kwargs.get("max_word_count_english"),
             )
+            created["splitter_target_language"] = _kwargs.get("target_language")
 
         def split_subtitle(self, asr_data):
             return asr_data
@@ -127,6 +128,7 @@ def test_subtitle_pipeline_uses_explicit_llm_client_without_env_mutation(
         "api_key": "task-key",
         "splitter_client": client,
         "splitter_limits": (31, 16),
+        "splitter_target_language": "",
     }
     assert os.environ["OPENAI_API_KEY"] == "original-key"
     assert os.environ["OPENAI_BASE_URL"] == "https://original.test/v1"
@@ -135,6 +137,7 @@ def test_subtitle_pipeline_uses_explicit_llm_client_without_env_mutation(
 def test_subtitle_pipeline_cleans_chinese_translation_punctuation(tmp_path, monkeypatch):
     import asyncio
 
+    created = {}
     subtitle_path = tmp_path / "input.srt"
     subtitle_path.write_text(
         "1\n00:00:00,000 --> 00:00:01,000\nHello, world.\n",
@@ -153,7 +156,7 @@ def test_subtitle_pipeline_cleans_chinese_translation_punctuation(tmp_path, monk
 
     class FakeSplitter:
         def __init__(self, **_kwargs):
-            pass
+            created["target_language"] = _kwargs.get("target_language")
 
         def split_subtitle(self, asr_data):
             return asr_data
@@ -185,6 +188,7 @@ def test_subtitle_pipeline_cleans_chinese_translation_punctuation(tmp_path, monk
     )
 
     output = subtitle_path.with_stem("input_processed").read_text(encoding="utf-8")
+    assert created["target_language"] == "chinese"
     assert "你好 世界" in output
     assert "Hello, world." in output
 

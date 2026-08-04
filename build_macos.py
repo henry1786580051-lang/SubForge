@@ -10,6 +10,7 @@ Output:
 
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -64,10 +65,23 @@ def create_dmg(app_path: Path):
         # PyInstaller's macOS bundle relies on symlinks between Resources and
         # Frameworks. Dereferencing them changes the sealed bundle contents and
         # invalidates the app signature inside the DMG.
-        shutil.copytree(app_path, staging / f"{APP_NAME}.app", symlinks=True)
+        staged_app = staging / f"{APP_NAME}.app"
+        shutil.copytree(app_path, staged_app, symlinks=True)
+        # Finder may reattach metadata after the verified app is moved back
+        # under Desktop. Sign the exact copy that will enter the DMG so those
+        # attributes cannot invalidate the distributed bundle.
+        subprocess.run(["xattr", "-cr", str(staged_app)], check=True)
+        subprocess.run(
+            ["codesign", "--force", "--deep", "--sign", "-", str(staged_app)],
+            check=True,
+        )
+        subprocess.run(
+            ["codesign", "--verify", "--deep", "--strict", str(staged_app)],
+            check=True,
+        )
         os.symlink("/Applications", staging / "Applications")
         app_size_mb = sum(
-            path.stat().st_size for path in (staging / f"{APP_NAME}.app").rglob("*") if path.is_file()
+            path.stat().st_size for path in staged_app.rglob("*") if path.is_file()
         ) // (1024 * 1024)
         dmg_size_mb = max(1024, int(app_size_mb * 1.35) + 256)
 
