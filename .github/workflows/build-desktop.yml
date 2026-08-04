@@ -23,6 +23,11 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Existing release version to rebuild (for example, 1.1.6)"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -55,6 +60,7 @@ jobs:
 
     env:
       SUBFORGE_BUILD_FLAVOR: ${{ matrix.build-flavor }}
+      SUBFORGE_BUILD_VERSION: ${{ inputs.release_version || '' }}
 
     steps:
       - uses: actions/checkout@v6
@@ -93,7 +99,11 @@ jobs:
         shell: pwsh
         run: |
           choco install innosetup --no-progress -y
-          $version = (uv run --no-sync python -c "from subforge.config import VERSION; print(VERSION)").Trim()
+          $version = if ($env:SUBFORGE_BUILD_VERSION) {
+            $env:SUBFORGE_BUILD_VERSION.Trim().TrimStart("v")
+          } else {
+            (uv run --no-sync python -c "from subforge.config import VERSION; print(VERSION)").Trim()
+          }
           $suffix = if ($env:SUBFORGE_BUILD_FLAVOR) { "-$($env:SUBFORGE_BUILD_FLAVOR)" } else { "" }
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" "/DMyAppSuffix=$suffix" "/DMyCompression=lzma2/ultra64" "/DMyDiskSpanning=no" "scripts\windows_installer.iss"
 
