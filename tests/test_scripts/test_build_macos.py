@@ -1,8 +1,12 @@
+import sys
 from pathlib import Path
+
+import pytest
 
 import build_macos
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="DMG signing is macOS-only")
 def test_create_dmg_resigns_exact_staged_app(tmp_path, monkeypatch):
     source_app = tmp_path / "source" / "SubForge.app"
     executable = source_app / "Contents" / "MacOS" / "SubForge"
