@@ -638,6 +638,9 @@ class SubtitleConfig:
     api_key: Optional[str] = None
     llm_model: Optional[str] = None
     deeplx_endpoint: Optional[str] = None
+    azure_translator_key: Optional[str] = None
+    azure_translator_region: Optional[str] = None
+    azure_translator_endpoint: Optional[str] = None
     # 翻译服务
     translator_service: Optional[TranslatorServiceEnum] = None
     need_translate: bool = False
@@ -690,6 +693,10 @@ class SubtitleConfig:
                 lines.append(f"  Reflect Translation: {self.need_reflect}")
             elif self.translator_service == TranslatorServiceEnum.DEEPLX:
                 lines.append(f"  DeepLX Endpoint: {self.deeplx_endpoint}")
+            elif self.translator_service == TranslatorServiceEnum.BING:
+                lines.append(f"  Azure Endpoint: {self.azure_translator_endpoint}")
+                lines.append(f"  Azure Region: {self.azure_translator_region or 'global'}")
+                lines.append(f"  Azure API Key: {self._mask_key(self.azure_translator_key)}")
             lines.append(
                 f"  Target Language: {self.target_language.value if self.target_language else 'None'}"
             )

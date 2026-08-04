@@ -207,11 +207,18 @@ def _deserialize_cached_turns(value: Any) -> list[SpeakerTurn]:
 def _select_diarization_device(torch_module: Any) -> str:
     """Select a safe pyannote device, with an override for diagnostics."""
     configured = os.environ.get("SUBFORGE_DIARIZATION_DEVICE", "auto").strip().lower()
-    if configured not in {"auto", "cpu", "mps"}:
+    if configured not in {"auto", "cpu", "mps", "cuda"}:
         logger.warning("Ignoring unsupported diarization device: %s", configured)
         configured = "auto"
     if configured == "cpu":
         return "cpu"
+
+    cuda = getattr(torch_module, "cuda", None)
+    cuda_available = bool(cuda and cuda.is_available())
+    if configured == "cuda":
+        if not cuda_available:
+            raise RuntimeError("NVIDIA CUDA was requested but is not available")
+        return "cuda"
 
     mps_backend = getattr(getattr(torch_module, "backends", None), "mps", None)
     mps_available = bool(mps_backend and mps_backend.is_available())
@@ -221,6 +228,8 @@ def _select_diarization_device(torch_module: Any) -> str:
         return "mps"
     if platform.system() == "Darwin" and platform.machine() == "arm64" and mps_available:
         return "mps"
+    if platform.system() == "Windows" and cuda_available:
+        return "cuda"
     return "cpu"
 
 
@@ -303,18 +312,22 @@ def diarize_audio(
                 "Unable to load the local Community-1 model. Verify that every model "
                 "file is stored locally and readable."
             ) from exc
-        if selected_device != "mps":
+        if selected_device not in {"mps", "cuda"}:
             raise RuntimeError(
                 "Unable to load or run the speaker diarization model. Verify the local "
                 "model and Community-1 runtime."
             ) from exc
         logger.warning(
-            "Community-1 MPS inference failed; retrying on CPU: %s",
+            "Community-1 %s inference failed; retrying on CPU: %s",
+            selected_device.upper(),
             exc,
             exc_info=True,
         )
         if callback:
-            callback(94, "MPS unavailable; retrying speaker analysis on CPU...")
+            callback(
+                94,
+                f"{selected_device.upper()} unavailable; retrying speaker analysis on CPU...",
+            )
         try:
             cpu_model_loaded = False
             cpu_cache_key = (

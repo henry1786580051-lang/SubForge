@@ -142,7 +142,7 @@ chmod +x run.sh
 
 ### High-Quality Translation
 
-- Supports LLM translation, Google Translate, Bing Translate, DeepLX
+- Supports LLM translation, Google Translate, Microsoft Azure Translator, and DeepLX
 - Reflection translation mechanism improves translation quality
 - Maintains complete timeline consistency
 - Supports 37 target languages

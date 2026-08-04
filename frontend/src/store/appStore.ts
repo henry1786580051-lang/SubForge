@@ -71,6 +71,8 @@ interface AppState {
     speakerCount: number;
   };
   setConfig: (config: Partial<AppState["config"]>) => void;
+  configLoaded: boolean;
+  setConfigLoaded: (loaded: boolean) => void;
 
   // Backend status
   backendOnline: boolean;
@@ -146,7 +148,7 @@ export const useAppStore = create<AppState>((set) => ({
   setIsProcessing: (v) => set({ isProcessing: v }),
 
   config: {
-    transcribeModel: "whisperx",
+    transcribeModel: "",
     sourceLanguage: "auto",
     targetLanguage: "chinese",
     translator: "bing",
@@ -159,13 +161,15 @@ export const useAppStore = create<AppState>((set) => ({
     whisperxAlignmentStrategy: "auto",
     whisperxAlignModel: "WAV2VEC2_ASR_LARGE_LV60K_960H",
     whisperxBatchSize: 8,
-    whisperxSupported: true,
+    whisperxSupported: false,
     enableAudioEnhancement: true,
     speakerDiarization: "off",
     speakerCount: 2,
   },
   setConfig: (partial) =>
     set((state) => ({ config: { ...state.config, ...partial } })),
+  configLoaded: false,
+  setConfigLoaded: (loaded) => set({ configLoaded: loaded }),
 
   backendOnline: false,
   setBackendOnline: (v) => set({ backendOnline: v }),

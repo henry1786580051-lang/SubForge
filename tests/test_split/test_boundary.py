@@ -85,16 +85,56 @@ def test_assessment_rejects_real_spoken_english_dependency_boundaries():
     assert all(assess_english_boundary(left, right).unstable for left, right in boundaries)
 
 
+def test_assessment_rejects_charger_recovery_dependency_boundaries():
+    boundaries = [
+        ("European influence here with this first", "generation of the new era Charger."),
+        ("I don't know whether", "the Charger is a future classic."),
+        ("This was driven by an old", "man who took great care of it."),
+        ("and it's the same", "as an S class, so that's cool."),
+        ("it really doesn't feel like", "this was put together in 2007."),
+    ]
+
+    assert all(assess_english_boundary(left, right).unstable for left, right in boundaries)
+
+
+def test_assessment_rejects_charger_full_run_dependency_boundaries():
+    boundaries = [
+        ("there was quite a bit of European influence", "here with this first generation"),
+        ("a performance pack to give you an intake", "and exhaust that boosted power"),
+        ("these days 48 grand damn near", "gets you an RT392 Durango"),
+        ("The easiest way to tell if they were a V6 or a V8", "was by the exhaust tips"),
+        ("and because of that, the turn", "signals are one touch"),
+        ("this is what's so great about", "this is you have the torque"),
+        ("instead of spending", "like eighty thousand dollars"),
+        ("quite a bit of European", "influence here with this generation"),
+        ("get a bit of a performance", "pack to give you an intake"),
+        ("The easiest way to tell if they were a V6", "or a V8 was by the exhaust tips"),
+        ("these days 48 grand damn", "near gets you an RT392 Durango"),
+        ("tell by how many exhaust", "tips they had"),
+        ("and this is what's", "so great about this car"),
+        ("I don't see why people avoid these cars. I mean,", "instead of spending more"),
+        ("I don't see why people avoid these cars, I mean", "instead of spending more"),
+        ("I mean, probably the closest", "of the sedans mentioned here"),
+        ("any of the other big body American", "sedans mentioned in this video"),
+        ("and this is what's so", "great about this car"),
+        ("the other big body", "American sedans mentioned here"),
+        ("I was a car-obsessed kid, which", "I was at age 13"),
+        ("this quiet V8. I mean, that's", "what this car is all about"),
+        ("And that's because at the time,", "Chrysler was involved"),
+        ("I knew at this time Mercedes", "was involved in the platform"),
+        ("Gene Buttman Ford in Ypsilanti,", "Michigan for tossing me the keys"),
+    ]
+
+    assert all(assess_english_boundary(left, right).unstable for left, right in boundaries)
+
+
 def test_assessment_allows_complete_comma_clauses_ending_in_pronouns():
     boundaries = [
         ("Any way you slice it,", "we have to replace the infrastructure"),
         ("If journalism like this is important to you,", "then join the community"),
     ]
 
-    assert all(
-        not assess_english_boundary(left, right).unstable
-        for left, right in boundaries
-    )
+    assert all(not assess_english_boundary(left, right).unstable for left, right in boundaries)
 
 
 def test_assessment_rejects_cross_language_sensitive_vehicle_boundaries():
@@ -239,15 +279,11 @@ def test_normalizer_removes_cross_boundary_singular_false_start():
 
 
 def test_normalizer_removes_in_subtitle_singular_false_start():
-    cues = _cues(
-        ["They know somebody who works at the plant, plants, or they work there."]
-    )
+    cues = _cues(["They know somebody who works at the plant, plants, or they work there."])
 
     repaired = normalize_boundaries(cues)
 
-    assert repaired[0].text == (
-        "They know somebody who works at the plants, or they work there."
-    )
+    assert repaired[0].text == ("They know somebody who works at the plants, or they work there.")
 
 
 def test_normalizer_merges_compact_pair_without_a_stable_internal_boundary():

@@ -36,9 +36,11 @@ _HARD_DANGLING_TAILS = {
     "unless",
     "while",
     "whereas",
+    "how",
     "if",
     "as",
     "at",
+    "about",
     "by",
     "for",
     "from",
@@ -51,6 +53,7 @@ _HARD_DANGLING_TAILS = {
     "that",
     "to",
     "under",
+    "whether",
     "with",
 }
 
@@ -132,6 +135,7 @@ _MODIFIER_TAILS = {
     "another",
     "any",
     "big",
+    "closest",
     "each",
     "every",
     "few",
@@ -157,6 +161,7 @@ _MODIFIER_TAILS = {
     "its",
     "massive",
     "my",
+    "near",
     "really",
     "serrated",
     "several",
@@ -169,7 +174,20 @@ _MODIFIER_TAILS = {
     "your",
 }
 
-_OPEN_COMPLEMENT_TAILS = {"give", "gives", "gave", "get", "gets", "got", "just"}
+_ATTRIBUTIVE_TAILS = {"first", "old", "same", "second", "similar"}
+
+_OPEN_COMPLEMENT_TAILS = {
+    "give",
+    "gives",
+    "gave",
+    "get",
+    "gets",
+    "got",
+    "just",
+    "spend",
+    "spending",
+    "spent",
+}
 _PHRASAL_PARTICLES = {"away", "back", "down", "in", "off", "on", "out", "over", "up"}
 
 _DANGLING_PHRASES = {
@@ -194,9 +212,14 @@ _DANGLING_PHRASES = {
 
 _DEPENDENCY_PAIRS = {
     ("ago", "or"),
+    ("american", "sedans"),
     ("better", "sound"),
     ("big", "picture"),
+    ("body", "american"),
     ("condition", "or"),
+    ("damn", "near"),
+    ("european", "influence"),
+    ("exhaust", "tips"),
     ("fall", "out"),
     ("flip", "switch"),
     ("generating", "power"),
@@ -206,12 +229,16 @@ _DEPENDENCY_PAIRS = {
     ("nuclear", "plants"),
     ("nuclear", "power"),
     ("power", "plants"),
+    ("performance", "pack"),
     ("pretty", "standard"),
     ("public", "college"),
     ("same", "sort"),
     ("serrated", "edge"),
     ("specialized", "employees"),
     ("traditional", "hybrid"),
+    ("turn", "signals"),
+    ("which", "i"),
+    ("that's", "what"),
 }
 
 _COPULA_COMPLEMENT_TAILS = {
@@ -261,13 +288,46 @@ _PREFERRED_CLAUSE_HEADS = {
 _RELATIVE_CLAUSE_HEADS = {"that", "which", "who", "whom", "whose"}
 _TRANSLATION_SENSITIVE_HEADS = {"after", "before", "when", "where"}
 _US_STATE_NAMES = {
-    "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
-    "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
-    "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana",
-    "maine", "maryland", "massachusetts", "michigan", "minnesota",
-    "mississippi", "missouri", "montana", "nebraska", "nevada",
-    "ohio", "oklahoma", "oregon", "pennsylvania", "tennessee", "texas",
-    "utah", "vermont", "virginia", "washington", "wisconsin", "wyoming",
+    "alabama",
+    "alaska",
+    "arizona",
+    "arkansas",
+    "california",
+    "colorado",
+    "connecticut",
+    "delaware",
+    "florida",
+    "georgia",
+    "hawaii",
+    "idaho",
+    "illinois",
+    "indiana",
+    "iowa",
+    "kansas",
+    "kentucky",
+    "louisiana",
+    "maine",
+    "maryland",
+    "massachusetts",
+    "michigan",
+    "minnesota",
+    "mississippi",
+    "missouri",
+    "montana",
+    "nebraska",
+    "nevada",
+    "ohio",
+    "oklahoma",
+    "oregon",
+    "pennsylvania",
+    "tennessee",
+    "texas",
+    "utah",
+    "vermont",
+    "virginia",
+    "washington",
+    "wisconsin",
+    "wyoming",
 }
 _THAT_COMPLEMENT_TAILS = {
     ("find", "out"),
@@ -286,7 +346,10 @@ def _tokens(text: str) -> list[str]:
 
 
 def _ends_with_phrase(tokens: Sequence[str]) -> bool:
-    return any(len(tokens) >= len(phrase) and tuple(tokens[-len(phrase) :]) == phrase for phrase in _DANGLING_PHRASES)
+    return any(
+        len(tokens) >= len(phrase) and tuple(tokens[-len(phrase) :]) == phrase
+        for phrase in _DANGLING_PHRASES
+    )
 
 
 @dataclass(frozen=True)
@@ -322,11 +385,7 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     if tail in _HARD_DANGLING_TAILS:
         risk += 32
         reasons.append(f"dangling function word '{tail}'")
-    if (
-        tail in _SUBJECT_TAILS
-        and right[:1].islower()
-        and not _CLAUSE_RE.search(left)
-    ):
+    if tail in _SUBJECT_TAILS and right[:1].islower() and not _CLAUSE_RE.search(left):
         risk += 26
         reasons.append(f"dangling subject '{tail}'")
     if tail in _INCOMPLETE_PREDICATE_TAILS:
@@ -338,6 +397,9 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     if tail in _MODIFIER_TAILS:
         risk += 24
         reasons.append(f"dangling modifier '{tail}'")
+    if tail in _ATTRIBUTIVE_TAILS and right[:1].islower():
+        risk += 24
+        reasons.append(f"dangling attributive '{tail}'")
     if tail in _OPEN_COMPLEMENT_TAILS and right[:1].islower():
         risk += 26
         reasons.append(f"open complement after '{tail}'")
@@ -356,6 +418,12 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     if re.search(r"(?:^|[.!?]\s+)(?:and|but|now|so),?$", left, re.I):
         risk += 34
         reasons.append("new-clause connective stranded at previous cue end")
+    if re.search(r"[.!?,;]\s+i\s+mean,?$", left, re.IGNORECASE):
+        risk += 36
+        reasons.append("sentence-opening filler belongs to the next cue")
+    if re.search(r"\bbecause\s+at\s+the\s+time,?$", left, re.IGNORECASE):
+        risk += 36
+        reasons.append("reason clause opener separated from its subject")
     if tail == "now" and head in (_SUBJECT_TAILS | {"our", "the", "a", "an"}):
         risk += 30
         reasons.append("sentence-opening time adverb belongs to the next cue")
@@ -365,16 +433,33 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     if (tail, head) in _DEPENDENCY_PAIRS:
         risk += 34
         reasons.append(f"split lexical unit '{tail} {head}'")
-    if (
-        head in _DEPENDENT_RIGHT_HEADS
-        and right[:1].islower()
-        and not _CLAUSE_RE.search(left)
-    ):
+    if tail == "intake" and tuple(right_tokens[:2]) == ("and", "exhaust"):
+        risk += 34
+        reasons.append("coordinate automotive term split between intake and exhaust")
+    if head == "or" and re.fullmatch(r"[a-z]+\d+", tail):
+        risk += 34
+        reasons.append("alphanumeric model alternative split before 'or'")
+    if tail == "same" and head == "as":
+        risk += 36
+        reasons.append("comparison split between 'same' and 'as'")
+    if re.search(r"\bthis\s+is\s+what['’]s$", left, re.IGNORECASE) and head == "so":
+        risk += 36
+        reasons.append("'what is so' complement split")
+    if re.search(r"\bwhat['’]s\s+so$", left, re.IGNORECASE) and head in {
+        "good",
+        "great",
+        "special",
+    }:
+        risk += 36
+        reasons.append("'what is so' complement split")
+    if tail == "like" and head in {"this", "that", "it", "these", "those"}:
+        risk += 32
+        reasons.append(f"comparison complement split before '{head}'")
+    if head in _DEPENDENT_RIGHT_HEADS and right[:1].islower() and not _CLAUSE_RE.search(left):
         risk += 30
         reasons.append(f"dependent phrase beginning with '{head}'")
     that_starts_complement = head == "that" and any(
-        len(left_tokens) >= len(phrase)
-        and tuple(left_tokens[-len(phrase) :]) == phrase
+        len(left_tokens) >= len(phrase) and tuple(left_tokens[-len(phrase) :]) == phrase
         for phrase in _THAT_COMPLEMENT_TAILS
     )
     if (
@@ -384,21 +469,42 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     ):
         risk += 30
         reasons.append(f"relative clause '{head}' separated from its antecedent")
-    if (
-        head in _TRANSLATION_SENSITIVE_HEADS
-        and right[:1].islower()
-        and not _CLAUSE_RE.search(left)
-    ):
+    if head in _TRANSLATION_SENSITIVE_HEADS and right[:1].islower() and not _CLAUSE_RE.search(left):
         risk += 26
         reasons.append(f"dependent adverbial clause beginning with '{head}'")
+    if (
+        head == "here"
+        and len(right_tokens) >= 2
+        and right_tokens[1] in {"in", "on", "with"}
+        and right[:1].islower()
+    ):
+        risk += 30
+        reasons.append("dependent locative phrase separated from its clause")
+    if (
+        head in {"is", "was"}
+        and re.match(
+            r"^the\s+(?:easiest|best|only|main)\s+way\b",
+            left,
+            flags=re.IGNORECASE,
+        )
+    ):
+        risk += 32
+        reasons.append("way-clause subject separated from its predicate")
+
+    if head in {"is", "are", "was", "were"} and re.search(
+        r"\b[A-Z][A-Za-z0-9'’.+-]*,?$", left
+    ):
+        risk += 34
+        reasons.append("proper-name subject separated from its predicate")
 
     # Keep location names such as "Ypsilanti, Michigan" in one cue.  This is
     # deliberately limited to a capitalized comma-separated left tail and a
     # known single-token state name to avoid treating ordinary sentence starts
     # as entities.
     left_name = re.search(r"\b([A-Z][A-Za-z'’-]+),\s*$", left)
-    if left_name and head in _US_STATE_NAMES and re.match(
-        rf"^{re.escape(right_tokens[0])}\s*,", right, flags=re.IGNORECASE
+    if (
+        left_name
+        and head in _US_STATE_NAMES
     ):
         risk += 38
         reasons.append("place name split between city and state")
@@ -406,9 +512,8 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     # Automotive speech commonly puts a trim before the model name ("RT392
     # Durango").  Moving this boundary is safe only for a compact alphanumeric
     # trim token followed by a capitalized model token.
-    if (
-        re.fullmatch(r"(?:rt|srt|amg|rs|m)\d{1,3}", tail, flags=re.IGNORECASE)
-        and re.match(r"^[A-Z][A-Za-z0-9-]+\b", right)
+    if re.fullmatch(r"(?:rt|srt|amg|rs|m)\d{1,3}", tail, flags=re.IGNORECASE) and re.match(
+        r"^[A-Z][A-Za-z0-9-]+\b", right
     ):
         risk += 34
         reasons.append("vehicle trim separated from model name")
@@ -493,11 +598,7 @@ def _is_singular_correction(left: ASRWord, right: ASRWord) -> bool:
         and len(left_tokens[0]) >= 3
         and right_tokens[0] == f"{left_tokens[0]}s"
         and right.start_time - left.end_time <= MAX_DUPLICATE_CORRECTION_GAP_MS
-        and (
-            not left.speaker_id
-            or not right.speaker_id
-            or left.speaker_id == right.speaker_id
-        )
+        and (not left.speaker_id or not right.speaker_id or left.speaker_id == right.speaker_id)
     )
 
 
@@ -580,9 +681,7 @@ def _merge_compact_unstable_pairs(
             and words[-1].end_time - words[0].start_time <= 8000
             and not re.search(r"[.!?][\"')\]]*\s+\S", combined_text)
         ):
-            result[index : index + 2] = [
-                _make_cue(words, left.speaker_id or right.speaker_id)
-            ]
+            result[index : index + 2] = [_make_cue(words, left.speaker_id or right.speaker_id)]
             logger.info(
                 "Merged compact unstable subtitles %s-%s: %s",
                 index + 1,
@@ -663,7 +762,11 @@ def _best_region_breaks(
                 if segment_cost == float("inf"):
                     continue
                 boundary_cost, boundary_risk = _boundary_cost(words, position, original)
-                candidate = (cost + segment_cost + boundary_cost, path + [position], risk + boundary_risk)
+                candidate = (
+                    cost + segment_cost + boundary_cost,
+                    path + [position],
+                    risk + boundary_risk,
+                )
                 existing = next_states.get(position)
                 if existing is None or candidate[0] < existing[0]:
                     next_states[position] = candidate
@@ -739,8 +842,7 @@ def normalize_boundaries(
         for cue_start, cue_end in reversed(regions):
             cues = result[cue_start : cue_end + 1]
             if any(not cue.words for cue in cues) or any(
-                _is_hard_boundary(cues[index], cues[index + 1])
-                for index in range(len(cues) - 1)
+                _is_hard_boundary(cues[index], cues[index + 1]) for index in range(len(cues) - 1)
             ):
                 continue
 
@@ -774,9 +876,7 @@ def normalize_boundaries(
             previous_position = 0
             fallback_speaker = cues[0].speaker_id
             for position in [*positions, len(words)]:
-                rebuilt.append(
-                    _make_cue(words[previous_position:position], fallback_speaker)
-                )
+                rebuilt.append(_make_cue(words[previous_position:position], fallback_speaker))
                 previous_position = position
             result[cue_start : cue_end + 1] = rebuilt
             changed = True

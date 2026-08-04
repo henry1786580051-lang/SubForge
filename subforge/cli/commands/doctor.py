@@ -139,6 +139,15 @@ def _check_subtitle(config: dict) -> list[Check]:
         checks.append(Check("llm.api_key", "warn", "LLM API key is missing; AI polish/split/LLM translation will fail", "Run 'subforge config set llm.api_key <key>' or disable AI polish/split"))
     if needs_llm and not get(config, "llm.model", ""):
         checks.append(Check("llm.model", "error", "LLM model is missing", "Run 'subforge config set llm.model <model>'"))
+    if translator == "bing" and not get(config, "translate.azure_key", ""):
+        checks.append(
+            Check(
+                "translate.azure_key",
+                "error",
+                "Microsoft Azure Translator API key is missing",
+                "Run 'subforge config set translate.azure_key <key>'",
+            )
+        )
     return checks
 
 

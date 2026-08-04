@@ -181,6 +181,7 @@ def test_public_config_reports_credentials_without_exposing_them():
             "llm_api_key": "llm-secret",
             "whisper_api_key": "whisper-secret",
             "huggingface_token": "hf-secret",
+            "azure_translator_key": "azure-secret",
             "llm_profiles": {
                 "mimo": {
                     "base_url": "https://example.test",
@@ -194,12 +195,58 @@ def test_public_config_reports_credentials_without_exposing_them():
     assert public["llm_api_key"] == ""
     assert public["whisper_api_key"] == ""
     assert public["huggingface_token"] == ""
+    assert public["azure_translator_key"] == ""
     assert public["llm_api_key_configured"] is True
+    assert public["azure_translator_key_configured"] is True
     assert public["llm_profiles"]["mimo"] == {
         "base_url": "https://example.test",
         "model": "mimo",
         "api_key_configured": True,
     }
+
+
+def test_azure_translator_endpoint_must_be_https():
+    with pytest.raises(HTTPException):
+        config_module._validate_config_update(
+            "azure_translator_endpoint", "http://example.test"
+        )
+
+    assert config_module._validate_config_update(
+        "azure_translator_endpoint",
+        "https://example.cognitiveservices.azure.com/translator/text/v3.0",
+    ) == "https://example.cognitiveservices.azure.com/translator/text/v3.0"
+
+
+def test_azure_translator_connection_requires_key(monkeypatch):
+    monkeypatch.setattr(config_module, "_read_settings", lambda: {})
+
+    result = asyncio.run(config_module.test_azure_translator_connection())
+
+    assert result == {
+        "ok": False,
+        "error": "未配置 Microsoft Azure Translator API Key",
+    }
+
+
+def test_azure_translator_connection_uses_private_persisted_key(monkeypatch):
+    monkeypatch.setattr(
+        config_module,
+        "_read_settings",
+        lambda: {
+            "azure_translator_key": "private-key",
+            "azure_translator_region": "eastasia",
+            "azure_translator_endpoint": "https://example.test",
+        },
+    )
+    monkeypatch.setattr(
+        "subforge.core.translate.bing_translator.BingTranslator.test_connection",
+        lambda self: "你好",
+    )
+
+    result = asyncio.run(config_module.test_azure_translator_connection())
+
+    assert result == {"ok": True, "translated": "你好"}
+    assert "private-key" not in str(result)
 
 
 def test_public_config_exposes_resolved_subtitle_length_policy():

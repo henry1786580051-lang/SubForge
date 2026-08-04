@@ -64,6 +64,9 @@ def create_translator_from_config(
         is_reflect=config.need_reflect,
         update_callback=callback,
         translation_context=translation_context,
+        azure_translator_key=config.azure_translator_key or "",
+        azure_translator_region=config.azure_translator_region or "",
+        azure_translator_endpoint=config.azure_translator_endpoint or "",
     )
 
 

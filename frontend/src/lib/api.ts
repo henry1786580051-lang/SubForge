@@ -76,6 +76,27 @@ export async function openNativeFile(
   return { available: true, path: result.ok ? result.path || null : null };
 }
 
+export async function openNativeLogsFolder(): Promise<{ available: boolean; path?: string }> {
+  if (typeof window === "undefined" || !("pywebview" in window)) {
+    return { available: false };
+  }
+  const nativeWindow = window as unknown as {
+    pywebview?: { api?: { open_logs_folder?: () => Promise<NativeOpenResult> } };
+  };
+  for (
+    let attempt = 0;
+    attempt < 20 && !nativeWindow.pywebview?.api?.open_logs_folder;
+    attempt += 1
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const openLogsFolder = nativeWindow.pywebview?.api?.open_logs_folder;
+  if (!openLogsFolder) return { available: false };
+  const result = await openLogsFolder();
+  if (!result.ok) throw new Error(result.error || "无法打开诊断目录");
+  return { available: true, path: result.path };
+}
+
 // Subtitles
 export const subtitlesApi = {
   load: (path: string) =>
@@ -165,6 +186,10 @@ export const configApi = {
     }),
   fetchModels: () => request<{ models: string[]; error?: string }>("/api/config/models"),
   testLlm: () => request<{ ok: boolean; model?: string; error?: string }>("/api/config/test-llm"),
+  testAzureTranslator: () =>
+    request<{ ok: boolean; translated?: string; error?: string }>(
+      "/api/config/test-azure-translator"
+    ),
   testWhisper: () => request<{ ok: boolean; error?: string }>("/api/config/test-whisper"),
   fetchWhisperModels: () => request<{ models: string[]; error?: string }>("/api/config/whisper-models"),
 };

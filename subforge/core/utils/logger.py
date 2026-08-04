@@ -7,6 +7,7 @@ from ...config import LOG_LEVEL, LOG_PATH
 
 FALLBACK_LOG_PATH = Path(tempfile.gettempdir()) / "SubForge" / "logs"
 _active_log_file: Path | None = None
+_ROOT_HANDLER_MARKER = "_subforge_root_handler"
 
 
 def get_active_log_file(default: Path | None = None) -> Path:
@@ -67,6 +68,7 @@ def setup_logger(
 
     logger = logging.getLogger(name)
     logger.setLevel(level)
+    logger.propagate = False
 
     if not logger.handlers:
         class LevelSpecificFormatter(logging.Formatter):
@@ -108,3 +110,21 @@ def setup_logger(
         logging.getLogger(lib).setLevel(logging.ERROR)
 
     return logger
+
+
+def configure_root_logger(level: int = LOG_LEVEL) -> Path:
+    """Persist logs from backend modules that use the standard logging API."""
+    root = logging.getLogger()
+    root.setLevel(level)
+    for handler in root.handlers:
+        if getattr(handler, _ROOT_HANDLER_MARKER, False):
+            return get_active_log_file()
+
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    handler = _build_file_handler(str(LOG_PATH / "app.log"), level, formatter)
+    setattr(handler, _ROOT_HANDLER_MARKER, True)
+    root.addHandler(handler)
+    return get_active_log_file()

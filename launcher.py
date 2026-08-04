@@ -56,6 +56,18 @@ def _configure_frozen_runtime_paths() -> None:
             sys.path.insert(0, path)
 
 
+def _configure_application_logging() -> None:
+    """Persist backend errors before the embedded server starts."""
+    try:
+        from subforge.core.utils.logger import configure_root_logger
+
+        configure_root_logger()
+    except Exception:
+        # Startup error reporting below remains available if the log directory
+        # itself cannot be initialized.
+        pass
+
+
 _configure_frozen_standard_streams()
 _configure_frozen_runtime_paths()
 
@@ -117,8 +129,10 @@ def _cleanup_desktop_session(server=None, *, cleanup_uploads: bool = True) -> No
         return
     try:
         from app.api.files import cleanup_session_uploads
+        from app.security import clear_granted_paths
 
         cleanup_session_uploads()
+        clear_granted_paths()
     except Exception:
         # Closing the native window must remain reliable even during a partial
         # backend startup or interpreter teardown.
@@ -214,7 +228,10 @@ class Api:
             if not result:
                 return {"ok": False, "cancelled": True}
             file_path = result if isinstance(result, str) else result[0]
-            return {"ok": True, "path": str(file_path)}
+            from app.security import grant_path
+
+            granted_path = grant_path(file_path)
+            return {"ok": True, "path": str(granted_path)}
         except Exception as exc:
             traceback.print_exc()
             return {"ok": False, "error": str(exc)}
@@ -248,6 +265,26 @@ class Api:
             print(f"[Api] save_file error: {e}")
             traceback.print_exc()
             return {"ok": False, "error": str(e)}
+
+    def open_logs_folder(self):
+        """Open the persistent diagnostics directory in the system file manager."""
+        try:
+            from subforge.config import LOG_PATH
+
+            LOG_PATH.mkdir(parents=True, exist_ok=True)
+            if os.name == "nt":
+                os.startfile(str(LOG_PATH))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                import subprocess
+
+                subprocess.Popen(["open", str(LOG_PATH)])
+            else:
+                import subprocess
+
+                subprocess.Popen(["xdg-open", str(LOG_PATH)])
+            return {"ok": True, "path": str(LOG_PATH)}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
 
 
 def main():
@@ -320,6 +357,12 @@ def main():
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
+    _configure_application_logging()
+
+    if os.environ.get("SUBFORGE_DENOISE_WORKER") == "1":
+        from subforge.core.asr.audio_enhancer import run_packaged_denoise_worker
+
+        run_packaged_denoise_worker()
 
     if os.environ.get("SUBFORGE_FASTER_WHISPER_WORKER") == "1":
         from subforge.core.asr.faster_whisper import run_packaged_faster_whisper_worker
@@ -334,7 +377,7 @@ if __name__ == "__main__":
     if os.environ.get("SUBFORGE_CHECK_DENOISE") == "1":
         import traceback
 
-        from subforge.core.asr.audio_enhancer import is_available
+        from subforge.core.asr.audio_enhancer import enhance_audio, is_available
 
         available = is_available()
         print(f"DeepFilterNet3 available: {available}")
@@ -346,6 +389,21 @@ if __name__ == "__main__":
                 from df.enhance import init_df as _init_df  # noqa: F401
             except Exception:
                 traceback.print_exc()
+        audio_path = os.environ.get("SUBFORGE_DENOISE_AUDIO_PATH", "")
+        if available and audio_path:
+            enhanced_path = None
+            try:
+                enhanced_path = enhance_audio(audio_path, atten_lim_db=18.0)
+                enhanced_file = Path(enhanced_path)
+                if not enhanced_file.is_file() or enhanced_file.stat().st_size == 0:
+                    raise RuntimeError("DeepFilterNet3 produced no smoke-test output")
+                print(f"DeepFilterNet3 inference: ok ({enhanced_file.stat().st_size} bytes)")
+            except BaseException:
+                traceback.print_exc()
+                raise SystemExit(1)
+            finally:
+                if enhanced_path:
+                    Path(enhanced_path).unlink(missing_ok=True)
         raise SystemExit(0 if available else 1)
     if os.environ.get("SUBFORGE_CHECK_FASTER_WHISPER") == "1":
         import traceback
@@ -367,6 +425,24 @@ if __name__ == "__main__":
                 raise RuntimeError("Packaged FasterWhisper VAD returned an invalid result")
             print(f"FasterWhisper import: ok ({device}/{compute_type})")
             print("FasterWhisper Silero VAD inference: ok")
+            raise SystemExit(0)
+        except Exception:
+            traceback.print_exc()
+            raise SystemExit(1)
+    if os.environ.get("SUBFORGE_CHECK_WHISPERX") == "1":
+        import traceback
+
+        try:
+            from subforge.core.asr.whisperx_asr import install_whisperx_runtime_stubs
+
+            install_whisperx_runtime_stubs()
+            from whisperx.alignment import align as _align  # noqa: F401
+            from whisperx.alignment import load_align_model as _load_align_model  # noqa: F401
+            from whisperx.asr import load_model as _load_model  # noqa: F401
+            from whisperx.audio import load_audio as _load_audio  # noqa: F401
+
+            print("WhisperX ASR import: ok")
+            print("WhisperX forced alignment import: ok")
             raise SystemExit(0)
         except Exception:
             traceback.print_exc()

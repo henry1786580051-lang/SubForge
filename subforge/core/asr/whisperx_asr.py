@@ -17,9 +17,12 @@ from ..utils.logger import setup_logger
 from .alignment_models import alignment_model_for_language, is_alignment_model_ready
 from .asr_data import ASRData, ASRDataSeg, ASRWord, TimestampSource
 from .base import BaseASR
-from .faster_whisper import is_faster_whisper_model_dir, resolve_faster_whisper_runtime
+from .faster_whisper import find_faster_whisper_model_dir, resolve_faster_whisper_runtime
 from .model_cache import SingleEntryModelCache
 from .status import ASRStatus
+from .worker_runtime import atomic_json_write as _atomic_json_write
+from .worker_runtime import log_tail as _worker_log_tail
+from .worker_runtime import stop_process as _stop_worker_process
 
 logger = setup_logger("whisperx_asr")
 _ALIGNMENT_MODEL_CACHE = SingleEntryModelCache()
@@ -211,30 +214,6 @@ def _prepare_mlx_model_path(model: str, tmp_dir: Path) -> str:
         except OSError:
             os.link(item, target)
     return str(alias_dir)
-
-
-def _atomic_json_write(path: Path, payload: Any) -> None:
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    temporary.replace(path)
-
-
-def _stop_worker_process(process: subprocess.Popen) -> None:
-    if process.poll() is not None:
-        return
-    process.terminate()
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=10)
-
-
-def _worker_log_tail(path: Path, limit: int = 6000) -> str:
-    try:
-        return path.read_text(encoding="utf-8", errors="replace")[-limit:].strip()
-    except OSError:
-        return ""
 
 
 def _mlx_preview_timestamp_ms(value: str) -> int:
@@ -986,18 +965,7 @@ class WhisperXASR(BaseASR):
         self.model_dir = model_dir or str(MODEL_PATH)
         requested_model = whisper_model or (default_mlx_model() if self.uses_mlx else "large-v3")
         if not self.uses_mlx:
-            models_root = Path(self.model_dir).expanduser()
-            requested_path = Path(requested_model).expanduser()
-            candidates = (
-                requested_path,
-                models_root,
-                models_root / f"faster-whisper-{requested_model}",
-                models_root / requested_model,
-            )
-            local_model = next(
-                (candidate for candidate in candidates if is_faster_whisper_model_dir(candidate)),
-                None,
-            )
+            local_model = find_faster_whisper_model_dir(requested_model, self.model_dir)
             if local_model is not None:
                 requested_model = str(local_model)
         self.whisper_model = requested_model
@@ -1017,6 +985,11 @@ class WhisperXASR(BaseASR):
         self.missing_alignment_model_callback = missing_alignment_model_callback
         self.cancel_event = cancel_event
         self.need_word_time_stamp = need_word_time_stamp
+
+    def _raise_if_cancelled(self, stage: str) -> None:
+        cancel_event = getattr(self, "cancel_event", None)
+        if cancel_event is not None and cancel_event.is_set():
+            raise RuntimeError(f"WhisperX transcription was cancelled during {stage}")
 
     def _transcribe_mlx_in_worker(
         self,
@@ -1162,6 +1135,7 @@ class WhisperXASR(BaseASR):
             pass
 
         callback = callback or _default_callback
+        self._raise_if_cancelled("startup")
         try:
             import whisperx.alignment as whisperx_alignment
             from whisperx.asr import load_model
@@ -1174,6 +1148,7 @@ class WhisperXASR(BaseASR):
 
         with tempfile.TemporaryDirectory() as tmp:
             audio_path = self._write_audio_to_temp(Path(tmp))
+            self._raise_if_cancelled("model loading")
             callback(15, "Loading WhisperX transcription model...")
             logger.info(
                 "Transcribing with standard WhisperX model=%s transcribe_device=%s "
@@ -1191,8 +1166,10 @@ class WhisperXASR(BaseASR):
                 vad_method="silero",
                 download_root=self.model_dir,
             )
+            self._raise_if_cancelled("model loading")
             callback(30, "Loading audio...")
             audio = load_audio(audio_path)
+            self._raise_if_cancelled("audio loading")
             callback(40, "Transcribing with WhisperX...")
             result = dict(
                 model.transcribe(
@@ -1201,6 +1178,7 @@ class WhisperXASR(BaseASR):
                     language=self.language,
                 )
             )
+            self._raise_if_cancelled("ASR decoding")
 
             if self.segment_callback:
                 raw_segments = self._make_segments(result)
@@ -1222,6 +1200,7 @@ class WhisperXASR(BaseASR):
                 whisperx_alignment,
                 skip_alignment_languages,
             )
+            self._raise_if_cancelled("forced alignment")
             aligned["asr_backend"] = "faster-whisper"
             aligned["whisper_model"] = self.whisper_model
 
@@ -1251,6 +1230,7 @@ class WhisperXASR(BaseASR):
         whisperx_alignment: Any,
     ) -> dict:
         align_segments = _segments_for_alignment(result)
+        self._raise_if_cancelled("forced alignment preparation")
         if not align_segments:
             raise RuntimeError("WhisperX did not return alignable transcript segments")
 
@@ -1293,6 +1273,7 @@ class WhisperXASR(BaseASR):
             id(whisperx_alignment.load_align_model),
         )
         with _ALIGNMENT_MODEL_CACHE.acquire(cache_key, _load_alignment_model) as loaded:
+            self._raise_if_cancelled("alignment model loading")
             model_a, metadata = loaded
             callback(78, "Running forced alignment...")
 
@@ -1320,6 +1301,7 @@ class WhisperXASR(BaseASR):
                     )
 
             aligned = _align(spoken_align_segments)
+            self._raise_if_cancelled("forced alignment")
             if alignment_plans:
                 restored = _restore_display_alignment(aligned, alignment_plans)
                 if restored is None:
@@ -1327,6 +1309,7 @@ class WhisperXASR(BaseASR):
                         "Spoken alignment mapping was incomplete; retrying original text"
                     )
                     aligned = _align(align_segments)
+                    self._raise_if_cancelled("forced alignment retry")
                 else:
                     aligned = restored
         aligned["language"] = language_code
@@ -1673,6 +1656,7 @@ class WhisperXASR(BaseASR):
         aligned_words: list[dict] = []
         align_models: dict[str, str] = {}
         for language, segments in grouped.items():
+            self._raise_if_cancelled(f"{language} alignment")
             if language in skip_alignment_languages:
                 aligned_segments.extend(
                     {**segment, "language": language, "alignment_skipped": True}

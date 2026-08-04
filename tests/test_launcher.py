@@ -1,4 +1,5 @@
 import threading
+import types
 
 import launcher
 
@@ -168,3 +169,28 @@ def test_start_server_preserves_exception_type(monkeypatch, tmp_path):
     assert errors == ["ValueError: bad configuration"]
     startup_log = tmp_path / "SubForge" / "startup-error.log"
     assert "ValueError: bad configuration" in startup_log.read_text(encoding="utf-8")
+
+
+def test_native_file_dialog_grants_selected_path(monkeypatch, tmp_path):
+    selected = tmp_path / "external" / "video.mp4"
+    selected.parent.mkdir()
+    selected.touch()
+    granted = []
+
+    class FakeWindow:
+        @staticmethod
+        def create_file_dialog(*_args, **_kwargs):
+            return (str(selected),)
+
+    fake_webview = types.SimpleNamespace(
+        windows=[FakeWindow()],
+        OPEN_DIALOG="open",
+        SAVE_DIALOG="save",
+    )
+    monkeypatch.setitem(launcher.sys.modules, "webview", fake_webview)
+    monkeypatch.setattr("app.security.grant_path", lambda path: granted.append(path) or selected)
+
+    result = launcher.Api().open_file("media")
+
+    assert result == {"ok": True, "path": str(selected)}
+    assert granted == [str(selected)]

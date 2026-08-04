@@ -184,6 +184,13 @@ def validate_subtitle(config: dict) -> bool:
     if translate and translator == "llm":
         needs_llm = True
 
+    if translate and translator == "bing" and not get(config, "translate.azure_key", ""):
+        output.error("Microsoft Azure Translator API key is missing")
+        output.hint(
+            "Set translate.azure_key or export AZURE_TRANSLATOR_KEY before translating"
+        )
+        return False
+
     if needs_llm:
         return validate_llm(config)
     return True

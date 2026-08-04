@@ -46,6 +46,11 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "..\dist\SubForge\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+[InstallDelete]
+; PyInstaller keeps native dependencies under _internal. Remove the previous
+; runtime first so deleted or renamed DLL/PYD files cannot survive an upgrade.
+Type: filesandordirs; Name: "{app}\_internal"
+
 [Icons]
 Name: "{autoprograms}\SubForge"; Filename: "{app}\SubForge.exe"
 Name: "{autodesktop}\SubForge"; Filename: "{app}\SubForge.exe"; Tasks: desktopicon

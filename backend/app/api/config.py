@@ -1,15 +1,23 @@
+import asyncio
 import json
 import os
 import platform
 import threading
 import time
 from pathlib import Path
-from typing import TypeVar, cast
+from typing import TypeVar
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from subforge.core.split.length_policy import resolve_length_policy
+from subforge.settings import (
+    SECRET_SETTING_KEYS,
+    coerce_flat_settings,
+    coerce_setting_value,
+    default_settings_dict,
+)
 
 router = APIRouter()
 
@@ -52,19 +60,6 @@ _cache_time: float = 0
 _CACHE_TTL = 5.0
 
 
-def _coerce_config_value(value, default: T) -> T:
-    """Return a persisted value only when it matches the default's type."""
-    if isinstance(default, bool):
-        return cast(T, value if isinstance(value, bool) else default)
-    if isinstance(default, int):
-        return cast(T, value if isinstance(value, int) and not isinstance(value, bool) else default)
-    if isinstance(default, float):
-        return cast(T, float(value) if isinstance(value, (int, float)) else default)
-    if isinstance(default, str):
-        return cast(T, value if isinstance(value, str) else default)
-    return cast(T, value if isinstance(value, type(default)) else default)
-
-
 def get_config_value(key: str, default: T) -> T:
     """Read a single config value with TTL cache."""
     global _settings_cache, _cache_time
@@ -73,7 +68,7 @@ def get_config_value(key: str, default: T) -> T:
         if _settings_cache is None or (now - _cache_time) > _CACHE_TTL:
             _settings_cache = _effective_config(_read_settings())
             _cache_time = now
-        return _coerce_config_value(_settings_cache.get(key, default), default)
+        return coerce_setting_value(_settings_cache.get(key, default), default)
 
 
 def invalidate_config_cache():
@@ -128,54 +123,7 @@ _LEGACY_MINIMAX_URLS = {
     "https://api.minimaxi.com/v1",
 }
 
-_DEFAULTS = {
-    "transcribe_model": "whisperx" if _IS_APPLE_SILICON else "whisper_cpp",
-    "source_language": "auto",
-    "target_language": "chinese",
-    "translator": "bing",
-    "work_dir": "",
-    "font_name": "Noto Sans SC",
-    "font_size": 40,
-    "font_color": "#ffffff",
-    "outline_color": "#000000",
-    "outline_width": 2.0,
-    "bold": True,
-    "subtitle_style": "classic",
-    "show_bilingual": True,
-    "need_optimize": True,
-    "need_translate": True,
-    "need_reflect": False,
-    "llm_base_url": "",
-    "llm_api_key": "",
-    "llm_model": "gpt-4o-mini",
-    "llm_provider": "custom",
-    "llm_profiles": {},
-    "llm_log_level": "summary",
-    "max_word_count_cjk": 25,
-    "max_word_count_english": 18,
-    "thread_num": 5,
-    "batch_size": 10,
-    "custom_prompt": "",
-    "whisper_model_dir": "",
-    "whisper_cpp_path": "",
-    "whisper_base_url": "",
-    "whisper_api_key": "",
-    "whisper_api_model": "whisper-1",
-    "whisper_device": "auto",
-    "whisper_n_threads": 4,
-    "whisper_compute_type": "default",
-    "whisperx_alignment_strategy": "auto",
-    "whisperx_align_model": "WAV2VEC2_ASR_LARGE_LV60K_960H",
-    "whisperx_batch_size": 8,
-    "ff_mdx_kim2": False,
-    "enable_audio_enhancement": True,
-    "speaker_diarization": "off",
-    "speaker_count": 2,
-    "diarization_model": "pyannote/speaker-diarization-community-1",
-    "huggingface_token": "",
-    "replace_chinese_punctuation": True,
-    "whisper_model_size": "large-v3" if _IS_APPLE_SILICON else "base",
-}
+_DEFAULTS = default_settings_dict(apple_silicon=_IS_APPLE_SILICON)
 
 
 def _detect_llm_provider(base_url: str) -> str:
@@ -215,10 +163,7 @@ def _active_llm_provider(stored: dict) -> str:
 
 def _effective_config(stored: dict) -> dict:
     """Apply platform constraints to persisted settings without rewriting them."""
-    config = {
-        key: _coerce_config_value(stored.get(key, default), default)
-        for key, default in _DEFAULTS.items()
-    }
+    config = coerce_flat_settings(stored, defaults=_DEFAULTS)
     if not _WHISPERX_SUPPORTED and config.get("transcribe_model") == "whisperx":
         config["transcribe_model"] = "whisper_cpp"
     if "whisperx_alignment_strategy" not in stored:
@@ -248,12 +193,9 @@ def _effective_config(stored: dict) -> dict:
 def _public_config(config: dict) -> dict:
     """Return configuration metadata without exposing persisted credentials."""
     public = dict(config)
-    public["llm_api_key_configured"] = bool(config.get("llm_api_key"))
-    public["whisper_api_key_configured"] = bool(config.get("whisper_api_key"))
-    public["huggingface_token_configured"] = bool(config.get("huggingface_token"))
-    public["llm_api_key"] = ""
-    public["whisper_api_key"] = ""
-    public["huggingface_token"] = ""
+    for key in SECRET_SETTING_KEYS:
+        public[f"{key}_configured"] = bool(config.get(key))
+        public[key] = ""
     public["llm_profiles"] = {
         provider: {
             "base_url": profile.get("base_url", ""),
@@ -365,6 +307,13 @@ def _validate_config_update(key: str, value: str | int | float | bool):
             raise HTTPException(status_code=422, detail="outline_width must be a number")
         if not 0 <= value <= 20:
             raise HTTPException(status_code=422, detail="outline_width must be between 0 and 20")
+    if key == "azure_translator_endpoint":
+        parsed = urlparse(str(value).strip())
+        if parsed.scheme != "https" or not parsed.hostname or parsed.query or parsed.fragment:
+            raise HTTPException(
+                status_code=422,
+                detail="azure_translator_endpoint must be an HTTPS service endpoint",
+            )
     if key in _CHOICES and value not in _CHOICES[key]:
         raise HTTPException(status_code=422, detail=f"Unsupported {key}: {value}")
     return value
@@ -388,7 +337,7 @@ async def update_config(update: ConfigUpdate):
     """Update a configuration value."""
     if update.key not in _DEFAULTS:
         raise HTTPException(status_code=400, detail=f"Unknown config key: {update.key}")
-    if update.key in {"llm_provider", "llm_profiles"}:
+    if update.key in {"llm_provider", "llm_profiles", "schema_version"}:
         raise HTTPException(
             status_code=400,
             detail="LLM providers must be changed through the provider switch endpoint",
@@ -421,9 +370,7 @@ async def update_config(update: ConfigUpdate):
         stored["llm_profiles"] = profiles
     _write_settings(stored)
     invalidate_config_cache()
-    response_value = (
-        "" if update.key in {"llm_api_key", "whisper_api_key", "huggingface_token"} else value
-    )
+    response_value = "" if update.key in SECRET_SETTING_KEYS else value
     return {"status": "ok", "key": update.key, "value": response_value}
 
 
@@ -534,6 +481,40 @@ async def test_whisper_connection():
             return {"ok": True}
     except Exception as e:
         return {"ok": False, "error": str(e)[:200]}
+
+
+@router.get("/test-azure-translator")
+async def test_azure_translator_connection():
+    """Test the official Azure Translator credentials with a minimal request."""
+    config = _effective_config(_read_settings())
+    api_key = str(config.get("azure_translator_key") or "").strip()
+    if not api_key:
+        return {"ok": False, "error": "未配置 Microsoft Azure Translator API Key"}
+
+    from subforge.core.translate.bing_translator import BingTranslator
+    from subforge.core.translate.types import TargetLanguage
+
+    translator = None
+    try:
+        translator = BingTranslator(
+            thread_num=1,
+            batch_num=1,
+            target_language=TargetLanguage.SIMPLIFIED_CHINESE,
+            update_callback=None,
+            use_cache=False,
+            api_key=api_key,
+            region=str(config.get("azure_translator_region") or ""),
+            endpoint=str(config.get("azure_translator_endpoint") or ""),
+            timeout=15,
+            max_retries=1,
+        )
+        translated = await asyncio.to_thread(translator.test_connection)
+        return {"ok": True, "translated": translated}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)[:300]}
+    finally:
+        if translator is not None:
+            translator.stop()
 
 
 @router.get("/whisper-models")

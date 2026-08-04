@@ -119,7 +119,10 @@ def transcribe(
             if is_available():
                 callback(6, "Enhancing audio with DeepFilterNet3...")
                 logger.info("Enhancing audio with DeepFilterNet3...")
-                enhanced_path = enhance_audio(audio_path)
+                enhanced_path = enhance_audio(
+                    audio_path,
+                    cancel_event=getattr(config, "cancel_event", None),
+                )
                 audio_for_asr = enhanced_path
                 logger.info("Using enhanced audio: %s", enhanced_path)
             else:

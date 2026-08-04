@@ -57,8 +57,11 @@ def run(args: Namespace, config: dict) -> int:
     if err is not None:
         return err
 
-    need_optimize = get(config, "subtitle.optimize", True)
-    need_translate = get(config, "subtitle.translate", False)
+    from subforge.settings import app_settings_from_cli
+
+    runtime_settings = app_settings_from_cli(config)
+    need_optimize = runtime_settings.need_optimize
+    need_translate = runtime_settings.need_translate
     need_split = get(config, "subtitle.split", True)
 
     # If user explicitly specified translator or target language, enable translation
@@ -68,7 +71,13 @@ def run(args: Namespace, config: dict) -> int:
         output.warn("--no-translate conflicts with --translator/--target-language; translation will be skipped")
     elif explicitly_wants_translate:
         need_translate = True
-    translator_service = get(config, "translate.service", "bing")
+    translator_service = runtime_settings.translator
+    if need_translate and translator_service == "bing" and not runtime_settings.azure_translator_key:
+        output.error("Microsoft Azure Translator API key is missing")
+        output.hint(
+            "Set translate.azure_key in config.toml or AZURE_TRANSLATOR_KEY in the environment"
+        )
+        return EXIT.USAGE_ERROR
 
     # Validate AFTER resolving the actual need_translate / need_optimize state
     needs_llm = need_optimize or (need_translate and translator_service == "llm")
@@ -76,8 +85,8 @@ def run(args: Namespace, config: dict) -> int:
         from subforge.cli.validators import validate_llm
         if not validate_llm(config):
             return EXIT.USAGE_ERROR
-    target_lang_code = get(config, "translate.target_language", "zh-Hans")
-    need_reflect = get(config, "translate.reflect", False)
+    target_lang_code = runtime_settings.target_language
+    need_reflect = runtime_settings.need_reflect
     if need_reflect and translator_service in ("bing", "google"):
         output.warn("--reflect only works with LLM translator, ignored for " + translator_service)
         need_reflect = False
@@ -90,10 +99,10 @@ def run(args: Namespace, config: dict) -> int:
     if (prompt_arg or prompt_file_arg) and not needs_llm:
         output.warn("--prompt/--prompt-file only works with LLM optimizer/translator")
 
-    thread_num = get(config, "subtitle.thread_num", 4)
-    batch_size = get(config, "subtitle.batch_size", 20)
-    max_cjk = get(config, "subtitle.max_word_count_cjk", 25)
-    max_english = get(config, "subtitle.max_word_count_english", 18)
+    thread_num = runtime_settings.thread_num
+    batch_size = runtime_settings.batch_size
+    max_cjk = runtime_settings.max_word_count_cjk
+    max_english = runtime_settings.max_word_count_english
 
     # Validate numeric ranges
     if thread_num < 1:
@@ -259,6 +268,9 @@ def run(args: Namespace, config: dict) -> int:
                 is_reflect=need_reflect,
                 update_callback=callback,
                 translation_context=translation_context,
+                azure_translator_key=runtime_settings.azure_translator_key,
+                azure_translator_region=runtime_settings.azure_translator_region,
+                azure_translator_endpoint=runtime_settings.azure_translator_endpoint,
             )
             asr_data = translator.translate_subtitle(asr_data)
             validate_bilingual_result(asr_data, source_lock)

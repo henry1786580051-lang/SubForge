@@ -1,12 +1,21 @@
 """Audio enhancement using DeepFilterNet3 for speech denoising."""
 
+import importlib
+import json
 import logging
 import os
 import platform
+import shutil
 import subprocess
+import sys
 import tempfile
 import threading
+import time
+import traceback
 from pathlib import Path
+
+from .worker_runtime import atomic_json_write as _atomic_json_write
+from .worker_runtime import stop_process as _stop_process
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +25,18 @@ _df_state = None
 _df_device = None
 _df_mps_failed = False
 _df_lock = threading.RLock()
+_DENOISE_WORKER_FLAG = "SUBFORGE_DENOISE_WORKER"
+_DENOISE_WORKER_REQUEST = "SUBFORGE_DENOISE_WORKER_REQUEST"
+_DENOISE_WORKER_RESULT = "SUBFORGE_DENOISE_WORKER_RESULT"
+_DENOISE_WORKER_HEARTBEAT = "SUBFORGE_DENOISE_WORKER_HEARTBEAT"
+_DENOISE_WORKER_IDLE_TIMEOUT = "SUBFORGE_DENOISE_WORKER_IDLE_TIMEOUT"
+
+
+def _worker_idle_timeout() -> float:
+    try:
+        return max(30.0, float(os.environ.get(_DENOISE_WORKER_IDLE_TIMEOUT, "300")))
+    except (TypeError, ValueError):
+        return 300.0
 
 
 def _device_name(device) -> str:
@@ -109,6 +130,35 @@ def _move_model_to_device(device) -> None:
     logger.info("DeepFilterNet3 running on %s", _device_name(device))
 
 
+def _repair_default_model_cache(enhance_module, *, force: bool = False) -> bool:
+    """Discard a broken built-in model cache so DeepFilter can redownload it."""
+    default_model = getattr(enhance_module, "DEFAULT_MODEL", "")
+    get_model_basedir = getattr(enhance_module, "get_model_basedir", None)
+    if not default_model or not callable(get_model_basedir):
+        return False
+    try:
+        resolved_model_dir = get_model_basedir(default_model)
+        if not isinstance(resolved_model_dir, (str, os.PathLike)):
+            return False
+        model_dir = Path(resolved_model_dir).expanduser().resolve()
+        if not model_dir.exists() or model_dir.name.casefold() != str(default_model).casefold():
+            return False
+        config_ready = (model_dir / "config.ini").is_file()
+        checkpoints_dir = model_dir / "checkpoints"
+        checkpoint_ready = checkpoints_dir.is_dir() and any(
+            path.is_file() and path.stat().st_size > 0
+            for path in checkpoints_dir.iterdir()
+        )
+        if not force and config_ready and checkpoint_ready:
+            return False
+        logger.warning("Removing invalid DeepFilterNet3 cache: %s", model_dir)
+        shutil.rmtree(model_dir)
+        return True
+    except OSError as exc:
+        logger.warning("Could not repair invalid DeepFilterNet3 cache: %s", exc)
+        return False
+
+
 def _load_model(device=None):
     """Lazy-load DeepFilterNet model."""
     global _df_model, _df_state, _df_device, _df_mps_failed
@@ -126,10 +176,17 @@ def _load_model(device=None):
 
             warnings.filterwarnings("ignore", message=".*torchaudio.backend.*")
 
-            from df.enhance import init_df
+            df_enhance = importlib.import_module("df.enhance")
 
             logger.info("Loading DeepFilterNet3 model...")
-            _df_model, _df_state, _ = init_df(log_file=None)
+            _repair_default_model_cache(df_enhance)
+            try:
+                _df_model, _df_state, _ = df_enhance.init_df(log_file=None)
+            except SystemExit:
+                if not _repair_default_model_cache(df_enhance, force=True):
+                    raise
+                logger.warning("Retrying DeepFilterNet3 after refreshing its model cache")
+                _df_model, _df_state, _ = df_enhance.init_df(log_file=None)
             try:
                 _move_model_to_device(device)
             except Exception as e:
@@ -145,6 +202,13 @@ def _load_model(device=None):
                 _df_mps_failed = True
                 _move_model_to_device(torch.device("cpu"))
             logger.info("DeepFilterNet3 model loaded")
+        except SystemExit as exc:
+            _df_model = None
+            _df_state = None
+            _df_device = None
+            raise RuntimeError(
+                "DeepFilterNet3 model is incomplete or its checkpoint could not be loaded"
+            ) from exc
         except ImportError:
             logger.warning("DeepFilterNet not installed (pip install deepfilternet)")
             raise
@@ -218,7 +282,7 @@ def _enhance_with_python(
                 )
 
 
-def enhance_audio(
+def _enhance_audio_direct(
     input_path: str,
     output_path: str | None = None,
     *,
@@ -299,6 +363,161 @@ def enhance_audio(
         for f in [temp_48k, temp_enhanced_48k]:
             if f:
                 Path(f).unlink(missing_ok=True)
+
+
+def _enhance_in_packaged_worker(
+    input_path: str,
+    output_path: str | None,
+    atten_lim_db: float | None,
+    cancel_event=None,
+) -> str:
+    if output_path is None:
+        fd, output_path = tempfile.mkstemp(suffix="_enhanced.wav")
+        os.close(fd)
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory(prefix="subforge-denoise-worker-") as temp_path:
+        temp_dir = Path(temp_path)
+        request_path = temp_dir / "request.json"
+        result_path = temp_dir / "result.json"
+        heartbeat_path = temp_dir / "heartbeat.json"
+        log_path = temp_dir / "worker.log"
+        _atomic_json_write(
+            request_path,
+            {
+                "input_path": str(Path(input_path).resolve()),
+                "output_path": str(output.resolve()),
+                "atten_lim_db": atten_lim_db,
+            },
+        )
+        env = os.environ.copy()
+        env.update(
+            {
+                _DENOISE_WORKER_FLAG: "1",
+                _DENOISE_WORKER_REQUEST: str(request_path),
+                _DENOISE_WORKER_RESULT: str(result_path),
+                _DENOISE_WORKER_HEARTBEAT: str(heartbeat_path),
+            }
+        )
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        with log_path.open("w", encoding="utf-8") as log_file:
+            process = subprocess.Popen(
+                [sys.executable],
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                creationflags=creationflags,
+            )
+            last_heartbeat_at = time.monotonic()
+            last_heartbeat_mtime = -1
+            try:
+                while process.poll() is None:
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise RuntimeError("Audio enhancement was cancelled")
+                    try:
+                        heartbeat_mtime = heartbeat_path.stat().st_mtime_ns
+                        if heartbeat_mtime != last_heartbeat_mtime:
+                            last_heartbeat_mtime = heartbeat_mtime
+                            last_heartbeat_at = time.monotonic()
+                    except OSError:
+                        pass
+                    if time.monotonic() - last_heartbeat_at > _worker_idle_timeout():
+                        raise RuntimeError("DeepFilterNet3 worker stopped responding")
+                    time.sleep(0.2)
+            finally:
+                _stop_process(process)
+
+        payload = None
+        if result_path.is_file():
+            try:
+                payload = json.loads(result_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                pass
+        if process.returncode != 0 or not isinstance(payload, dict) or not payload.get("ok"):
+            detail = str((payload or {}).get("error") or "").strip()
+            if not detail:
+                try:
+                    detail = log_path.read_text(encoding="utf-8", errors="replace")[-4000:].strip()
+                except OSError:
+                    detail = ""
+            output.unlink(missing_ok=True)
+            suffix = f": {detail}" if detail else ""
+            raise RuntimeError(
+                f"DeepFilterNet3 worker exited with code {process.returncode}{suffix}"
+            )
+        if not output.is_file() or output.stat().st_size == 0:
+            output.unlink(missing_ok=True)
+            raise RuntimeError("DeepFilterNet3 worker did not produce enhanced audio")
+        return str(output)
+
+
+def enhance_audio(
+    input_path: str,
+    output_path: str | None = None,
+    *,
+    atten_lim_db: float | None = None,
+    cancel_event=None,
+) -> str:
+    """Enhance audio, isolating the native stack in packaged Windows builds."""
+    use_worker = (
+        platform.system() == "Windows"
+        and getattr(sys, "frozen", False)
+        and os.environ.get(_DENOISE_WORKER_FLAG) != "1"
+    )
+    if use_worker:
+        return _enhance_in_packaged_worker(
+            input_path,
+            output_path,
+            atten_lim_db,
+            cancel_event,
+        )
+    return _enhance_audio_direct(input_path, output_path, atten_lim_db=atten_lim_db)
+
+
+def run_packaged_denoise_worker() -> None:
+    """Execute one DeepFilterNet request and contain native/SystemExit failures."""
+    request_path = Path(os.environ[_DENOISE_WORKER_REQUEST])
+    result_path = Path(os.environ[_DENOISE_WORKER_RESULT])
+    heartbeat_path = Path(os.environ[_DENOISE_WORKER_HEARTBEAT])
+    stop_heartbeat = threading.Event()
+
+    def publish_heartbeat() -> None:
+        while not stop_heartbeat.is_set():
+            try:
+                _atomic_json_write(heartbeat_path, {"time": time.time()})
+            except OSError:
+                pass
+            stop_heartbeat.wait(2.0)
+
+    heartbeat = threading.Thread(target=publish_heartbeat, daemon=True)
+    heartbeat.start()
+    try:
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+        enhanced = _enhance_audio_direct(
+            str(request["input_path"]),
+            str(request["output_path"]),
+            atten_lim_db=request.get("atten_lim_db"),
+        )
+        _atomic_json_write(result_path, {"ok": True, "path": enhanced})
+        exit_code = 0
+    except BaseException:
+        try:
+            _atomic_json_write(result_path, {"ok": False, "error": traceback.format_exc()})
+        except OSError:
+            pass
+        exit_code = 1
+    finally:
+        stop_heartbeat.set()
+        heartbeat.join(timeout=3)
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream:
+                stream.flush()
+        except Exception:
+            pass
+    os._exit(exit_code)
 
 
 def is_available() -> bool:

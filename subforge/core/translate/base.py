@@ -1,12 +1,16 @@
 """翻译器基类"""
 
-import re
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, List, Optional
 
 from subforge.core.asr.asr_data import ASRData, ASRDataSeg
 from subforge.core.entities import SubtitleProcessData
+from subforge.core.translate.quality import (
+    inspect_translation_batch,
+    is_placeholder_translation,
+    is_untranslated_output,
+)
 from subforge.core.translate.types import TargetLanguage
 from subforge.core.utils.cache import generate_cache_key, get_translate_cache, is_cache_enabled
 from subforge.core.utils.logger import setup_logger
@@ -118,6 +122,10 @@ class BaseTranslator(ABC):
         """Allow translators to run whole-document consistency checks."""
         return translated_list
 
+    def _is_chunk_result_stable(self, translated_list: List[SubtitleProcessData]) -> bool:
+        """Return whether a provisional chunk is safe to preview and cache."""
+        return True
+
     def _parallel_translate(
         self, chunks: List[List[SubtitleProcessData]]
     ) -> List[SubtitleProcessData]:
@@ -146,7 +154,11 @@ class BaseTranslator(ABC):
                 if isinstance(e, PartialTranslationError):
                     translated_list.extend(e.completed)
                     failed_count += len(e.failed_indices)
-                    if self.update_callback and e.completed:
+                    if (
+                        self.update_callback
+                        and e.completed
+                        and self._is_chunk_result_stable(e.completed)
+                    ):
                         self.update_callback(e.completed)
                 else:
                     failed_count += len(future_to_chunk[future])
@@ -168,9 +180,7 @@ class BaseTranslator(ABC):
                 "preserve model names",
             )
             quality_failure = any(
-                marker in error.lower()
-                for error in failed_errors
-                for marker in quality_markers
+                marker in error.lower() for error in failed_errors for marker in quality_markers
             )
             guidance = (
                 "The translation provider responded, but the result did not pass subtitle "
@@ -180,8 +190,7 @@ class BaseTranslator(ABC):
             )
             raise RuntimeError(
                 f"Translation failed: {failed_count}/{total_segments} segments failed "
-                f"({fail_rate:.0%}). {guidance}"
-                + detail
+                f"({fail_rate:.0%}). {guidance}" + detail
             )
 
         return translated_list
@@ -192,126 +201,26 @@ class BaseTranslator(ABC):
         translated_list: List[SubtitleProcessData],
     ) -> None:
         """Reject incomplete translation results before writing subtitles."""
-        translated_by_index = {}
-        duplicates: list[str] = []
-        for item in translated_list:
-            if item.index in translated_by_index:
-                duplicates.append(str(item.index))
-            translated_by_index[item.index] = item
-
-        missing: list[str] = []
-        empty: list[str] = []
-        placeholders: list[str] = []
-        untranslated: list[str] = []
-        for source in source_list:
-            translated = translated_by_index.get(source.index)
-            if translated is None:
-                missing.append(str(source.index))
-            elif not translated.translated_text.strip():
-                empty.append(str(source.index))
-            else:
-                output = translated.translated_text.strip()
-                if self._looks_like_placeholder_translation(output):
-                    placeholders.append(str(source.index))
-                if self._is_untranslated_output(output, source.original_text):
-                    untranslated.append(str(source.index))
-
-        if not missing and not empty and not duplicates and not placeholders and not untranslated:
+        report = inspect_translation_batch(
+            source_list,
+            translated_list,
+            self.target_language,
+        )
+        if report.valid:
             return
-
-        parts = []
-        if missing:
-            parts.append(f"missing indices: {missing[:20]}")
-        if empty:
-            parts.append(f"empty translations: {empty[:20]}")
-        if duplicates:
-            parts.append(f"duplicate indices: {duplicates[:20]}")
-        if placeholders:
-            parts.append(f"placeholder translations: {placeholders[:20]}")
-        if untranslated:
-            parts.append(f"untranslated indices: {untranslated[:20]}")
         raise RuntimeError(
             "Translation incomplete; refusing to save mixed source/target subtitles ("
-            + "; ".join(parts)
+            + report.error_detail()
             + ")"
         )
 
     @staticmethod
     def _looks_like_placeholder_translation(text: str) -> bool:
         """Detect LLM notes that are not actual translations."""
-        text = str(text or "").strip()
-        if not text:
-            return True
-        compact = re.sub(r"\s+", "", text).strip("()（）[]【】<>《》“”\"'。，、；;：:！!?")
-        previous_refs = r"上一句|上句|上一条|上条|前一句|前一条|前文|前面"
-        placeholder_patterns = [
-            r"(?:此|本)句.*(?:合并|并入|省略|略去|无需翻译|不单独翻译).*",
-            rf"(?:已)?(?:合并|并入|接上|延续|已译|包含).*(?:{previous_refs})",
-            rf"(?:{previous_refs}).*(?:合并|包含|已译|并入|已经翻译)",
-            r"(?:最终版本|最终字幕).*(?:合并|省略)",
-            r"(?:内容)?(?:同上|见上|略|省略|无需翻译|不单独翻译)",
-            r"merged(?:with|into)?(?:the)?(?:previous|above)",
-            r"sameasabove",
-            r"omitted",
-        ]
-        if any(
-            re.fullmatch(pattern, compact, flags=re.IGNORECASE) for pattern in placeholder_patterns
-        ):
-            return True
-        meta_note = re.compile(
-            r"(?:\(|（|\[|【)\s*(?:应为|疑似|译注|注\s*[:：]|原文(?:应为)?|可能是)"
-            r"[^\)）\]】]*(?:\)|）|\]|】)",
-            flags=re.IGNORECASE,
-        )
-        return bool(meta_note.search(text))
+        return is_placeholder_translation(text)
 
     def _is_untranslated_output(self, output: str, source: str) -> bool:
-        target_patterns = {
-            TargetLanguage.SIMPLIFIED_CHINESE: r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]",
-            TargetLanguage.TRADITIONAL_CHINESE: r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]",
-            TargetLanguage.CANTONESE: r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]",
-            TargetLanguage.JAPANESE: r"[\u3040-\u30ff\u31f0-\u31ff\u3400-\u4dbf\u4e00-\u9fff]",
-            TargetLanguage.KOREAN: r"[\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\uac00-\ud7af\ud7b0-\ud7ff]",
-        }
-        target_pattern = target_patterns.get(self.target_language)
-        if target_pattern is None:
-            return False
-        if re.search(target_pattern, output):
-            return False
-
-        # Broad CJK presence is insufficient: unchanged Korean is not a valid
-        # Simplified Chinese translation, and vice versa.
-        if re.search(
-            r"[\u3040-\u30ff\u31f0-\u31ff\u1100-\u11ff\u3130-\u318f"
-            r"\ua960-\ua97f\uac00-\ud7af\ud7b0-\ud7ff\u3400-\u4dbf"
-            r"\u4e00-\u9fff\uf900-\ufaff]",
-            source,
-        ):
-            return True
-
-        source_words = re.findall(r"[A-Za-z]+", source)
-        if not source_words:
-            # Numbers, symbols, and punctuation can legitimately be identical.
-            return False
-        source_tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9.+#&/-]*", source)
-
-        def is_identifier_like(token: str) -> bool:
-            token = token.strip(".")
-            letters = re.sub(r"[^A-Za-z]", "", token)
-            return bool(
-                re.search(r"\d", token)
-                or (len(letters) >= 2 and letters.isupper())
-                or re.search(r"[a-z][A-Z]", letters)
-                or re.search(r"[.+#&/-]", token)
-            )
-
-        # Acronyms and product identifiers can legitimately remain in Latin
-        # script. Merely title-cased words such as "Area" or "Okay" cannot.
-        if source_tokens and len(source_tokens) <= 3 and all(
-            is_identifier_like(token) for token in source_tokens
-        ):
-            return False
-        return bool(source_words)
+        return is_untranslated_output(output, source, self.target_language)
 
     def _get_cache_key(self, chunk: List[SubtitleProcessData]) -> str:
         """生成缓存键"""
@@ -351,10 +260,11 @@ class BaseTranslator(ABC):
             result = self._translate_chunk(chunk)
             self._validate_translated_list(chunk, result)
 
-            if self.update_callback:
+            result_is_stable = self._is_chunk_result_stable(result)
+            if self.update_callback and result_is_stable:
                 self.update_callback(result)
 
-            if self.use_cache and is_cache_enabled():
+            if self.use_cache and result_is_stable and is_cache_enabled():
                 self._cache.set(cache_key, result, expire=86400 * 7)
             return result
 

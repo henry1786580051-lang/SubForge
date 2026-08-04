@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@iconify/react";
-import { useAppStore, WorkflowStep } from "@/store/appStore";
+import { useAppStore, type WorkflowStep } from "@/store/appStore";
 import {
   configApi,
   filesApi,
@@ -14,8 +14,20 @@ import {
   type FileInfo,
   type SubtitleSegment,
 } from "@/lib/api";
-import { formatDuration, formatSize, parseSrtTime } from "@/lib/format";
+import { formatDuration, formatSize } from "@/lib/format";
 import { SubtitlePanel } from "@/components/SubtitlePanel";
+import {
+  ASR_ENGINES,
+  SOURCE_LANGUAGES,
+  STEP_META,
+  TARGET_LANGUAGES,
+  TRANSCRIBE_STAGES,
+  TRANSLATORS,
+} from "@/features/workflow/catalog";
+import {
+  analyzeSubtitleQuality,
+  type SubtitleQuality,
+} from "@/features/workflow/quality";
 
 type TaskStarter = (
   type: "transcribe" | "subtitle",
@@ -27,99 +39,6 @@ interface WorkflowWorkspaceProps {
   startTask: TaskStarter;
   cancelTask: () => Promise<void>;
 }
-
-const STEP_META: Record<
-  WorkflowStep,
-  { eyebrow: string; title: string; description: string; icon: string }
-> = {
-  import: {
-    eyebrow: "01 / Source",
-    title: "导入与预检",
-    description: "先确认素材、音轨、字幕和运行环境，避免任务开始后才发现配置缺口。",
-    icon: "solar:inbox-in-bold-duotone",
-  },
-  transcribe: {
-    eyebrow: "02 / Alignment",
-    title: "语音转录工作台",
-    description: "围绕 WhisperX、MLX、forced alignment 和实时字幕质量来组织转录流程。",
-    icon: "solar:microphone-3-bold-duotone",
-  },
-  subtitle: {
-    eyebrow: "03 / Bilingual Edit",
-    title: "智能断句与翻译",
-    description: "在时间轴、原文、译文和质量提示之间快速审校，减少吞词和错位。",
-    icon: "solar:subtitle-bold-duotone",
-  },
-};
-
-const SOURCE_LANGUAGES = [
-  ["auto", "自动"],
-  ["en", "英文"],
-  ["zh", "中文"],
-  ["ja", "日文"],
-  ["ko", "韩文"],
-  ["fr", "法语"],
-  ["de", "德语"],
-  ["es", "西班牙语"],
-  ["pt", "葡萄牙语"],
-  ["ru", "俄语"],
-];
-
-const TARGET_LANGUAGES = [
-  ["chinese", "中文"],
-  ["english", "英文"],
-  ["japanese", "日文"],
-  ["korean", "韩文"],
-  ["french", "法语"],
-  ["german", "德语"],
-  ["spanish", "西班牙语"],
-  ["portuguese", "葡萄牙语"],
-  ["russian", "俄语"],
-];
-
-const TRANSLATORS = [
-  ["llm", "LLM"],
-  ["bing", "Bing"],
-  ["google", "Google"],
-  ["deeplx", "DeepLX"],
-];
-
-const ASR_ENGINES = [
-  {
-    id: "whisperx",
-    name: "WhisperX",
-    desc: "Apple MLX / Windows CTranslate2 · forced alignment",
-    icon: "solar:bolt-bold-duotone",
-  },
-  {
-    id: "whisper_cpp",
-    name: "Whisper.cpp",
-    desc: "本地 GGML · Metal/CPU 路径",
-    icon: "solar:cpu-bolt-bold-duotone",
-  },
-  {
-    id: "faster_whisper",
-    name: "FasterWhisper",
-    desc: "CTranslate2 · CUDA 设备更合适",
-    icon: "solar:cpu-bold-duotone",
-  },
-  {
-    id: "whisper_api",
-    name: "Whisper API",
-    desc: "云端识别 · 不占用本机算力",
-    icon: "solar:cloud-bold-duotone",
-  },
-];
-
-const TRANSCRIBE_STAGES = [
-  "提取音频",
-  "音频增强",
-  "Whisper 转录",
-  "词级对齐",
-  "说话人识别",
-  "时间轴修正",
-  "写入字幕",
-];
 
 export function WorkflowWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
   const { step } = useAppStore();
@@ -320,10 +239,10 @@ function ImportWorkspace() {
             <div className="flex items-start justify-between gap-6">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-accent">
-                  Media Intake
+                  准备素材
                 </p>
                 <h2 className="mt-2 max-w-[620px] text-[27px] font-semibold leading-tight text-text-primary">
-                  把视频、音频和已有字幕先归档到一个清晰的任务入口。
+                  选择要处理的视频或音频
                 </h2>
               </div>
               <button
@@ -332,7 +251,7 @@ function ImportWorkspace() {
                 disabled={uploading === "media"}
               >
                 <Icon icon={uploading === "media" ? "solar:refresh-bold" : "solar:upload-bold"} className={uploading === "media" ? "animate-spin" : ""} width={17} />
-                选择素材
+                选择文件
               </button>
             </div>
 
@@ -348,7 +267,7 @@ function ImportWorkspace() {
                   <p className="mt-2 text-[13px] leading-6 text-text-secondary">
                     {videoFile
                       ? videoFile.split("/").pop()
-                      : "支持 MP4、MOV、MKV、MP3、WAV。导入后会自动读取音轨、时长、分辨率和体积。"}
+                      : "支持 MP4、MOV、MKV、MP3 和 WAV。导入后将自动读取时长、画面和音轨信息。"}
                   </p>
                 </div>
                 <div className="mt-5 grid grid-cols-2 gap-2.5">
@@ -364,9 +283,9 @@ function ImportWorkspace() {
 
               <div className="rounded-2xl border border-border bg-surface-raised p-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-[14px] font-semibold text-text-primary">导入预检</h3>
+                  <h3 className="text-[14px] font-semibold text-text-primary">文件检查</h3>
                   <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[11px] text-text-muted">
-                    {fileInfo ? "已读取素材" : "等待素材"}
+                    {fileInfo ? "文件已就绪" : "等待导入"}
                   </span>
                 </div>
                 <div className="mt-4 space-y-2.5">
@@ -377,9 +296,9 @@ function ImportWorkspace() {
                 <div className="mt-4 rounded-xl bg-background p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-[13px] font-medium text-text-primary">已有字幕文件</p>
+                      <p className="text-[13px] font-medium text-text-primary">已有字幕</p>
                       <p className="mt-1 text-[12px] text-text-muted">
-                        {subtitleFile ? subtitleFile.split("/").pop() : "可直接进入智能断句/翻译"}
+                        {subtitleFile ? subtitleFile.split("/").pop() : "导入 SRT、VTT 或 ASS，可直接断句、翻译和审校"}
                       </p>
                     </div>
                     <button
@@ -406,24 +325,24 @@ function ImportWorkspace() {
         </section>
 
         <aside className="flex min-h-0 flex-col gap-5 overflow-auto pr-1">
-          <Panel title="任务路径" icon="solar:map-point-wave-bold-duotone">
+          <Panel title="处理流程" icon="solar:map-point-wave-bold-duotone">
             <div className="space-y-4">
               <FlowStep index="1" title="导入" active done={!!videoFile || !!subtitleFile} />
               <FlowStep index="2" title="转录" active={!!videoFile} done={!!subtitleFile && subtitles.length > 0} />
-              <FlowStep index="3" title="断句/翻译" active={!!subtitleFile} done={subtitles.some((s) => s.translated)} />
+              <FlowStep index="3" title="断句与翻译" active={!!subtitleFile} done={subtitles.some((s) => s.translated)} />
               <FlowStep index="4" title="导出" active={subtitles.length > 0} />
             </div>
           </Panel>
 
-          <Panel title="音轨明细" icon="solar:soundwave-square-bold-duotone">
+          <Panel title="音轨信息" icon="solar:soundwave-square-bold-duotone">
             {fileInfo?.audio_tracks.length ? (
               <div className="space-y-2">
                 {fileInfo.audio_tracks.map((track) => (
                   <div key={track.index} className="rounded-xl border border-border bg-background p-3">
                     <div className="flex items-center justify-between">
-                      <span className="text-[13px] font-medium text-text-primary">Audio {track.index + 1}</span>
+                      <span className="text-[13px] font-medium text-text-primary">音轨 {track.index + 1}</span>
                       <span className="rounded-full bg-surface px-2 py-0.5 text-[10px] text-text-muted">
-                        {track.language || "und"}
+                        {track.language || "未标注"}
                       </span>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-text-muted">
@@ -435,7 +354,7 @@ function ImportWorkspace() {
                 ))}
               </div>
             ) : (
-              <EmptyState icon="solar:soundwave-bold-duotone" title="暂无音轨信息" minHeight="min-h-[220px]" />
+              <EmptyState icon="solar:soundwave-bold-duotone" title="导入文件后显示音轨信息" minHeight="min-h-[220px]" />
             )}
           </Panel>
         </aside>
@@ -447,6 +366,7 @@ function ImportWorkspace() {
 function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
   const {
     config,
+    configLoaded,
     fileInfo,
     isProcessing,
     setConfig,
@@ -515,6 +435,10 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
   );
 
   const startTranscribe = useCallback(async () => {
+    if (!configLoaded || !config.transcribeModel) {
+      setError("转录配置仍在加载，请稍后重试");
+      return;
+    }
     if (!videoFile) {
       setError("请先导入视频或音频文件");
       setStep("import");
@@ -526,7 +450,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
       model: config.transcribeModel,
       language: config.sourceLanguage,
     });
-  }, [config.sourceLanguage, config.transcribeModel, setError, setIsProcessing, setStep, startTask, videoFile]);
+  }, [config.sourceLanguage, config.transcribeModel, configLoaded, setError, setIsProcessing, setStep, startTask, videoFile]);
 
   const currentModels = useMemo(() => {
     if (config.transcribeModel === "whisper_cpp") {
@@ -668,7 +592,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
         </section>
 
         <aside className="flex min-h-0 flex-col gap-5 overflow-auto pr-1">
-          <Panel title="ASR 引擎" icon="solar:tuning-square-2-bold-duotone">
+          <Panel title="识别引擎" icon="solar:tuning-square-2-bold-duotone">
             <div className="grid grid-cols-2 gap-2.5">
               {ASR_ENGINES.map((engine) => {
                 const unsupported = engine.id === "whisperx" && !config.whisperxSupported;
@@ -697,7 +621,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
             </div>
           </Panel>
 
-          <Panel title="多人语音" icon="solar:users-group-rounded-bold-duotone">
+          <Panel title="说话人识别" icon="solar:users-group-rounded-bold-duotone">
             <div className="space-y-3">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -807,14 +731,14 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
             </div>
           </Panel>
 
-          <Panel title="模型与对齐" icon="solar:layers-bold-duotone">
+          <Panel title="识别模型" icon="solar:layers-bold-duotone">
             {config.transcribeModel === "whisper_api" ? (
               <EmptyState icon="solar:cloud-bold-duotone" title="云端模型在设置页配置" />
             ) : (
               <div className="space-y-4">
                 <div>
                   <FieldLabel
-                    label="默认转录模型"
+                    label="当前转录模型"
                     value={selectedModel?.downloaded ? "本地可用" : selectedModel?.state === "on_demand" ? "首次使用下载" : "未下载"}
                   />
                   <div className="mt-2 grid grid-cols-2 gap-2 max-md:grid-cols-1">
@@ -834,7 +758,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
 
                 {config.transcribeModel === "whisperx" && (
                   <div>
-                    <FieldLabel label="词级时间轴" value="按源语言匹配" />
+                    <FieldLabel label="时间轴对齐" value="按源语言自动匹配" />
                     <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-border bg-background/70 p-3">
                       <div className="flex min-w-0 items-center gap-3">
                         <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${
@@ -855,7 +779,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                               ? `${selectedAlignModel.downloaded ? "本地已就绪" : "尚未下载"} · ${selectedAlignModel.align_model}`
                               : config.sourceLanguage === "auto"
                                 ? "首次使用对应语言时按需加载"
-                                : "WhisperX 暂无默认模型，请在设置中手动指定"}
+                                : "当前语言没有推荐模型，请在设置中手动选择"}
                           </p>
                         </div>
                       </div>
@@ -1027,10 +951,16 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
           )}
 
           <TaskActionCard
-            title="开始转录"
-            description={videoFile ? videoFile.split("/").pop() || videoFile : "先导入视频或音频文件"}
+            title="转录任务"
+            description={
+              !configLoaded
+                ? "正在加载识别配置"
+                : videoFile
+                  ? videoFile.split(/[\\/]/).pop() || videoFile
+                  : "请先导入视频或音频文件"
+            }
             primaryLabel={taskStatus === "running" ? "转录中" : "开始转录"}
-            disabled={!videoFile || isProcessing || !diarizationReady}
+            disabled={!videoFile || !configLoaded || !config.transcribeModel || isProcessing || !diarizationReady}
             progress={taskProgress}
             message={taskMessage}
             running={isProcessing}
@@ -1139,8 +1069,8 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
           <Panel title="处理模式" icon="solar:magic-stick-3-bold-duotone">
             <div className="grid grid-cols-2 gap-2">
               <ToggleCard
-                title="智能断句"
-                desc="语义重组与字幕长度控制"
+                title="优化断句"
+                desc="按语义调整分段和字幕长度"
                 checked={config.needOptimize}
                 icon="solar:scissors-bold-duotone"
                 onChange={(value) => void saveConfig("need_optimize", value)}
@@ -1197,7 +1127,8 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
               </label>
               <div className="pt-3">
                 <ToggleLine
-                  label="反思模式"
+                  label="翻译复核"
+                  description="完成初译后再次检查完整性和表达"
                   checked={config.needReflect}
                   onChange={(value) => void saveConfig("need_reflect", value)}
                 />
@@ -1205,7 +1136,7 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
             </div>
           </Panel>
 
-          <Panel title="自定义 Prompt" icon="solar:pen-new-square-bold-duotone">
+          <Panel title="翻译要求" icon="solar:pen-new-square-bold-duotone">
             <textarea
               value={config.customPrompt}
               onFocus={() => setPromptFocused(true)}
@@ -1221,7 +1152,7 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
                   void configApi.update("custom_prompt", value);
                 }, 700);
               }}
-              placeholder="例如：保留汽车品牌、车型、技术名词；中文要自然，不要吞掉限定词。"
+              placeholder="例如：保留汽车品牌、车型和技术名词；中文表达自然，不遗漏限定信息。"
               className={`h-28 w-full resize-none rounded-xl border bg-background p-3 text-[12px] leading-5 text-text-primary outline-none transition ${
                 promptFocused ? "border-border-active shadow-[0_0_0_3px_rgba(37,99,235,0.08)]" : "border-border"
               }`}
@@ -1244,14 +1175,14 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
           </Panel>
 
           <TaskActionCard
-            title="开始处理字幕"
-            description={subtitleFile ? subtitleFile.split("/").pop() || subtitleFile : "等待字幕文件"}
+            title="字幕处理任务"
+            description={subtitleFile ? subtitleFile.split("/").pop() || subtitleFile : "请先导入或生成字幕"}
             primaryLabel={taskStatus === "running" ? "处理中" : config.needTranslate ? "开始翻译" : "开始断句"}
             disabled={!subtitleFile || isProcessing}
             progress={taskProgress}
             message={taskMessage}
             running={isProcessing}
-            stages={["读取字幕", "智能断句", "优化原文", "生成上下文", "翻译", "重排保存"]}
+            stages={["读取字幕", "调整断句", "检查原文", "生成翻译", "质量复核", "保存结果"]}
             currentStage={taskMessage}
             onPrimary={startSubtitle}
             onCancel={cancelTask}
@@ -1602,7 +1533,7 @@ function TaskActionCard({
   primaryLabel: string;
   progress: number;
   running: boolean;
-  stages: string[];
+  stages: readonly string[];
   title: string;
 }) {
   return (
@@ -1777,35 +1708,4 @@ function QualitySummary({ compact, quality }: { compact?: boolean; quality: Subt
       )}
     </div>
   );
-}
-
-interface SubtitleQuality {
-  overlaps: number[];
-  longDurations: number[];
-  tightGaps: number[];
-  emptyTranslations: number;
-}
-
-function analyzeSubtitleQuality(subtitles: SubtitleSegment[]): SubtitleQuality {
-  const overlaps: number[] = [];
-  const longDurations: number[] = [];
-  const tightGaps: number[] = [];
-  let emptyTranslations = 0;
-
-  subtitles.forEach((subtitle, index) => {
-    const start = parseSrtTime(subtitle.start);
-    const end = parseSrtTime(subtitle.end);
-    const next = subtitles[index + 1];
-    const duration = end - start;
-    if (duration > 7.5) longDurations.push(subtitle.id);
-    if (!subtitle.translated.trim()) emptyTranslations += 1;
-    if (next) {
-      const nextStart = parseSrtTime(next.start);
-      const gap = nextStart - end;
-      if (gap < -0.01) overlaps.push(subtitle.id);
-      if (gap >= 0 && gap < 0.08) tightGaps.push(subtitle.id);
-    }
-  });
-
-  return { overlaps, longDurations, tightGaps, emptyTranslations };
 }

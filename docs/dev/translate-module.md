@@ -32,11 +32,13 @@ app/core/translate/
 - 支持多种语言
 - 适合日常使用
 
-### 3. Bing 翻译器
+### 3. Microsoft Azure Translator
 
-- Microsoft 翻译服务
+- Microsoft 官方 Translator v3 API
 - 批量翻译支持
-- 自动 Token 管理
+- 订阅密钥和可选区域认证
+- 对 429 和临时服务错误执行退避重试
+- 错误会向任务层传递，不会以空译文假装成功
 
 ### 4. DeepLX 翻译器
 
@@ -74,12 +76,14 @@ translator = TranslatorFactory.create_translator(
 result = translator.translate_subtitle("subtitle.srt")
 ```
 
-### 使用 Bing 翻译
+### 使用 Microsoft Azure Translator
 
 ```python
 translator = TranslatorFactory.create_translator(
     translator_type=TranslatorType.BING,
     target_language="Chinese",
+    azure_translator_key="your-subscription-key",
+    azure_translator_region="eastasia",
 )
 
 result = translator.translate_subtitle("subtitle.srt")

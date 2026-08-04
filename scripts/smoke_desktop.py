@@ -148,13 +148,24 @@ def main() -> int:
 
             env = os.environ.copy()
             env["SUBFORGE_CHECK_DENOISE"] = "1"
+            env["SUBFORGE_DENOISE_AUDIO_PATH"] = str(video)
             _run([str(exe)], env=env)
-            print("Verified packaged DeepFilterNet3 imports")
+            print("Verified packaged DeepFilterNet3 inference")
 
             env = os.environ.copy()
             env["SUBFORGE_CHECK_FASTER_WHISPER"] = "1"
             _run([str(exe)], env=env)
             print("Verified packaged FasterWhisper/CTranslate2/PyAV imports")
+
+            env = os.environ.copy()
+            env["SUBFORGE_CHECK_WHISPERX"] = "1"
+            _run([str(exe)], env=env)
+            print("Verified packaged WhisperX and forced-alignment imports")
+
+            env = os.environ.copy()
+            env["SUBFORGE_CHECK_DIARIZATION"] = "1"
+            _run([str(exe)], env=env)
+            print("Verified packaged pyannote speaker diarization imports")
 
         if platform.system() == "Darwin" and platform.machine() == "arm64":
             env = os.environ.copy()

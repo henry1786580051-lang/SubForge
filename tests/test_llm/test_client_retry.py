@@ -116,9 +116,12 @@ def test_other_models_keep_standard_retry_dispatch(monkeypatch):
 def test_standard_retry_only_accepts_transient_provider_failures():
     assert client_module._is_retryable_standard_error(_rate_limit_error()) is True
     assert client_module._is_retryable_standard_error(_status_error(503)) is True
-    assert client_module._is_retryable_standard_error(
-        openai.APIConnectionError(request=httpx.Request("POST", "https://api.deepseek.com"))
-    ) is True
+    assert (
+        client_module._is_retryable_standard_error(
+            openai.APIConnectionError(request=httpx.Request("POST", "https://api.deepseek.com"))
+        )
+        is True
+    )
     assert client_module._is_retryable_standard_error(_status_error(400)) is False
 
 
@@ -179,7 +182,9 @@ def test_nvidia_does_not_retry_authentication_errors(monkeypatch):
             "bad key",
             response=httpx.Response(
                 401,
-                request=httpx.Request("POST", "https://integrate.api.nvidia.com/v1/chat/completions"),
+                request=httpx.Request(
+                    "POST", "https://integrate.api.nvidia.com/v1/chat/completions"
+                ),
             ),
             body={},
         )
@@ -193,6 +198,86 @@ def test_nvidia_does_not_retry_authentication_errors(monkeypatch):
 
     with pytest.raises(openai.AuthenticationError):
         client_module._call_llm_api([], "nvidia/nemotron-3-nano-30b-a3b", client=client)
+
+
+def test_deepseek_waits_until_rate_limit_recovers(monkeypatch):
+    success = object()
+    outcomes = [_rate_limit_error(), _rate_limit_error(), success]
+    sleeps = []
+    client = SimpleNamespace(_subforge_base_url="https://api.deepseek.com/v1")
+
+    def fake_call(*_args, **_kwargs):
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(client_module, "_call_llm_once", fake_call)
+    monkeypatch.setattr(
+        client_module,
+        "_persistent_rate_limit_wait_seconds",
+        lambda _error, attempt: float(attempt),
+    )
+    monkeypatch.setattr(client_module.time, "sleep", sleeps.append)
+
+    result = client_module._call_llm_api(
+        [],
+        "deepseek-v4-flash",
+        client=client,
+    )
+
+    assert result is success
+    assert sleeps == [1.0, 2.0]
+    assert outcomes == []
+
+
+def test_deepseek_does_not_wait_for_non_rate_limit_errors(monkeypatch):
+    client = SimpleNamespace(_subforge_base_url="https://api.deepseek.com/v1")
+
+    def fail(*_args, **_kwargs):
+        raise openai.AuthenticationError(
+            "bad key",
+            response=httpx.Response(
+                401,
+                request=httpx.Request("POST", "https://api.deepseek.com/v1/chat/completions"),
+            ),
+            body={},
+        )
+
+    monkeypatch.setattr(client_module, "_call_llm_once", fail)
+    monkeypatch.setattr(
+        client_module.time,
+        "sleep",
+        lambda _seconds: pytest.fail("non-rate-limit errors must not sleep"),
+    )
+
+    with pytest.raises(openai.AuthenticationError):
+        client_module._call_llm_api([], "deepseek-v4-flash", client=client)
+
+
+def test_deepseek_retries_transient_timeouts_but_not_forever(monkeypatch):
+    client = SimpleNamespace(_subforge_base_url="https://api.deepseek.com/v1")
+    request = httpx.Request("POST", "https://api.deepseek.com/v1/chat/completions")
+    outcomes = [
+        openai.APITimeoutError(request=request),
+        openai.APITimeoutError(request=request),
+        object(),
+    ]
+    sleeps = []
+
+    def fake_call(*_args, **_kwargs):
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(client_module, "_call_llm_once", fake_call)
+    monkeypatch.setattr(client_module.time, "sleep", sleeps.append)
+
+    result = client_module._call_llm_api([], "deepseek-v4-flash", client=client)
+
+    assert result is not None
+    assert sleeps == [2.0, 4.0]
 
 
 class _CapturingCompletions:

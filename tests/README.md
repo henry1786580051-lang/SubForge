@@ -7,17 +7,17 @@ SubForge 翻译模块的集成测试。
 ```
 tests/test_translate/
 ├── test_google_translator.py   # Google 翻译器（免费 API）
-├── test_bing_translator.py     # Bing 翻译器（免费 API）
+├── test_bing_translator.py     # Microsoft Azure Translator（模拟官方 API）
 ├── test_llm_translator.py      # LLM 翻译器（需要 API 密钥）
 └── test_deeplx_translator.py   # DeepLX 翻译器（可选）
 ```
 
 ## 🚀 运行测试
 
-### 快速测试（免费 API）
+### 快速测试（无需联网）
 
 ```bash
-# Google + Bing 翻译器（无需配置）
+# Google 集成测试 + Azure Translator 单元测试
 uv run pytest tests/test_translate/test_google_translator.py tests/test_translate/test_bing_translator.py -v
 ```
 
@@ -27,6 +27,8 @@ uv run pytest tests/test_translate/test_google_translator.py tests/test_translat
 # 1. 配置环境变量
 export OPENAI_BASE_URL=https://api.openai.com/v1
 export OPENAI_API_KEY=sk-your-key
+export AZURE_TRANSLATOR_KEY=your-azure-translator-key
+export AZURE_TRANSLATOR_REGION=eastasia  # 区域/多服务资源需要
 
 # 2. 运行所有测试
 uv run pytest tests/test_translate/ -v

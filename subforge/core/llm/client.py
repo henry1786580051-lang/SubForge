@@ -35,6 +35,7 @@ logger = setup_logger("llm_client")
 # Timeout for LLM API calls (seconds)
 LLM_TIMEOUT = 120.0
 PERSISTENT_RATE_LIMIT_MAX_WAIT = 60.0
+PERSISTENT_TRANSIENT_MAX_ATTEMPTS = 3
 ReasoningMode = Literal["default", "enabled", "disabled"]
 
 
@@ -86,6 +87,7 @@ def create_client(base_url: str, api_key: str) -> Any:
             base_url=base_url,
             api_key=api_key,
             timeout=LLM_TIMEOUT,
+            max_retries=0,
             http_client=http_client,
         )
     setattr(client, "_subforge_log_context", log_context)
@@ -288,6 +290,7 @@ def _call_until_provider_available(
 ) -> Any:
     """Wait through rate limits until a persistent provider accepts the request."""
     attempt = 0
+    transient_attempt = 0
     while True:
         try:
             return _call_llm_once(messages, model, temperature, client=client, **kwargs)
@@ -300,6 +303,24 @@ def _call_until_provider_available(
                 provider_name,
                 wait_seconds,
                 attempt,
+            )
+            time.sleep(wait_seconds)
+        except (
+            openai.InternalServerError,
+            openai.APITimeoutError,
+            openai.APIConnectionError,
+        ) as error:
+            transient_attempt += 1
+            if transient_attempt >= PERSISTENT_TRANSIENT_MAX_ATTEMPTS:
+                raise
+            wait_seconds = min(30.0, float(2**transient_attempt))
+            logger.warning(
+                "%s request failed with %s; waiting %.1fs before bounded retry %d/%d.",
+                provider_name,
+                type(error).__name__,
+                wait_seconds,
+                transient_attempt + 1,
+                PERSISTENT_TRANSIENT_MAX_ATTEMPTS,
             )
             time.sleep(wait_seconds)
 
@@ -319,6 +340,15 @@ def _call_llm_api(
             temperature,
             client=client,
             provider_name="NVIDIA API",
+            **kwargs,
+        )
+    if _is_deepseek_client(client) and _is_deepseek_model(model):
+        return _call_until_provider_available(
+            messages,
+            model,
+            temperature,
+            client=client,
+            provider_name="DeepSeek API",
             **kwargs,
         )
     if _is_minimax_m3_model(model):

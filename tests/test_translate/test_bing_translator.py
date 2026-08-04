@@ -1,93 +1,188 @@
-"""Bing Translator integration tests."""
+"""Unit tests for the official Microsoft Azure Translator client."""
 
-from typing import Dict, List
+from dataclasses import dataclass, field
 
 import pytest
+import requests
 
-from subforge.core.asr.asr_data import ASRData
-from subforge.core.translate import SubtitleProcessData, TargetLanguage
+import subforge.core.translate.bing_translator as bing_module
+from subforge.core.entities import SubtitleProcessData
 from subforge.core.translate.bing_translator import BingTranslator
-from tests.conftest import assert_translation_quality
+from subforge.core.translate.factory import TranslatorFactory
+from subforge.core.translate.types import TargetLanguage, TranslatorType
 
 
-@pytest.mark.integration
-class TestBingTranslator:
-    """Test suite for BingTranslator using public API endpoints."""
+@dataclass
+class FakeResponse:
+    status_code: int
+    payload: object
+    headers: dict[str, str] = field(default_factory=dict)
+    text: str = ""
 
-    @pytest.fixture
-    def bing_translator(self, target_language: TargetLanguage) -> BingTranslator:
-        """Create BingTranslator instance for testing."""
-        return BingTranslator(
-            thread_num=2,
-            batch_num=5,
-            target_language=target_language,
+    def json(self):
+        if isinstance(self.payload, Exception):
+            raise self.payload
+        return self.payload
+
+
+class FakeSession:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+        self.closed = False
+
+    def post(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    def close(self):
+        self.closed = True
+
+
+def make_translator(session, **kwargs):
+    return BingTranslator(
+        thread_num=1,
+        batch_num=10,
+        target_language=TargetLanguage.SIMPLIFIED_CHINESE,
+        update_callback=None,
+        use_cache=False,
+        api_key="azure-secret",
+        region="eastasia",
+        session=session,
+        **kwargs,
+    )
+
+
+def test_requires_subscription_key(monkeypatch):
+    monkeypatch.delenv("AZURE_TRANSLATOR_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="API Key is not configured"):
+        BingTranslator(
+            thread_num=1,
+            batch_num=1,
+            target_language=TargetLanguage.SIMPLIFIED_CHINESE,
             update_callback=None,
+            api_key="",
         )
 
-    @pytest.mark.parametrize(
-        "target_language",
-        [TargetLanguage.SIMPLIFIED_CHINESE, TargetLanguage.JAPANESE],
+
+def test_factory_passes_azure_credentials_to_bing(monkeypatch):
+    captured = {}
+
+    class FakeBingTranslator:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(
+        "subforge.core.translate.factory.BingTranslator", FakeBingTranslator
     )
-    def test_translate_simple_text(
-        self,
-        bing_translator: BingTranslator,
-        sample_asr_data: ASRData,
-        expected_translations: Dict[str, Dict[str, List[str]]],
-        target_language: TargetLanguage,
-    ) -> None:
-        """Test translating simple ASR data with quality validation."""
-        result = bing_translator.translate_subtitle(sample_asr_data)
 
-        print("\n" + "=" * 60)
-        print(f"Bing Translation Results (to {target_language.value}):")
-        for i, seg in enumerate(result.segments, 1):
-            print(f"  [{i}] {seg.text} → {seg.translated_text}")
-        print("=" * 60)
+    TranslatorFactory.create_translator(
+        translator_type=TranslatorType.BING,
+        azure_translator_key="factory-key",
+        azure_translator_region="eastasia",
+        azure_translator_endpoint="https://example.test",
+    )
 
-        assert len(result.segments) == len(sample_asr_data.segments)
+    assert captured["api_key"] == "factory-key"
+    assert captured["region"] == "eastasia"
+    assert captured["endpoint"] == "https://example.test"
 
-        # Get expected keywords for target language
-        lang_expectations = expected_translations.get(target_language.value, {})
 
-        # Validate translation quality
-        for seg in result.segments:
-            if seg.text in lang_expectations:
-                assert_translation_quality(
-                    seg.text, seg.translated_text, lang_expectations[seg.text]
-                )
-            else:
-                assert seg.translated_text, f"Translation is empty for: {seg.text}"
+def test_uses_official_endpoint_key_and_region_headers():
+    session = FakeSession(
+        [FakeResponse(200, [{"translations": [{"text": "你好"}]}])]
+    )
+    translator = make_translator(session)
+    data = [SubtitleProcessData(index=1, original_text="Hello")]
 
-    def test_translate_chunk(
-        self,
-        bing_translator: BingTranslator,
-        sample_translate_data: list[SubtitleProcessData],
-        expected_translations: Dict[str, Dict[str, List[str]]],
-        target_language: TargetLanguage,
-    ) -> None:
-        """Test translating a single chunk of data with quality validation."""
-        result = bing_translator._translate_chunk(sample_translate_data)
+    result = translator._translate_chunk(data)
 
-        print("\n" + "=" * 60)
-        print(f"Bing Chunk Translation Results (to {target_language.value}):")
-        for data in result:
-            print(f"  [{data.index}] {data.original_text} → {data.translated_text}")
-        print("=" * 60)
+    assert result[0].translated_text == "你好"
+    url, request = session.calls[0]
+    assert url == "https://api.cognitive.microsofttranslator.com/translate"
+    assert request["params"]["api-version"] == "3.0"
+    assert request["params"]["to"] == "zh-Hans"
+    assert request["headers"]["Ocp-Apim-Subscription-Key"] == "azure-secret"
+    assert request["headers"]["Ocp-Apim-Subscription-Region"] == "eastasia"
+    assert "X-ClientTraceId" in request["headers"]
+    translator.stop()
+    assert session.closed is False
 
-        assert len(result) == len(sample_translate_data)
 
-        # Get expected keywords for target language
-        lang_expectations = expected_translations.get(target_language.value, {})
+def test_custom_resource_endpoint_appends_translate_path():
+    session = FakeSession(
+        [FakeResponse(200, [{"translations": [{"text": "你好"}]}])]
+    )
+    translator = make_translator(
+        session,
+        endpoint="https://example.cognitiveservices.azure.com/translator/text/v3.0/",
+    )
 
-        # Validate translation quality
-        for data in result:
-            if data.original_text in lang_expectations:
-                assert_translation_quality(
-                    data.original_text,
-                    data.translated_text,
-                    lang_expectations[data.original_text],
-                )
-            else:
-                assert (
-                    data.translated_text
-                ), f"Translation is empty for: {data.original_text}"
+    assert translator.test_connection() == "你好"
+    assert session.calls[0][0] == (
+        "https://example.cognitiveservices.azure.com/translator/text/v3.0/translate"
+    )
+    translator.stop()
+
+
+def test_retries_throttled_request_using_retry_after(monkeypatch):
+    session = FakeSession(
+        [
+            FakeResponse(429, {"error": {"message": "Rate limit"}}, {"Retry-After": "2"}),
+            FakeResponse(200, [{"translations": [{"text": "你好"}]}]),
+        ]
+    )
+    sleeps = []
+    monkeypatch.setattr(bing_module.time, "sleep", sleeps.append)
+    translator = make_translator(session, max_retries=2)
+
+    assert translator.test_connection() == "你好"
+    assert sleeps == [2.0]
+    assert len(session.calls) == 2
+    translator.stop()
+
+
+def test_authentication_failure_is_not_silently_swallowed():
+    session = FakeSession(
+        [FakeResponse(401, {"error": {"message": "Invalid subscription key"}})]
+    )
+    translator = make_translator(session)
+    data = [SubtitleProcessData(index=1, original_text="Hello")]
+
+    with pytest.raises(RuntimeError, match="HTTP 401: Invalid subscription key"):
+        translator._translate_chunk(data)
+
+    assert data[0].translated_text == ""
+    translator.stop()
+
+
+def test_network_failure_is_retried_then_propagated(monkeypatch):
+    session = FakeSession(
+        [requests.ConnectionError("offline"), requests.ConnectionError("offline")]
+    )
+    monkeypatch.setattr(bing_module.time, "sleep", lambda _delay: None)
+    translator = make_translator(session, max_retries=1)
+
+    with pytest.raises(RuntimeError, match="network request failed after 2 attempts"):
+        translator.test_connection()
+
+    translator.stop()
+
+
+def test_rejects_partial_batch_response():
+    session = FakeSession(
+        [FakeResponse(200, [{"translations": [{"text": "第一条"}]}])]
+    )
+    translator = make_translator(session)
+    data = [
+        SubtitleProcessData(index=1, original_text="First"),
+        SubtitleProcessData(index=2, original_text="Second"),
+    ]
+
+    with pytest.raises(RuntimeError, match="different number of results"):
+        translator._translate_chunk(data)
+
+    translator.stop()

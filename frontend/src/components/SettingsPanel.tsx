@@ -3,70 +3,18 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { Icon } from "@iconify/react";
 import { useAppStore } from "@/store/appStore";
-import { configApi, transcribeApi, tasksApi } from "@/lib/api";
+import { configApi, openNativeLogsFolder, transcribeApi, tasksApi } from "@/lib/api";
 import type { AsrModelInfo, AsrModelStatus, AsrModelTestResult } from "@/lib/api";
 import { groupNvidiaModels } from "@/lib/llmModels";
-
-const LLM_PROVIDERS = [
-  { id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1" },
-  { id: "nvidia", name: "NVIDIA", baseUrl: "https://integrate.api.nvidia.com/v1", groupedModels: true },
-  { id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com" },
-  { id: "mimo", name: "小米 MiMo", baseUrl: "https://token-plan-cn.xiaomimimo.com/v1" },
-  { id: "qwen", name: "通义千问", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" },
-  { id: "zhipu", name: "智谱 GLM", baseUrl: "https://open.bigmodel.cn/api/paas/v4" },
-  { id: "moonshot", name: "月之暗面", baseUrl: "https://api.moonshot.cn/v1" },
-  { id: "baichuan", name: "百川智能", baseUrl: "https://api.baichuan-ai.com/v1" },
-  { id: "yi", name: "零一万物", baseUrl: "https://api.lingyiwanwu.com/v1" },
-  { id: "minimax", name: "MiniMax", baseUrl: "https://api.minimaxi.com/anthropic" },
-  { id: "siliconflow", name: "SiliconFlow", baseUrl: "https://api.siliconflow.cn/v1" },
-  { id: "openrouter", name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1" },
-  { id: "custom", name: "自定义", baseUrl: "" },
-];
-
-type SettingsView = "llm" | "asr" | "subtitle" | "files";
-
-const ENGLISH_LENGTH_PRESETS = [
-  { label: "紧凑", value: 14, description: "目标 14 词 · 最多 18 词" },
-  { label: "均衡", value: 18, description: "目标 18 词 · 最多 22 词" },
-  { label: "宽松", value: 22, description: "目标 22 词 · 最多 26 词" },
-] as const;
-
-const SETTINGS_VIEWS: Array<{
-  id: SettingsView;
-  label: string;
-  description: string;
-  icon: string;
-}> = [
-  { id: "llm", label: "LLM 服务", description: "服务商、模型与性能", icon: "solar:server-square-cloud-linear" },
-  { id: "asr", label: "语音识别", description: "引擎、模型与时间轴", icon: "solar:microphone-3-linear" },
-  { id: "subtitle", label: "字幕处理", description: "翻译、断句与输出", icon: "solar:subtitles-linear" },
-  { id: "files", label: "文件与存储", description: "工作目录", icon: "solar:folder-with-files-linear" },
-];
-
-const WHISPER_CPP_MODELS = [
-  { id: "tiny", name: "Tiny", size: "75MB", desc: "39M 参数，速度最快，适合快速预览，多语言能力弱" },
-  { id: "base", name: "Base", size: "142MB", desc: "74M 参数，速度很快，英文表现尚可，其他语言一般" },
-  { id: "small", name: "Small", size: "466MB", desc: "244M 参数，速度与质量较平衡，多语言能力明显提升" },
-  { id: "medium", name: "Medium", size: "1.5GB", desc: "769M 参数，高准确率，中日韩等非英语语言推荐起步" },
-  { id: "large-v1", name: "Large V1", size: "3.1GB", desc: "1550M 参数，初代旗舰，多语言表现优秀" },
-  { id: "large-v2", name: "Large V2", size: "3.1GB", desc: "1550M 参数，训练数据更多，比 V1 更稳定可靠" },
-  { id: "large-v3", name: "Large V3", size: "3.1GB", desc: "1550M 参数，最新架构，幻觉更少，推荐高质量转录" },
-];
-
-const FASTER_WHISPER_MODELS = [
-  { id: "tiny", name: "Tiny", size: "75MB", desc: "CTranslate2 加速，速度极快，适合实时或低配设备" },
-  { id: "base", name: "Base", size: "148MB", desc: "CTranslate2 加速，比原版快 4 倍，日常英文够用" },
-  { id: "small", name: "Small", size: "496MB", desc: "CTranslate2 加速，性价比最高，多语言可用" },
-  { id: "medium", name: "Medium", size: "1.5GB", desc: "CTranslate2 加速，非英语语言推荐，质量接近 Large" },
-  { id: "large-v1", name: "Large V1", size: "3.1GB", desc: "CTranslate2 加速，初代旗舰量化版" },
-  { id: "large-v2", name: "Large V2", size: "3.1GB", desc: "CTranslate2 加速，比 V1 训练更充分，更少出错" },
-  { id: "large-v3", name: "Large V3", size: "3.1GB", desc: "CTranslate2 加速，最佳质量，专业字幕制作首选" },
-  { id: "large-v3-turbo", name: "Large V3 Turbo", size: "1.7GB", desc: "V3 蒸馏版，速度提升 8 倍，质量略低于 V3" },
-];
-
-const MLX_WHISPER_MODELS = [
-  ...FASTER_WHISPER_MODELS.map((model) => ({ ...model, onDemand: true })),
-];
+import {
+  ENGLISH_LENGTH_PRESETS,
+  FASTER_WHISPER_MODELS,
+  LLM_PROVIDERS,
+  MLX_WHISPER_MODELS,
+  SETTINGS_VIEWS,
+  WHISPER_CPP_MODELS,
+  type SettingsView,
+} from "@/features/settings/catalog";
 
 export function SettingsPanel() {
   const { setActiveView } = useAppStore();
@@ -97,6 +45,8 @@ export function SettingsPanel() {
   const [expandedModelCompany, setExpandedModelCompany] = useState<string | null>(null);
   const [testingLlm, setTestingLlm] = useState(false);
   const [llmTestResult, setLlmTestResult] = useState<{ ok: boolean; model?: string; error?: string } | null>(null);
+  const [testingAzureTranslator, setTestingAzureTranslator] = useState(false);
+  const [azureTranslatorTestResult, setAzureTranslatorTestResult] = useState<{ ok: boolean; translated?: string; error?: string } | null>(null);
   const [testingWhisper, setTestingWhisper] = useState(false);
   const [whisperTestResult, setWhisperTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
   const [whisperModels, setWhisperModels] = useState<string[] | null>(null);
@@ -163,7 +113,7 @@ export function SettingsPanel() {
     setSaving(true);
     try {
       await configApi.update(key, value);
-      const secretKey = ["llm_api_key", "whisper_api_key", "huggingface_token"].includes(key);
+      const secretKey = ["llm_api_key", "whisper_api_key", "huggingface_token", "azure_translator_key"].includes(key);
       if (["max_word_count_cjk", "max_word_count_english"].includes(key)) {
         setSettings(await configApi.get());
       } else {
@@ -197,9 +147,40 @@ export function SettingsPanel() {
         setAsrTestResult(null);
         await refreshAsrState();
       }
+      if (["azure_translator_key", "azure_translator_region", "azure_translator_endpoint"].includes(key)) {
+        setAzureTranslatorTestResult(null);
+      }
     }
     catch (err) { useAppStore.getState().setError(err instanceof Error ? err.message : "Save failed"); }
     finally { setSaving(false); }
+  };
+
+  const handleTestAzureTranslator = async () => {
+    setTestingAzureTranslator(true);
+    setAzureTranslatorTestResult(null);
+    try {
+      const endpoint = ((settings.azure_translator_endpoint as string) || "https://api.cognitive.microsofttranslator.com").trim();
+      const region = ((settings.azure_translator_region as string) || "").trim();
+      const key = ((settings.azure_translator_key as string) || "").trim();
+      await configApi.update("azure_translator_endpoint", endpoint);
+      await configApi.update("azure_translator_region", region);
+      if (key) await configApi.update("azure_translator_key", key);
+      setSettings((prev) => ({
+        ...prev,
+        azure_translator_endpoint: endpoint,
+        azure_translator_region: region,
+        azure_translator_key: "",
+        azure_translator_key_configured: key ? true : prev.azure_translator_key_configured,
+      }));
+      setAzureTranslatorTestResult(await configApi.testAzureTranslator());
+    } catch (err) {
+      setAzureTranslatorTestResult({
+        ok: false,
+        error: err instanceof Error ? err.message : "测试失败",
+      });
+    } finally {
+      setTestingAzureTranslator(false);
+    }
   };
 
   const handleProviderChange = async (providerId: string) => {
@@ -1083,9 +1064,66 @@ export function SettingsPanel() {
         <SettingsSection title="翻译服务">
           <SettingsField label="默认翻译服务">
             <select value={(settings.translator as string) || "bing"} onChange={(e) => handleSave("translator", e.target.value)} className="input-field">
-              <option value="bing">Bing 翻译 (免费)</option><option value="google">Google 翻译</option><option value="deeplx">DeepLX</option><option value="llm">LLM 翻译</option>
+              <option value="bing">Microsoft Azure Translator</option><option value="google">Google 翻译</option><option value="deeplx">DeepLX</option><option value="llm">LLM 翻译</option>
             </select>
           </SettingsField>
+          {(settings.translator as string) === "bing" && (
+            <>
+              <SettingsField label="Azure 服务终结点" description="默认使用微软全球 Translator v3 终结点，也支持 Azure 资源的自定义域名">
+                <input
+                  type="url"
+                  value={(settings.azure_translator_endpoint as string) || "https://api.cognitive.microsofttranslator.com"}
+                  onChange={(event) => setSettings((prev) => ({ ...prev, azure_translator_endpoint: event.target.value }))}
+                  onBlur={(event) => void handleSave("azure_translator_endpoint", event.target.value.trim())}
+                  placeholder="https://api.cognitive.microsofttranslator.com"
+                  className="input-field"
+                />
+              </SettingsField>
+              <SettingsField label="Azure API Key" description="密钥仅保存在本机设置中，界面和日志不会回显">
+                <input
+                  type="password"
+                  value={(settings.azure_translator_key as string) || ""}
+                  onChange={(event) => setSettings((prev) => ({ ...prev, azure_translator_key: event.target.value }))}
+                  onBlur={(event) => {
+                    const value = event.target.value.trim();
+                    if (value) void handleSave("azure_translator_key", value);
+                  }}
+                  placeholder={settings.azure_translator_key_configured ? "已配置，输入新密钥可替换" : "输入 Azure Translator 密钥"}
+                  autoComplete="off"
+                  className="input-field"
+                />
+              </SettingsField>
+              <SettingsField label="资源区域" description="多服务或区域资源需要填写，例如 eastasia；全球单服务资源可留空">
+                <input
+                  type="text"
+                  value={(settings.azure_translator_region as string) || ""}
+                  onChange={(event) => setSettings((prev) => ({ ...prev, azure_translator_region: event.target.value }))}
+                  onBlur={(event) => void handleSave("azure_translator_region", event.target.value.trim())}
+                  placeholder="可选，例如 eastasia"
+                  className="input-field"
+                />
+                <div className="mt-2 flex min-h-7 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleTestAzureTranslator()}
+                    disabled={testingAzureTranslator || (!settings.azure_translator_key && !settings.azure_translator_key_configured)}
+                    className="flex items-center gap-1.5 rounded-md bg-accent-dim px-3 py-1.5 text-[12px] font-medium text-accent transition-colors hover:bg-accent/15 disabled:cursor-not-allowed disabled:opacity-40 btn-press"
+                  >
+                    {testingAzureTranslator ? (
+                      <><Icon icon="solar:refresh-circle-linear" className="h-3.5 w-3.5 animate-spin" />测试中...</>
+                    ) : (
+                      <><Icon icon="solar:check-circle-linear" className="h-3.5 w-3.5" />测试连接</>
+                    )}
+                  </button>
+                  {azureTranslatorTestResult && (
+                    <span className={`text-[11px] ${azureTranslatorTestResult.ok ? "text-emerald-600" : "text-red-500"}`}>
+                      {azureTranslatorTestResult.ok ? `连接成功：${azureTranslatorTestResult.translated}` : `失败：${azureTranslatorTestResult.error}`}
+                    </span>
+                  )}
+                </div>
+              </SettingsField>
+            </>
+          )}
           <SettingsField label="默认目标语言">
             <select value={(settings.target_language as string) || "english"} onChange={(e) => handleSave("target_language", e.target.value)} className="input-field">
               <option value="chinese">中文</option><option value="english">英文</option><option value="japanese">日文</option><option value="korean">韩文</option>
@@ -1184,6 +1222,27 @@ export function SettingsPanel() {
               onChange={(e) => setSettings((prev) => ({ ...prev, work_dir: e.target.value }))}
               onBlur={(e) => handleSave("work_dir", e.target.value)}
               placeholder="默认: ~/SubForge/work-dir" className="input-field" />
+          </SettingsField>
+          <SettingsField label="诊断日志" description="转录或启动失败时可在此目录找到完整错误记录">
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const result = await openNativeLogsFolder();
+                  if (!result.available) {
+                    useAppStore.getState().addToast("诊断目录仅在桌面应用中可打开", "info");
+                  }
+                } catch (error) {
+                  useAppStore.getState().setError(
+                    error instanceof Error ? error.message : "无法打开诊断目录"
+                  );
+                }
+              }}
+              className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-background px-3 text-[11px] font-semibold text-text-secondary transition-colors hover:border-accent/40 hover:text-accent"
+            >
+              <Icon icon="solar:folder-open-linear" width={16} />
+              打开诊断目录
+            </button>
           </SettingsField>
         </SettingsSection>
         )}

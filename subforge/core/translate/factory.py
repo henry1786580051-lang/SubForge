@@ -30,6 +30,9 @@ class TranslatorFactory:
         use_cache: bool = True,
         translation_context: Optional[TranslationContext] = None,
         llm_client: Any = None,
+        azure_translator_key: str = "",
+        azure_translator_region: str = "",
+        azure_translator_endpoint: str = "",
     ) -> BaseTranslator:
         """创建翻译器实例"""
         try:
@@ -68,6 +71,9 @@ class TranslatorFactory:
                     target_language=target_language,
                     update_callback=update_callback,
                     use_cache=use_cache,
+                    api_key=azure_translator_key,
+                    region=azure_translator_region,
+                    endpoint=azure_translator_endpoint,
                 )
             elif translator_type == TranslatorType.DEEPLX:
                 batch_num = 5

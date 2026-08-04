@@ -14,6 +14,8 @@ from pydantic import BaseModel, Field
 from app.core.blocking import run_blocking
 from app.core.task_manager import TaskResourceBusyError, task_manager
 from app.security import validate_path
+from app.services.task_runtime import create_pipeline_context, schedule_background_task
+from subforge.application import subtitle_preview_segments
 from subforge.core.asr.alignment_models import (
     ALIGNMENT_MODEL_BY_ID,
     ALIGNMENT_MODELS,
@@ -23,6 +25,7 @@ from subforge.core.asr.alignment_models import (
     normalize_alignment_language,
 )
 from subforge.core.asr.faster_whisper import (
+    find_faster_whisper_model_dir,
     is_faster_whisper_model_dir,
 )
 from subforge.core.asr.whisperx_asr import (
@@ -38,25 +41,6 @@ router = APIRouter()
 _background_tasks: set[asyncio.Task] = set()
 _model_test_lock = asyncio.Lock()
 _model_download_locks: dict[str, asyncio.Lock] = {}
-
-
-def _preview_segments(data) -> list[dict]:
-    return [
-        {
-            "id": index,
-            "start": segment._ms_to_srt_time(segment.start_time),
-            "end": segment._ms_to_srt_time(segment.end_time),
-            "text": segment.text,
-            "translated": segment.translated_text or "",
-            "speaker": segment.speaker_id or "",
-        }
-        for index, segment in enumerate(data.segments, 1)
-    ]
-
-
-def _raise_if_cancelled(task_id: str) -> None:
-    if task_manager.is_cancelled(task_id):
-        raise asyncio.CancelledError()
 
 
 def detect_hardware() -> dict:
@@ -342,19 +326,15 @@ async def start_transcription(req: TranscribeRequest):
     req = req.model_copy(update={"file_path": str(file_path)})
 
     try:
-        task = task_manager.create_task(
-            "transcribe",
+        task_id = schedule_background_task(
+            task_type="transcribe",
             resource_key=f"transcribe:{file_path.resolve()}",
+            runner=lambda current_task_id: _run_transcription(current_task_id, req),
+            background_tasks=_background_tasks,
         )
     except TaskResourceBusyError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    # Run transcription in background
-    task_obj = asyncio.create_task(_run_transcription(task.id, req))
-    task_manager.register_running_task(task.id, task_obj)
-    _background_tasks.add(task_obj)
-    task_obj.add_done_callback(_background_tasks.discard)
-    task_obj.add_done_callback(lambda _task: task_manager.unregister_running_task(task.id))
-    return {"task_id": task.id, "status": "started"}
+    return {"task_id": task_id, "status": "started"}
 
 
 @router.post("/{task_id}/alignment-decision")
@@ -383,9 +363,10 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
 
     temp_audio_path = None
     partial_srt_path = None
+    context = create_pipeline_context(task_id)
     try:
-        task_manager.update_progress(task_id, 5, "Initializing transcription...")
-        _raise_if_cancelled(task_id)
+        context.report(5, "Initializing transcription...")
+        context.checkpoint()
 
         config = _build_transcribe_config(req.model, req.language)
         cancel_event = threading.Event()
@@ -400,12 +381,12 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
                     "message": "检测到尚未安装对齐模型的语言，等待选择处理方式",
                     "models": models,
                 }
-                if not task_manager.request_attention(task_id, attention):
+                if not context.request_attention(attention):
                     raise RuntimeError(
                         "Transcription task ended while waiting for alignment models"
                     )
-                while not cancel_event.is_set() and not task_manager.is_cancelled(task_id):
-                    resolution = task_manager.wait_for_attention_resolution(task_id, timeout=0.5)
+                while not cancel_event.is_set() and not context.is_cancelled():
+                    resolution = context.wait_for_attention(timeout=0.5)
                     if resolution is not None:
                         return resolution
                 raise RuntimeError("Transcription cancelled while waiting for alignment models")
@@ -413,18 +394,25 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
             config.missing_alignment_model_callback = _wait_for_alignment_models
 
         # Extract audio from video to temp WAV file
-        task_manager.update_progress(task_id, 10, "Extracting audio from video...")
-        _raise_if_cancelled(task_id)
+        context.report(10, "Extracting audio from video...")
+        context.checkpoint()
         temp_audio_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
         temp_audio_path = temp_audio_file.name
         temp_audio_file.close()
 
-        success = await run_blocking(video2audio, req.file_path, temp_audio_path)
+        success = await run_blocking(
+            video2audio,
+            req.file_path,
+            temp_audio_path,
+            0,
+            cancel_event,
+            on_cancel=cancel_event.set,
+        )
         if not success:
             raise RuntimeError("Failed to extract audio from video")
-        _raise_if_cancelled(task_id)
+        context.checkpoint()
 
-        task_manager.update_progress(task_id, 30, "Running ASR engine...")
+        context.report(30, "Running ASR engine...")
 
         # Partial SRT file for real-time preview
         partial_srt = tempfile.NamedTemporaryFile(suffix="_partial.srt", delete=False)
@@ -434,15 +422,14 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
         # Progress callback: map ASR progress (0-100) to overall (30-95%)
         def _on_progress(asr_progress: int, message: str):
             overall = 30 + int(asr_progress * 0.65)
-            task_manager.update_progress(task_id, overall, message or "Transcribing...")
+            context.report(overall, message or "Transcribing...")
 
         # Save partial results as segments are transcribed
         def _on_segment(partial_data):
             try:
                 partial_data.save(partial_srt_path)
-                task_manager.publish_preview(
-                    task_id,
-                    _preview_segments(partial_data),
+                context.publish_preview(
+                    subtitle_preview_segments(partial_data),
                     subtitle_file=partial_srt_path,
                 )
             except Exception as e:
@@ -457,7 +444,7 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
             _on_segment,
             on_cancel=cancel_event.set,
         )
-        _raise_if_cancelled(task_id)
+        context.checkpoint()
 
         # Save subtitle file
         if result and len(result.segments) > 0:
@@ -482,13 +469,13 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
                     work_dir = source.parent
             work_dir.mkdir(parents=True, exist_ok=True)
             subtitle_path = work_dir / f"{video_stem}.srt"
-            _raise_if_cancelled(task_id)
+            context.checkpoint()
             result.save(str(subtitle_path))
             task_manager.complete_task(
                 task_id,
                 {
                     "subtitle_file": str(subtitle_path),
-                    "segments": _preview_segments(result),
+                    "segments": subtitle_preview_segments(result),
                 },
             )
         else:
@@ -596,9 +583,10 @@ def _current_model_status() -> dict:
                 and importlib.util.find_spec("whisperx") is not None
             )
         else:
-            resolved = model_value
-            resolved_path = Path()
-            local_ready = False
+            local_model = find_faster_whisper_model_dir(model_value, models_dir)
+            resolved = str(local_model) if local_model is not None else model_value
+            resolved_path = local_model or Path()
+            local_ready = local_model is not None
             runtime_ready = (
                 importlib.util.find_spec("whisperx") is not None
                 and importlib.util.find_spec("faster_whisper") is not None
@@ -834,9 +822,15 @@ async def list_whisper_models():
             }
         )
     for model_value, repo in MLX_WHISPER_MODELS.items():
-        resolved = resolve_mlx_model(model_value) if uses_mlx else model_value
-        model_path = Path(resolved).expanduser() if uses_mlx else Path()
-        local_ready = uses_mlx and is_valid_mlx_model_dir(model_path)
+        if uses_mlx:
+            resolved = resolve_mlx_model(model_value)
+            model_path = Path(resolved).expanduser()
+            local_ready = is_valid_mlx_model_dir(model_path)
+        else:
+            local_model = find_faster_whisper_model_dir(model_value, models_dir)
+            resolved = str(local_model) if local_model is not None else model_value
+            model_path = local_model or Path()
+            local_ready = local_model is not None
         result.append(
             {
                 "id": f"mlx-{model_value}" if uses_mlx else f"whisperx-{model_value}",
@@ -855,7 +849,7 @@ async def list_whisper_models():
                 "downloadable": False,
                 "path": str(model_path) if local_ready else "",
                 "resolved_model": resolved
-                if uses_mlx and local_ready
+                if local_ready
                 else repo
                 if uses_mlx
                 else model_value,

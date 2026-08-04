@@ -64,7 +64,12 @@ def temporary_subtitle_file(subtitle_path: str):
         Path(temp_path).unlink(missing_ok=True)
 
 
-def video2audio(input_file: str, output: str = "", audio_track_index: int = 0) -> bool:
+def video2audio(
+    input_file: str,
+    output: str = "",
+    audio_track_index: int = 0,
+    cancel_event=None,
+) -> bool:
     """使用 ffmpeg 将视频转换为音频
 
     Args:
@@ -98,30 +103,38 @@ def video2audio(input_file: str, output: str = "", audio_track_index: int = 0) -
     logger.debug(f"Audio conversion cmd: {' '.join(cmd)}")
 
     try:
-        result = subprocess.run(
+        process = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             encoding="utf-8",
             errors="replace",
             creationflags=(
                 getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
             ),
         )
+        while True:
+            try:
+                stdout, stderr = process.communicate(timeout=0.2)
+                break
+            except subprocess.TimeoutExpired:
+                if cancel_event is None or not cancel_event.is_set():
+                    continue
+                process.terminate()
+                try:
+                    stdout, stderr = process.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    stdout, stderr = process.communicate(timeout=5)
+                logger.info("Audio extraction cancelled")
+                return False
+        result = subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
         if result.returncode == 0 and Path(output).is_file():
             logger.debug("Audio conversion complete")
             return True
         else:
             logger.error("Audio conversion failed")
             return False
-    except subprocess.CalledProcessError as e:
-        logger.error("FFmpeg execution failed")
-        logger.error(f"Return code: {e.returncode}")
-        logger.error(f"Command: {' '.join(e.cmd)}")
-        if e.stdout:
-            logger.error(f"stdout: {e.stdout}")
-        if e.stderr:
-            logger.error(f"stderr: {e.stderr}")
-        return False
     except Exception as e:
         logger.exception(f"音频转换出错: {str(e)}")
         return False

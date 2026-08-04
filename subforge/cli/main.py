@@ -162,7 +162,7 @@ def _build_subtitle_parser(subparsers) -> None:
             "  3. Translate — Translate to another language (LLM, Bing, or Google)\n\n"
             "By default, optimize and split are enabled, translation is disabled.\n"
             "Use --translator or --target-language to enable translation.\n"
-            "Bing and Google translators are free, LLM requires an API key."
+            "Microsoft Azure Translator and LLM require API keys; Google uses its network service."
         ),
     )
     p.add_argument("input", help="Subtitle file path (.srt, .ass, .vtt)")
@@ -186,7 +186,7 @@ def _build_subtitle_parser(subparsers) -> None:
     trans.add_argument(
         "--translator",
         choices=["llm", "bing", "google"],
-        help="Translation service (default: bing). bing and google are free",
+        help="Translation service (default: bing). bing uses Microsoft Azure Translator credentials",
     )
     trans.add_argument(
         "--target-language",
@@ -363,7 +363,7 @@ def _build_process_parser(subparsers) -> None:
                       help="Source language as ISO 639-1 code, or 'auto' (default: auto)")
     pipe.add_argument("--whisper-api-key", metavar="KEY", help="Whisper API key (for --asr whisper-api)")
     pipe.add_argument("--translator", choices=["llm", "bing", "google"],
-                      help="Translation service (default: bing). bing and google are free")
+                      help="Translation service (default: bing). bing uses Microsoft Azure Translator credentials")
     pipe.add_argument("--to", dest="target_language", metavar="CODE", help="Target language BCP 47 code")
     p.add_argument("--target-language", dest="target_language", metavar="CODE", help=argparse.SUPPRESS)
     pipe.add_argument("--reflect", action="store_true", help="Reflective translation (LLM only)")

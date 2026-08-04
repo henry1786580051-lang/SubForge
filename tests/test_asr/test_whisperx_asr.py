@@ -1,5 +1,6 @@
 import json
 import sys
+import threading
 import wave
 from types import SimpleNamespace
 
@@ -683,3 +684,12 @@ def test_whisperx_routes_to_platform_backend(monkeypatch, uses_mlx, method_name)
 
     assert asr._run() == {"ok": True}
     assert calls == [method_name]
+
+
+def test_whisperx_checks_cancellation_between_native_stages():
+    asr = WhisperXASR.__new__(WhisperXASR)
+    asr.cancel_event = threading.Event()
+    asr.cancel_event.set()
+
+    with pytest.raises(RuntimeError, match="cancelled during model loading"):
+        asr._raise_if_cancelled("model loading")

@@ -11,14 +11,22 @@ import { useAppStore, WorkflowStep } from "@/store/appStore";
 import { healthApi, configApi } from "@/lib/api";
 
 const WORKFLOW_STEPS: { id: WorkflowStep; label: string }[] = [
-  { id: "import", label: "导入媒体" },
+  { id: "import", label: "导入素材" },
   { id: "transcribe", label: "语音转录" },
   { id: "subtitle", label: "字幕处理" },
 ];
 
 export default function Home() {
-  const { step, setStep, activeView, backendOnline, setBackendOnline, taskStatus, taskMessage } =
-    useAppStore();
+  const {
+    step,
+    setStep,
+    activeView,
+    backendOnline,
+    setBackendOnline,
+    setConfigLoaded,
+    taskStatus,
+    taskMessage,
+  } = useAppStore();
   const taskControls = useTaskMonitor();
 
   const currentIdx = WORKFLOW_STEPS.findIndex((s) => s.id === step);
@@ -40,29 +48,38 @@ export default function Home() {
 
   // Load backend config on startup to sync with store
   useEffect(() => {
-    configApi.get().then((data: Record<string, unknown>) => {
-      useAppStore.getState().setConfig({
-        transcribeModel: (data.transcribe_model as string) || "whisperx",
-        sourceLanguage: (data.source_language as string) || "auto",
-        targetLanguage: (data.target_language as string) || "chinese",
-        translator: (data.translator as string) || "bing",
-        llmModel: (data.llm_model as string) || "gpt-4o-mini",
-        needOptimize: (data.need_optimize as boolean) ?? true,
-        needTranslate: (data.need_translate as boolean) ?? true,
-        needReflect: (data.need_reflect as boolean) ?? false,
-        customPrompt: (data.custom_prompt as string) || "",
-        whisperModelSize: (data.whisper_model_size as string) || "large-v3",
-        whisperxAlignmentStrategy:
-          (data.whisperx_alignment_strategy as "auto" | "manual") || "auto",
-        whisperxAlignModel: (data.whisperx_align_model as string) || "WAV2VEC2_ASR_LARGE_LV60K_960H",
-        whisperxBatchSize: Number(data.whisperx_batch_size || 8),
-        whisperxSupported: (data.whisperx_supported as boolean) ?? true,
-        enableAudioEnhancement: (data.enable_audio_enhancement as boolean) ?? true,
-        speakerDiarization: (data.speaker_diarization as "off" | "two" | "auto" | "fixed") || "off",
-        speakerCount: Number(data.speaker_count || 2),
+    configApi
+      .get()
+      .then((data: Record<string, unknown>) => {
+        useAppStore.getState().setConfig({
+          transcribeModel: (data.transcribe_model as string) || "whisper_cpp",
+          sourceLanguage: (data.source_language as string) || "auto",
+          targetLanguage: (data.target_language as string) || "chinese",
+          translator: (data.translator as string) || "bing",
+          llmModel: (data.llm_model as string) || "gpt-4o-mini",
+          needOptimize: (data.need_optimize as boolean) ?? true,
+          needTranslate: (data.need_translate as boolean) ?? true,
+          needReflect: (data.need_reflect as boolean) ?? false,
+          customPrompt: (data.custom_prompt as string) || "",
+          whisperModelSize: (data.whisper_model_size as string) || "large-v3",
+          whisperxAlignmentStrategy:
+            (data.whisperx_alignment_strategy as "auto" | "manual") || "auto",
+          whisperxAlignModel:
+            (data.whisperx_align_model as string) || "WAV2VEC2_ASR_LARGE_LV60K_960H",
+          whisperxBatchSize: Number(data.whisperx_batch_size || 8),
+          whisperxSupported: (data.whisperx_supported as boolean) ?? true,
+          enableAudioEnhancement: (data.enable_audio_enhancement as boolean) ?? true,
+          speakerDiarization:
+            (data.speaker_diarization as "off" | "two" | "auto" | "fixed") || "off",
+          speakerCount: Number(data.speaker_count || 2),
+        });
+        setConfigLoaded(true);
+      })
+      .catch(() => {
+        setConfigLoaded(false);
+        useAppStore.getState().setError("无法读取转录配置，请确认后端服务正常");
       });
-    }).catch(() => {});
-  }, []);
+  }, [setConfigLoaded]);
 
   return (
     <div className="flex h-dvh overflow-hidden">

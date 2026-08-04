@@ -121,6 +121,33 @@ def test_windows_lists_standard_whisperx_and_downloadable_tool_models(tmp_path, 
     assert diarization["downloadable"] is True
 
 
+def test_windows_reports_managed_whisperx_model_as_ready(tmp_path, monkeypatch):
+    values = _config_values(tmp_path)
+    model_dir = tmp_path / "models" / "faster-whisper-large-v3"
+    model_dir.mkdir(parents=True)
+    (model_dir / "config.json").write_text("{}" * 100, encoding="utf-8")
+    (model_dir / "model.bin").write_bytes(b"x" * (1024 * 1024))
+    (model_dir / "tokenizer.json").write_text("{}" * 1024, encoding="utf-8")
+    monkeypatch.setattr(
+        config_module,
+        "get_config_value",
+        lambda key, default=None: values.get(key, default),
+    )
+    monkeypatch.setattr(transcribe_api.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(transcribe_api.platform, "machine", lambda: "AMD64")
+    monkeypatch.setattr(transcribe_api.importlib.util, "find_spec", lambda _name: object())
+
+    status = transcribe_api._current_model_status()
+    models = asyncio.run(transcribe_api.list_whisper_models())
+    listed = next(model for model in models if model["id"] == "whisperx-large-v3")
+
+    assert status["model_ready"] is True
+    assert status["model_path"] == str(model_dir)
+    assert status["model_state"] == "ready"
+    assert listed["downloaded"] is True
+    assert listed["path"] == str(model_dir)
+
+
 def test_model_list_exposes_language_specific_alignment_models(tmp_path, monkeypatch):
     values = _config_values(tmp_path)
     values.update(

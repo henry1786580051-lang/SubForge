@@ -137,6 +137,13 @@ class Config(QConfig):
         "Translate", "NeedReflectTranslate", False, BoolValidator()
     )
     deeplx_endpoint = ConfigItem("Translate", "DeeplxEndpoint", "")
+    azure_translator_key = ConfigItem("Translate", "AzureTranslatorKey", "")
+    azure_translator_region = ConfigItem("Translate", "AzureTranslatorRegion", "")
+    azure_translator_endpoint = ConfigItem(
+        "Translate",
+        "AzureTranslatorEndpoint",
+        "https://api.cognitive.microsofttranslator.com",
+    )
     batch_size = RangeConfigItem("Translate", "BatchSize", 10, RangeValidator(5, 50))
     thread_num = RangeConfigItem("Translate", "ThreadNum", 10, RangeValidator(1, 50))
 

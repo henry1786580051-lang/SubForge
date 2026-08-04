@@ -54,10 +54,15 @@ def _requires_mlx_metallib() -> bool:
     return platform.system() == "Darwin" and platform.machine().lower() in {"arm64", "aarch64"}
 
 
+def _release_version(value: str) -> str:
+    """Normalize VCS development metadata to the user-facing release version."""
+    return value.strip().lstrip("v").split(".dev", 1)[0]
+
+
 def _version() -> str:
     explicit_version = os.environ.get("SUBFORGE_BUILD_VERSION", "").strip()
     if explicit_version:
-        return explicit_version.lstrip("v")
+        return _release_version(explicit_version)
 
     version_file = ROOT / "subforge" / "_version.py"
     if version_file.is_file():
@@ -67,7 +72,7 @@ def _version() -> str:
             re.MULTILINE,
         )
         if match:
-            return match.group(1).lstrip("v")
+            return _release_version(match.group(1))
     try:
         result = subprocess.run(
             [sys.executable, "-m", "hatchling", "version"],
@@ -76,7 +81,7 @@ def _version() -> str:
             text=True,
             check=True,
         )
-        return result.stdout.strip().lstrip("v")
+        return _release_version(result.stdout)
     except Exception:
         result = subprocess.run(
             ["git", "describe", "--tags", "--always"],
@@ -85,11 +90,11 @@ def _version() -> str:
             text=True,
         )
         if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip().lstrip("v")
+            return _release_version(result.stdout)
     try:
         import importlib.metadata
 
-        return importlib.metadata.version("subforge").lstrip("v")
+        return _release_version(importlib.metadata.version("subforge"))
     except Exception:
         pass
     return "0.0.0-dev"
@@ -170,20 +175,19 @@ def _fetch_static_ffmpeg(
 def prepare_ffmpeg() -> None:
     """Download the current platform's static ffmpeg/ffprobe into runtime resources."""
     try:
-        from static_ffmpeg.run import (
-            get_or_fetch_platform_executables_else_raise,
-            get_platform_key,
-        )
+        from static_ffmpeg.run import get_or_fetch_platform_executables_else_raise
     except ImportError as exc:
         raise RuntimeError(
-            "static-ffmpeg is required for desktop builds. "
+            "static-ffmpeg 2.13 is required for desktop builds. "
             "Run with: uv run --extra denoise --extra whisperx "
-            "--with static-ffmpeg --with pyinstaller python scripts/build_desktop.py"
+            "--with static-ffmpeg==2.13 --with pyinstaller python scripts/build_desktop.py"
         ) from exc
 
     runtime_bin = RUNTIME_DIR / "resource" / "bin"
     runtime_bin.mkdir(parents=True, exist_ok=True)
-    cache_dir = BUILD_DIR / "static-ffmpeg" / get_platform_key()
+    # static-ffmpeg archives contain a top-level directory named exactly like
+    # sys.platform, and the package extracts it next to this target directory.
+    cache_dir = BUILD_DIR / "static-ffmpeg" / sys.platform
     ffmpeg, ffprobe = _fetch_static_ffmpeg(
         get_or_fetch_platform_executables_else_raise,
         cache_dir,

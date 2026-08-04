@@ -154,6 +154,7 @@ class TestRunVadInference:
 
         model = StatefulModel()
         monkeypatch.setattr(silero_vad, "_vad_model", model)
+        monkeypatch.setattr(silero_vad, "_vad_backend", "torch_hub")
         samples = np.ones(512, dtype=np.float32)
 
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -212,6 +213,7 @@ class TestRunVadInference:
                 return Probability()
 
         monkeypatch.setattr(silero_vad, "_vad_model", Model())
+        monkeypatch.setattr(silero_vad, "_vad_backend", "torch_hub")
         result = silero_vad.run_vad_inference(
             np.ones(16000, dtype=np.float32),
             threshold=0,

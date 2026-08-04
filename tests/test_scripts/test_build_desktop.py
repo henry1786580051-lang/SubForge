@@ -3,6 +3,15 @@ import pytest
 from scripts import build_desktop
 
 
+def test_windows_installer_removes_previous_pyinstaller_runtime():
+    installer = (build_desktop.ROOT / "scripts" / "windows_installer.iss").read_text(
+        encoding="utf-8"
+    )
+
+    assert "[InstallDelete]" in installer
+    assert 'Name: "{app}\\_internal"' in installer
+
+
 def test_build_version_prefers_explicit_release_environment(monkeypatch):
     monkeypatch.setenv("SUBFORGE_BUILD_VERSION", "v9.8.7")
 
@@ -19,6 +28,19 @@ def test_build_version_prefers_repository_version_file(monkeypatch, tmp_path):
     monkeypatch.setattr(build_desktop, "ROOT", tmp_path)
 
     assert build_desktop._version() == "9.8.7"
+
+
+def test_build_version_removes_vcs_development_metadata(monkeypatch, tmp_path):
+    package_dir = tmp_path / "subforge"
+    package_dir.mkdir()
+    (package_dir / "_version.py").write_text(
+        "__version__ = version = '1.1.6.dev4+g1234567'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("SUBFORGE_BUILD_VERSION", raising=False)
+    monkeypatch.setattr(build_desktop, "ROOT", tmp_path)
+
+    assert build_desktop._version() == "1.1.6"
 
 
 def test_pyinstaller_receives_release_version(monkeypatch):

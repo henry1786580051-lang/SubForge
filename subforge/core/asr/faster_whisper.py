@@ -21,6 +21,9 @@ from typing import Any, Callable, List, Optional, Union
 from .asr_data import ASRDataSeg
 from .base import BaseASR
 from .status import ASRStatus
+from .worker_runtime import atomic_json_write as _atomic_json_write
+from .worker_runtime import log_tail as _log_tail
+from .worker_runtime import stop_process as _stop_process
 
 logger = logging.getLogger(__name__)
 _CUDA_DLL_DIRECTORY_HANDLES: list[Any] = []
@@ -32,35 +35,11 @@ _FASTER_WORKER_HEARTBEAT = "SUBFORGE_FASTER_WHISPER_HEARTBEAT"
 _FASTER_WORKER_IDLE_TIMEOUT = "SUBFORGE_FASTER_WHISPER_IDLE_TIMEOUT"
 
 
-def _atomic_json_write(path: Path, payload: Any) -> None:
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    temporary.replace(path)
-
-
 def _worker_idle_timeout() -> float:
     try:
         return max(30.0, float(os.environ.get(_FASTER_WORKER_IDLE_TIMEOUT, "180")))
     except (TypeError, ValueError):
         return 180.0
-
-
-def _stop_process(process: subprocess.Popen) -> None:
-    if process.poll() is not None:
-        return
-    process.terminate()
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=10)
-
-
-def _log_tail(path: Path, limit: int = 4000) -> str:
-    try:
-        return path.read_text(encoding="utf-8", errors="replace")[-limit:].strip()
-    except OSError:
-        return ""
 
 
 def _candidate_cuda_runtime_dirs() -> list[Path]:
@@ -165,6 +144,29 @@ def is_faster_whisper_model_dir(path: str | Path) -> bool:
     )
 
 
+def find_faster_whisper_model_dir(
+    whisper_model: str,
+    model_dir: str | Path = "",
+) -> Path | None:
+    """Resolve one complete managed or explicitly configured CTranslate2 model."""
+    configured = Path(whisper_model).expanduser()
+    if is_faster_whisper_model_dir(configured):
+        return configured
+
+    if model_dir:
+        models_root = Path(model_dir).expanduser()
+    else:
+        from subforge.config import MODEL_PATH
+
+        models_root = MODEL_PATH
+    candidates = (
+        models_root,
+        models_root / f"faster-whisper-{whisper_model}",
+        models_root / whisper_model,
+    )
+    return next((candidate for candidate in candidates if is_faster_whisper_model_dir(candidate)), None)
+
+
 class FasterWhisperASR(BaseASR):
     """Run FasterWhisper through the packaged Python runtime."""
 
@@ -211,24 +213,9 @@ class FasterWhisperASR(BaseASR):
 
     @staticmethod
     def _resolve_model_path(whisper_model: str, model_dir: str) -> Path:
-        configured = Path(whisper_model).expanduser()
-        if is_faster_whisper_model_dir(configured):
-            return configured
-
-        if model_dir:
-            models_root = Path(model_dir).expanduser()
-        else:
-            from subforge.config import MODEL_PATH
-
-            models_root = MODEL_PATH
-        candidates = [
-            models_root,
-            models_root / f"faster-whisper-{whisper_model}",
-            models_root / whisper_model,
-        ]
-        for candidate in candidates:
-            if is_faster_whisper_model_dir(candidate):
-                return candidate
+        resolved = find_faster_whisper_model_dir(whisper_model, model_dir)
+        if resolved is not None:
+            return resolved
         raise RuntimeError(
             f"FasterWhisper model '{whisper_model}' is not downloaded or is incomplete. "
             "Download its CTranslate2 model in ASR settings. Whisper.cpp GGML files "

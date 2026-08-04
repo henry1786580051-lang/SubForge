@@ -3,20 +3,31 @@
 import logging
 import threading
 from pathlib import Path
-from typing import List, Tuple
+from typing import Any, List, Tuple
 
 logger = logging.getLogger(__name__)
 
-_vad_model = None
+_vad_model: Any = None
+_vad_backend: str | None = None
 _vad_lock = threading.RLock()
 
 
 def _load_model():
-    """Lazy-load Silero VAD model via torch.hub."""
-    global _vad_model
+    """Lazy-load the packaged Silero ONNX model, with torch.hub as fallback."""
+    global _vad_model, _vad_backend
     with _vad_lock:
         if _vad_model is not None:
             return
+
+        try:
+            from faster_whisper.vad import get_vad_model
+
+            logger.info("Loading packaged Silero VAD ONNX model...")
+            _vad_model = get_vad_model()
+            _vad_backend = "faster_whisper_onnx"
+            return
+        except (ImportError, OSError, RuntimeError) as exc:
+            logger.warning("Packaged Silero VAD is unavailable; trying torch.hub: %s", exc)
 
         import torch
 
@@ -28,6 +39,7 @@ def _load_model():
         )
         if _vad_model is None:
             raise RuntimeError("Silero VAD model failed to load")
+        _vad_backend = "torch_hub"
         logger.info("Silero VAD model loaded")
 
 
@@ -66,24 +78,32 @@ def run_vad_inference(
         audio_len_ms = int(round(len(samples) / sample_rate * 1000))
 
     import numpy as np
-    import torch
-
     window_size = 512  # 32ms at 16kHz
-    speech_probs = []
+    speech_probs: list[float] = []
     # Silero keeps recurrent state inside the shared model. Reset and inference
     # must be one atomic operation or concurrent jobs corrupt each other's VAD.
     with _vad_lock:
         _load_model()
         assert _vad_model is not None  # guaranteed by _load_model
-        _vad_model.reset_states()
+        if _vad_backend == "faster_whisper_onnx":
+            frame_count = (len(samples) + window_size - 1) // window_size
+            padded = np.pad(
+                np.asarray(samples, dtype=np.float32),
+                (0, frame_count * window_size - len(samples)),
+            )
+            probabilities = _vad_model(padded, num_samples=window_size)
+            speech_probs = [float(value) for value in np.asarray(probabilities).reshape(-1)]
+        else:
+            import torch
 
-        for i in range(0, len(samples), window_size):
-            chunk = samples[i : i + window_size]
-            if len(chunk) < window_size:
-                chunk = np.pad(chunk, (0, window_size - len(chunk)))
-            tensor = torch.from_numpy(chunk)
-            prob = _vad_model(tensor, sample_rate).item()
-            speech_probs.append(prob)
+            _vad_model.reset_states()
+            for i in range(0, len(samples), window_size):
+                chunk = samples[i : i + window_size]
+                if len(chunk) < window_size:
+                    chunk = np.pad(chunk, (0, window_size - len(chunk)))
+                tensor = torch.from_numpy(chunk)
+                prob = _vad_model(tensor, sample_rate).item()
+                speech_probs.append(prob)
 
     # Group consecutive speech frames into segments
     frame_duration_ms = window_size / sample_rate * 1000
@@ -192,7 +212,10 @@ def detect_speech_segments(
 
 
 def is_available() -> bool:
-    """Check if Silero VAD is available (requires torch)."""
+    """Check if either the packaged ONNX or legacy torch Silero runtime exists."""
     import importlib.util
 
-    return importlib.util.find_spec("torch") is not None
+    return (
+        importlib.util.find_spec("faster_whisper") is not None
+        or importlib.util.find_spec("torch") is not None
+    )

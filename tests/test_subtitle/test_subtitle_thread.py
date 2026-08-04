@@ -263,12 +263,22 @@ class TestSubtitleThreadTranslate:
             assert len(results["updates"]) > 0
 
     @pytest.mark.integration
+    @pytest.mark.skipif(
+        not os.getenv("AZURE_TRANSLATOR_KEY"),
+        reason="AZURE_TRANSLATOR_KEY is required for the Azure Translator integration test",
+    )
     def test_translate_bing(self, subtitle_file, output_dir, base_config):
-        """Test Bing Translate (free API)."""
+        """Test the official Microsoft Azure Translator API."""
         config = base_config
         config.need_translate = True
         config.translator_service = TranslatorServiceEnum.BING
         config.target_language = TargetLanguage.SIMPLIFIED_CHINESE
+        config.azure_translator_key = os.environ["AZURE_TRANSLATOR_KEY"]
+        config.azure_translator_region = os.getenv("AZURE_TRANSLATOR_REGION", "")
+        config.azure_translator_endpoint = os.getenv(
+            "AZURE_TRANSLATOR_ENDPOINT",
+            "https://api.cognitive.microsofttranslator.com",
+        )
 
         output_path = os.path.join(output_dir, "translate_bing.srt")
         task = SubtitleTask(

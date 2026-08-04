@@ -190,6 +190,7 @@ class LLMTranslator(BaseTranslator):
         """
         misaligned_keys: List[str] = []
         try:
+
             def audit_items(keys, translations=translated_dict):
                 items = {}
                 for key in keys:
@@ -243,8 +244,10 @@ class LLMTranslator(BaseTranslator):
                 focused=True,
             )
             confirmed = (
-                set(first_flags) & set(confirmed_flags)
-            ) | set(strong_outliers) | set(semantic_candidates)
+                (set(first_flags) & set(confirmed_flags))
+                | set(strong_outliers)
+                | set(semantic_candidates)
+            )
             misaligned_keys = self._expand_confirmed_alignment_keys(
                 ordered_keys,
                 confirmed,
@@ -297,13 +300,9 @@ class LLMTranslator(BaseTranslator):
                     raise ValueError(error)
                 recovered = self._translate_locked_batch(
                     recovery_chunk,
-                    initial_feedback=(
-                        "Sparse alignment corrections were still invalid: " + error
-                    ),
+                    initial_feedback=("Sparse alignment corrections were still invalid: " + error),
                 )
-                candidate.update(
-                    {str(item.index): item.translated_text for item in recovered}
-                )
+                candidate.update({str(item.index): item.translated_text for item in recovered})
                 valid, error = self._validate_llm_response(
                     candidate,
                     subtitle_dict,
@@ -339,9 +338,7 @@ class LLMTranslator(BaseTranslator):
                     audit_items(unresolved_repairs, candidate),
                     focused=True,
                 )
-                unresolved_fallbacks = sorted(
-                    set(fallback_flags) & set(unresolved_repairs)
-                )
+                unresolved_fallbacks = sorted(set(fallback_flags) & set(unresolved_repairs))
                 if unresolved_fallbacks:
                     self._queue_alignment_repairs(unresolved_fallbacks)
                     logger.warning(
@@ -360,15 +357,24 @@ class LLMTranslator(BaseTranslator):
             return translated_dict
 
     def _queue_alignment_repairs(self, keys) -> None:
-        numeric_keys = {
-            int(key)
-            for key in keys
-            if str(key).isdigit()
-        }
+        numeric_keys = {int(key) for key in keys if str(key).isdigit()}
         if not numeric_keys:
             return
         with self._pending_alignment_repair_lock:
             self._pending_alignment_repair_keys.update(numeric_keys)
+
+    def _is_chunk_result_stable(self, translated_list: List[SubtitleProcessData]) -> bool:
+        """Keep confirmed but unresolved alignment shifts out of previews and recovery."""
+        chunk_indices = {item.index for item in translated_list}
+        with self._pending_alignment_repair_lock:
+            pending = chunk_indices & self._pending_alignment_repair_keys
+        if pending:
+            logger.warning(
+                "Deferring provisional translation chunk with pending alignment repairs: %s",
+                sorted(pending),
+            )
+            return False
+        return True
 
     def _expand_confirmed_alignment_keys(
         self,
@@ -420,8 +426,7 @@ class LLMTranslator(BaseTranslator):
             han_count = len(re.findall(r"[\u3400-\u9fff]", target))
             target_units = han_count + len(re.findall(r"[A-Za-z0-9]", target))
             has_internal_proper_noun = any(
-                token[:1].isupper() and not token.isupper()
-                for token in source_words[1:]
+                token[:1].isupper() and not token.isupper() for token in source_words[1:]
             )
             extreme_expansion = bool(
                 source_words
@@ -502,8 +507,7 @@ class LLMTranslator(BaseTranslator):
                 )
             )
             literal_duration_output = bool(
-                model_year
-                and re.search(rf"(?<!\d){model_year.group(1)}\s*年", translated)
+                model_year and re.search(rf"(?<!\d){model_year.group(1)}\s*年", translated)
             )
             if has_model_year_context and literal_duration_output:
                 candidates.append(key)
@@ -535,11 +539,7 @@ class LLMTranslator(BaseTranslator):
                     )
                     and re.search(r"(?:消失|没了|不见)", translated)
                 )
-                if (
-                    impossible_process
-                    or impossible_facelift
-                    or impossible_reverse_camera_age
-                ):
+                if impossible_process or impossible_facelift or impossible_reverse_camera_age:
                     candidates.append(key)
         return candidates
 
@@ -1166,9 +1166,7 @@ Delete every fact, action, object, name, number, or clause that current_source d
     def _current_subtitles_payload(self, subtitle_dict: Dict[str, str]) -> Dict[str, Any]:
         """Attach anonymous dialogue turns without mixing labels into source text."""
         if not any(
-            self._all_speaker_by_index.get(int(key))
-            for key in subtitle_dict
-            if str(key).isdigit()
+            self._all_speaker_by_index.get(int(key)) for key in subtitle_dict if str(key).isdigit()
         ):
             return dict(subtitle_dict)
         return {
@@ -1181,9 +1179,7 @@ Delete every fact, action, object, name, number, or clause that current_source d
 
     def _dialogue_prompt_rules(self, subtitle_dict: Dict[str, str]) -> str:
         has_speakers = any(
-            self._all_speaker_by_index.get(int(key))
-            for key in subtitle_dict
-            if str(key).isdigit()
+            self._all_speaker_by_index.get(int(key)) for key in subtitle_dict if str(key).isdigit()
         )
         if not has_speakers:
             return ""
@@ -1282,6 +1278,14 @@ Delete every fact, action, object, name, number, or clause that current_source d
                     f"subtitle text. Remove speaker labels from keys: {leaked_speakers[:20]}",
                 )
 
+        price_band_ok, price_band_error = self._validate_natural_price_bands(
+            response_dict,
+            subtitle_dict,
+            _extract_text,
+        )
+        if not price_band_ok:
+            return False, price_band_error
+
         preserved_ok, preserved_error = self._validate_preserved_tokens(
             response_dict, subtitle_dict, _extract_text
         )
@@ -1329,6 +1333,45 @@ Delete every fact, action, object, name, number, or clause that current_source d
 
         return True, ""
 
+    @staticmethod
+    def _validate_natural_price_bands(
+        response_dict: Dict[str, Any],
+        subtitle_dict: Dict[str, str],
+        extract_text,
+    ) -> Tuple[bool, str]:
+        unnatural: list[str] = []
+        for key, source in subtitle_dict.items():
+            price_band = re.search(
+                r"\b(\d{2})s\s+(?:to|through|-)\s+(\d{2})s\b",
+                source,
+                flags=re.IGNORECASE,
+            )
+            translated = extract_text(response_dict.get(key, ""))
+            has_price_context = bool(
+                re.search(
+                    r"\b(?:cost|costs|expensive|pay|price|priced|range|sell|sold|worth)\b|[$]",
+                    source,
+                    flags=re.IGNORECASE,
+                )
+                or re.search(r"(?:美元|美金|万元?|千元?|\d\s*[万千k])", translated, re.IGNORECASE)
+            )
+            if not price_band or not has_price_context:
+                continue
+            if re.search(
+                r"(?:\d+\s*到\s*\d+多?千|\d+多千|(?<![A-Za-z0-9])\d{2}s(?![A-Za-z0-9]))",
+                translated,
+                flags=re.IGNORECASE,
+            ):
+                unnatural.append(str(key))
+        if not unnatural:
+            return True, ""
+        return (
+            False,
+            "Render colloquial thousand-dollar price bands in natural Chinese ten-thousand "
+            "notation. For example, '18s to 20s' is '1.8万到2万美元', not '18到20多千美元'. "
+            f"Unnatural price-band keys: {unnatural[:20]}",
+        )
+
     def _validate_cross_key_boundaries(
         self,
         response_dict: Dict[str, Any],
@@ -1369,13 +1412,9 @@ Delete every fact, action, object, name, number, or clause that current_source d
             for token in source_owners:
                 token_compact = re.sub(r"[\s,，.。-]+", "", token)
                 if token_compact.isdigit():
-                    token_pattern = (
-                        rf"(?<![a-z0-9]){re.escape(token_compact)}(?![a-z0-9])"
-                    )
+                    token_pattern = rf"(?<![a-z0-9]){re.escape(token_compact)}(?![a-z0-9])"
                 else:
-                    token_pattern = (
-                        rf"(?<![a-z0-9]){re.escape(token_compact)}(?![a-z0-9])"
-                    )
+                    token_pattern = rf"(?<![a-z0-9]){re.escape(token_compact)}(?![a-z0-9])"
                 if re.search(token_pattern, compact, flags=re.IGNORECASE):
                     translated_owners.setdefault(token, set()).add(str(key))
 
@@ -1398,6 +1437,25 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 "A number or model fact was duplicated into a different subtitle key. "
                 "Keep each fact in the key that contains it in current_subtitles. "
                 f"Cross-key duplicates: {leaks[:20]}",
+            )
+
+        discourse_source_owners = {
+            str(key)
+            for key, source in subtitle_dict.items()
+            if re.search(r"\bi\s+mean\b", source, flags=re.IGNORECASE)
+        }
+        discourse_target_owners = {
+            str(key)
+            for key, value in response_dict.items()
+            if re.search(r"(?:我是说|我的意思是|也就是说)", extract_text(value))
+        }
+        discourse_leaks = sorted(discourse_target_owners - discourse_source_owners)
+        if discourse_leaks:
+            return (
+                False,
+                "The discourse marker 'I mean' was translated under a key that does not "
+                "own it. Keep it in its source key or omit it as filler; never move it to "
+                f"a neighboring subtitle. Leaked keys: {discourse_leaks[:20]}",
             )
 
         if not check_adjacent_repetition:
@@ -1444,17 +1502,11 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 extract_text(response_dict.get(right_key, ""))
             )
             for quantity in sorted(left_quantities & right_quantities):
-                left_owns = self._source_mentions_quantity(
-                    subtitle_dict[left_key], quantity
-                )
-                right_owns = self._source_mentions_quantity(
-                    subtitle_dict[right_key], quantity
-                )
+                left_owns = self._source_mentions_quantity(subtitle_dict[left_key], quantity)
+                right_owns = self._source_mentions_quantity(subtitle_dict[right_key], quantity)
                 if left_owns == right_owns:
                     continue
-                duplicated_quantities.append(
-                    f"{left_key}-{right_key}:{quantity[0]}{quantity[1]}"
-                )
+                duplicated_quantities.append(f"{left_key}-{right_key}:{quantity[0]}{quantity[1]}")
         if duplicated_quantities:
             return (
                 False,
@@ -1506,10 +1558,12 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 "it",
                 "i",
                 "he",
+                "here",
                 "she",
                 "we",
                 "you",
                 "they",
+                "there",
                 "could",
                 "would",
                 "of",
@@ -1521,12 +1575,12 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 "to",
                 "with",
             }
-            left_tokens = set(
-                self._normalized_source_text(subtitle_dict[left_key]).split()
-            ) - stopwords
-            right_tokens = set(
-                self._normalized_source_text(subtitle_dict[right_key]).split()
-            ) - stopwords
+            left_tokens = (
+                set(self._normalized_source_text(subtitle_dict[left_key]).split()) - stopwords
+            )
+            right_tokens = (
+                set(self._normalized_source_text(subtitle_dict[right_key]).split()) - stopwords
+            )
             return bool(left_tokens & right_tokens)
 
         duplicated_connectors: list[str] = []
@@ -1557,12 +1611,8 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 continue
             if source_repeats_meaning(left_key, right_key):
                 continue
-            left_source_tokens = self._normalized_source_text(
-                subtitle_dict[left_key]
-            ).split()
-            right_source_tokens = self._normalized_source_text(
-                subtitle_dict[right_key]
-            ).split()
+            left_source_tokens = self._normalized_source_text(subtitle_dict[left_key]).split()
+            right_source_tokens = self._normalized_source_text(subtitle_dict[right_key]).split()
             if (
                 left_source_tokens
                 and right_source_tokens
@@ -1608,9 +1658,7 @@ Delete every fact, action, object, name, number, or clause that current_source d
                     break
             if not repeated_ending:
                 continue
-            repeated_share = len(repeated_ending) / min(
-                len(left_target), len(right_target)
-            )
+            repeated_share = len(repeated_ending) / min(len(left_target), len(right_target))
             if (
                 not (left_speaker and right_speaker)
                 and repeated_ending not in {left_target, right_target}
@@ -1622,21 +1670,15 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 continue
             if source_repeats_meaning(left_key, right_key):
                 continue
-            left_source_tokens = self._normalized_source_text(
-                subtitle_dict[left_key]
-            ).split()
-            right_source_tokens = self._normalized_source_text(
-                subtitle_dict[right_key]
-            ).split()
+            left_source_tokens = self._normalized_source_text(subtitle_dict[left_key]).split()
+            right_source_tokens = self._normalized_source_text(subtitle_dict[right_key]).split()
             if (
                 left_source_tokens
                 and right_source_tokens
                 and left_source_tokens[-1] == right_source_tokens[-1]
             ):
                 continue
-            duplicated_endings.append(
-                f"{left_key}-{right_key}:{repeated_ending}"
-            )
+            duplicated_endings.append(f"{left_key}-{right_key}:{repeated_ending}")
         if duplicated_endings:
             return (
                 False,
@@ -1659,30 +1701,38 @@ Delete every fact, action, object, name, number, or clause that current_source d
             shorter_target = min(len(left_target), len(right_target))
             if shorter_target < 6:
                 continue
-            left_speaker = (
-                self._all_speaker_by_index.get(int(left_key), "")
-                if left_key.isdigit()
-                else ""
-            )
-            right_speaker = (
-                self._all_speaker_by_index.get(int(right_key), "")
-                if right_key.isdigit()
-                else ""
-            )
-            if (
-                left_speaker
-                and left_speaker == right_speaker
-                and source_repeats_meaning(left_key, right_key)
-            ):
+            if source_repeats_meaning(left_key, right_key):
                 continue
             target_ratio = difflib.SequenceMatcher(None, left_target, right_target).ratio()
             left_source = self._normalized_source_text(subtitle_dict[left_key])
             right_source = self._normalized_source_text(subtitle_dict[right_key])
             source_ratio = difflib.SequenceMatcher(None, left_source, right_source).ratio()
-            target_common = difflib.SequenceMatcher(
-                None, left_target, right_target
-            ).find_longest_match().size
+            target_common = (
+                difflib.SequenceMatcher(None, left_target, right_target).find_longest_match().size
+            )
             common_share = target_common / min(len(left_target), len(right_target))
+            canonical_left = left_target.replace("是一样的", "一样").replace("是相同的", "相同")
+            canonical_right = right_target.replace("是一样的", "一样").replace("是相同的", "相同")
+            boundary_overlap = 0
+            for length in range(
+                min(12, len(canonical_left), len(canonical_right)),
+                3,
+                -1,
+            ):
+                if canonical_left[-length:] == canonical_right[:length]:
+                    boundary_overlap = length
+                    break
+            repeated_boundary_phrase = bool(
+                boundary_overlap >= 4
+                and source_ratio < 0.45
+                and (
+                    boundary_overlap >= 6
+                    or re.search(
+                        r"[A-Za-z0-9]",
+                        canonical_right[:boundary_overlap],
+                    )
+                )
+            )
             repeated_phrase = (
                 target_common >= 7
                 and common_share >= 0.38
@@ -1696,11 +1746,15 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 and common_share - source_ratio >= 0.35
             )
             if (
-                target_ratio >= 0.68 and target_ratio - source_ratio >= 0.25
-            ) or repeated_phrase or contained_short_phrase:
+                (target_ratio >= 0.68 and target_ratio - source_ratio >= 0.25)
+                or repeated_phrase
+                or contained_short_phrase
+                or repeated_boundary_phrase
+            ):
                 duplicate_pairs.append(
                     f"{left_key}-{right_key} (target={target_ratio:.0%}, "
-                    f"shared={common_share:.0%}, source={source_ratio:.0%})"
+                    f"shared={common_share:.0%}, boundary={boundary_overlap}, "
+                    f"source={source_ratio:.0%})"
                 )
         if duplicate_pairs:
             return (
@@ -1743,9 +1797,7 @@ Delete every fact, action, object, name, number, or clause that current_source d
     @classmethod
     def _localized_quantity_tokens(cls, text: str) -> set[tuple[int, str]]:
         """Extract small translated quantities used for adjacent ownership checks."""
-        unit_pattern = "|".join(
-            sorted(map(re.escape, cls._QUANTITY_UNITS), key=len, reverse=True)
-        )
+        unit_pattern = "|".join(sorted(map(re.escape, cls._QUANTITY_UNITS), key=len, reverse=True))
         quantities: set[tuple[int, str]] = set()
         for match in re.finditer(
             rf"(?<![A-Za-z0-9])(?P<number>\d+|[零〇一二两三四五六七八九十])\s*"
@@ -1754,9 +1806,7 @@ Delete every fact, action, object, name, number, or clause that current_source d
         ):
             raw_number = match.group("number")
             value = (
-                int(raw_number)
-                if raw_number.isdigit()
-                else cls._CHINESE_NUMBER_VALUES[raw_number]
+                int(raw_number) if raw_number.isdigit() else cls._CHINESE_NUMBER_VALUES[raw_number]
             )
             quantities.add((value, match.group("unit")))
         return quantities
@@ -2035,11 +2085,7 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 flags=re.IGNORECASE,
             ):
                 return False
-            equivalents = (
-                {"一战", "第一次世界大战"}
-                if roman == "I"
-                else {"二战", "第二次世界大战"}
-            )
+            equivalents = {"一战", "第一次世界大战"} if roman == "I" else {"二战", "第二次世界大战"}
             return any(normalized_text(value) in translated_norm for value in equivalents)
 
         def _is_decade_token(token: str) -> bool:
@@ -2133,6 +2179,55 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 candidates.add(chinese_decades[decade_key])
             return any(normalized_text(candidate) in translated_norm for candidate in candidates)
 
+        def _is_price_band_token(original: str, token: str, translated: str = "") -> bool:
+            has_price_context = bool(
+                re.search(
+                    r"\b(?:cost|costs|expensive|pay|price|priced|range|sell|sold|worth)\b"
+                    r"|[$]",
+                    original,
+                    flags=re.IGNORECASE,
+                )
+                or re.search(
+                    r"(?:美元|美金|万元?|千元?|\d\s*[万千k])",
+                    translated,
+                    flags=re.IGNORECASE,
+                )
+            )
+            return bool(
+                re.fullmatch(r"\d{2}s", token, flags=re.IGNORECASE)
+                and has_price_context
+            )
+
+        def _price_band_preserved(
+            original: str,
+            token: str,
+            translated: str,
+            translated_norm: str,
+        ) -> bool:
+            """Accept plural price bands translated as thousands or ten-thousands."""
+            if not _is_price_band_token(original, token, translated):
+                return False
+
+            match = re.fullmatch(r"(\d{2})s", token, flags=re.IGNORECASE)
+            assert match is not None
+            value = int(match.group(1))
+            candidates = {
+                f"{value}k",
+                f"{value}000",
+                f"{Decimal(value) / Decimal(10):g}万",
+            }
+            if value == 20:
+                candidates.update({"二万", "两万"})
+            return any(
+                normalized_text(candidate) in translated_norm for candidate in candidates
+            ) or bool(
+                re.search(
+                    rf"(?<!\d){value}(?!\d)\s*(?:千|k)",
+                    translated,
+                    flags=re.IGNORECASE,
+                )
+            )
+
         def _inflected_alnum_preserved(token: str, translated_norm: str) -> bool:
             if not re.search(r"\d", token):
                 return False
@@ -2189,10 +2284,7 @@ Delete every fact, action, object, name, number, or clause that current_source d
                     decimal_text(absolute),
                     f"{decimal_text(ten_thousands)}万",
                 }
-                if any(
-                    normalized_text(candidate) in translated_norm
-                    for candidate in candidates
-                ):
+                if any(normalized_text(candidate) in translated_norm for candidate in candidates):
                     return True
             return False
 
@@ -2246,6 +2338,16 @@ Delete every fact, action, object, name, number, or clause that current_source d
             for token in important_tokens(original):
                 token_norm = normalized_text(token)
                 if _world_war_roman_preserved(original, token, translated_norm):
+                    continue
+                if _is_price_band_token(original, token, translated):
+                    if _price_band_preserved(
+                        original,
+                        token,
+                        translated,
+                        translated_norm,
+                    ):
+                        continue
+                    missing.append(f"{key}:{token}")
                     continue
                 if _decade_preserved(token, translated, translated_norm):
                     continue
@@ -2536,9 +2638,7 @@ Delete every fact, action, object, name, number, or clause that current_source d
             )
 
         fallback_source = {str(data.index): data.original_text for data in subtitle_chunk}
-        fallback_response = {
-            str(data.index): data.translated_text for data in translated_items
-        }
+        fallback_response = {str(data.index): data.translated_text for data in translated_items}
         fallback_ok, fallback_error = self._validate_llm_response(
             fallback_response,
             fallback_source,
@@ -2573,7 +2673,6 @@ Delete every fact, action, object, name, number, or clause that current_source d
             return translated_list
 
         translated_by_index = {item.index: item for item in translated_list}
-        source_by_index = {item.index: item for item in source_list}
         repetition_markers = (
             "Repeated boundaries:",
             "Repeated endings:",
@@ -2584,17 +2683,13 @@ Delete every fact, action, object, name, number, or clause that current_source d
             pending_keys = sorted(self._pending_alignment_repair_keys)
             self._pending_alignment_repair_keys.clear()
 
-        pending_clusters: list[list[int]] = []
-        for index in pending_keys:
-            if index not in source_by_index or index not in translated_by_index:
-                continue
-            if pending_clusters and index == pending_clusters[-1][-1] + 1:
-                pending_clusters[-1].append(index)
-            else:
-                pending_clusters.append([index])
-
-        for cluster in pending_clusters:
-            repair_sources = [source_by_index[index] for index in cluster]
+        pending_windows = self._pending_alignment_repair_windows(
+            source_list,
+            translated_by_index,
+            pending_keys,
+        )
+        for repair_sources in pending_windows:
+            repair_indices = [item.index for item in repair_sources]
             try:
                 if len(repair_sources) == 1:
                     item = repair_sources[0]
@@ -2603,12 +2698,8 @@ Delete every fact, action, object, name, number, or clause that current_source d
                             item,
                             translated_text=self._translate_alignment_item(
                                 item.original_text,
-                                previous_source=self._all_source_by_index.get(
-                                    item.index - 1, ""
-                                ),
-                                next_source=self._all_source_by_index.get(
-                                    item.index + 1, ""
-                                ),
+                                previous_source=self._all_source_by_index.get(item.index - 1, ""),
+                                next_source=self._all_source_by_index.get(item.index + 1, ""),
                             ),
                         )
                     ]
@@ -2616,23 +2707,28 @@ Delete every fact, action, object, name, number, or clause that current_source d
                     repaired = self._translate_locked_batch(
                         repair_sources,
                         initial_feedback=(
-                            "These keys were independently confirmed as shifted or as "
-                            "containing neighboring meaning. Translate only each key's own "
-                            "source words and preserve incomplete sentence fragments."
+                            "At least one key in this original translation batch was "
+                            "independently confirmed as shifted or as containing neighboring "
+                            "meaning. Rebuild the complete batch so a multi-key shift cannot "
+                            "survive outside the initially flagged keys. Translate only each "
+                            "key's own source words and preserve incomplete sentence fragments."
                         ),
                     )
             except Exception as error:
                 logger.warning(
                     "Final grouped alignment repair failed for subtitles %s; retaining "
                     "the validated translations: %s",
-                    cluster,
+                    repair_indices,
                     error,
                 )
                 continue
             for item in repaired:
                 if item.index in translated_by_index:
                     translated_by_index[item.index] = item
-            logger.info("Final grouped alignment repair corrected keys: %s", cluster)
+            logger.info(
+                "Final grouped alignment repair corrected batch: %s",
+                repair_indices,
+            )
 
         for boundary in range(1, len(source_list)):
             pair_sources = source_list[boundary - 1 : boundary + 1]
@@ -2640,9 +2736,7 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 item.index not in translated_by_index for item in pair_sources
             ):
                 continue
-            source_dict = {
-                str(item.index): item.original_text for item in pair_sources
-            }
+            source_dict = {str(item.index): item.original_text for item in pair_sources}
             response_dict = {
                 str(item.index): translated_by_index[item.index].translated_text
                 for item in pair_sources
@@ -2656,9 +2750,7 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 pair_sources,
                 response_dict,
             )
-            repetition_failure = not valid and any(
-                marker in error for marker in repetition_markers
-            )
+            repetition_failure = not valid and any(marker in error for marker in repetition_markers)
             if not (dependent_boundary or repetition_failure):
                 continue
             logger.warning(
@@ -2674,14 +2766,10 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 ):
                     repair_sources = source_list[boundary - 2 : boundary + 1]
             right_text = pair_sources[-1].original_text.strip()
-            if boundary + 1 < len(source_list) and not re.search(
-                r"[.!?][\"')\]]*$", right_text
-            ):
+            if boundary + 1 < len(source_list) and not re.search(r"[.!?][\"')\]]*$", right_text):
                 start = boundary - 2 if len(repair_sources) == 3 else boundary - 1
                 repair_sources = source_list[start : boundary + 2]
-            repair_source_dict = {
-                str(item.index): item.original_text for item in repair_sources
-            }
+            repair_source_dict = {str(item.index): item.original_text for item in repair_sources}
             try:
                 repaired = self._translate_locked_batch(
                     repair_sources,
@@ -2705,9 +2793,7 @@ Delete every fact, action, object, name, number, or clause that current_source d
                     repair_error,
                 )
                 continue
-            repaired_response = {
-                str(item.index): item.translated_text for item in repaired
-            }
+            repaired_response = {str(item.index): item.translated_text for item in repaired}
             repaired_valid, repaired_error = self._validate_cross_key_boundaries(
                 repaired_response,
                 repair_source_dict,
@@ -2725,9 +2811,7 @@ Delete every fact, action, object, name, number, or clause that current_source d
                         "neighboring meaning: " + repaired_error
                     ),
                 )
-                repaired_response = {
-                    str(item.index): item.translated_text for item in repaired
-                }
+                repaired_response = {str(item.index): item.translated_text for item in repaired}
                 repaired_valid, repaired_error = self._validate_cross_key_boundaries(
                     repaired_response,
                     repair_source_dict,
@@ -2778,6 +2862,10 @@ Delete every fact, action, object, name, number, or clause that current_source d
             source_list,
             translated_by_index,
         )
+        self._remove_stranded_chinese_subject_tails(
+            source_list,
+            translated_by_index,
+        )
         self._repair_chinese_boundary_fluency(
             source_list,
             translated_by_index,
@@ -2787,6 +2875,102 @@ Delete every fact, action, object, name, number, or clause that current_source d
             translated_by_index[item.index]
             for item in source_list
             if item.index in translated_by_index
+        ]
+
+    @staticmethod
+    def _remove_stranded_chinese_subject_tails(
+        source_list: List[SubtitleProcessData],
+        translated_by_index: Dict[int, SubtitleProcessData],
+    ) -> None:
+        """Remove only a duplicated Chinese subject split from its following auxiliary."""
+        auxiliary_heads = {
+            "am",
+            "are",
+            "can",
+            "could",
+            "did",
+            "do",
+            "does",
+            "had",
+            "has",
+            "have",
+            "is",
+            "may",
+            "might",
+            "must",
+            "should",
+            "was",
+            "were",
+            "will",
+            "would",
+        }
+        english_subjects = {
+            "he",
+            "i",
+            "it",
+            "she",
+            "that",
+            "these",
+            "they",
+            "this",
+            "those",
+            "we",
+            "which",
+            "who",
+            "you",
+        }
+        pronouns = "我|你|他|她|它|我们|你们|他们|她们|它们"
+        for left, right in zip(source_list, source_list[1:]):
+            left_item = translated_by_index.get(left.index)
+            right_item = translated_by_index.get(right.index)
+            if left_item is None or right_item is None:
+                continue
+            left_tokens = re.findall(r"[A-Za-z]+(?:['’][A-Za-z]+)?", left.original_text.lower())
+            right_tokens = re.findall(r"[A-Za-z]+(?:['’][A-Za-z]+)?", right.original_text.lower())
+            if (
+                len(left_tokens) < 2
+                or left_tokens[-1] not in english_subjects
+                or not right_tokens
+                or right_tokens[0] not in auxiliary_heads
+            ):
+                continue
+            cleaned = re.sub(rf"(?:\s*)(?:{pronouns})\s*$", "", left_item.translated_text).strip()
+            if cleaned and cleaned != left_item.translated_text.strip():
+                translated_by_index[left.index] = replace(
+                    left_item,
+                    translated_text=cleaned,
+                )
+
+    def _pending_alignment_repair_windows(
+        self,
+        source_list: List[SubtitleProcessData],
+        translated_by_index: Dict[int, SubtitleProcessData],
+        pending_keys: List[int],
+    ) -> List[List[SubtitleProcessData]]:
+        """Return complete original batches touched by a confirmed alignment error.
+
+        A one-key shift commonly cascades through the rest of its LLM batch. Repairing
+        only the keys an auditor happened to flag can preserve a valid-looking shifted
+        suffix. Rebuilding the affected original batch keeps the scope bounded while
+        restoring ownership for the complete shift chain.
+        """
+        batch_size = max(1, int(self.batch_num))
+        pending = set(pending_keys)
+        valid_positions = {
+            position
+            for position, item in enumerate(source_list)
+            if item.index in pending and item.index in translated_by_index
+        }
+        batch_starts = sorted(
+            {(position // batch_size) * batch_size for position in valid_positions}
+        )
+        return [
+            [
+                item
+                for item in source_list[start : start + batch_size]
+                if item.index in translated_by_index
+            ]
+            for start in batch_starts
         ]
 
     @staticmethod
@@ -2856,9 +3040,7 @@ Delete every fact, action, object, name, number, or clause that current_source d
             return True
 
         targets = [
-            cls._normalized_target_text(
-                str(response_dict.get(str(item.index), ""))
-            )
+            cls._normalized_target_text(str(response_dict.get(str(item.index), "")))
             for item in pair_sources
         ]
         if min(map(len, targets), default=0) < 6:
@@ -2897,18 +3079,13 @@ Delete every fact, action, object, name, number, or clause that current_source d
 
         left_bigrams, right_bigrams = map(bigrams, targets)
         shorter = min(len(left_bigrams), len(right_bigrams))
-        if bool(
-            shorter
-            and len(left_bigrams & right_bigrams) / shorter >= 0.55
-        ):
+        if bool(shorter and len(left_bigrams & right_bigrams) / shorter >= 0.55):
             return True
 
         common = difflib.SequenceMatcher(None, targets[0], targets[1]).find_longest_match()
         repeated_tail = targets[0][common.a : common.a + common.size]
         return bool(
-            common.size >= 3
-            and targets[0].endswith(repeated_tail)
-            and repeated_tail in targets[1]
+            common.size >= 3 and targets[0].endswith(repeated_tail) and repeated_tail in targets[1]
         )
 
     def _repair_contextual_nuclear_plant_terms(
@@ -2928,8 +3105,7 @@ Delete every fact, action, object, name, number, or clause that current_source d
             if not re.search(r"\b(?:the|these|those)\s+plants\b", source):
                 continue
             neighborhood = " ".join(
-                source_by_index.get(index, "")
-                for index in range(item.index - 3, item.index + 4)
+                source_by_index.get(index, "") for index in range(item.index - 3, item.index + 4)
             ).lower()
             translated_item = translated_by_index.get(item.index)
             if (
@@ -2972,22 +3148,43 @@ Delete every fact, action, object, name, number, or clause that current_source d
         if not candidates:
             return
 
+        batches = [
+            candidates[start : start + self.CHINESE_FLUENCY_AUDIT_BATCH_SIZE]
+            for start in range(0, len(candidates), self.CHINESE_FLUENCY_AUDIT_BATCH_SIZE)
+        ]
         confirmed: list[int] = []
-        for start in range(0, len(candidates), self.CHINESE_FLUENCY_AUDIT_BATCH_SIZE):
-            batch = candidates[start : start + self.CHINESE_FLUENCY_AUDIT_BATCH_SIZE]
-            try:
-                confirmed.extend(
-                    self._request_chinese_fluency_flags(
+        audit_results: list[tuple[int, list[int]]] = []
+        audit_workers = min(self.thread_num, len(batches))
+        with ThreadPoolExecutor(max_workers=audit_workers) as executor:
+            futures = {
+                executor.submit(
+                    self._request_chinese_fluency_flags,
+                    batch,
+                    source_list,
+                    translated_by_index,
+                ): batch
+                for batch in batches
+            }
+            for future in as_completed(futures):
+                batch = futures[future]
+                try:
+                    audit_results.append((batch[0], future.result()))
+                except Exception as error:
+                    logger.warning(
+                        "Chinese boundary fluency audit failed for candidate batch %s; "
+                        "retaining validated text: %s",
                         batch,
-                        source_list,
-                        translated_by_index,
+                        error,
                     )
-                )
-            except Exception as error:
-                logger.warning(
-                    "Chinese boundary fluency audit failed; retaining validated text: %s",
-                    error,
-                )
+        for _first_index, result in sorted(audit_results):
+            confirmed.extend(result)
+        confirmed.extend(
+            self._mandatory_chinese_fluency_candidates(
+                source_list,
+                translated_by_index,
+            )
+        )
+        confirmed = list(dict.fromkeys(confirmed))
 
         if not confirmed:
             return
@@ -2997,12 +3194,11 @@ Delete every fact, action, object, name, number, or clause that current_source d
             {
                 position_by_index[index]
                 for index in confirmed
-                if index in position_by_index
-                and position_by_index[index] + 1 < len(source_list)
+                if index in position_by_index and position_by_index[index] + 1 < len(source_list)
             }
         )
         windows = self._chinese_fluency_windows(source_list, confirmed_positions)
-        workers = min(self.thread_num, len(windows), 8)
+        workers = min(self.thread_num, len(windows))
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {
                 executor.submit(
@@ -3091,6 +3287,53 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 candidates.append(left_source.index)
         return candidates
 
+    def _mandatory_chinese_fluency_candidates(
+        self,
+        source_list: List[SubtitleProcessData],
+        translated_by_index: Dict[int, SubtitleProcessData],
+    ) -> list[int]:
+        """Return deterministic syntax breaks that must not depend on LLM recall."""
+        mandatory: list[int] = []
+        for left, right in zip(source_list, source_list[1:]):
+            left_item = translated_by_index.get(left.index)
+            right_item = translated_by_index.get(right.index)
+            if left_item is None or right_item is None:
+                continue
+            left_speaker = self._all_speaker_by_index.get(left.index, "")
+            right_speaker = self._all_speaker_by_index.get(right.index, "")
+            if left_speaker and right_speaker and left_speaker != right_speaker:
+                continue
+
+            target_signal = self._chinese_boundary_signal(
+                left_item.translated_text,
+                right_item.translated_text,
+            )
+            reasons = set(
+                assess_english_boundary(left.original_text, right.original_text).reasons
+            )
+            source_is_open = not re.search(
+                r"[.!?][\"')\]]*$",
+                left.original_text.strip(),
+            )
+            if source_is_open and target_signal and target_signal not in {
+                "possible function-word split",
+                "possible demonstrative split",
+                "possible pronoun boundary",
+            }:
+                mandatory.append(left.index)
+            elif target_signal == "possible pronoun boundary" and any(
+                reason.startswith("dangling subject") for reason in reasons
+            ):
+                mandatory.append(left.index)
+            elif reasons.intersection(
+                {
+                    "place name split between city and state",
+                    "proper-name subject separated from its predicate",
+                }
+            ):
+                mandatory.append(left.index)
+        return mandatory
+
     @staticmethod
     def _source_boundary_signal(
         left_source: str,
@@ -3172,6 +3415,9 @@ Delete every fact, action, object, name, number, or clause that current_source d
         if connector_pattern.search(left):
             return "connective stranded at previous subtitle end"
 
+        if re.search(r"(?:我|你|他|她|它|我们|你们|他们|她们|它们)(?:还|又|也|就|刚)?把$", left):
+            return "unfinished Chinese grammatical structure"
+
         soft_tail = re.compile(
             r"(?:的|是|把|被|让|给|和|与|对|向|从|比|像|后|前|大约|差不多|与其|为了|花)$"
         )
@@ -3180,14 +3426,29 @@ Delete every fact, action, object, name, number, or clause that current_source d
 
         structural_tail = re.compile(
             r"(?:作为|没有|不会|不能|可以|应该|能够|正在|已经|只是|其实|确实|"
-            r"相当|非常|更|最|如今|现在|目前|当时|后来|最终|像是|就像|就是|例如|比如)$"
+            r"相当|非常|更|最|几乎|如今|现在|目前|当时|后来|最终|像是|就像|就是|"
+            r"我是说|我的意思是|来说|例如|比如)$"
         )
         if structural_tail.search(left):
             return "unfinished Chinese grammatical structure"
 
-        if re.search(r"(?:我|你|他|她|它|我们|你们|他们)$", left) and len(
-            re.sub(r"\s+", "", left)
-        ) >= 5:
+        if re.search(
+            r"(?:买(?:到)?|选(?:择)?|找(?:到)?|换(?:成)?)"
+            r"(?:一|这|那)(?:个|辆|台|种|套|位|名|条|款|部|件)$",
+            left,
+        ):
+            return "unfinished Chinese grammatical structure"
+
+        if re.search(r"(?:身上|当中|之中|方面)$", left) and not re.search(
+            r"(?:在|落在|发生在|位于).{0,12}(?:身上|当中|之中|方面)$",
+            left,
+        ):
+            return "unfinished Chinese locative subject"
+
+        if (
+            re.search(r"(?:我|你|他|她|它|我们|你们|他们)$", left)
+            and len(re.sub(r"\s+", "", left)) >= 5
+        ):
             # A final pronoun may be either a stranded subject ("问题是他们")
             # or a perfectly natural object ("我会立刻选他"). Let the
             # context-aware audit decide instead of rejecting it as a hard rule.
@@ -3261,7 +3522,7 @@ Delete every fact, action, object, name, number, or clause that current_source d
                     "or acts as a colloquial final particle, and do not treat a completed object "
                     "ending in 这个 as a stranded subject. "
                     "Do not rewrite text. Return only JSON "
-                    "as {\"awkward_boundaries\": [\"left-right\"]}."
+                    'as {"awkward_boundaries": ["left-right"]}.'
                 ),
             },
             {
@@ -3269,36 +3530,16 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 "content": json.dumps(items, ensure_ascii=False),
             },
         ]
-        use_reasoning = prefers_native_reasoning(self.model)
-        try:
-            response = call_llm(
-                messages=messages,
-                model=self.model,
-                temperature=0,
-                use_cache=self.use_cache,
-                client=self.llm_client,
-                reasoning_mode="enabled" if use_reasoning else "disabled",
-                max_output_tokens=6144 if use_reasoning else 4096,
-            )
-            payload = parse_json_object(get_response_text(response))
-        except ValueError as error:
-            if not use_reasoning:
-                raise
-            logger.warning(
-                "Thinking fluency audit produced no usable verdict; retrying without "
-                "thinking: %s",
-                error,
-            )
-            response = call_llm(
-                messages=messages,
-                model=self.model,
-                temperature=0,
-                use_cache=self.use_cache,
-                client=self.llm_client,
-                reasoning_mode="disabled",
-                max_output_tokens=4096,
-            )
-            payload = parse_json_object(get_response_text(response))
+        response = call_llm(
+            messages=messages,
+            model=self.model,
+            temperature=0,
+            use_cache=self.use_cache,
+            client=self.llm_client,
+            reasoning_mode="disabled",
+            max_output_tokens=4096,
+        )
+        payload = parse_json_object(get_response_text(response))
         boundaries = payload.get("awkward_boundaries")
         if not isinstance(boundaries, list) or not all(
             isinstance(value, (str, int)) for value in boundaries
@@ -3369,11 +3610,16 @@ Rewrite only the provided translations. Keep every key, source subtitle, timesta
                     "Chinese function word. Do not leave a connective as its own key. For a "
                     "source split like 'the problem is they' / 'made it', prefer '但这里有个问题' "
                     "/ '他们把它做成了' instead of preserving '他们' at the first key's end. "
+                    "For 'but I do know at this time' / 'Mercedes was involved', prefer "
+                    "'但有一点可以确定' / '当时梅赛德斯参与其中' instead of ending the first "
+                    "key with 当时. "
+                    "For 'Ford in Ypsilanti, Michigan for tossing' / 'me the keys', prefer "
+                    "'还要感谢密歇根州伊普西兰蒂的这家经销商' / '他们把钥匙交给了我' "
+                    "instead of ending the first key with 他们把. "
                     "For 'a serrated' / 'edge', prefer '这里采用锯齿状设计' / '这样的边缘' "
                     "instead of ending the first key with 的. For 'I'd pick him in a second' "
                     "/ 'as an appealing winner', prefer '我会立刻选他' / '他是个很有吸引力的赢家' "
-                    "instead of starting the second key with 作为."
-                    + retry_instruction
+                    "instead of starting the second key with 作为." + retry_instruction
                 ),
             },
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
@@ -3388,14 +3634,10 @@ Rewrite only the provided translations. Keep every key, source subtitle, timesta
             # use the validator's concrete feedback and do not benefit from another
             # long chain of thought.
             reasoning_mode=(
-                "enabled"
-                if not feedback and prefers_native_reasoning(self.model)
-                else "disabled"
+                "enabled" if not feedback and prefers_native_reasoning(self.model) else "disabled"
             ),
             max_output_tokens=(
-                8192
-                if not feedback and prefers_native_reasoning(self.model)
-                else 4096
+                8192 if not feedback and prefers_native_reasoning(self.model) else 4096
             ),
         )
         result = parse_json_object(get_response_text(response)).get("translations")
@@ -3468,19 +3710,20 @@ Rewrite only the provided translations. Keep every key, source subtitle, timesta
             }
         }
         if hard_remaining:
-            raise ValueError(
-                f"fluency repair left structural boundary signals: {hard_remaining}"
-            )
-        if remaining_details:
+            raise ValueError(f"fluency repair left structural boundary signals: {hard_remaining}")
+        remaining_candidates = set(remaining_details)
+        remaining_candidates.update(
+            self._chinese_fluency_candidates(source_items, repaired_by_index)
+        )
+        if remaining_candidates:
             confirmed_remaining = self._request_chinese_fluency_flags(
-                list(remaining_details),
+                sorted(remaining_candidates),
                 source_items,
                 repaired_by_index,
             )
             if confirmed_remaining:
                 raise ValueError(
-                    "fluency repair left confirmed soft boundary signals: "
-                    f"{confirmed_remaining}"
+                    f"fluency repair left confirmed soft boundary signals: {confirmed_remaining}"
                 )
 
         self._validate_chinese_window_fidelity(source_items, repaired_items)
@@ -3518,7 +3761,7 @@ Rewrite only the provided translations. Keep every key, source subtitle, timesta
                     "and no meaning may be invented, omitted, duplicated, anticipated from "
                     "outside this window, or moved across a speaker turn. Judge combined "
                     "fidelity and per-cue readability, not English word-order similarity. "
-                    "Return only {\"valid\": true_or_false, \"issues\": [\"brief issue\"]}."
+                    'Return only {"valid": true_or_false, "issues": ["brief issue"]}.'
                 ),
             },
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
@@ -3537,8 +3780,10 @@ Rewrite only the provided translations. Keep every key, source subtitle, timesta
         result = parse_json_object(get_response_text(response))
         valid = result.get("valid")
         issues = result.get("issues")
-        if not isinstance(valid, bool) or not isinstance(issues, list) or not all(
-            isinstance(issue, str) for issue in issues
+        if (
+            not isinstance(valid, bool)
+            or not isinstance(issues, list)
+            or not all(isinstance(issue, str) for issue in issues)
         ):
             raise ValueError("window fidelity validator returned an invalid verdict")
         if not valid:

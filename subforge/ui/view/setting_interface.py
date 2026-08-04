@@ -2,7 +2,7 @@ import webbrowser
 
 from PyQt5.QtCore import Qt, QThread, QUrl, pyqtSignal
 from PyQt5.QtGui import QDesktopServices
-from PyQt5.QtWidgets import QFileDialog, QLabel, QWidget
+from PyQt5.QtWidgets import QFileDialog, QLabel, QLineEdit, QWidget
 from qfluentwidgets import (
     ComboBoxSettingCard,
     CustomColorSettingCard,
@@ -522,6 +522,32 @@ class SettingInterface(ScrollArea):
             self.translate_serviceGroup,
         )
 
+        self.azureTranslatorEndpointCard = LineEditSettingCard(
+            cfg.azure_translator_endpoint,
+            FIF.LINK,
+            self.tr("Azure Translator 终结点"),
+            self.tr("Microsoft Azure Translator v3 服务终结点"),
+            "https://api.cognitive.microsofttranslator.com",
+            self.translate_serviceGroup,
+        )
+        self.azureTranslatorKeyCard = LineEditSettingCard(
+            cfg.azure_translator_key,
+            FIF.VPN,
+            self.tr("Azure Translator API Key"),
+            self.tr("Azure Translator 资源订阅密钥"),
+            "API Key",
+            self.translate_serviceGroup,
+        )
+        self.azureTranslatorKeyCard.lineEdit.setEchoMode(QLineEdit.Password)
+        self.azureTranslatorRegionCard = LineEditSettingCard(
+            cfg.azure_translator_region,
+            FIF.GLOBE,
+            self.tr("Azure Translator 区域"),
+            self.tr("区域或多服务资源需要填写；全球单服务资源可留空"),
+            "eastasia",
+            self.translate_serviceGroup,
+        )
+
         # 批处理大小配置
         self.batchSizeCard = RangeSettingCard(
             cfg.batch_size,
@@ -546,6 +572,9 @@ class SettingInterface(ScrollArea):
         self.translate_serviceGroup.addSettingCard(self.translatorServiceCard)
         self.translate_serviceGroup.addSettingCard(self.needReflectTranslateCard)
         self.translate_serviceGroup.addSettingCard(self.deeplxEndpointCard)
+        self.translate_serviceGroup.addSettingCard(self.azureTranslatorEndpointCard)
+        self.translate_serviceGroup.addSettingCard(self.azureTranslatorKeyCard)
+        self.translate_serviceGroup.addSettingCard(self.azureTranslatorRegionCard)
         self.translate_serviceGroup.addSettingCard(self.batchSizeCard)
         self.translate_serviceGroup.addSettingCard(self.threadNumCard)
 
@@ -866,8 +895,13 @@ class SettingInterface(ScrollArea):
             self.batchSizeCard,
         ]
         deeplx_cards = [self.deeplxEndpointCard]
+        azure_cards = [
+            self.azureTranslatorEndpointCard,
+            self.azureTranslatorKeyCard,
+            self.azureTranslatorRegionCard,
+        ]
 
-        all_cards = openai_cards + deeplx_cards
+        all_cards = openai_cards + deeplx_cards + azure_cards
         for card in all_cards:
             card.setVisible(False)
 
@@ -877,6 +911,9 @@ class SettingInterface(ScrollArea):
                 card.setVisible(True)
         elif service in [TranslatorServiceEnum.OPENAI.value]:
             for card in openai_cards:
+                card.setVisible(True)
+        elif service in [TranslatorServiceEnum.BING.value]:
+            for card in azure_cards:
                 card.setVisible(True)
 
         # 更新布局

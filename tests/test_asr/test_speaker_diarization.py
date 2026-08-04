@@ -24,6 +24,12 @@ class _MpsBackend:
         return True
 
 
+class _CudaBackend:
+    @staticmethod
+    def is_available() -> bool:
+        return True
+
+
 def _write_community_model(model_dir: Path) -> None:
     model_dir.mkdir()
     (model_dir / "config.yaml").write_text("pipeline: {}" * 20, encoding="utf-8")
@@ -54,6 +60,18 @@ def test_select_diarization_device_honors_cpu_override(monkeypatch):
     monkeypatch.setenv("SUBFORGE_DIARIZATION_DEVICE", "cpu")
 
     assert _select_diarization_device(fake_torch) == "cpu"
+
+
+def test_select_diarization_device_prefers_cuda_on_windows(monkeypatch):
+    fake_torch = SimpleNamespace(
+        backends=SimpleNamespace(mps=_MpsBackend()),
+        cuda=_CudaBackend(),
+    )
+    monkeypatch.setattr(diarization_module.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(diarization_module.platform, "machine", lambda: "AMD64")
+    monkeypatch.delenv("SUBFORGE_DIARIZATION_DEVICE", raising=False)
+
+    assert _select_diarization_device(fake_torch) == "cuda"
 
 
 def test_diarize_audio_reloads_pipeline_on_mps_failure(tmp_path, monkeypatch):

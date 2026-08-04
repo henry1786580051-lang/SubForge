@@ -173,6 +173,9 @@ class TaskFactory:
             api_key=api_key,
             llm_model=llm_model,
             deeplx_endpoint=cfg.deeplx_endpoint.value,
+            azure_translator_key=cfg.azure_translator_key.value,
+            azure_translator_region=cfg.azure_translator_region.value,
+            azure_translator_endpoint=cfg.azure_translator_endpoint.value,
             # 翻译服务
             translator_service=cfg.translator_service.value,
             # 字幕处理
