@@ -3,35 +3,11 @@ import io
 import sys
 from pathlib import Path
 
-import pytest
 from starlette.datastructures import UploadFile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 
 import app.api.files as files_module
-from app.api.files import _parse_range_header
-
-
-@pytest.mark.parametrize(
-    ("header", "expected"),
-    [
-        ("bytes=0-99", (0, 99)),
-        ("bytes=100-", (100, 999)),
-        ("bytes=-100", (900, 999)),
-        ("bytes=900-1200", (900, 999)),
-    ],
-)
-def test_parse_range_header(header, expected):
-    assert _parse_range_header(header, 1000) == expected
-
-
-@pytest.mark.parametrize(
-    "header",
-    ["items=0-10", "bytes=", "bytes=100-50", "bytes=1000-", "bytes=-0", "bytes=0-1,4-5"],
-)
-def test_parse_range_header_rejects_invalid_ranges(header):
-    with pytest.raises((ValueError, IndexError)):
-        _parse_range_header(header, 1000)
 
 
 def test_uploads_with_the_same_name_do_not_overwrite_each_other(tmp_path, monkeypatch):

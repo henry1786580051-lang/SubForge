@@ -1,16 +1,9 @@
-import datetime
-import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Literal, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from subforge.core.translate.types import TargetLanguage
-
-
-def _generate_task_id() -> str:
-    """生成 8 位任务 ID"""
-    return uuid.uuid4().hex[:8]
 
 
 @dataclass
@@ -156,67 +149,6 @@ class SubtitleLayoutEnum(Enum):
     ORIGINAL_ON_TOP = "原文在上"
     ONLY_ORIGINAL = "仅原文"
     ONLY_TRANSLATE = "仅译文"
-
-
-class SubtitleRenderModeEnum(Enum):
-    """字幕渲染模式"""
-
-    ASS_STYLE = "ASS 样式"  # FFmpeg ASS 渲染
-    ROUNDED_BG = "圆角背景"  # Pillow 圆角矩形背景
-
-
-class VideoQualityEnum(Enum):
-    """视频合成质量"""
-
-    ULTRA_HIGH = "极高质量"
-    HIGH = "高质量"
-    MEDIUM = "中等质量"
-    LOW = "低质量"
-
-    def get_crf(self) -> int:
-        """获取对应的 CRF 值（越小质量越高，文件越大）"""
-        crf_map = {
-            VideoQualityEnum.ULTRA_HIGH: 18,
-            VideoQualityEnum.HIGH: 23,
-            VideoQualityEnum.MEDIUM: 28,
-            VideoQualityEnum.LOW: 32,
-        }
-        return crf_map[self]
-
-    def get_preset(
-        self,
-    ) -> Literal[
-        "ultrafast",
-        "superfast",
-        "veryfast",
-        "faster",
-        "fast",
-        "medium",
-        "slow",
-        "slower",
-        "veryslow",
-    ]:
-        """获取对应的 FFmpeg preset 值（影响编码速度）"""
-        preset_map: dict[
-            VideoQualityEnum,
-            Literal[
-                "ultrafast",
-                "superfast",
-                "veryfast",
-                "faster",
-                "fast",
-                "medium",
-                "slow",
-                "slower",
-                "veryslow",
-            ],
-        ] = {
-            VideoQualityEnum.ULTRA_HIGH: "slow",
-            VideoQualityEnum.HIGH: "medium",
-            VideoQualityEnum.MEDIUM: "medium",
-            VideoQualityEnum.LOW: "fast",
-        }
-        return preset_map[self]
 
 
 class TranscribeLanguageEnum(Enum):
@@ -507,34 +439,6 @@ def get_asr_language_capability(model: TranscribeModelEnum) -> ASRLanguageCapabi
 
 
 @dataclass
-class AudioStreamInfo:
-    """音频流信息"""
-
-    index: int  # 音轨在视频中的实际索引（如 0, 1, 2 或 2, 3, 4）
-    codec: str  # 音频编解码器（如 aac, mp3, opus）
-    language: str = ""  # 语言标签（如 eng, chi, deu）
-    title: str = ""  # 音轨标题（可选）
-
-
-@dataclass
-class VideoInfo:
-    """视频信息类"""
-
-    file_name: str
-    file_path: str
-    width: int
-    height: int
-    fps: float
-    duration_seconds: float
-    bitrate_kbps: int
-    video_codec: str
-    audio_codec: str
-    audio_sampling_rate: int
-    thumbnail_path: str
-    audio_streams: list[AudioStreamInfo] = field(default_factory=list)  # 音频流列表
-
-
-@dataclass
 class TranscribeConfig:
     """转录配置类"""
 
@@ -628,7 +532,6 @@ class TranscribeConfig:
         lines.append("=" * 42)
         return "\n".join(lines)
 
-
 @dataclass
 class SubtitleConfig:
     """字幕处理配置类"""
@@ -706,172 +609,3 @@ class SubtitleConfig:
         lines.append(f"Layout: {self.subtitle_layout.value}")
         lines.append("=" * 48)
         return "\n".join(lines)
-
-
-@dataclass
-class SynthesisConfig:
-    """视频合成配置类"""
-
-    need_video: bool = True
-    soft_subtitle: bool = True
-    render_mode: SubtitleRenderModeEnum = SubtitleRenderModeEnum.ASS_STYLE
-    video_quality: VideoQualityEnum = VideoQualityEnum.MEDIUM
-    subtitle_layout: SubtitleLayoutEnum = SubtitleLayoutEnum.ORIGINAL_ON_TOP
-    # 字幕样式配置
-    ass_style: str = ""  # ASS 样式字符串
-    rounded_style: Optional[dict] = None  # 圆角背景样式配置
-
-    def print_config(self) -> str:
-        """Print video synthesis configuration"""
-        lines = ["=========== Video Synthesis Task ==========="]
-        lines.append(f"Generate Video: {self.need_video}")
-        if self.need_video:
-            lines.append(f"Subtitle Type: {'Soft' if self.soft_subtitle else 'Hard'}")
-            if not self.soft_subtitle:
-                lines.append(f"Render Mode: {self.render_mode.value}")
-            lines.append(f"Video Quality: {self.video_quality.value}")
-            lines.append(f"  CRF: {self.video_quality.get_crf()}")
-            lines.append(f"  Preset: {self.video_quality.get_preset()}")
-        lines.append("=" * 44)
-        return "\n".join(lines)
-
-
-@dataclass
-class TranscribeTask:
-    """转录任务类"""
-
-    # 任务标识
-    task_id: str = field(default_factory=_generate_task_id)
-
-    queued_at: Optional[datetime.datetime] = None
-    started_at: Optional[datetime.datetime] = None
-    completed_at: Optional[datetime.datetime] = None
-
-    # 输入文件
-    file_path: Optional[str] = None
-
-    # 输出字幕文件
-    output_path: Optional[str] = None
-
-    # 是否需要执行下一个任务（字幕处理）
-    need_next_task: bool = False
-
-    # 选中的音轨索引
-    selected_audio_track_index: int = 0
-
-    transcribe_config: Optional[TranscribeConfig] = None
-
-
-@dataclass
-class SubtitleTask:
-    """字幕任务类"""
-
-    # 任务标识
-    task_id: str = field(default_factory=_generate_task_id)
-
-    queued_at: Optional[datetime.datetime] = None
-    started_at: Optional[datetime.datetime] = None
-    completed_at: Optional[datetime.datetime] = None
-
-    # 输入原始字幕文件
-    subtitle_path: str = ""
-    # 输入原始视频文件
-    video_path: Optional[str] = None
-
-    # 输出 断句、优化、翻译 后的字幕文件
-    output_path: Optional[str] = None
-
-    # 是否需要执行下一个任务（视频合成）
-    need_next_task: bool = True
-
-    subtitle_config: Optional[SubtitleConfig] = None
-
-
-@dataclass
-class SynthesisTask:
-    """视频合成任务类"""
-
-    # 任务标识
-    task_id: str = field(default_factory=_generate_task_id)
-
-    queued_at: Optional[datetime.datetime] = None
-    started_at: Optional[datetime.datetime] = None
-    completed_at: Optional[datetime.datetime] = None
-
-    # 输入
-    video_path: Optional[str] = None
-    subtitle_path: Optional[str] = None
-
-    # 输出
-    output_path: Optional[str] = None
-
-    # 是否需要执行下一个任务（预留）
-    need_next_task: bool = False
-
-    synthesis_config: Optional[SynthesisConfig] = None
-
-
-@dataclass
-class TranscriptAndSubtitleTask:
-    """转录和字幕任务类"""
-
-    # 任务标识
-    task_id: str = field(default_factory=_generate_task_id)
-
-    queued_at: Optional[datetime.datetime] = None
-    started_at: Optional[datetime.datetime] = None
-    completed_at: Optional[datetime.datetime] = None
-
-    # 输入
-    file_path: Optional[str] = None
-
-    # 输出
-    output_path: Optional[str] = None
-
-    transcribe_config: Optional[TranscribeConfig] = None
-    subtitle_config: Optional[SubtitleConfig] = None
-
-
-@dataclass
-class FullProcessTask:
-    """完整处理任务类(转录+字幕+合成)"""
-
-    # 任务标识
-    task_id: str = field(default_factory=_generate_task_id)
-
-    queued_at: Optional[datetime.datetime] = None
-    started_at: Optional[datetime.datetime] = None
-    completed_at: Optional[datetime.datetime] = None
-
-    # 输入
-    file_path: Optional[str] = None
-    # 输出
-    output_path: Optional[str] = None
-
-    transcribe_config: Optional[TranscribeConfig] = None
-    subtitle_config: Optional[SubtitleConfig] = None
-    synthesis_config: Optional[SynthesisConfig] = None
-
-
-class BatchTaskType(Enum):
-    """批量处理任务类型"""
-
-    TRANSCRIBE = "批量转录"
-    SUBTITLE = "批量字幕"
-    TRANS_SUB = "转录+字幕"
-    FULL_PROCESS = "全流程处理"
-
-    def __str__(self):
-        return self.value
-
-
-class BatchTaskStatus(Enum):
-    """批量处理任务状态"""
-
-    WAITING = "等待中"
-    RUNNING = "处理中"
-    COMPLETED = "已完成"
-    FAILED = "失败"
-
-    def __str__(self):
-        return self.value

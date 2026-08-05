@@ -18,7 +18,6 @@ import tempfile
 import time
 import urllib.request
 import zipfile
-from collections.abc import Callable
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -30,10 +29,38 @@ RUNTIME_DIR = BUILD_DIR / "desktop-runtime"
 FRONTEND_DIR = ROOT / "frontend"
 FRONTEND_OUT_DIR = FRONTEND_DIR / "out"
 WHISPER_CPP_WINDOWS_URL = (
-    "https://github.com/ggml-org/whisper.cpp/releases/download/"
-    "v1.9.1/whisper-bin-x64.zip"
+    "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.1/whisper-bin-x64.zip"
 )
 WHISPER_CPP_WINDOWS_SHA256 = "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab6092594b0a063539"
+FFMPEG_VERSION = "8.1.2"
+FFMPEG_ARCHIVES = {
+    ("Darwin", "arm64"): (
+        (
+            "https://ffmpeg.martin-riedl.de/download/macos/arm64/1783011502_8.1.2/ffmpeg.zip",
+            "ef1aa60006c7b77ce170c1608c08d8e4ba1c30c5746f2ac986ded932d0ac2c3c",
+        ),
+        (
+            "https://ffmpeg.martin-riedl.de/download/macos/arm64/1783011502_8.1.2/ffprobe.zip",
+            "c39787f4af7a3932502d2d48db6f6feaaa836b48a73ef78c32cc3285df61dfaf",
+        ),
+    ),
+    ("Darwin", "x86_64"): (
+        (
+            "https://ffmpeg.martin-riedl.de/download/macos/amd64/1783018342_8.1.2/ffmpeg.zip",
+            "a52ef43883f44c219766d4b3bdde4e635b35465d0b704c01c3a0566b59775df9",
+        ),
+        (
+            "https://ffmpeg.martin-riedl.de/download/macos/amd64/1783018342_8.1.2/ffprobe.zip",
+            "5408ca588c8c72b0dde3afe676d0a7acf25ef97e55ae6eba5c7bede1cda42695",
+        ),
+    ),
+    ("Windows", "x86_64"): (
+        (
+            "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-8.1.2-essentials_build.zip",
+            "db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec",
+        ),
+    ),
+}
 
 
 def _run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
@@ -149,18 +176,31 @@ def build_frontend(version: str, skip: bool = False) -> None:
         raise RuntimeError("Missing frontend static export:\n  - " + "\n  - ".join(missing))
 
 
-def _fetch_static_ffmpeg(
-    fetch: Callable[..., tuple[str, str]],
-    cache_dir: Path,
+def _download_verified_archive(
+    url: str,
+    destination: Path,
+    expected_sha256: str,
     *,
     attempts: int = 4,
     initial_delay: float = 5.0,
-) -> tuple[str, str]:
-    """Retry transient CDN failures while fetching desktop FFmpeg binaries."""
+) -> Path:
+    """Download a pinned archive with retries and verify its digest."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
     for attempt in range(1, attempts + 1):
         try:
-            return fetch(download_dir=str(cache_dir))
+            if not destination.exists():
+                print(f"Downloading {url}")
+                _download_file(url, destination)
+            digest = hashlib.sha256(destination.read_bytes()).hexdigest()
+            if digest != expected_sha256:
+                destination.unlink(missing_ok=True)
+                raise RuntimeError(
+                    f"Archive checksum mismatch for {destination.name}: "
+                    f"expected {expected_sha256}, got {digest}"
+                )
+            return destination
         except Exception as exc:
+            destination.unlink(missing_ok=True)
             if attempt == attempts:
                 raise
             delay = initial_delay * (2 ** (attempt - 1))
@@ -169,50 +209,121 @@ def _fetch_static_ffmpeg(
                 f"Retrying in {delay:g}s..."
             )
             time.sleep(delay)
-    raise RuntimeError("FFmpeg download retry loop exited unexpectedly")
+    raise RuntimeError("FFmpeg archive download retry loop exited unexpectedly")
+
+
+def _download_file(url: str, destination: Path) -> None:
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": f"SubForge/{_version()} FFmpeg-runtime-fetcher"},
+    )
+    with urllib.request.urlopen(request, timeout=10 * 60) as response:
+        with destination.open("wb") as output:
+            shutil.copyfileobj(response, output)
+
+
+def _ffmpeg_platform_key() -> tuple[str, str]:
+    system = platform.system()
+    machine = platform.machine().lower()
+    if machine in {"amd64", "x64"}:
+        machine = "x86_64"
+    elif machine == "aarch64":
+        machine = "arm64"
+    key = (system, machine)
+    if key not in FFMPEG_ARCHIVES:
+        supported = ", ".join(f"{os_name}/{arch}" for os_name, arch in FFMPEG_ARCHIVES)
+        raise RuntimeError(
+            f"No FFmpeg {FFMPEG_VERSION} runtime for {system}/{machine}; supported: {supported}"
+        )
+    return key
+
+
+def _safe_extract_zip(archive: Path, destination: Path) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    destination_root = destination.resolve()
+    with zipfile.ZipFile(archive) as zf:
+        for member in zf.infolist():
+            target = (destination / member.filename).resolve()
+            if target != destination_root and destination_root not in target.parents:
+                raise RuntimeError(f"Unsafe path in {archive.name}: {member.filename}")
+        zf.extractall(destination)
+
+
+def _find_ffmpeg_executable(directory: Path, name: str) -> Path:
+    candidates = [path for path in directory.rglob(name) if path.is_file()]
+    if len(candidates) != 1:
+        raise RuntimeError(f"Expected one {name} in FFmpeg archive, found {len(candidates)}")
+    return candidates[0]
+
+
+def _validate_ffmpeg_runtime(ffmpeg: Path, ffprobe: Path) -> None:
+    for executable in (ffmpeg, ffprobe):
+        result = subprocess.run(
+            [str(executable), "-version"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        if f"version {FFMPEG_VERSION}" not in result.stdout.splitlines()[0]:
+            raise RuntimeError(
+                f"Unexpected {executable.name} version: {result.stdout.splitlines()[0]}"
+            )
+
+    encoders = subprocess.run(
+        [str(ffmpeg), "-hide_banner", "-encoders"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    if " pcm_s16le " not in encoders:
+        raise RuntimeError("Bundled FFmpeg does not include the PCM encoder required by ASR")
 
 
 def _ffmpeg_runtime_files(ffmpeg: Path, ffprobe: Path) -> list[Path]:
     """Return executables and the shared libraries required by the platform build."""
     files = [ffmpeg, ffprobe]
     if platform.system() == "Windows":
-        dlls = sorted(ffmpeg.parent.glob("*.dll"))
-        if not dlls:
-            raise RuntimeError(
-                "The downloaded Windows FFmpeg runtime does not contain its required DLLs"
-            )
-        files.extend(dlls)
+        files.extend(sorted(ffmpeg.parent.glob("*.dll")))
     return files
 
 
 def prepare_ffmpeg() -> None:
-    """Download the current platform's static ffmpeg/ffprobe into runtime resources."""
-    try:
-        from static_ffmpeg.run import get_or_fetch_platform_executables_else_raise
-    except ImportError as exc:
-        raise RuntimeError(
-            "static-ffmpeg 2.13 is required for desktop builds. "
-            "Run with: uv run --extra denoise --extra whisperx "
-            "--with static-ffmpeg==2.13 --with pyinstaller python scripts/build_desktop.py"
-        ) from exc
+    """Bundle the pinned FFmpeg/ffprobe runtime for the current platform."""
+    key = _ffmpeg_platform_key()
+    download_dir = BUILD_DIR / "downloads" / f"ffmpeg-{FFMPEG_VERSION}-{key[0]}-{key[1]}"
+    extract_dir = BUILD_DIR / "ffmpeg-runtime"
+    if extract_dir.exists():
+        shutil.rmtree(extract_dir)
+    extract_dir.mkdir(parents=True)
+
+    for index, (url, digest) in enumerate(FFMPEG_ARCHIVES[key], start=1):
+        archive = _download_verified_archive(
+            url,
+            download_dir / f"runtime-{index}.zip",
+            digest,
+        )
+        _safe_extract_zip(archive, extract_dir)
+
+    executable_suffix = ".exe" if key[0] == "Windows" else ""
+    ffmpeg_path = _find_ffmpeg_executable(extract_dir, f"ffmpeg{executable_suffix}")
+    ffprobe_path = _find_ffmpeg_executable(extract_dir, f"ffprobe{executable_suffix}")
+    if key[0] != "Windows":
+        for executable in (ffmpeg_path, ffprobe_path):
+            executable.chmod(executable.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    _validate_ffmpeg_runtime(ffmpeg_path, ffprobe_path)
 
     runtime_bin = RUNTIME_DIR / "resource" / "bin"
     runtime_bin.mkdir(parents=True, exist_ok=True)
-    # static-ffmpeg archives contain a top-level directory named exactly like
-    # sys.platform, and the package extracts it next to this target directory.
-    cache_dir = BUILD_DIR / "static-ffmpeg" / sys.platform
-    ffmpeg_path, ffprobe_path = _fetch_static_ffmpeg(
-        get_or_fetch_platform_executables_else_raise,
-        cache_dir,
-    )
-    for src in _ffmpeg_runtime_files(Path(ffmpeg_path), Path(ffprobe_path)):
+    for src in _ffmpeg_runtime_files(ffmpeg_path, ffprobe_path):
         dst = runtime_bin / src.name
         if dst.exists():
             dst.chmod(dst.stat().st_mode | stat.S_IWUSR)
         shutil.copy2(src, dst)
         if platform.system() != "Windows":
             mode = dst.stat().st_mode
-            dst.chmod(mode | stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+            dst.chmod(
+                mode | stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+            )
         print(f"Bundled {dst.relative_to(ROOT)}")
 
 
@@ -244,7 +355,8 @@ def prepare_whisper_cpp() -> None:
     runtime_bin = RUNTIME_DIR / "resource" / "bin"
     runtime_bin.mkdir(parents=True, exist_ok=True)
     runtime_files = [
-        path for path in extract_dir.rglob("*")
+        path
+        for path in extract_dir.rglob("*")
         if path.is_file() and path.suffix.lower() in {".exe", ".dll"}
     ]
     cli = next((path for path in runtime_files if path.name.lower() == "whisper-cli.exe"), None)
@@ -261,17 +373,20 @@ def build_pyinstaller(version: str) -> None:
     env["SUBFORGE_BUILD_VERSION"] = version
     if platform.system() == "Darwin":
         env.setdefault("TORCH_USE_RTLD_GLOBAL", "1")
-    _run([
-        sys.executable,
-        "-m",
-        "PyInstaller",
-        str(SPEC_FILE),
-        "--noconfirm",
-        "--distpath",
-        str(DIST_DIR),
-        "--workpath",
-        str(BUILD_DIR / "pyinstaller"),
-    ], env=env)
+    _run(
+        [
+            sys.executable,
+            "-m",
+            "PyInstaller",
+            str(SPEC_FILE),
+            "--noconfirm",
+            "--distpath",
+            str(DIST_DIR),
+            "--workpath",
+            str(BUILD_DIR / "pyinstaller"),
+        ],
+        env=env,
+    )
 
 
 def inject_packaged_mlx_runtime() -> None:
@@ -283,7 +398,9 @@ def inject_packaged_mlx_runtime() -> None:
     for package_name in ("mlx", "mlx_whisper"):
         spec = importlib.util.find_spec(package_name)
         if spec is None or not spec.submodule_search_locations:
-            raise RuntimeError(f"Missing {package_name}; install the whisperx extra before packaging")
+            raise RuntimeError(
+                f"Missing {package_name}; install the whisperx extra before packaging"
+            )
         package_sources[package_name] = Path(next(iter(spec.submodule_search_locations)))
 
     bundle_roots = [
@@ -367,11 +484,7 @@ def patch_packaged_torch() -> None:
         DIST_DIR / "SubForge.app" / "Contents" / "Frameworks" / "torch" / "__init__.py",
     ]
     needle = "for name in dir(_C):\n"
-    replacement = (
-        "import torch._C as _C\n"
-        "\n"
-        "for name in dir(_C):\n"
-    )
+    replacement = "import torch._C as _C\n\nfor name in dir(_C):\n"
     for path in candidates:
         if not path.exists():
             continue
@@ -476,10 +589,14 @@ def _verify_data_root(data_root: Path, label: str) -> None:
         data_root / "frontend" / "out" / "index.html",
         data_root / "frontend" / "out" / "_next",
         data_root / "resource" / "assets" / "logo.png",
-        data_root / "resource" / "fonts" / "NotoSansSC-Regular.ttf",
-        data_root / "resource" / "subtitle_style" / "ass-default.json",
-        data_root / "resource" / "bin" / ("ffmpeg.exe" if platform.system() == "Windows" else "ffmpeg"),
-        data_root / "resource" / "bin" / ("ffprobe.exe" if platform.system() == "Windows" else "ffprobe"),
+        data_root
+        / "resource"
+        / "bin"
+        / ("ffmpeg.exe" if platform.system() == "Windows" else "ffmpeg"),
+        data_root
+        / "resource"
+        / "bin"
+        / ("ffprobe.exe" if platform.system() == "Windows" else "ffprobe"),
     ]
     if platform.system() == "Windows":
         required.extend(
@@ -511,11 +628,7 @@ def _verify_macos_app(app: Path, expected_version: str) -> None:
         app / "Contents" / "Frameworks",
     ]
     data_root = next(
-        (
-            root
-            for root in candidate_roots
-            if (root / "frontend" / "out" / "index.html").exists()
-        ),
+        (root for root in candidate_roots if (root / "frontend" / "out" / "index.html").exists()),
         None,
     )
     if data_root is None:
@@ -564,8 +677,14 @@ def archive(version: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--clean", action="store_true", help="Remove build/dist/artifacts first")
-    parser.add_argument("--no-archive", action="store_true", help="Build and verify without creating zip archives")
-    parser.add_argument("--skip-frontend-build", action="store_true", help="Use the existing frontend/out static export")
+    parser.add_argument(
+        "--no-archive", action="store_true", help="Build and verify without creating zip archives"
+    )
+    parser.add_argument(
+        "--skip-frontend-build",
+        action="store_true",
+        help="Use the existing frontend/out static export",
+    )
     args = parser.parse_args()
 
     version = _version()

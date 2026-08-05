@@ -4,16 +4,8 @@ import ast
 import json
 import os
 import re
-import sys
 from types import SimpleNamespace
 from typing import Dict, List
-
-# Qt aborts during QApplication construction on headless Linux unless a
-# platform backend is selected before any PyQt module is imported.
-if sys.platform.startswith("linux") and not (
-    os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
-):
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 
@@ -31,8 +23,9 @@ def isolate_global_caches():
     cache.disable_cache()
     for cache_instance in (
         cache.get_llm_cache(),
-        cache.get_tts_cache(),
+        cache.get_asr_cache(),
         cache.get_translate_cache(),
+        cache.get_diarization_cache(),
     ):
         cache_instance.clear()
     yield
@@ -207,18 +200,12 @@ def mock_llm_client(monkeypatch):
     import subforge.core.split.split_by_llm as split_module
     import subforge.core.translate.context as translate_context_module
     import subforge.core.translate.llm_translator as translator_module
-    import subforge.ui.thread.subtitle_thread as subtitle_thread_module
 
     monkeypatch.setattr(llm_module, "call_llm", fake_call_llm)
     monkeypatch.setattr(optimize_module, "call_llm", fake_call_llm)
     monkeypatch.setattr(split_module, "call_llm", fake_call_llm)
     monkeypatch.setattr(translate_context_module, "call_llm", fake_call_llm)
     monkeypatch.setattr(translator_module, "call_llm", fake_call_llm)
-    monkeypatch.setattr(
-        subtitle_thread_module,
-        "check_llm_connection",
-        lambda *args, **kwargs: (True, ""),
-    )
     return fake_call_llm
 
 

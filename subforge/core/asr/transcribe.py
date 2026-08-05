@@ -79,6 +79,8 @@ def transcribe(
                 token=getattr(config, "diarization_token", ""),
                 model_dir=getattr(config, "diarization_model_dir", "") or None,
                 num_speakers=num_speakers,
+                min_speakers=2 if num_speakers is None else None,
+                max_speakers=10 if num_speakers is None else None,
                 callback=_diarization_progress,
             )
             detected_speakers = len({turn.speaker_id for turn in diarization_turns})
@@ -237,10 +239,22 @@ def transcribe(
         asr_data.fix_boundary_overlaps()
 
         if diarization_turns:
-            from subforge.core.asr.speaker_diarization import assign_speakers
+            from subforge.core.asr.speaker_diarization import (
+                acoustically_verify_speakers,
+                assign_speakers,
+            )
 
             callback(96, "Assigning speaker turns...")
             assign_speakers(asr_data, diarization_turns)
+            callback(98, "Verifying uncertain speaker changes...")
+            acoustically_verify_speakers(
+                asr_data,
+                audio_path,
+                diarization_turns,
+                model=getattr(config, "diarization_model", ""),
+                token=getattr(config, "diarization_token", ""),
+                model_dir=getattr(config, "diarization_model_dir", "") or None,
+            )
 
         return asr_data
     finally:

@@ -1,3 +1,6 @@
+import hashlib
+import zipfile
+
 import pytest
 
 from scripts import build_desktop
@@ -130,51 +133,87 @@ def test_frontend_build_requires_explicit_skip_when_dependencies_are_missing(tmp
     build_desktop.build_frontend("1.2.3", skip=True)
 
 
-def test_static_ffmpeg_download_retries_transient_failures(tmp_path, monkeypatch):
+def test_ffmpeg_download_retries_transient_failures(tmp_path, monkeypatch):
     attempts = []
     delays = []
+    payload = b"ffmpeg archive"
 
-    def fake_fetch(*, download_dir):
-        attempts.append(download_dir)
+    def fake_download(url, destination):
+        attempts.append((url, destination))
         if len(attempts) < 3:
             raise RuntimeError("temporary gateway timeout")
-        return "ffmpeg", "ffprobe"
+        destination.write_bytes(payload)
 
+    monkeypatch.setattr(build_desktop, "_download_file", fake_download)
     monkeypatch.setattr(build_desktop.time, "sleep", delays.append)
+    destination = tmp_path / "ffmpeg.zip"
 
-    result = build_desktop._fetch_static_ffmpeg(
-        fake_fetch,
-        tmp_path,
+    result = build_desktop._download_verified_archive(
+        "https://example.test/ffmpeg.zip",
+        destination,
+        hashlib.sha256(payload).hexdigest(),
         attempts=4,
         initial_delay=0.5,
     )
 
-    assert result == ("ffmpeg", "ffprobe")
-    assert attempts == [str(tmp_path)] * 3
+    assert result == destination
+    assert attempts == [("https://example.test/ffmpeg.zip", destination)] * 3
     assert delays == [0.5, 1.0]
 
 
-def test_static_ffmpeg_download_raises_after_retry_limit(tmp_path, monkeypatch):
+def test_ffmpeg_download_raises_after_retry_limit(tmp_path, monkeypatch):
     attempts = []
 
-    def fake_fetch(*, download_dir):
-        attempts.append(download_dir)
+    def fake_download(url, destination):
+        attempts.append((url, destination))
         raise RuntimeError("persistent gateway timeout")
 
+    monkeypatch.setattr(build_desktop, "_download_file", fake_download)
     monkeypatch.setattr(build_desktop.time, "sleep", lambda _delay: None)
+    destination = tmp_path / "ffmpeg.zip"
 
     with pytest.raises(RuntimeError, match="persistent gateway timeout"):
-        build_desktop._fetch_static_ffmpeg(
-            fake_fetch,
-            tmp_path,
+        build_desktop._download_verified_archive(
+            "https://example.test/ffmpeg.zip",
+            destination,
+            "0" * 64,
             attempts=3,
             initial_delay=0,
         )
 
-    assert attempts == [str(tmp_path)] * 3
+    assert attempts == [("https://example.test/ffmpeg.zip", destination)] * 3
 
 
-def test_windows_ffmpeg_runtime_includes_required_dlls(tmp_path, monkeypatch):
+def test_ffmpeg_download_rejects_checksum_mismatch(tmp_path, monkeypatch):
+    destination = tmp_path / "ffmpeg.zip"
+
+    def fake_download(_url, path):
+        path.write_bytes(b"tampered")
+
+    monkeypatch.setattr(build_desktop, "_download_file", fake_download)
+    monkeypatch.setattr(build_desktop.time, "sleep", lambda _delay: None)
+
+    with pytest.raises(RuntimeError, match="checksum mismatch"):
+        build_desktop._download_verified_archive(
+            "https://example.test/ffmpeg.zip",
+            destination,
+            "0" * 64,
+            attempts=1,
+        )
+
+    assert not destination.exists()
+
+
+def test_ffmpeg_zip_rejects_path_traversal(tmp_path):
+    archive = tmp_path / "ffmpeg.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("../ffmpeg", b"unsafe")
+
+    with pytest.raises(RuntimeError, match="Unsafe path"):
+        build_desktop._safe_extract_zip(archive, tmp_path / "runtime")
+
+
+def test_windows_ffmpeg_runtime_includes_optional_dlls(tmp_path, monkeypatch):
     ffmpeg = tmp_path / "ffmpeg.exe"
     ffprobe = tmp_path / "ffprobe.exe"
     codec = tmp_path / "avcodec-59.dll"
@@ -189,15 +228,14 @@ def test_windows_ffmpeg_runtime_includes_required_dlls(tmp_path, monkeypatch):
     ]
 
 
-def test_windows_ffmpeg_runtime_rejects_missing_dlls(tmp_path, monkeypatch):
+def test_windows_static_ffmpeg_runtime_does_not_require_dlls(tmp_path, monkeypatch):
     ffmpeg = tmp_path / "ffmpeg.exe"
     ffprobe = tmp_path / "ffprobe.exe"
     ffmpeg.write_bytes(b"runtime")
     ffprobe.write_bytes(b"runtime")
     monkeypatch.setattr(build_desktop.platform, "system", lambda: "Windows")
 
-    with pytest.raises(RuntimeError, match="required DLLs"):
-        build_desktop._ffmpeg_runtime_files(ffmpeg, ffprobe)
+    assert build_desktop._ffmpeg_runtime_files(ffmpeg, ffprobe) == [ffmpeg, ffprobe]
 
 
 def test_windows_bundle_requires_faster_whisper_vad_asset(tmp_path, monkeypatch):
@@ -206,8 +244,6 @@ def test_windows_bundle_requires_faster_whisper_vad_asset(tmp_path, monkeypatch)
         data_root / "frontend" / "out" / "index.html",
         data_root / "frontend" / "out" / "_next" / "build.js",
         data_root / "resource" / "assets" / "logo.png",
-        data_root / "resource" / "fonts" / "NotoSansSC-Regular.ttf",
-        data_root / "resource" / "subtitle_style" / "ass-default.json",
         data_root / "resource" / "bin" / "ffmpeg.exe",
         data_root / "resource" / "bin" / "ffprobe.exe",
         data_root / "resource" / "bin" / "whisper-cli.exe",

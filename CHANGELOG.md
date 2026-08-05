@@ -1,5 +1,39 @@
 # Changelog
 
+## v1.1.7 - 2026-08-05
+
+### Added
+
+- Added an optional dual-model speaker-verification gate: Community-1 proposes uncertain boundary corrections and WeSpeaker ECAPA-TDNN512-LM independently confirms them without storing enrolled voiceprints.
+- Added reproducible AMI and VoxConverse diarization benchmarks covering strict DER, automatic speaker count, boundary quality, word-level speaker ownership, overlap protection, stability, and runtime.
+- Added bounded automatic speaker detection for 2-10 participants and conservative overlap-aware assignment diagnostics.
+
+### Improved
+
+- Reduced non-overlap AMI word-speaker error from 4.70% to 4.61% with the dual-model verifier while preserving ASR text and timestamps; all sampled conditions remained non-regressive.
+- Upgraded the bundled media runtime to pinned, checksum-verified FFmpeg/FFprobe 8.1.2 builds on macOS and Windows.
+- Simplified the supported CLI and documentation around import, transcription, subtitle restructuring, translation, review, and export.
+- Reduced desktop resources and dependency surface by retaining only modules used by the current Next.js, FastAPI, and pywebview application.
+
+### Fixed
+
+- Fixed semantic speaker-boundary heuristics overriding acoustically correct labels; they now act only as proposals behind conservative acoustic validation.
+- Fixed packaged multi-speaker startup after dependency cleanup by retaining Pillow for the pyannote, torchmetrics, and torchvision import chain.
+- Fixed stale media routes, configuration sections, and command help exposing features that the current desktop workflow no longer provides.
+- Fixed FFmpeg package drift by downloading platform-specific archives with pinned versions, SHA-256 verification, safe extraction, and runtime codec checks.
+
+### Removed
+
+- Removed the retired PyQt desktop interface and its background-thread implementation.
+- Removed unused subtitle burning, ASS styling, video synthesis, TTS, dubbing, bundled fonts, translation resources, legacy assets, commands, and tests.
+- Removed PyQt, Fluent Widgets, Edge TTS, fontTools, CairoSVG, and related dependencies from the supported runtime.
+
+### Packaging
+
+- macOS Apple Silicon: `SubForge-1.1.7-macos-arm64.dmg`.
+- Windows x64: `SubForge-1.1.7-windows-x64-setup.exe`, built and smoke-tested by GitHub Actions.
+- Whisper, forced-alignment, Community-1, ECAPA, and DeepFilterNet models remain separate on-demand downloads.
+
 ## v1.1.6 - 2026-08-04
 
 ### Improved

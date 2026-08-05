@@ -89,7 +89,7 @@ jobs:
         working-directory: frontend
 
       - name: Build desktop bundle
-        run: uv run --no-sync ${{ matrix.uv-extra }} --with static-ffmpeg==2.13 --with pyinstaller --with pywebview python scripts/build_desktop.py --clean
+        run: uv run --no-sync ${{ matrix.uv-extra }} --with pyinstaller --with pywebview python scripts/build_desktop.py --clean
 
       - name: Smoke test packaged app
         run: uv run --no-sync python scripts/smoke_desktop.py dist/SubForge

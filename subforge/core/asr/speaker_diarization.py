@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"
 LOCAL_DIARIZATION_DIR = "pyannote-speaker-diarization-community-1"
-DIARIZATION_CACHE_VERSION = 1
+DIARIZATION_CACHE_VERSION = 3
 _DIARIZATION_MODEL_CACHE = SingleEntryModelCache()
 _DARWIN_DATALESS_FLAG = 0x40000000
 
@@ -34,6 +34,23 @@ class SpeakerTurn:
     start_ms: int
     end_ms: int
     speaker_id: str
+
+
+class SpeakerTurns(list[SpeakerTurn]):
+    """Speaker turns plus overlap regions from regular diarization output."""
+
+    def __init__(
+        self,
+        turns: Iterable[SpeakerTurn] = (),
+        *,
+        overlap_regions: Iterable[tuple[int, int]] = (),
+        regular_turns: Iterable[SpeakerTurn] = (),
+        execution_device: str = "unknown",
+    ) -> None:
+        super().__init__(turns)
+        self.overlap_regions = list(overlap_regions)
+        self.regular_turns = list(regular_turns)
+        self.execution_device = execution_device
 
 
 def _is_local_file_available(path: Path, minimum_size: int) -> bool:
@@ -83,8 +100,7 @@ def is_diarization_model_dir(path: str | Path) -> bool:
         "plda/xvec_transform.npz": 1024,
     }
     return model_dir.is_dir() and all(
-        _is_local_file_available(model_dir / name, minimum)
-        for name, minimum in required.items()
+        _is_local_file_available(model_dir / name, minimum) for name, minimum in required.items()
     )
 
 
@@ -164,6 +180,8 @@ def _diarization_cache_key(
     audio_path: str,
     resolved_model: str,
     num_speakers: int | None,
+    min_speakers: int | None,
+    max_speakers: int | None,
 ) -> str:
     from subforge.core.utils.cache import generate_cache_key
 
@@ -179,17 +197,56 @@ def _diarization_cache_key(
             "model": str(Path(resolved_model).resolve()),
             "model_signature": model_signature,
             "num_speakers": num_speakers,
+            "min_speakers": min_speakers,
+            "max_speakers": max_speakers,
         }
     )
 
 
-def _deserialize_cached_turns(value: Any) -> list[SpeakerTurn]:
+def _deserialize_cached_turns(value: Any) -> SpeakerTurns:
+    overlap_regions: list[tuple[int, int]] = []
+    regular_turns: list[SpeakerTurn] = []
+    execution_device = "cache"
+    if isinstance(value, dict):
+        raw_turns = value.get("turns")
+        raw_regions = value.get("overlap_regions", [])
+        raw_regular_turns = value.get("regular_turns", [])
+        execution_device = str(value.get("execution_device") or "cache")
+        if not isinstance(raw_turns, list) or not isinstance(raw_regions, list):
+            return SpeakerTurns()
+        for region in raw_regions:
+            if not isinstance(region, (list, tuple)) or len(region) != 2:
+                return SpeakerTurns()
+            try:
+                start_ms, end_ms = int(region[0]), int(region[1])
+            except (TypeError, ValueError):
+                return SpeakerTurns()
+            if end_ms <= start_ms:
+                return SpeakerTurns()
+            overlap_regions.append((start_ms, end_ms))
+        if not isinstance(raw_regular_turns, list):
+            return SpeakerTurns()
+        for item in raw_regular_turns:
+            if not isinstance(item, dict):
+                return SpeakerTurns()
+            try:
+                turn = SpeakerTurn(
+                    int(item["start_ms"]),
+                    int(item["end_ms"]),
+                    str(item["speaker_id"]),
+                )
+            except (KeyError, TypeError, ValueError):
+                return SpeakerTurns()
+            if turn.end_ms <= turn.start_ms or not turn.speaker_id:
+                return SpeakerTurns()
+            regular_turns.append(turn)
+        value = raw_turns
     if not isinstance(value, list):
-        return []
+        return SpeakerTurns()
     turns: list[SpeakerTurn] = []
     for item in value:
         if not isinstance(item, dict):
-            return []
+            return SpeakerTurns()
         try:
             turn = SpeakerTurn(
                 int(item["start_ms"]),
@@ -197,11 +254,50 @@ def _deserialize_cached_turns(value: Any) -> list[SpeakerTurn]:
                 str(item["speaker_id"]),
             )
         except (KeyError, TypeError, ValueError):
-            return []
+            return SpeakerTurns()
         if turn.end_ms <= turn.start_ms or not turn.speaker_id:
-            return []
+            return SpeakerTurns()
         turns.append(turn)
-    return turns
+    return SpeakerTurns(
+        turns,
+        overlap_regions=overlap_regions,
+        regular_turns=regular_turns,
+        execution_device=execution_device,
+    )
+
+
+def _find_overlap_regions(annotation: Any) -> list[tuple[int, int]]:
+    """Return intervals where regular diarization has two active speakers."""
+    events: list[tuple[float, int, str]] = []
+    for start, end, label in _iter_labeled_turns(annotation):
+        if end <= start:
+            continue
+        events.append((start, 1, label))
+        events.append((end, -1, label))
+    events.sort(key=lambda event: (event[0], event[1]))
+    active: dict[str, int] = {}
+    overlap_start: float | None = None
+    regions: list[tuple[int, int]] = []
+    for timestamp, delta, label in events:
+        was_overlapping = len(active) >= 2
+        if delta < 0:
+            count = active.get(label, 0) - 1
+            if count > 0:
+                active[label] = count
+            else:
+                active.pop(label, None)
+        else:
+            active[label] = active.get(label, 0) + 1
+        is_overlapping = len(active) >= 2
+        if not was_overlapping and is_overlapping:
+            overlap_start = timestamp
+        elif was_overlapping and not is_overlapping and overlap_start is not None:
+            start_ms = max(0, round(overlap_start * 1000))
+            end_ms = max(1, round(timestamp * 1000))
+            if end_ms > start_ms:
+                regions.append((start_ms, end_ms))
+            overlap_start = None
+    return regions
 
 
 def _select_diarization_device(torch_module: Any) -> str:
@@ -233,45 +329,17 @@ def _select_diarization_device(torch_module: Any) -> str:
     return "cpu"
 
 
-def diarize_audio(
-    audio_path: str,
+def _load_diarization_pipeline(
+    resolved_model: str,
     *,
-    model: str = DEFAULT_DIARIZATION_MODEL,
-    token: str = "",
-    model_dir: str | Path | None = None,
-    num_speakers: int | None = 2,
-    callback: Callable[[int, str], None] | None = None,
-) -> list[SpeakerTurn]:
-    """Run pyannote on the original audio and return first-appearance labels."""
-    resolved_model = require_local_diarization_model(model, model_dir)
-    cache_key = _diarization_cache_key(audio_path, resolved_model, num_speakers)
-    try:
-        from subforge.core.utils.cache import get_diarization_cache, is_cache_enabled
+    token: str,
+    model_dir: str | Path | None,
+    device: str,
+):
+    """Acquire the shared Community-1 pipeline on the requested device."""
+    from pyannote.audio import Pipeline
 
-        if is_cache_enabled():
-            cached_turns = _deserialize_cached_turns(
-                get_diarization_cache().get(cache_key)
-            )
-            if cached_turns:
-                logger.info("Using cached speaker diarization (%d turns)", len(cached_turns))
-                if callback:
-                    callback(94, "Using cached speaker analysis...")
-                return cached_turns
-    except Exception as exc:
-        logger.debug("Speaker diarization cache lookup failed: %s", exc)
-
-    try:
-        import torch
-        from pyannote.audio import Pipeline
-    except ImportError as exc:
-        raise RuntimeError(
-            "Speaker diarization runtime is unavailable. Install the WhisperX "
-            "dependencies that include pyannote.audio."
-        ) from exc
-
-    if callback:
-        callback(92, "Loading speaker diarization model...")
-    def _load_pipeline():
+    def _loader():
         loaded = Pipeline.from_pretrained(
             resolved_model,
             token=token or None,
@@ -281,8 +349,72 @@ def diarize_audio(
             raise RuntimeError("Speaker diarization model could not be loaded")
         return loaded
 
+    cache_key = (str(Path(resolved_model).resolve()), device, id(Pipeline))
+    return _DIARIZATION_MODEL_CACHE.acquire(cache_key, _loader)
+
+
+def diarize_audio(
+    audio_path: str,
+    *,
+    model: str = DEFAULT_DIARIZATION_MODEL,
+    token: str = "",
+    model_dir: str | Path | None = None,
+    num_speakers: int | None = 2,
+    min_speakers: int | None = None,
+    max_speakers: int | None = None,
+    callback: Callable[[int, str], None] | None = None,
+) -> SpeakerTurns:
+    """Run pyannote on the original audio and return first-appearance labels."""
+    if num_speakers is not None:
+        min_speakers = None
+        max_speakers = None
+    elif min_speakers is not None and max_speakers is not None and min_speakers > max_speakers:
+        raise ValueError("min_speakers must not exceed max_speakers")
+    resolved_model = require_local_diarization_model(model, model_dir)
+    result_cache_key = _diarization_cache_key(
+        audio_path,
+        resolved_model,
+        num_speakers,
+        min_speakers,
+        max_speakers,
+    )
+    try:
+        from subforge.core.utils.cache import get_diarization_cache, is_cache_enabled
+
+        if is_cache_enabled():
+            cached_turns = _deserialize_cached_turns(get_diarization_cache().get(result_cache_key))
+            if cached_turns:
+                logger.info("Using cached speaker diarization (%d turns)", len(cached_turns))
+                if callback:
+                    callback(94, "Using cached speaker analysis...")
+                return cached_turns
+    except Exception as exc:
+        logger.debug("Speaker diarization cache lookup failed: %s", exc)
+
+    try:
+        import pyannote.audio as pyannote_audio
+        import torch
+
+        if not hasattr(pyannote_audio, "Pipeline"):
+            raise ImportError("pyannote.audio.Pipeline is unavailable")
+    except ImportError as exc:
+        raise RuntimeError(
+            "Speaker diarization runtime is unavailable. Install the WhisperX "
+            "dependencies that include pyannote.audio."
+        ) from exc
+
+    if callback:
+        callback(92, "Loading speaker diarization model...")
+
     audio = _load_waveform(audio_path)
-    kwargs = {"num_speakers": num_speakers} if num_speakers else {}
+    kwargs: dict[str, int] = {}
+    if num_speakers is not None:
+        kwargs["num_speakers"] = num_speakers
+    else:
+        if min_speakers is not None:
+            kwargs["min_speakers"] = min_speakers
+        if max_speakers is not None:
+            kwargs["max_speakers"] = max_speakers
     selected_device = _select_diarization_device(torch)
 
     def _run_pipeline(active_pipeline: Any, device_name: str):
@@ -298,12 +430,13 @@ def diarize_audio(
 
     model_loaded = False
     try:
-        cache_key = (
-            str(Path(resolved_model).resolve()),
-            selected_device,
-            id(Pipeline.from_pretrained),
+        pipeline_context = _load_diarization_pipeline(
+            resolved_model,
+            token=token,
+            model_dir=model_dir,
+            device=selected_device,
         )
-        with _DIARIZATION_MODEL_CACHE.acquire(cache_key, _load_pipeline) as pipeline:
+        with pipeline_context as pipeline:
             model_loaded = True
             output = _run_pipeline(pipeline, selected_device)
     except Exception as exc:
@@ -330,14 +463,13 @@ def diarize_audio(
             )
         try:
             cpu_model_loaded = False
-            cpu_cache_key = (
-                str(Path(resolved_model).resolve()),
-                "cpu",
-                id(Pipeline.from_pretrained),
+            pipeline_context = _load_diarization_pipeline(
+                resolved_model,
+                token=token,
+                model_dir=model_dir,
+                device="cpu",
             )
-            with _DIARIZATION_MODEL_CACHE.acquire(
-                cpu_cache_key, _load_pipeline
-            ) as pipeline:
+            with pipeline_context as pipeline:
                 cpu_model_loaded = True
                 output = _run_pipeline(pipeline, "cpu")
             selected_device = "cpu"
@@ -346,15 +478,15 @@ def diarize_audio(
                 raise RuntimeError(
                     "Unable to reload the local Community-1 model for CPU fallback."
                 ) from cpu_exc
-            raise RuntimeError(
-                "Speaker diarization failed on both Apple MPS and CPU"
-            ) from cpu_exc
+            raise RuntimeError("Speaker diarization failed on both Apple MPS and CPU") from cpu_exc
+    regular_annotation = getattr(output, "speaker_diarization", None)
+    overlap_regions = _find_overlap_regions(regular_annotation)
     annotation = getattr(output, "exclusive_speaker_diarization", None)
     if annotation is None:
         annotation = getattr(output, "speaker_diarization", output)
 
     label_map: dict[str, str] = {}
-    turns: list[SpeakerTurn] = []
+    turns = SpeakerTurns(overlap_regions=overlap_regions, execution_device=selected_device)
     for start, end, raw_label in _iter_labeled_turns(annotation):
         if end <= start:
             continue
@@ -369,20 +501,46 @@ def diarize_audio(
     turns.sort(key=lambda turn: (turn.start_ms, turn.end_ms))
     if not turns:
         raise RuntimeError("Speaker diarization produced no speaker turns")
+    regular_turns: list[SpeakerTurn] = []
+    for start, end, raw_label in _iter_labeled_turns(regular_annotation):
+        if end <= start:
+            continue
+        label_map.setdefault(raw_label, f"Speaker {len(label_map) + 1}")
+        regular_turns.append(
+            SpeakerTurn(
+                start_ms=max(0, round(start * 1000)),
+                end_ms=max(1, round(end * 1000)),
+                speaker_id=label_map[raw_label],
+            )
+        )
+    regular_turns.sort(key=lambda turn: (turn.start_ms, turn.end_ms, turn.speaker_id))
+    turns.regular_turns = regular_turns
     try:
         from subforge.core.utils.cache import get_diarization_cache, is_cache_enabled
 
         if is_cache_enabled():
             get_diarization_cache().set(
-                cache_key,
-                [
-                    {
-                        "start_ms": turn.start_ms,
-                        "end_ms": turn.end_ms,
-                        "speaker_id": turn.speaker_id,
-                    }
-                    for turn in turns
-                ],
+                result_cache_key,
+                {
+                    "turns": [
+                        {
+                            "start_ms": turn.start_ms,
+                            "end_ms": turn.end_ms,
+                            "speaker_id": turn.speaker_id,
+                        }
+                        for turn in turns
+                    ],
+                    "overlap_regions": [list(region) for region in overlap_regions],
+                    "regular_turns": [
+                        {
+                            "start_ms": turn.start_ms,
+                            "end_ms": turn.end_ms,
+                            "speaker_id": turn.speaker_id,
+                        }
+                        for turn in regular_turns
+                    ],
+                    "execution_device": selected_device,
+                },
                 expire=90 * 24 * 60 * 60,
             )
     except Exception as exc:
@@ -396,12 +554,69 @@ def diarize_audio(
     return turns
 
 
+def acoustically_verify_speakers(
+    asr_data: ASRData,
+    audio_path: str,
+    turns: SpeakerTurns,
+    *,
+    model: str = DEFAULT_DIARIZATION_MODEL,
+    token: str = "",
+    model_dir: str | Path | None = None,
+) -> ASRData:
+    """Verify risky semantic corrections with independent speaker embeddings.
+
+    This pass is deliberately best-effort. It never changes text or timestamps,
+    and any verifier failure leaves the conservative diarization labels intact.
+    """
+    try:
+        import torch
+
+        from subforge.core.asr.speaker_verification import verify_speakers_with_pipeline
+
+        resolved_model = require_local_diarization_model(model, model_dir)
+        device = getattr(turns, "execution_device", "unknown")
+        if device not in {"cpu", "mps", "cuda"}:
+            device = _select_diarization_device(torch)
+        pipeline_context = _load_diarization_pipeline(
+            resolved_model,
+            token=token,
+            model_dir=model_dir,
+            device=device,
+        )
+        with pipeline_context as pipeline:
+            stats = verify_speakers_with_pipeline(
+                asr_data,
+                audio_path,
+                pipeline=pipeline,
+                device=device,
+                model_dir=str(model_dir) if model_dir else None,
+                overlap_regions=getattr(turns, "overlap_regions", ()),
+            )
+        logger.info(
+            "Acoustic speaker verification accepted %d/%d proposals "
+            "(%d overlap, %d reference, %d consensus skips)",
+            stats.accepted,
+            stats.proposals,
+            stats.skipped_overlap,
+            stats.skipped_reference,
+            stats.skipped_consensus,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Acoustic speaker verification failed; keeping conservative labels: %s",
+            exc,
+            exc_info=True,
+        )
+    return asr_data
+
+
 def assign_speakers(
     asr_data: ASRData,
     turns: list[SpeakerTurn],
     *,
     nearest_gap_ms: int = 120,
     suppress_flip_ms: int = 300,
+    smooth: bool = True,
 ) -> ASRData:
     """Attach speaker labels without changing ASR text or timestamps."""
     if not asr_data.segments or not turns:
@@ -440,10 +655,13 @@ def assign_speakers(
 
     for segment, label in zip(asr_data.segments, labels):
         segment.speaker_id = label
+    if not smooth:
+        return asr_data
     return smooth_speaker_assignments(
         asr_data,
         nearest_gap_ms=nearest_gap_ms,
         suppress_flip_ms=suppress_flip_ms,
+        overlap_regions=getattr(turns, "overlap_regions", ()),
     )
 
 
@@ -504,6 +722,38 @@ _CONTINUATION_START_WORDS = {
     "why",
 }
 
+_BOUNDARY_CONTINUATION_WORDS = _CONTINUATION_START_WORDS | {
+    "and",
+    "of",
+    "to",
+    "with",
+}
+
+_QUESTION_START_WORDS = {
+    "are",
+    "can",
+    "could",
+    "did",
+    "do",
+    "does",
+    "had",
+    "has",
+    "have",
+    "how",
+    "is",
+    "should",
+    "was",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "will",
+    "would",
+}
+
 _SHORT_INTERJECTIONS = {
     "ah",
     "hmm",
@@ -534,6 +784,146 @@ def _normalized_word(text: str) -> str:
     return words[-1].replace("’", "'") if words else ""
 
 
+def _first_normalized_word(text: str) -> str:
+    words = re.findall(r"[A-Za-z]+(?:['’][A-Za-z]+)?", text.lower())
+    return words[0].replace("’", "'") if words else ""
+
+
+def _ends_sentence(text: str) -> bool:
+    return bool(re.search(r"[.!?][\"')\]]*\s*$", text.strip()))
+
+
+def _intersects_overlap(
+    segments: list[ASRDataSeg],
+    start: int,
+    end: int,
+    overlap_regions: Iterable[tuple[int, int]],
+) -> bool:
+    if start >= end:
+        return False
+    start_ms = segments[start].start_time
+    end_ms = segments[end - 1].end_time
+    return any(
+        region_start < end_ms and region_end > start_ms
+        for region_start, region_end in overlap_regions
+    )
+
+
+def _snap_boundary_continuations(
+    segments: list[ASRDataSeg],
+    labels: list[str],
+    overlap_regions: Iterable[tuple[int, int]],
+    max_edge_gap: int,
+) -> None:
+    """Repair grammatical fragments stranded beside a diarization boundary."""
+    overlap_regions = tuple(overlap_regions)
+    original_labels = list(labels)
+    boundaries = [
+        index
+        for index in range(1, len(labels))
+        if original_labels[index]
+        and original_labels[index - 1]
+        and original_labels[index] != original_labels[index - 1]
+    ]
+
+    # Move a tiny unfinished suffix with its following continuation, as in
+    # "I'm glad / to be here.". Stop at the prior sentence boundary.
+    for boundary in boundaries:
+        following_word = _first_normalized_word(segments[boundary].text)
+        if following_word not in _BOUNDARY_CONTINUATION_WORDS:
+            continue
+        start = boundary
+        while (
+            start > 0
+            and boundary - start < 4
+            and labels[start - 1] == labels[boundary - 1]
+            and not _ends_sentence(segments[start - 1].text)
+        ):
+            start -= 1
+        if start == boundary:
+            continue
+        phrase = segments[start:boundary]
+        duration = phrase[-1].end_time - phrase[0].start_time
+        gap = segments[boundary].start_time - phrase[-1].end_time
+        first_word = _first_normalized_word(phrase[0].text)
+        if (
+            duration <= 1_300
+            and gap <= max_edge_gap
+            and first_word in _BOUNDARY_PREFIX_WORDS
+            and not _intersects_overlap(segments, start, boundary, overlap_regions)
+        ):
+            labels[start:boundary] = [labels[boundary]] * (boundary - start)
+
+    # Exclusive diarization can land before a lowercase sentence tail. Move
+    # only the first completed sentence and, at most, one immediate question.
+    for boundary in boundaries:
+        previous_label = labels[boundary - 1]
+        current_label = labels[boundary]
+        first_text = segments[boundary].text.strip()
+        first_word = _first_normalized_word(first_text)
+        boundary_gap = segments[boundary].start_time - segments[boundary - 1].end_time
+        extended_gap_allowed = (
+            first_word in _BOUNDARY_CONTINUATION_WORDS
+            or first_word in _BOUNDARY_PREFIX_WORDS
+            or first_word.endswith("ing")
+        )
+        if (
+            not previous_label
+            or not current_label
+            or previous_label == current_label
+            or not first_text
+            or not first_text[0].islower()
+            or _ends_sentence(segments[boundary - 1].text)
+            or (boundary_gap > max_edge_gap and (boundary_gap > 1_000 or not extended_gap_allowed))
+        ):
+            continue
+        run_end = boundary + 1
+        while run_end < len(labels) and labels[run_end] == current_label:
+            run_end += 1
+        terminal = next(
+            (
+                index
+                for index in range(boundary, min(run_end, boundary + 8))
+                if _ends_sentence(segments[index].text)
+            ),
+            None,
+        )
+        if terminal is None:
+            continue
+        move_end = terminal + 1
+        word_count = sum(
+            len(re.findall(r"[A-Za-z]+(?:['’][A-Za-z]+)?", segment.text))
+            for segment in segments[boundary:move_end]
+        )
+        duration = segments[move_end - 1].end_time - segments[boundary].start_time
+        if word_count > 8 or duration > 3_500:
+            continue
+
+        if (
+            move_end < run_end
+            and _first_normalized_word(segments[move_end].text) in _QUESTION_START_WORDS
+        ):
+            question_terminal = next(
+                (
+                    index
+                    for index in range(move_end, min(run_end, move_end + 12))
+                    if _ends_sentence(segments[index].text)
+                ),
+                None,
+            )
+            if question_terminal is not None:
+                question_end = question_terminal + 1
+                total_duration = segments[question_end - 1].end_time - segments[boundary].start_time
+                total_words = sum(
+                    len(re.findall(r"[A-Za-z]+(?:['’][A-Za-z]+)?", segment.text))
+                    for segment in segments[boundary:question_end]
+                )
+                if total_words <= 20 and total_duration <= 8_000:
+                    move_end = question_end
+
+        labels[boundary:move_end] = [previous_label] * (move_end - boundary)
+
+
 def _is_short_interjection(segments: list[ASRDataSeg]) -> bool:
     text = " ".join(segment.text.strip() for segment in segments if segment.text.strip())
     words = re.findall(r"[A-Za-z]+(?:['’][A-Za-z]+)?", text.lower())
@@ -557,12 +947,14 @@ def smooth_speaker_assignments(
     *,
     nearest_gap_ms: int = 120,
     suppress_flip_ms: int = 300,
+    overlap_regions: Iterable[tuple[int, int]] = (),
+    stages: frozenset[str] | None = None,
 ) -> ASRData:
-    """Conservatively remove word-level diarization boundary jitter.
+    """Fill only short unlabeled gaps in word-level diarization output.
 
-    This changes speaker metadata only. Long turns and uncertain gaps remain
-    untouched; short blanks, isolated label islands, and auxiliaries stranded
-    before a continuous lowercase phrase are repaired.
+    Semantic boundary rewrites are available to the offline benchmark through
+    ``stages`` but are intentionally disabled in production: AMI word-level
+    scoring showed that they move more correctly attributed words than errors.
     """
     segments = asr_data.segments
     if len(segments) < 2 or not any(segment.speaker_id for segment in segments):
@@ -571,93 +963,111 @@ def smooth_speaker_assignments(
     labels = [segment.speaker_id for segment in segments]
     max_fill_duration = max(700, suppress_flip_ms * 2)
     max_edge_gap = max(300, nearest_gap_ms * 2)
+    enabled = stages if stages is not None else frozenset({"fill_blanks"})
 
-    index = 0
-    while index < len(labels):
-        if labels[index]:
-            index += 1
-            continue
-        end = index + 1
-        while end < len(labels) and not labels[end]:
-            end += 1
-        previous = labels[index - 1] if index > 0 else ""
-        following = labels[end] if end < len(labels) else ""
-        duration = segments[end - 1].end_time - segments[index].start_time
-        candidate = previous if previous and previous == following else ""
-        if not candidate and duration <= max_fill_duration:
-            if previous and not following:
-                gap = segments[index].start_time - segments[index - 1].end_time
-                if gap <= max_edge_gap:
-                    candidate = previous
-            elif following and not previous:
-                gap = segments[end].start_time - segments[end - 1].end_time
-                if gap <= max_edge_gap:
+    if "fill_blanks" in enabled:
+        index = 0
+        while index < len(labels):
+            if labels[index]:
+                index += 1
+                continue
+            end = index + 1
+            while end < len(labels) and not labels[end]:
+                end += 1
+            previous = labels[index - 1] if index > 0 else ""
+            following = labels[end] if end < len(labels) else ""
+            duration = segments[end - 1].end_time - segments[index].start_time
+            candidate = previous if previous and previous == following else ""
+            if not candidate and duration <= max_fill_duration:
+                next_text = segments[end].text.strip() if end < len(segments) else ""
+                blank_words = [
+                    _first_normalized_word(segment.text) for segment in segments[index:end]
+                ]
+                if (
+                    following
+                    and next_text
+                    and next_text[0].islower()
+                    and all(word in _BOUNDARY_PREFIX_WORDS for word in blank_words)
+                    and segments[end].start_time - segments[end - 1].end_time <= 600
+                    and not _intersects_overlap(segments, index, end, overlap_regions)
+                ):
                     candidate = following
-        if candidate and duration <= max_fill_duration:
-            labels[index:end] = [candidate] * (end - index)
-        index = end
+            if not candidate and duration <= max_fill_duration:
+                if previous and not following:
+                    gap = segments[index].start_time - segments[index - 1].end_time
+                    if gap <= max_edge_gap:
+                        candidate = previous
+                elif following and not previous:
+                    gap = segments[end].start_time - segments[end - 1].end_time
+                    if gap <= max_edge_gap:
+                        candidate = following
+            if candidate and duration <= max_fill_duration:
+                labels[index:end] = [candidate] * (end - index)
+            index = end
 
-    changed = True
-    while changed:
-        changed = False
-        runs: list[tuple[int, int, str]] = []
-        start = 0
-        for index in range(1, len(labels) + 1):
-            if index == len(labels) or labels[index] != labels[start]:
-                runs.append((start, index, labels[start]))
-                start = index
-        for run_index in range(1, len(runs) - 1):
-            start, end, label = runs[run_index]
-            previous = runs[run_index - 1][2]
-            following = runs[run_index + 1][2]
-            duration = segments[end - 1].end_time - segments[start].start_time
-            previous_gap = segments[start].start_time - segments[start - 1].end_time
-            following_gap = segments[end].start_time - segments[end - 1].end_time
-            standard_short_flip = (
-                duration <= max(700, suppress_flip_ms)
-                and previous_gap <= max_edge_gap
-                and following_gap <= max_edge_gap
-                and not _is_short_interjection(segments[start:end])
-            )
-            incomplete_continuation = (
-                duration <= 1200
-                and previous_gap <= 1200
-                and following_gap <= 450
-                and _is_incomplete_speaker_island(segments[start:end])
-            )
+    if "suppress_islands" in enabled:
+        changed = True
+        while changed:
+            changed = False
+            runs: list[tuple[int, int, str]] = []
+            start = 0
+            for index in range(1, len(labels) + 1):
+                if index == len(labels) or labels[index] != labels[start]:
+                    runs.append((start, index, labels[start]))
+                    start = index
+            for run_index in range(1, len(runs) - 1):
+                start, end, label = runs[run_index]
+                previous = runs[run_index - 1][2]
+                following = runs[run_index + 1][2]
+                duration = segments[end - 1].end_time - segments[start].start_time
+                previous_gap = segments[start].start_time - segments[start - 1].end_time
+                following_gap = segments[end].start_time - segments[end - 1].end_time
+                standard_short_flip = (
+                    duration <= max(700, suppress_flip_ms)
+                    and previous_gap <= max_edge_gap
+                    and following_gap <= max_edge_gap
+                    and not _is_short_interjection(segments[start:end])
+                )
+                incomplete_continuation = (
+                    duration <= 1200
+                    and previous_gap <= 1200
+                    and following_gap <= 450
+                    and _is_incomplete_speaker_island(segments[start:end])
+                )
+                if (
+                    label
+                    and previous
+                    and previous == following
+                    and label != previous
+                    and end - start <= 3
+                    and (standard_short_flip or incomplete_continuation)
+                ):
+                    labels[start:end] = [previous] * (end - start)
+                    changed = True
+                    break
+
+    if "move_prefix" in enabled:
+        for index in range(len(labels) - 1):
+            current = labels[index]
+            following = labels[index + 1]
+            if not current or not following or current == following:
+                continue
+            word = _normalized_word(segments[index].text)
+            next_text = segments[index + 1].text.strip()
             if (
-                label
-                and previous
-                and previous == following
-                and label != previous
-                and end - start <= 3
-                and (standard_short_flip or incomplete_continuation)
+                word in _BOUNDARY_PREFIX_WORDS
+                and next_text
+                and next_text[0].islower()
+                and segments[index].end_time - segments[index].start_time <= 450
+                and segments[index + 1].start_time - segments[index].end_time <= max_edge_gap
             ):
-                labels[start:end] = [previous] * (end - start)
-                changed = True
-                break
-
-    for index in range(len(labels) - 1):
-        current = labels[index]
-        following = labels[index + 1]
-        if not current or not following or current == following:
-            continue
-        word = _normalized_word(segments[index].text)
-        next_text = segments[index + 1].text.strip()
-        if (
-            word in _BOUNDARY_PREFIX_WORDS
-            and next_text
-            and next_text[0].islower()
-            and segments[index].end_time - segments[index].start_time <= 450
-            and segments[index + 1].start_time - segments[index].end_time <= max_edge_gap
-        ):
-            labels[index] = following
+                labels[index] = following
 
     # A diarization boundary can land after an adverb and strand a tiny
     # subject phrase ("He certainly / delivered...") on the prior speaker.
     # Keep this deliberately narrow so complete replies and interruptions are
     # not absorbed into the next turn.
-    for boundary in range(2, len(labels)):
+    for boundary in range(2, len(labels)) if "move_subject" in enabled else ():
         previous = labels[boundary - 1]
         following = labels[boundary]
         next_text = segments[boundary].text.strip()
@@ -681,6 +1091,14 @@ def smooth_speaker_assignments(
             ):
                 labels[start:boundary] = [following] * phrase_length
                 break
+
+    if "snap_continuations" in enabled:
+        _snap_boundary_continuations(
+            segments,
+            labels,
+            overlap_regions,
+            max_edge_gap,
+        )
 
     for segment, label in zip(segments, labels):
         segment.speaker_id = label

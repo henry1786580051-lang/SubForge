@@ -19,7 +19,7 @@ def test_core_does_not_depend_on_backend_or_ui():
     violations = []
     for path in (ROOT / "subforge" / "core").rglob("*.py"):
         for module in _imports(path):
-            if module == "app" or module.startswith(("app.", "backend.", "subforge.ui")):
+            if module == "app" or module.startswith(("app.", "backend.")):
                 violations.append(f"{path.relative_to(ROOT)} -> {module}")
 
     assert violations == []
@@ -30,7 +30,7 @@ def test_settings_model_does_not_depend_on_interface_layers():
     for path in (ROOT / "subforge" / "settings").rglob("*.py"):
         for module in _imports(path):
             if module == "app" or module.startswith(
-                ("app.", "backend.", "subforge.ui", "subforge.cli")
+                ("app.", "backend.", "subforge.cli")
             ):
                 violations.append(f"{path.relative_to(ROOT)} -> {module}")
 
@@ -42,14 +42,14 @@ def test_application_layer_does_not_depend_on_interface_layers():
     for path in (ROOT / "subforge" / "application").rglob("*.py"):
         for module in _imports(path):
             if module == "app" or module.startswith(
-                ("app.", "backend.", "subforge.ui", "subforge.cli")
+                ("app.", "backend.", "subforge.cli")
             ):
                 violations.append(f"{path.relative_to(ROOT)} -> {module}")
 
     assert violations == []
 
 
-def test_current_desktop_launcher_does_not_import_legacy_pyqt_ui():
+def test_current_desktop_launcher_does_not_import_removed_pyqt_ui():
     imports = _imports(ROOT / "launcher.py")
 
     assert not any(

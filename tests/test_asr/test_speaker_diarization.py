@@ -8,6 +8,7 @@ import subforge.core.asr.speaker_diarization as diarization_module
 from subforge.core.asr.asr_data import ASRData, ASRDataSeg
 from subforge.core.asr.speaker_diarization import (
     SpeakerTurn,
+    SpeakerTurns,
     _deserialize_cached_turns,
     _select_diarization_device,
     assign_speakers,
@@ -80,6 +81,7 @@ def test_diarize_audio_reloads_pipeline_on_mps_failure(tmp_path, monkeypatch):
     audio_path = tmp_path / "audio.wav"
     audio_path.write_bytes(b"audio")
     devices: list[str] = []
+    pipeline_kwargs: list[dict[str, int]] = []
     load_count = 0
 
     class FakePipeline:
@@ -89,7 +91,8 @@ def test_diarize_audio_reloads_pipeline_on_mps_failure(tmp_path, monkeypatch):
         def to(self, device):
             devices.append(str(device))
 
-        def __call__(self, _audio, **_kwargs):
+        def __call__(self, _audio, **kwargs):
+            pipeline_kwargs.append(kwargs)
             if self.fail:
                 raise RuntimeError("unsupported MPS operator")
             segment = SimpleNamespace(start=0.0, end=1.0)
@@ -121,12 +124,77 @@ def test_diarize_audio_reloads_pipeline_on_mps_failure(tmp_path, monkeypatch):
     turns = diarization_module.diarize_audio(
         str(audio_path),
         model_dir=tmp_path,
-        num_speakers=2,
+        num_speakers=None,
+        min_speakers=2,
+        max_speakers=10,
     )
 
     assert load_count == 2
     assert devices == ["mps", "cpu"]
+    assert pipeline_kwargs == [
+        {"min_speakers": 2, "max_speakers": 10},
+        {"min_speakers": 2, "max_speakers": 10},
+    ]
     assert turns == [SpeakerTurn(0, 1_000, "Speaker 1")]
+    assert turns.execution_device == "cpu"
+
+
+def test_diarize_audio_retains_regular_and_exclusive_outputs(tmp_path, monkeypatch):
+    model_dir = tmp_path / "pyannote-speaker-diarization-community-1"
+    _write_community_model(model_dir)
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"audio")
+
+    class Annotation:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def itertracks(self, *, yield_label):
+            assert yield_label
+            for start, end, label in self.rows:
+                yield SimpleNamespace(start=start, end=end), None, label
+
+    regular = Annotation([(0.0, 1.0, "A"), (0.8, 1.4, "B")])
+    exclusive = Annotation([(0.0, 0.9, "A"), (0.9, 1.4, "B")])
+
+    class FakePipeline:
+        def to(self, _device):
+            return None
+
+        def __call__(self, _audio, **_kwargs):
+            return SimpleNamespace(
+                speaker_diarization=regular,
+                exclusive_speaker_diarization=exclusive,
+            )
+
+    class PipelineFactory:
+        @staticmethod
+        def from_pretrained(*_args, **_kwargs):
+            return FakePipeline()
+
+    fake_audio_module = ModuleType("pyannote.audio")
+    fake_audio_module.Pipeline = PipelineFactory
+    fake_torch_module = ModuleType("torch")
+    fake_torch_module.device = lambda name: name
+    monkeypatch.setitem(sys.modules, "pyannote.audio", fake_audio_module)
+    monkeypatch.setitem(sys.modules, "torch", fake_torch_module)
+    monkeypatch.setattr(diarization_module, "_load_waveform", lambda _path: object())
+    monkeypatch.setattr(diarization_module, "_select_diarization_device", lambda _torch: "cpu")
+    import subforge.core.utils.cache as cache_module
+
+    monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: False)
+
+    turns = diarization_module.diarize_audio(str(audio_path), model_dir=tmp_path, num_speakers=2)
+
+    assert turns == [
+        SpeakerTurn(0, 900, "Speaker 1"),
+        SpeakerTurn(900, 1_400, "Speaker 2"),
+    ]
+    assert turns.regular_turns == [
+        SpeakerTurn(0, 1_000, "Speaker 1"),
+        SpeakerTurn(800, 1_400, "Speaker 2"),
+    ]
+    assert turns.overlap_regions == [(800, 1_000)]
 
 
 def test_assign_speakers_preserves_text_and_timestamps():
@@ -175,7 +243,7 @@ def test_assign_speakers_does_not_fill_distant_silence():
     assert data.segments[0].speaker_id == ""
 
 
-def test_assign_speakers_suppresses_only_short_isolated_flip():
+def test_assign_speakers_preserves_short_acoustic_speaker_flip():
     data = ASRData(
         [
             ASRDataSeg("one", 0, 200),
@@ -191,7 +259,11 @@ def test_assign_speakers_suppresses_only_short_isolated_flip():
 
     assign_speakers(data, turns)
 
-    assert [segment.speaker_id for segment in data] == ["Speaker 1"] * 3
+    assert [segment.speaker_id for segment in data] == [
+        "Speaker 1",
+        "Speaker 2",
+        "Speaker 1",
+    ]
 
 
 def test_smooth_speaker_assignments_repairs_island_and_boundary_prefix():
@@ -205,7 +277,10 @@ def test_smooth_speaker_assignments_repairs_island_and_boundary_prefix():
         ]
     )
 
-    smooth_speaker_assignments(data)
+    smooth_speaker_assignments(
+        data,
+        stages=frozenset({"suppress_islands", "move_prefix"}),
+    )
 
     assert [segment.speaker_id for segment in data] == [
         "Speaker 1",
@@ -238,7 +313,7 @@ def test_smooth_speaker_assignments_repairs_longer_incomplete_island():
         ]
     )
 
-    smooth_speaker_assignments(data)
+    smooth_speaker_assignments(data, stages=frozenset({"suppress_islands"}))
 
     assert [segment.speaker_id for segment in data] == ["Speaker 1"] * 3
 
@@ -252,11 +327,155 @@ def test_smooth_speaker_assignments_preserves_complete_short_interjection():
         ]
     )
 
-    smooth_speaker_assignments(data)
+    smooth_speaker_assignments(data, stages=frozenset({"suppress_islands"}))
 
     assert [segment.speaker_id for segment in data] == [
         "Speaker 1",
         "Speaker 2",
+        "Speaker 1",
+    ]
+
+
+def test_smooth_speaker_assignments_moves_lowercase_tail_to_previous_speaker():
+    data = ASRData(
+        [
+            ASRDataSeg("without", 0, 300, speaker_id="Speaker 1"),
+            ASRDataSeg("realizing", 320, 600, speaker_id="Speaker 2"),
+            ASRDataSeg("that", 620, 760, speaker_id="Speaker 2"),
+            ASRDataSeg("we're", 780, 960, speaker_id="Speaker 2"),
+            ASRDataSeg("doing", 980, 1_180, speaker_id="Speaker 2"),
+            ASRDataSeg("it.", 1_200, 1_400, speaker_id="Speaker 2"),
+            ASRDataSeg("I", 1_520, 1_620, speaker_id="Speaker 2"),
+            ASRDataSeg("don't", 1_640, 1_820, speaker_id="Speaker 2"),
+        ]
+    )
+
+    smooth_speaker_assignments(data, stages=frozenset({"snap_continuations"}))
+
+    assert [segment.speaker_id for segment in data] == [
+        "Speaker 1",
+        "Speaker 1",
+        "Speaker 1",
+        "Speaker 1",
+        "Speaker 1",
+        "Speaker 1",
+        "Speaker 2",
+        "Speaker 2",
+    ]
+
+
+def test_smooth_speaker_assignments_keeps_question_with_previous_speaker():
+    data = ASRData(
+        [
+            ASRDataSeg("a", 0, 100, speaker_id="Speaker 2"),
+            ASRDataSeg("huge", 120, 300, speaker_id="Speaker 2"),
+            ASRDataSeg("response.", 320, 700, speaker_id="Speaker 1"),
+            ASRDataSeg("Why", 720, 900, speaker_id="Speaker 1"),
+            ASRDataSeg("do", 920, 1_020, speaker_id="Speaker 1"),
+            ASRDataSeg("you", 1_040, 1_160, speaker_id="Speaker 1"),
+            ASRDataSeg("think", 1_180, 1_400, speaker_id="Speaker 1"),
+            ASRDataSeg("that", 1_420, 1_560, speaker_id="Speaker 1"),
+            ASRDataSeg("hit?", 1_580, 1_900, speaker_id="Speaker 1"),
+            ASRDataSeg("This", 2_100, 2_300, speaker_id="Speaker 1"),
+            ASRDataSeg("was", 2_320, 2_500, speaker_id="Speaker 1"),
+        ]
+    )
+
+    smooth_speaker_assignments(data, stages=frozenset({"snap_continuations"}))
+
+    assert [segment.speaker_id for segment in data] == [
+        "Speaker 2",
+        "Speaker 2",
+        "Speaker 2",
+        "Speaker 2",
+        "Speaker 2",
+        "Speaker 2",
+        "Speaker 2",
+        "Speaker 2",
+        "Speaker 2",
+        "Speaker 1",
+        "Speaker 1",
+    ]
+
+
+def test_smooth_speaker_assignments_preserves_long_lowercase_new_turn():
+    data = ASRData(
+        [
+            ASRDataSeg("Right.", 0, 300, speaker_id="Speaker 1"),
+            ASRDataSeg("the", 320, 450, speaker_id="Speaker 2"),
+            ASRDataSeg("stick", 470, 650, speaker_id="Speaker 2"),
+            ASRDataSeg("shift", 670, 850, speaker_id="Speaker 2"),
+            ASRDataSeg("is", 870, 980, speaker_id="Speaker 2"),
+            ASRDataSeg("one", 1_000, 1_160, speaker_id="Speaker 2"),
+            ASRDataSeg("of", 1_180, 1_280, speaker_id="Speaker 2"),
+            ASRDataSeg("your", 1_300, 1_480, speaker_id="Speaker 2"),
+            ASRDataSeg("examples", 1_500, 1_900, speaker_id="Speaker 2"),
+        ]
+    )
+
+    smooth_speaker_assignments(data, stages=frozenset({"snap_continuations"}))
+
+    assert [segment.speaker_id for segment in data] == [
+        "Speaker 1",
+        "Speaker 2",
+        "Speaker 2",
+        "Speaker 2",
+        "Speaker 2",
+        "Speaker 2",
+        "Speaker 2",
+        "Speaker 2",
+        "Speaker 2",
+    ]
+
+
+def test_smooth_speaker_assignments_repairs_incomplete_left_suffix():
+    data = ASRData(
+        [
+            ASRDataSeg("Welcome back.", 0, 600, speaker_id="Speaker 2"),
+            ASRDataSeg("I'm", 700, 880, speaker_id="Speaker 2"),
+            ASRDataSeg("glad", 900, 1_100, speaker_id="Speaker 2"),
+            ASRDataSeg("to", 1_120, 1_220, speaker_id="Speaker 1"),
+            ASRDataSeg("be", 1_240, 1_340, speaker_id="Speaker 1"),
+            ASRDataSeg("here.", 1_360, 1_620, speaker_id="Speaker 1"),
+        ]
+    )
+
+    smooth_speaker_assignments(data, stages=frozenset({"snap_continuations"}))
+
+    assert [segment.speaker_id for segment in data] == [
+        "Speaker 2",
+        "Speaker 1",
+        "Speaker 1",
+        "Speaker 1",
+        "Speaker 1",
+        "Speaker 1",
+    ]
+
+
+def test_smooth_speaker_assignments_does_not_move_left_suffix_in_real_overlap():
+    data = ASRData(
+        [
+            ASRDataSeg("Welcome back.", 0, 600, speaker_id="Speaker 2"),
+            ASRDataSeg("I'm", 700, 880, speaker_id="Speaker 2"),
+            ASRDataSeg("glad", 900, 1_100, speaker_id="Speaker 2"),
+            ASRDataSeg("To", 1_120, 1_220, speaker_id="Speaker 1"),
+            ASRDataSeg("be", 1_240, 1_340, speaker_id="Speaker 1"),
+            ASRDataSeg("here.", 1_360, 1_620, speaker_id="Speaker 1"),
+        ]
+    )
+
+    smooth_speaker_assignments(
+        data,
+        overlap_regions=[(690, 1_230)],
+        stages=frozenset({"snap_continuations"}),
+    )
+
+    assert [segment.speaker_id for segment in data] == [
+        "Speaker 2",
+        "Speaker 2",
+        "Speaker 2",
+        "Speaker 1",
+        "Speaker 1",
         "Speaker 1",
     ]
 
@@ -270,7 +489,7 @@ def test_smooth_speaker_assignments_repairs_near_boundary_question_island():
         ]
     )
 
-    smooth_speaker_assignments(data)
+    smooth_speaker_assignments(data, stages=frozenset({"suppress_islands"}))
 
     assert [segment.speaker_id for segment in data] == ["Speaker 2"] * 3
 
@@ -286,7 +505,7 @@ def test_smooth_speaker_assignments_repairs_short_subject_phrase_at_boundary():
         ]
     )
 
-    smooth_speaker_assignments(data)
+    smooth_speaker_assignments(data, stages=frozenset({"move_subject"}))
 
     assert [segment.speaker_id for segment in data] == [
         "Speaker 1",
@@ -309,7 +528,12 @@ def test_smooth_speaker_assignments_preserves_demonstrative_turn_ending():
         ]
     )
 
-    smooth_speaker_assignments(data)
+    smooth_speaker_assignments(
+        data,
+        stages=frozenset(
+            {"suppress_islands", "move_prefix", "move_subject", "snap_continuations"}
+        ),
+    )
 
     assert [segment.speaker_id for segment in data] == [
         "Speaker 2",
@@ -364,9 +588,7 @@ def test_require_local_diarization_model_explains_cloud_placeholder(monkeypatch,
     )
 
     with pytest.raises(RuntimeError, match="cloud placeholders"):
-        require_local_diarization_model(
-            "pyannote/speaker-diarization-community-1", tmp_path
-        )
+        require_local_diarization_model("pyannote/speaker-diarization-community-1", tmp_path)
 
 
 def test_require_local_diarization_model_fails_before_asr(tmp_path: Path):
@@ -389,3 +611,28 @@ def test_cached_diarization_turns_are_strictly_validated():
         SpeakerTurn(510, 900, "Speaker 2"),
     ]
     assert _deserialize_cached_turns([{"start_ms": 500, "end_ms": 100}]) == []
+
+
+def test_cached_diarization_turns_restore_overlap_regions():
+    cached = {
+        "turns": [
+            {"start_ms": 0, "end_ms": 500, "speaker_id": "Speaker 1"},
+            {"start_ms": 510, "end_ms": 900, "speaker_id": "Speaker 2"},
+        ],
+        "overlap_regions": [[320, 410]],
+        "regular_turns": [
+            {"start_ms": 0, "end_ms": 500, "speaker_id": "Speaker 1"},
+            {"start_ms": 320, "end_ms": 410, "speaker_id": "Speaker 2"},
+        ],
+        "execution_device": "mps",
+    }
+
+    turns = _deserialize_cached_turns(cached)
+
+    assert isinstance(turns, SpeakerTurns)
+    assert turns.overlap_regions == [(320, 410)]
+    assert turns.regular_turns == [
+        SpeakerTurn(0, 500, "Speaker 1"),
+        SpeakerTurn(320, 410, "Speaker 2"),
+    ]
+    assert turns.execution_device == "mps"

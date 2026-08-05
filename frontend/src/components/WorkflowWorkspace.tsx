@@ -468,9 +468,15 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
     () => models.filter((model) => model.category === "whisperx" && model.type === "alignment"),
     [models]
   );
-  const diarizationModels = useMemo(
-    () => models.filter((model) => model.category === "whisperx" && model.type === "diarization"),
+  const speakerModels = useMemo(
+    () => models.filter(
+      (model) => model.category === "whisperx" && ["diarization", "speaker_verification"].includes(model.type)
+    ),
     [models]
+  );
+  const diarizationModels = useMemo(
+    () => speakerModels.filter((model) => model.type === "diarization"),
+    [speakerModels]
   );
   const diarizationReady =
     config.speakerDiarization === "off" ||
@@ -685,7 +691,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
 
               {config.speakerDiarization !== "off" && (
                 <div className="space-y-3 border-t border-border pt-3">
-                  {diarizationModels.map((model) => (
+                  {speakerModels.map((model) => (
                     <ModelRow
                       key={model.id}
                       model={model}
@@ -696,7 +702,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                       onDownload={() => void downloadModel(model.id)}
                     />
                   ))}
-                  {!diarizationModels.length && (
+                  {!speakerModels.length && (
                     <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] leading-4 text-amber-800">
                       未找到 Community-1 模型配置，请检查后端模型清单。
                     </p>

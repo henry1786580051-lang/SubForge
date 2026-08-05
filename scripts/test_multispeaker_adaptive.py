@@ -6,14 +6,19 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 import tempfile
 from collections import Counter
 from pathlib import Path
 
-from subforge.core.asr.asr_data import ASRData
-from subforge.core.asr.transcribe import transcribe
-from subforge.core.entities import TranscribeConfig, TranscribeModelEnum
-from subforge.core.utils.video_utils import video2audio
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from subforge.core.asr.asr_data import ASRData  # noqa: E402
+from subforge.core.asr.transcribe import transcribe  # noqa: E402
+from subforge.core.entities import TranscribeConfig, TranscribeModelEnum  # noqa: E402
+from subforge.core.utils.video_utils import video2audio  # noqa: E402
 
 
 def _srt_summary(path: Path) -> dict[str, int | str]:

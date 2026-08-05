@@ -1,4 +1,3 @@
-import hashlib
 import os
 import shutil
 import tempfile
@@ -6,8 +5,7 @@ import time
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import APIRouter, HTTPException, Query, UploadFile
 
 from app.security import validate_path
 
@@ -40,30 +38,8 @@ def cleanup_stale_uploads(max_age_seconds: int = 7 * 24 * 60 * 60) -> None:
 
 
 def cleanup_session_uploads() -> None:
-    """Remove uploads and thumbnails owned by this application process."""
+    """Remove uploads owned by this application process."""
     shutil.rmtree(UPLOAD_DIR, ignore_errors=True)
-
-
-def _parse_range_header(range_header: str, file_size: int) -> tuple[int, int]:
-    """Parse one HTTP byte range and reject malformed or multipart ranges."""
-    if file_size <= 0 or not range_header.startswith("bytes="):
-        raise ValueError("Invalid Range header")
-    value = range_header[6:].strip()
-    if not value or "," in value or "-" not in value:
-        raise ValueError("Invalid Range header")
-
-    start_text, end_text = value.split("-", 1)
-    if not start_text:
-        suffix_length = int(end_text)
-        if suffix_length <= 0:
-            raise ValueError("Invalid suffix range")
-        return max(0, file_size - suffix_length), file_size - 1
-
-    start = int(start_text)
-    end = int(end_text) if end_text else file_size - 1
-    if start < 0 or start >= file_size or end < start:
-        raise ValueError("Range out of bounds")
-    return start, min(end, file_size - 1)
 
 
 @router.post("/upload")
@@ -179,93 +155,3 @@ def get_file_info(path: str = Query(..., description="File path")):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/thumbnail")
-def get_thumbnail(path: str = Query(...)):
-    """Generate a video thumbnail."""
-    import subprocess
-
-    try:
-        file_path = validate_path(path)
-    except ValueError:
-        raise HTTPException(status_code=403, detail="Access denied")
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="File not found")
-
-    path_hash = hashlib.sha256(str(file_path).encode("utf-8")).hexdigest()[:16]
-    thumb_path = UPLOAD_DIR / f"{file_path.stem}_{path_hash}_thumb.jpg"
-
-    if not thumb_path.exists() or thumb_path.stat().st_mtime_ns < file_path.stat().st_mtime_ns:
-        result = subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-i",
-                str(file_path),
-                "-ss",
-                "00:00:01",
-                "-vframes",
-                "1",
-                "-vf",
-                "scale=320:-1",
-                str(thumb_path),
-            ],
-            capture_output=True,
-            timeout=30,
-            creationflags=(
-                getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
-            ),
-        )
-        if result.returncode != 0:
-            raise HTTPException(status_code=500, detail="Thumbnail generation failed")
-
-    return FileResponse(thumb_path, media_type="image/jpeg")
-
-
-@router.get("/stream")
-def stream_video(request: Request, path: str = Query(...)):
-    """Stream a video file for HTML5 video player with range support."""
-    import mimetypes
-    import os
-
-    try:
-        file_path = validate_path(path)
-    except ValueError:
-        raise HTTPException(status_code=403, detail="Access denied")
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="File not found")
-
-    media_type = mimetypes.guess_type(str(file_path))[0] or "video/mp4"
-    file_size = os.path.getsize(file_path)
-
-    # Handle range requests for video seeking
-    range_header = request.headers.get("range")
-    if range_header:
-        try:
-            start, end = _parse_range_header(range_header, file_size)
-        except (ValueError, IndexError):
-            raise HTTPException(status_code=416, detail="Invalid Range header")
-
-        def iter_range():
-            with open(file_path, "rb") as f:
-                f.seek(start)
-                remaining = end - start + 1
-                chunk_size = 64 * 1024
-                while remaining > 0:
-                    read_size = min(chunk_size, remaining)
-                    data = f.read(read_size)
-                    if not data:
-                        break
-                    remaining -= len(data)
-                    yield data
-
-        headers = {
-            "Content-Range": f"bytes {start}-{end}/{file_size}",
-            "Accept-Ranges": "bytes",
-            "Content-Length": str(end - start + 1),
-            "Content-Type": media_type,
-        }
-        return StreamingResponse(iter_range(), status_code=206, headers=headers)
-
-    return FileResponse(file_path, media_type=media_type)

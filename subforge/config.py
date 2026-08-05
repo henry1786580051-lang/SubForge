@@ -1,6 +1,5 @@
 import logging
 import os
-import shutil
 import sys
 from pathlib import Path
 
@@ -50,18 +49,13 @@ else:
     WORK_PATH = Path.home() / APP_NAME
 
 ASSETS_PATH = RESOURCE_PATH / "assets"
-TRANSLATIONS_PATH = RESOURCE_PATH / "translations"
 
 # Writable user data. Keep generated/downloaded files out of frozen bundles and
 # package directories so app upgrades are just replacing the program files.
 if _IS_DEV:
     BIN_PATH = RESOURCE_PATH / "bin"
-    SUBTITLE_STYLE_PATH = RESOURCE_PATH / "subtitle_style"
-    FONTS_PATH = RESOURCE_PATH / "fonts"
 else:
     BIN_PATH = APPDATA_PATH / "bin"
-    SUBTITLE_STYLE_PATH = APPDATA_PATH / "resource" / "subtitle_style"
-    FONTS_PATH = APPDATA_PATH / "resource" / "fonts"
 
 BUNDLED_BIN_PATH = RESOURCE_PATH / "bin"
 
@@ -77,26 +71,9 @@ FASTER_WHISPER_PATH = BIN_PATH / "Faster-Whisper-XXL"
 LOG_LEVEL = logging.INFO
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
-def _copy_missing_tree(src: Path, dst: Path) -> None:
-    """Copy bundled default files into the writable user directory."""
-    if not src.exists():
-        return
-    dst.mkdir(parents=True, exist_ok=True)
-    for item in src.iterdir():
-        target = dst / item.name
-        if item.is_dir():
-            _copy_missing_tree(item, target)
-        elif not target.exists():
-            shutil.copy2(item, target)
-
-
 # Create data directories
 for p in [APPDATA_PATH, CACHE_PATH, LOG_PATH, WORK_PATH, MODEL_PATH, BIN_PATH]:
     p.mkdir(parents=True, exist_ok=True)
-
-if not _IS_DEV:
-    _copy_missing_tree(RESOURCE_PATH / "subtitle_style", SUBTITLE_STYLE_PATH)
-    _copy_missing_tree(RESOURCE_PATH / "fonts", FONTS_PATH)
 
 # Add bin paths to PATH. User-downloaded binaries take precedence over bundled
 # tools, while packaged ffmpeg/ffprobe still work out of the box.

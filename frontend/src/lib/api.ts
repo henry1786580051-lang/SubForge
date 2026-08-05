@@ -44,10 +44,6 @@ export const filesApi = {
   },
   info: (path: string) =>
     request<FileInfo>(`/api/files/info?path=${encodeURIComponent(path)}`),
-  thumbnailUrl: (path: string) =>
-    `${API_BASE}/api/files/thumbnail?path=${encodeURIComponent(path)}`,
-  streamUrl: (path: string) =>
-    `${API_BASE}/api/files/stream?path=${encodeURIComponent(path)}`,
 };
 
 type NativeOpenResult = {

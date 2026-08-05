@@ -74,11 +74,11 @@ features:
 
   - icon: 📦
     title: Batch Processing
-    details: Drag and drop videos for automatic processing with batch queue support. From recognition to translation to synthesis, zero manual intervention.
+    details: Drag and drop media for automatic transcription, subtitle restructuring, and translation with live task progress.
 
-  - icon: 🎨
-    title: Professional Subtitle Styles
-    details: Built-in style templates. Support hard/soft subtitles with SRT/ASS/VTT multi-format output.
+  - icon: ✍️
+    title: Subtitle Review & Export
+    details: Review timestamps, source text, translations, and quality warnings in one workspace, then save or export clean SRT subtitles.
 
   - icon: 🔧
     title: Advanced Features
@@ -147,12 +147,11 @@ chmod +x run.sh
 - Maintains complete timeline consistency
 - Supports 37 target languages
 
-### Video Synthesis
+### Subtitle Output
 
-- Supports hard subtitles and soft subtitles
-- Rich subtitle style templates
-- Supports multiple subtitle formats (SRT, ASS, VTT, TXT)
-- Supports batch video processing
+- Keeps source media unchanged
+- Supports SRT, ASS, TXT, and JSON subtitle output
+- Provides bilingual layout and timeline-quality checks
 
 ## Get Started
 

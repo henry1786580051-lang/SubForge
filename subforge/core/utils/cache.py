@@ -52,7 +52,6 @@ def _open_cache(name: str, **kwargs: Any) -> Cache:
 # Predefined cache instances for common use cases
 _llm_cache = _open_cache("llm_translation")
 _asr_cache = _open_cache("asr_results", tag_index=True)
-_tts_cache = _open_cache("tts_audio")
 _translate_cache = _open_cache("translate_results")
 _version_state_cache = _open_cache("version_state")
 _diarization_cache = _open_cache("speaker_diarization")
@@ -71,11 +70,6 @@ def get_asr_cache() -> Cache:
 def get_translate_cache() -> Cache:
     """Get translate cache instance."""
     return _translate_cache
-
-
-def get_tts_cache() -> Cache:
-    """Get TTS audio cache instance."""
-    return _tts_cache
 
 
 def get_version_state_cache() -> Cache:

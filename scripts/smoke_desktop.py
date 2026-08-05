@@ -7,13 +7,16 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
 
-def _run(cmd: list[str], *, env: dict[str, str] | None = None, cwd: Path | None = None) -> subprocess.CompletedProcess:
+def _run(
+    cmd: list[str], *, env: dict[str, str] | None = None, cwd: Path | None = None
+) -> subprocess.CompletedProcess:
     print("+ " + " ".join(str(part) for part in cmd))
     return subprocess.run(cmd, cwd=str(cwd) if cwd else None, env=env, check=True, text=True)
 
@@ -54,59 +57,76 @@ def _find_bundled_tool(bundle: Path, name: str) -> Path:
     raise FileNotFoundError(f"{name} not found in bundle or PATH")
 
 
-def _write_sample_srt(path: Path) -> None:
-    path.write_text(
-        "1\n"
-        "00:00:00,100 --> 00:00:01,400\n"
-        "Hello from SubForge.\n\n"
-        "2\n"
-        "00:00:01,500 --> 00:00:02,600\n"
-        "这是一条真实合成测试字幕。\n",
-        encoding="utf-8",
+def _create_sample_video(ffmpeg: Path, output: Path) -> None:
+    _run(
+        [
+            str(ffmpeg),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=640x360:rate=24",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=880:sample_rate=44100",
+            "-t",
+            "3",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            "-shortest",
+            "-y",
+            str(output),
+        ]
     )
 
 
-def _create_sample_video(ffmpeg: Path, output: Path) -> None:
-    _run([
-        str(ffmpeg),
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-f",
-        "lavfi",
-        "-i",
-        "testsrc2=size=640x360:rate=24",
-        "-f",
-        "lavfi",
-        "-i",
-        "sine=frequency=880:sample_rate=44100",
-        "-t",
-        "3",
-        "-pix_fmt",
-        "yuv420p",
-        "-c:v",
-        "libx264",
-        "-c:a",
-        "aac",
-        "-shortest",
-        "-y",
-        str(output),
-    ])
-
-
 def _duration(ffprobe: Path, media: Path) -> float:
-    result = subprocess.run([
-        str(ffprobe),
-        "-v",
-        "error",
-        "-show_entries",
-        "format=duration",
-        "-of",
-        "json",
-        str(media),
-    ], check=True, capture_output=True, text=True)
+    result = subprocess.run(
+        [
+            str(ffprobe),
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "json",
+            str(media),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     data = json.loads(result.stdout)
     return float(data["format"]["duration"])
+
+
+def _verify_ffmpeg_runtime(ffmpeg: Path, ffprobe: Path) -> None:
+    for executable in (ffmpeg, ffprobe):
+        result = subprocess.run(
+            [str(executable), "-version"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        first_line = result.stdout.splitlines()[0]
+        if not re.search(r"\bversion 8\.1(?:\.\d+)?\b", first_line):
+            raise RuntimeError(f"Expected FFmpeg 8.1 runtime, got: {first_line}")
+
+    encoders = subprocess.run(
+        [str(ffmpeg), "-hide_banner", "-encoders"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    if " pcm_s16le " not in encoders:
+        raise RuntimeError("Bundled FFmpeg is missing the PCM encoder required by ASR")
 
 
 def main() -> int:
@@ -118,13 +138,12 @@ def main() -> int:
     exe = _find_executable(bundle)
     ffmpeg = _find_bundled_tool(bundle, "ffmpeg")
     ffprobe = _find_bundled_tool(bundle, "ffprobe")
+    _verify_ffmpeg_runtime(ffmpeg, ffprobe)
 
     with tempfile.TemporaryDirectory(prefix="subforge-smoke-") as tmp:
         tmp_path = Path(tmp)
 
         video = tmp_path / "sample.mp4"
-        subtitle = tmp_path / "sample.srt"
-        _write_sample_srt(subtitle)
         _create_sample_video(ffmpeg, video)
 
         # Verify ffmpeg/ffprobe work

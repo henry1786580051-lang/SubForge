@@ -113,12 +113,15 @@ def test_windows_lists_standard_whisperx_and_downloadable_tool_models(tmp_path, 
     whisperx_model = next(model for model in models if model["id"] == "whisperx-large-v3")
     alignment = next(model for model in models if model["type"] == "alignment")
     diarization = next(model for model in models if model["type"] == "diarization")
+    verifier = next(model for model in models if model["type"] == "speaker_verification")
 
     assert whisperx_model["type"] == "ctranslate2"
     assert whisperx_model["selected"] is True
     assert whisperx_model["state"] == "on_demand"
     assert alignment["downloadable"] is True
     assert diarization["downloadable"] is True
+    assert verifier["downloadable"] is True
+    assert verifier["downloaded"] is False
 
 
 def test_windows_reports_managed_whisperx_model_as_ready(tmp_path, monkeypatch):
@@ -217,6 +220,39 @@ def test_huggingface_alignment_download_uses_whisperx_cache_layout(tmp_path, mon
 
     assert completed["task_id"] == "task-1"
     assert transcribe_api._alignment_model_ready(model_id, models_dir) is True
+
+
+def test_speaker_verification_download_is_pinned_and_public(tmp_path, monkeypatch):
+    model_id = "whisperx-speaker-verification-ecapa512-lm"
+    dest = tmp_path / transcribe_api.LOCAL_SPEAKER_VERIFICATION_DIR
+    completed = {}
+
+    def fake_snapshot_download(repo_id, revision, local_dir, allow_patterns):
+        assert repo_id == "Wespeaker/wespeaker-ecapa-tdnn512-LM"
+        assert revision == transcribe_api.SPEAKER_VERIFICATION_MODEL_REVISION
+        assert transcribe_api.SPEAKER_VERIFICATION_MODEL_FILE in allow_patterns
+        model_path = Path(local_dir) / transcribe_api.SPEAKER_VERIFICATION_MODEL_FILE
+        model_path.parent.mkdir(parents=True)
+        with model_path.open("wb") as model_file:
+            model_file.truncate(20 * 1024 * 1024)
+        return local_dir
+
+    huggingface_hub = types.ModuleType("huggingface_hub")
+    huggingface_hub.snapshot_download = fake_snapshot_download
+    monkeypatch.setitem(sys.modules, "huggingface_hub", huggingface_hub)
+    monkeypatch.setattr(
+        transcribe_api.task_manager, "update_progress", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        transcribe_api.task_manager,
+        "complete_task",
+        lambda task_id, result: completed.update({"task_id": task_id, **result}),
+    )
+
+    asyncio.run(transcribe_api._download_speaker_verification_model("task-2", model_id, dest))
+
+    assert completed == {"task_id": "task-2", "path": str(dest)}
+    assert transcribe_api.is_speaker_verification_model_ready(tmp_path)
 
 
 def test_build_transcribe_config_uses_auto_or_manual_alignment(tmp_path, monkeypatch):

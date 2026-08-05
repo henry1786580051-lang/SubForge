@@ -38,7 +38,7 @@ def _build_config(args: argparse.Namespace) -> dict:
     config["translate"]["service"] = "llm"
     config["translate"]["target_language"] = "zh-Hans"
     config["translate"]["reflect"] = False
-    config["synthesize"]["layout"] = "target-above"
+    config["subtitle"]["layout"] = "target-above"
 
     api_key = os.environ.get("MIMO_API_KEY") or os.environ.get("OPENAI_API_KEY")
     api_base = os.environ.get("MIMO_BASE_URL") or os.environ.get("OPENAI_BASE_URL")

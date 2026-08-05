@@ -138,17 +138,10 @@ def _interactive_init(args: Namespace, config_data: dict) -> int:
             _set_nested(config_data, "translate.azure_key", _prompt("Azure Translator API key [skip]: "))
             _set_nested(config_data, "translate.azure_region", _prompt("Azure Translator region [optional]: "))
         print()
-        print("LLM config is used for AI subtitle polish, LLM translation, and --adapt-length.")
+        print("LLM config is used for subtitle splitting, polish, and translation.")
         _set_nested(config_data, "llm.api_key", _prompt("LLM API key [skip]: "))
         _set_nested(config_data, "llm.api_base", _prompt(f"LLM API base [{DEFAULTS['llm']['api_base']}]: ", DEFAULTS["llm"]["api_base"]))
         _set_nested(config_data, "llm.model", _prompt(f"LLM model [{DEFAULTS['llm']['model']}]: ", DEFAULTS["llm"]["model"]))
-        print()
-        print("Dubbing config is used by 'dub' and 'process --dub-only'.")
-        _set_nested(config_data, "dubbing.preset", _prompt("Dubbing preset [edge-cn-female] (no API key): ", "edge-cn-female"))
-        _set_nested(config_data, "dubbing.api_key", _prompt("TTS API key [skip; only needed for SiliconFlow/Gemini]: "))
-        _set_nested(config_data, "dubbing.voice", _prompt("Default voice [xiaoxiao]: ", "xiaoxiao"))
-        _set_nested(config_data, "dubbing.timing", _prompt("Timing [balanced] (balanced/strict/natural/none): ", "balanced"))
-        _set_nested(config_data, "dubbing.audio_mode", _prompt("Audio mode [replace] (replace/mix/duck): ", "replace"))
     except (EOFError, KeyboardInterrupt):
         return EXIT.USAGE_ERROR
 
@@ -166,10 +159,6 @@ def _yes_no(prompt: str, default: bool) -> bool:
 def _build_onboarding_config(args: Namespace) -> dict:
     config_data = deepcopy(DEFAULTS)
     _set_nested(config_data, "translate.service", "bing")
-    _set_nested(config_data, "dubbing.preset", "edge-cn-female")
-    _set_nested(config_data, "dubbing.voice", "xiaoxiao")
-    _set_nested(config_data, "dubbing.timing", "balanced")
-    _set_nested(config_data, "dubbing.audio_mode", "replace")
 
     mappings = {
         "llm_api_key": "llm.api_key",
@@ -177,11 +166,6 @@ def _build_onboarding_config(args: Namespace) -> dict:
         "llm_model": "llm.model",
         "asr": "transcribe.asr",
         "translator": "translate.service",
-        "tts_api_key": "dubbing.api_key",
-        "dub_preset": "dubbing.preset",
-        "voice": "dubbing.voice",
-        "timing": "dubbing.timing",
-        "audio_mode": "dubbing.audio_mode",
     }
     for attr, key in mappings.items():
         value = getattr(args, attr, None)
@@ -203,16 +187,12 @@ def _render_onboarding_template(config_data: dict) -> str:
     f.write("# SubForge configuration\n")
     f.write("# Priority: CLI flags > environment variables > this file > built-in defaults.\n")
     f.write("# Keep API keys private. This file is written with 0600 permissions on Unix.\n\n")
-    f.write("# [llm] is used for AI subtitle polish, LLM translation, reflective translation, and dubbing length adaptation.\n")
+    f.write("# [llm] is used for subtitle splitting, AI polish, and LLM translation.\n")
     f.write("# [whisper_api] is only needed when transcribe.asr = \"whisper-api\".\n")
     f.write("# [transcribe] controls speech-to-text. whisper-api needs API key; whisper-cpp needs a local binary/model.\n")
     f.write("# [subtitle] split and AI polish use LLM; bing translation uses official Microsoft Azure credentials.\n")
-    f.write("# [synthesize] controls subtitle embedding/burning.\n")
-    f.write("# [dubbing] preset selects provider/model/voice defaults; edge-* presets need no API key but require network access.\n")
-    f.write("# timing controls speech fitting; audio_mode controls original audio.\n\n")
+    f.write("# Generated subtitles remain separate files; source media is never modified.\n\n")
     _write_toml(f, template_data)
-    f.write("\n# Optional multi-speaker example:\n")
-    f.write("# [dubbing.speakers.Alice]\n# voice = \"anna\"\n# [dubbing.speakers.Bob]\n# voice = \"benjamin\"\n# clone_audio = \"bob-reference.wav\"\n# clone_text = \"Exact words spoken in the reference audio.\"\n\n")
     return f.getvalue()
 
 
@@ -244,21 +224,6 @@ def _user_facing_config(config_data: dict) -> dict:
             "azure_key": config_data["translate"]["azure_key"],
             "azure_region": config_data["translate"]["azure_region"],
             "azure_endpoint": config_data["translate"]["azure_endpoint"],
-        },
-        "synthesize": {
-            "subtitle_mode": config_data["synthesize"]["subtitle_mode"],
-            "quality": config_data["synthesize"]["quality"],
-            "layout": config_data["synthesize"]["layout"],
-            "style": config_data["synthesize"]["style"],
-        },
-        "dubbing": {
-            "preset": config_data["dubbing"]["preset"],
-            "api_key": config_data["dubbing"]["api_key"],
-            "voice": config_data["dubbing"]["voice"],
-            "tts_workers": config_data["dubbing"]["tts_workers"],
-            "timing": config_data["dubbing"]["timing"],
-            "audio_mode": config_data["dubbing"]["audio_mode"],
-            "rewrite_too_long": config_data["dubbing"]["rewrite_too_long"],
         },
         "output": config_data["output"],
     }

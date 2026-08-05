@@ -11,17 +11,9 @@ from subforge.cli.config import (
     _toml_value,
     build_config,
     load_config_file,
-    load_env_overrides,
     save_config_value,
 )
 from subforge.core.entities import SubtitleConfig
-
-
-def test_default_dubbing_uses_keyless_edge_tts():
-    assert DEFAULTS["dubbing"]["provider"] == "edge"
-    assert DEFAULTS["dubbing"]["preset"] == "edge-cn-female"
-    assert DEFAULTS["dubbing"]["api_key"] == ""
-    assert DEFAULTS["dubbing"]["voice"] == "zh-CN-XiaoxiaoNeural"
 
 
 def test_default_subtitle_lengths_match_desktop_policy():
@@ -160,16 +152,3 @@ class TestBuildConfig:
         monkeypatch.setenv("VIDEOCAPTIONER_LLM_MODEL", "env-model")
         config = build_config(cli_overrides={"llm": {"model": "cli-model"}})
         assert config["llm"]["model"] == "cli-model"
-
-    def test_env_values_are_typed(self, monkeypatch):
-        monkeypatch.setenv("VIDEOCAPTIONER_TTS_MAX_SPEED", "2.0")
-        monkeypatch.setenv("VIDEOCAPTIONER_TTS_WORKERS", "3")
-        monkeypatch.setenv("VIDEOCAPTIONER_TTS_REWRITE_TOO_LONG", "true")
-        monkeypatch.setenv("VIDEOCAPTIONER_TTS_MIX_ORIGINAL_AUDIO", "false")
-
-        overrides = load_env_overrides()
-
-        assert overrides["dubbing"]["max_speed"] == 2.0
-        assert overrides["dubbing"]["tts_workers"] == 3
-        assert overrides["dubbing"]["rewrite_too_long"] is True
-        assert overrides["dubbing"]["mix_original_audio"] is False

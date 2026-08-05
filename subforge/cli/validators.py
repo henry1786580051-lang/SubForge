@@ -54,21 +54,6 @@ def validate_subtitle_input(path: Path) -> int | None:
     return None
 
 
-def validate_video_input(path: Path) -> int | None:
-    """Validate input is a video file (not audio or other). Returns exit code on failure."""
-    from subforge.cli import exit_codes as EXIT
-    ext = path.suffix.lower()
-    if ext.lstrip(".") in AUDIO_EXTENSIONS:
-        output.error(f"Input is an audio file ({ext}), not a video. Cannot burn subtitles into audio.")
-        output.hint("Use a video file (mp4, mkv, etc.) as input.")
-        return EXIT.USAGE_ERROR
-    if ext and ext.lstrip(".") not in VIDEO_EXTENSIONS:
-        output.error(f"Unsupported video format: {ext}")
-        output.hint(f"Supported: {', '.join(sorted(VIDEO_EXTENSIONS))}")
-        return EXIT.USAGE_ERROR
-    return None
-
-
 def validate_output_format(path: Path) -> int | None:
     """Validate output file extension is supported. Returns exit code on failure."""
     from subforge.cli import exit_codes as EXIT
@@ -196,74 +181,12 @@ def validate_subtitle(config: dict) -> bool:
     return True
 
 
-def validate_synthesize(config: dict) -> bool:
-    """Validate config for synthesize command."""
-    return validate_ffmpeg()
-
-
-def validate_dubbing(config: dict, *, needs_video: bool = False, rewrite: bool = False) -> bool:
-    """Validate config for dub command."""
-    provider = get(config, "dubbing.provider", "")
-    model = get(config, "dubbing.model", "")
-    preset_name = get(config, "dubbing.preset", "")
-    if preset_name:
-        try:
-            from subforge.core.dubbing.presets import get_dubbing_preset
-            preset = get_dubbing_preset(preset_name)
-        except ValueError as exc:
-            output.error(str(exc))
-            return False
-        provider = preset.provider
-        model = preset.model
-    api_key = get(config, "dubbing.api_key", "")
-    workers = get(config, "dubbing.tts_workers", 5)
-    timing = get(config, "dubbing.timing", "balanced")
-    audio_mode = get(config, "dubbing.audio_mode", "replace")
-
-    if provider not in {"siliconflow", "gemini", "edge"}:
-        output.error(f"Unsupported dubbing provider: {provider}")
-        output.hint("Supported providers: siliconflow, gemini, edge")
-        return False
-    if provider != "edge" and not api_key:
-        output.config_missing_error(
-            "TTS API key",
-            "dubbing.api_key",
-            "VIDEOCAPTIONER_TTS_API_KEY",
-            "--tts-api-key",
-        )
-        return False
-    if provider != "edge" and not model:
-        output.config_missing_error(
-            "TTS model",
-            "dubbing.model",
-            "VIDEOCAPTIONER_TTS_MODEL",
-            "--tts-model",
-        )
-        return False
-    if int(workers) < 1:
-        output.error("dubbing.tts_workers must be at least 1")
-        return False
-    if timing not in {"balanced", "strict", "natural", "none"}:
-        output.error(f"Unsupported dubbing timing: {timing}")
-        output.hint("Supported timing values: balanced, strict, natural, none")
-        return False
-    if audio_mode not in {"replace", "mix", "duck"}:
-        output.error(f"Unsupported dubbing audio mode: {audio_mode}")
-        output.hint("Supported audio modes: replace, mix, duck")
-        return False
-    if (needs_video or get(config, "dubbing.fit_mode", "tempo") == "tempo") and not validate_ffmpeg():
-        return False
-    if rewrite and not validate_llm(config):
-        return False
-    return True
-
-
-def validate_process(config: dict, no_synthesize: bool = False) -> bool:
+def validate_process(config: dict) -> bool:
     """Validate config for full process command."""
+    if not validate_ffmpeg():
+        return False
     if not validate_transcribe(config):
         return False
     if not validate_subtitle(config):
-        return False
-    if not no_synthesize and not validate_ffmpeg():
         return False
     return True

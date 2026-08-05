@@ -43,6 +43,16 @@ class DummyWordTimestampASR:
         )
 
 
+@pytest.fixture(autouse=True)
+def _skip_real_speaker_verification(monkeypatch):
+    diarization = importlib.import_module("subforge.core.asr.speaker_diarization")
+    monkeypatch.setattr(
+        diarization,
+        "acoustically_verify_speakers",
+        lambda asr_data, *_args, **_kwargs: asr_data,
+    )
+
+
 def _whisper_cpp_config() -> TranscribeConfig:
     return TranscribeConfig(
         transcribe_model=TranscribeModelEnum.WHISPER_CPP,
@@ -193,6 +203,14 @@ def test_transcribe_diarization_uses_original_audio_and_preserves_timing(monkeyp
         "require_local_diarization_model",
         lambda *_args, **_kwargs: "/tmp/diarization-model",
     )
+    verified_paths = []
+    monkeypatch.setattr(
+        diarization,
+        "acoustically_verify_speakers",
+        lambda asr_data, audio_path, *_args, **_kwargs: (
+            verified_paths.append(audio_path) or asr_data
+        ),
+    )
     monkeypatch.setattr(speech_vad, "is_available", lambda: False)
     monkeypatch.setattr(enhancer, "is_available", lambda: False)
     config = TranscribeConfig(
@@ -216,6 +234,7 @@ def test_transcribe_diarization_uses_original_audio_and_preserves_timing(monkeyp
         (2_300, 2_600),
         (2_650, 2_900),
     ]
+    assert verified_paths == ["original.wav"]
 
 
 def test_transcribe_passes_fixed_speaker_count_to_diarization(monkeypatch):
@@ -251,6 +270,46 @@ def test_transcribe_passes_fixed_speaker_count_to_diarization(monkeypatch):
     transcribe_module.transcribe("original.wav", config)
 
     assert received["num_speakers"] == 5
+
+
+def test_transcribe_bounds_automatic_speaker_count(monkeypatch):
+    diarization = importlib.import_module("subforge.core.asr.speaker_diarization")
+    speech_vad = importlib.import_module("subforge.core.asr.speech_vad")
+    received: dict[str, int | None] = {}
+
+    monkeypatch.setattr(
+        transcribe_module,
+        "_create_asr_instance",
+        lambda *_args, **_kwargs: DummyWordTimestampASR(),
+    )
+    monkeypatch.setattr(
+        diarization,
+        "require_local_diarization_model",
+        lambda *_args, **_kwargs: "/tmp/diarization-model",
+    )
+
+    def _diarize(_audio_path, **kwargs):
+        received.update(
+            {
+                "num_speakers": kwargs["num_speakers"],
+                "min_speakers": kwargs["min_speakers"],
+                "max_speakers": kwargs["max_speakers"],
+            }
+        )
+        return [diarization.SpeakerTurn(0, 4_000, "Speaker 1")]
+
+    monkeypatch.setattr(diarization, "diarize_audio", _diarize)
+    monkeypatch.setattr(speech_vad, "is_available", lambda: False)
+    config = TranscribeConfig(
+        transcribe_model=TranscribeModelEnum.WHISPERX,
+        need_word_time_stamp=True,
+        enable_audio_enhancement=False,
+        speaker_diarization="auto",
+    )
+
+    transcribe_module.transcribe("original.wav", config)
+
+    assert received == {"num_speakers": None, "min_speakers": 2, "max_speakers": 10}
 
 
 def test_transcribe_auto_diarization_failure_continues_without_labels(monkeypatch):

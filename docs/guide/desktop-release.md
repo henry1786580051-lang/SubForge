@@ -8,12 +8,13 @@ bundled `SubForge` executable without installing Python or FFmpeg.
 
 ```bash
 uv sync --frozen
-uv run --with static-ffmpeg --with pyinstaller python scripts/build_desktop.py --clean
+uv run --with pyinstaller --with pywebview python scripts/build_desktop.py --clean
 uv run python scripts/smoke_desktop.py dist/SubForge
 ```
 
-The build script downloads static `ffmpeg` and `ffprobe` for the current platform
-and bundles them under `resource/bin` inside the PyInstaller app. Runtime user data
+The build script downloads checksum-pinned FFmpeg 8.1.2 `ffmpeg` and `ffprobe`
+executables for the current platform and bundles them under `resource/bin` inside
+the PyInstaller app. Runtime user data
 is kept in the system user-data directory, so app upgrades do not overwrite
 settings, logs, cache, models, or custom subtitle styles.
 

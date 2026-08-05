@@ -14,7 +14,7 @@ SubForge 的系统架构设计。
 
 ### 1. 领域核心 (`subforge/core/`)
 
-包含 ASR、断句、优化、翻译和字幕数据结构。该层不得依赖 FastAPI、React、PyQt 或全局任务管理器。
+包含 ASR、断句、优化、翻译和字幕数据结构。该层不得依赖 FastAPI、React 或全局任务管理器。
 
 ASR 的隔离进程通过 `subforge/core/asr/worker_runtime.py` 共享原子消息写入、日志读取和退出升级策略；模型推理与时间轴算法仍由各引擎实现。
 
@@ -34,7 +34,7 @@ FastAPI 路由只负责输入输出和调用应用层，`backend/app/services/` 
 
 Next.js 负责导入、转录、翻译与字幕编辑界面；FastAPI 负责本地任务、文件和实时进度接口；pywebview 将两者封装为桌面应用。
 
-`subforge/ui/` 是冻结的旧版 PyQt 兼容界面，不是当前发布包的主界面。新功能不得依赖该目录，桌面启动器也不得导入它。
+旧 PyQt 界面已删除。桌面启动器只负责启动本地 FastAPI 服务和 pywebview 窗口。
 
 ## 依赖方向
 

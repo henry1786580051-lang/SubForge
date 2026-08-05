@@ -115,7 +115,7 @@ def run(args: Namespace, config: dict) -> int:
         output.error("--max-cjk and --max-english must be at least 1")
         return EXIT.USAGE_ERROR
     out_fmt = get(config, "output.format", "srt")
-    layout_str = get(config, "synthesize.layout", "target-above")
+    layout_str = get(config, "subtitle.layout", "target-above")
     verbose = getattr(args, "verbose", False)
     quiet = getattr(args, "quiet", False)
 

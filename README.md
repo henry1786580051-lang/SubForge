@@ -145,7 +145,7 @@ uv run subforge transcribe input.mp4 --asr whisperx --language auto --word-times
 uv run subforge subtitle input.srt
 ```
 
-更多命令请运行 `uv run subforge --help`。当前桌面应用的源码入口是 `launcher.py`；`subforge-gui` 是旧版 PyQt 界面。
+更多命令请运行 `uv run subforge --help`。桌面应用入口为 `launcher.py`，界面采用 Next.js、FastAPI 与 pywebview。
 
 ## 实测案例
 

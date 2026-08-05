@@ -97,6 +97,8 @@ optional_hiddenimports += [
     'pyannote.database',
     'pyannote.metrics',
     'pyannote.pipeline',
+    'onnxruntime',
+    'onnxruntime.capi._pybind_state',
     'lightning',
     'lightning_fabric',
     'pytorch_lightning',
@@ -146,16 +148,12 @@ backend_datas = collect_data_files('app', include_py_files=False)
 # Collect subforge prompt/resource files
 vc_datas = collect_data_files('subforge.core.prompts', include_py_files=False)
 
-# Collect only resources used by the webview desktop application. Legacy Qt
-# translations, screenshots, and alternate UI fonts remain in the source tree.
+# Collect only resources used by the webview desktop application.
 resource_datas = []
 resource_dir = os.path.join(ROOT, 'resource')
 resource_entries = [
-    'assets/default_bg.png',
     'assets/en.mp3',
     'assets/logo.png',
-    'fonts/NotoSansSC-Regular.ttf',
-    'subtitle_style',
     'ten_vad',
 ]
 for entry in resource_entries:
@@ -224,6 +222,8 @@ a = Analysis(
         'subforge.core.asr.whisper_cpp',
         'subforge.core.asr.whisperx_asr',
         'subforge.core.asr.speaker_diarization',
+        'subforge.core.asr.speaker_embedding_models',
+        'subforge.core.asr.speaker_verification',
         'subforge.core.asr.faster_whisper',
         'subforge.core.asr.chunked_asr',
         'subforge.core.asr.transcribe',
@@ -248,6 +248,8 @@ a = Analysis(
         'modelscope',
         'tensorflow', 'keras',
         'PyQt5', 'PyQt-Fluent-Widgets', 'qfluentwidgets',
+        # Pillow is imported transitively by torchvision during pyannote startup.
+        'fontTools', 'edge_tts',
         'matplotlib',
         'IPython', 'jupyter',
         'test', 'tests',

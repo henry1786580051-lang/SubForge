@@ -28,6 +28,14 @@ from subforge.core.asr.faster_whisper import (
     find_faster_whisper_model_dir,
     is_faster_whisper_model_dir,
 )
+from subforge.core.asr.speaker_embedding_models import (
+    DEFAULT_SPEAKER_VERIFICATION_MODEL,
+    LOCAL_SPEAKER_VERIFICATION_DIR,
+    SPEAKER_VERIFICATION_MODEL_FILE,
+    SPEAKER_VERIFICATION_MODEL_REVISION,
+    is_speaker_verification_model_ready,
+    speaker_verification_model_path,
+)
 from subforge.core.asr.whisperx_asr import (
     MLX_WHISPER_MODELS,
     is_valid_mlx_model_dir,
@@ -187,6 +195,19 @@ DIARIZATION_MODELS = {
         "repo": "pyannote/speaker-diarization-community-1",
         "dirname": "pyannote-speaker-diarization-community-1",
         "size": "约 34MB",
+    },
+}
+
+SPEAKER_VERIFICATION_MODELS = {
+    "whisperx-speaker-verification-ecapa512-lm": {
+        "name": "WeSpeaker ECAPA512-LM",
+        "category": "whisperx",
+        "type": "speaker_verification",
+        "repo": DEFAULT_SPEAKER_VERIFICATION_MODEL,
+        "revision": SPEAKER_VERIFICATION_MODEL_REVISION,
+        "dirname": LOCAL_SPEAKER_VERIFICATION_DIR,
+        "filename": SPEAKER_VERIFICATION_MODEL_FILE,
+        "size": "约 25MB",
     },
 }
 
@@ -848,11 +869,7 @@ async def list_whisper_models():
                 "downloaded": local_ready,
                 "downloadable": False,
                 "path": str(model_path) if local_ready else "",
-                "resolved_model": resolved
-                if local_ready
-                else repo
-                if uses_mlx
-                else model_value,
+                "resolved_model": resolved if local_ready else repo if uses_mlx else model_value,
                 "selected": selected_engine == "whisperx"
                 and (selected_model == model_value or selected_resolved == resolved),
                 "state": "ready" if local_ready else "on_demand",
@@ -935,6 +952,26 @@ async def list_whisper_models():
                 "detail": "双人/多人说话人标注" if ready else "需 Hugging Face 授权后下载",
             }
         )
+    for model_id, info in SPEAKER_VERIFICATION_MODELS.items():
+        ready = is_speaker_verification_model_ready(models_dir)
+        result.append(
+            {
+                "id": model_id,
+                "name": info["name"],
+                "category": info["category"],
+                "type": info["type"],
+                "size": info["size"],
+                "downloaded": ready,
+                "downloadable": True,
+                "path": str(speaker_verification_model_path(models_dir)),
+                "value": info["repo"],
+                "selected": selected_diarization != "off" and ready,
+                "state": "ready" if ready else "missing",
+                "detail": (
+                    "独立声纹交叉校验已启用" if ready else "可选；缺失时保留 Community-1 保守结果"
+                ),
+            }
+        )
     return result
 
 
@@ -954,6 +991,9 @@ async def download_whisper_model(req: DownloadModelRequest):
     elif req.model_id in DIARIZATION_MODELS:
         models_dir = _get_models_dir()
         model_path = models_dir / DIARIZATION_MODELS[req.model_id]["dirname"]
+    elif req.model_id in SPEAKER_VERIFICATION_MODELS:
+        models_dir = _get_models_dir()
+        model_path = models_dir / SPEAKER_VERIFICATION_MODELS[req.model_id]["dirname"]
     elif req.model_id in FASTER_WHISPER_MODELS:
         models_dir = _get_models_dir()
         model_path = models_dir / req.model_id
@@ -969,6 +1009,8 @@ async def download_whisper_model(req: DownloadModelRequest):
         from subforge.core.asr.speaker_diarization import is_diarization_model_dir
 
         model_ready = is_diarization_model_dir(model_path)
+    elif req.model_id in SPEAKER_VERIFICATION_MODELS:
+        model_ready = is_speaker_verification_model_ready(models_dir)
     elif req.model_id in FASTER_WHISPER_MODELS:
         model_ready = is_faster_whisper_model_dir(model_path)
     elif req.model_id in WHISPERX_MODELS:
@@ -990,6 +1032,9 @@ async def download_whisper_model(req: DownloadModelRequest):
 async def _download_model(task_id: str, model_id: str, dest: Path):
     if model_id in DIARIZATION_MODELS:
         await _download_diarization_model(task_id, model_id, dest)
+        return
+    if model_id in SPEAKER_VERIFICATION_MODELS:
+        await _download_speaker_verification_model(task_id, model_id, dest)
         return
     if model_id in FASTER_WHISPER_MODELS:
         await _download_faster_whisper_model(task_id, model_id, dest)
@@ -1192,6 +1237,51 @@ async def _download_diarization_model(task_id: str, model_id: str, dest: Path):
             task_id,
             "说话人模型下载失败。请确认已接受 Community-1 条款且 Token 具有读取权限：" + str(exc),
         )
+    finally:
+        if not download_lock.locked():
+            _model_download_locks.pop(str(dest), None)
+
+
+async def _download_speaker_verification_model(task_id: str, model_id: str, dest: Path):
+    """Download the pinned public ECAPA snapshot into the managed model folder."""
+    info = SPEAKER_VERIFICATION_MODELS[model_id]
+    staging = dest.with_name(f".{dest.name}.{task_id}.part")
+    download_lock = _model_download_locks.setdefault(str(dest), asyncio.Lock())
+    try:
+        async with download_lock:
+            models_dir = dest.parent
+            if is_speaker_verification_model_ready(models_dir):
+                task_manager.complete_task(task_id, {"path": str(dest)})
+                return
+            if staging.exists():
+                shutil.rmtree(staging, ignore_errors=True)
+            task_manager.update_progress(task_id, 5, "正在下载独立声纹校验模型...")
+
+            def _snapshot_download():
+                from huggingface_hub import snapshot_download
+
+                return snapshot_download(
+                    repo_id=info["repo"],
+                    revision=info["revision"],
+                    local_dir=str(staging),
+                    allow_patterns=[info["filename"], "README.md", "config.yaml"],
+                )
+
+            await run_blocking(_snapshot_download)
+            staged_model = staging / info["filename"]
+            if not staged_model.is_file() or staged_model.stat().st_size < 20 * 1024 * 1024:
+                raise RuntimeError("下载完成但 ECAPA512-LM ONNX 权重缺失或不完整")
+            if dest.exists():
+                shutil.rmtree(dest)
+            staging.replace(dest)
+            task_manager.complete_task(task_id, {"path": str(dest)})
+    except asyncio.CancelledError:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    except Exception as exc:
+        shutil.rmtree(staging, ignore_errors=True)
+        logger.exception("Speaker verification model download failed")
+        task_manager.fail_task(task_id, "独立声纹校验模型下载失败：" + str(exc))
     finally:
         if not download_lock.locked():
             _model_download_locks.pop(str(dest), None)
