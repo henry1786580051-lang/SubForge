@@ -107,8 +107,11 @@ def test_diarize_audio_reloads_pipeline_on_mps_failure(tmp_path, monkeypatch):
 
     fake_audio_module = ModuleType("pyannote.audio")
     fake_audio_module.Pipeline = PipelineFactory
+    fake_pyannote_module = ModuleType("pyannote")
+    fake_pyannote_module.audio = fake_audio_module
     fake_torch_module = ModuleType("torch")
     fake_torch_module.device = lambda name: name
+    monkeypatch.setitem(sys.modules, "pyannote", fake_pyannote_module)
     monkeypatch.setitem(sys.modules, "pyannote.audio", fake_audio_module)
     monkeypatch.setitem(sys.modules, "torch", fake_torch_module)
     monkeypatch.setattr(diarization_module, "_load_waveform", lambda _path: object())
@@ -174,8 +177,11 @@ def test_diarize_audio_retains_regular_and_exclusive_outputs(tmp_path, monkeypat
 
     fake_audio_module = ModuleType("pyannote.audio")
     fake_audio_module.Pipeline = PipelineFactory
+    fake_pyannote_module = ModuleType("pyannote")
+    fake_pyannote_module.audio = fake_audio_module
     fake_torch_module = ModuleType("torch")
     fake_torch_module.device = lambda name: name
+    monkeypatch.setitem(sys.modules, "pyannote", fake_pyannote_module)
     monkeypatch.setitem(sys.modules, "pyannote.audio", fake_audio_module)
     monkeypatch.setitem(sys.modules, "torch", fake_torch_module)
     monkeypatch.setattr(diarization_module, "_load_waveform", lambda _path: object())

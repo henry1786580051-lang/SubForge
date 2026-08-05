@@ -1,3 +1,6 @@
+import sys
+from types import ModuleType
+
 import numpy as np
 import pytest
 
@@ -228,6 +231,10 @@ def test_pipeline_verifier_reads_only_needed_audio_and_applies_gate(tmp_path, mo
             return [np.array([1.0, 0.0]) if mean < 0.5 else np.array([0.0, 1.0])]
 
     pipeline = type("Pipeline", (), {"_embedding": FakeEmbedding()})()
+    fake_torch_module = ModuleType("torch")
+    fake_torch_module.device = lambda name: name
+    fake_torch_module.from_numpy = lambda samples: samples
+    monkeypatch.setitem(sys.modules, "torch", fake_torch_module)
     stats = verification.verify_speakers_with_pipeline(
         data,
         str(audio_path),
