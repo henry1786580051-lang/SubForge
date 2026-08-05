@@ -37,12 +37,7 @@ jobs:
         run: uv run pyright subforge backend launcher.py scripts
 
       - name: Unit tests
-        run: >-
-          uv run pytest
-          tests/test_cli tests/test_dubbing tests/test_backend tests/test_asr
-          tests/test_translate tests/test_llm tests/test_split tests/test_optimize
-          tests/test_subtitle tests/test_thread tests/test_tts tests/test_scripts
-          tests/test_launcher.py -m "not integration" -q
+        run: uv run pytest -m "not integration" -q
 
       - name: Build package
         run: uv build

@@ -21,6 +21,7 @@
 - Fixed packaged multi-speaker startup after dependency cleanup by retaining Pillow for the pyannote, torchmetrics, and torchvision import chain.
 - Fixed stale media routes, configuration sections, and command help exposing features that the current desktop workflow no longer provides.
 - Fixed FFmpeg package drift by downloading platform-specific archives with pinned versions, SHA-256 verification, safe extraction, and runtime codec checks.
+- Fixed CI explicitly referencing retired test directories instead of discovering the maintained test suite.
 
 ### Removed
 
