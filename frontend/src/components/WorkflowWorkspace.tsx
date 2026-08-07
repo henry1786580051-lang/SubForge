@@ -998,10 +998,26 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
     taskStatus,
   } = useAppStore();
   const [promptFocused, setPromptFocused] = useState(false);
+  const [subtitleFocusRequest, setSubtitleFocusRequest] = useState<{
+    id: number;
+    token: number;
+  } | null>(null);
   const promptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const focusTokenRef = useRef(0);
   const quality = useMemo(() => analyzeSubtitleQuality(subtitles), [subtitles]);
   const translatedCount = subtitles.filter((sub) => sub.translated.trim()).length;
   const completion = subtitles.length ? Math.round((translatedCount / subtitles.length) * 100) : 0;
+
+  const jumpToNextEmptyTranslation = useCallback(() => {
+    const ids = quality.emptyTranslationIds;
+    if (!ids.length) return;
+    const currentIndex = subtitleFocusRequest
+      ? ids.indexOf(subtitleFocusRequest.id)
+      : -1;
+    const nextId = ids[(currentIndex + 1) % ids.length];
+    focusTokenRef.current += 1;
+    setSubtitleFocusRequest({ id: nextId, token: focusTokenRef.current });
+  }, [quality.emptyTranslationIds, subtitleFocusRequest]);
 
   useEffect(
     () => () => {
@@ -1068,7 +1084,11 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
     <WorkspaceFrame meta={STEP_META.subtitle}>
       <div className="grid h-full min-h-0 grid-cols-[minmax(560px,1fr)_360px] gap-5 max-xl:grid-cols-1">
         <section className="min-h-0 overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
-          <SubtitlePanel showPrompt={false} showTranslateActions={false} />
+          <SubtitlePanel
+            focusRequest={subtitleFocusRequest}
+            showPrompt={false}
+            showTranslateActions={false}
+          />
         </section>
 
         <aside className="flex min-h-0 flex-col gap-5 overflow-auto pr-1">
@@ -1176,7 +1196,11 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
                   <div className="h-full rounded-full bg-accent" style={{ width: `${completion}%` }} />
                 </div>
               </div>
-              <QualitySummary quality={quality} compact />
+              <QualitySummary
+                quality={quality}
+                compact
+                onEmptyTranslationsClick={jumpToNextEmptyTranslation}
+              />
             </div>
           </Panel>
 
@@ -1678,32 +1702,69 @@ function LiveSubtitleList({
   );
 }
 
-function QualitySummary({ compact, quality }: { compact?: boolean; quality: SubtitleQuality }) {
+function QualitySummary({
+  compact,
+  onEmptyTranslationsClick,
+  quality,
+}: {
+  compact?: boolean;
+  onEmptyTranslationsClick?: () => void;
+  quality: SubtitleQuality;
+}) {
   const items = [
     { label: "重叠", value: quality.overlaps.length, tone: quality.overlaps.length ? "bad" : "good" },
     { label: "过长", value: quality.longDurations.length, tone: quality.longDurations.length ? "warn" : "good" },
     { label: "紧贴", value: quality.tightGaps.length, tone: quality.tightGaps.length ? "warn" : "good" },
-    { label: "空译文", value: quality.emptyTranslations, tone: quality.emptyTranslations ? "warn" : "good" },
+    {
+      label: "空译文",
+      value: quality.emptyTranslations,
+      tone: quality.emptyTranslations ? "warn" : "good",
+      onClick: onEmptyTranslationsClick,
+    },
   ];
   return (
     <div className="space-y-3">
       <div className={`grid ${compact ? "grid-cols-4 max-sm:grid-cols-2" : "grid-cols-2"} gap-2`}>
-        {items.map((item) => (
-          <div key={item.label} className="rounded-xl border border-border bg-background p-3">
-            <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-text-muted">{item.label}</p>
-            <p
-              className={`mt-1 font-mono text-[20px] font-semibold ${
-                item.tone === "bad"
-                  ? "text-red-600"
-                  : item.tone === "warn"
-                  ? "text-amber-600"
-                  : "text-emerald-600"
+        {items.map((item) => {
+          const interactive = Boolean(item.onClick && item.value > 0);
+          return (
+            <button
+              key={item.label}
+              type="button"
+              disabled={!interactive}
+              onClick={interactive ? item.onClick : undefined}
+              aria-label={interactive ? `定位空译文，共 ${item.value} 条` : undefined}
+              title={interactive ? `定位空译文，共 ${item.value} 条；再次点击查看下一条` : undefined}
+              className={`relative rounded-xl border border-border bg-background p-3 text-left transition-[border-color,background-color,transform] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 ${
+                interactive
+                  ? "cursor-pointer hover:border-amber-300 hover:bg-amber-50/60 active:translate-y-px"
+                  : "cursor-default"
               }`}
             >
-              {item.value}
-            </p>
-          </div>
-        ))}
+              <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-text-muted">
+                {item.label}
+              </p>
+              {interactive && (
+                <Icon
+                  icon="solar:map-arrow-right-bold"
+                  width={14}
+                  className="absolute right-3 top-3 text-amber-600"
+                />
+              )}
+              <p
+                className={`mt-1 font-mono text-[20px] font-semibold ${
+                  item.tone === "bad"
+                    ? "text-red-600"
+                    : item.tone === "warn"
+                      ? "text-amber-600"
+                      : "text-emerald-600"
+                }`}
+              >
+                {item.value}
+              </p>
+            </button>
+          );
+        })}
       </div>
       {!compact && (
         <div className="rounded-xl bg-background p-3">

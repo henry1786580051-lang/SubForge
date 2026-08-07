@@ -2288,6 +2288,77 @@ Delete every fact, action, object, name, number, or clause that current_source d
                     return True
             return False
 
+        def _thousand_magnitude_preserved(
+            original: str,
+            translated_norm: str,
+            token: str,
+        ) -> bool:
+            """Accept natural Chinese equivalents of explicit thousand amounts."""
+            if not re.fullmatch(r"\d+(?:\.\d+)?", token):
+                return False
+
+            normalized_source = re.sub(r"[-\s]+", " ", original).strip()
+            match = re.search(
+                rf"\b{re.escape(token)}\s+"
+                r"(?:(?:some\s+odd|some|odd)\s+)?thousand\b",
+                normalized_source,
+                flags=re.IGNORECASE,
+            )
+            if not match:
+                return False
+
+            try:
+                absolute = Decimal(token) * 1000
+            except InvalidOperation:
+                return False
+
+            def decimal_text(value: Decimal) -> str:
+                rendered = format(value, "f")
+                return rendered.rstrip("0").rstrip(".") if "." in rendered else rendered
+
+            candidates = {decimal_text(absolute)}
+            ten_thousands = absolute / 10000
+            if ten_thousands == ten_thousands.to_integral_value():
+                compact_value = str(int(ten_thousands))
+                candidates.add(f"{compact_value}万")
+                for chinese_value in _integer_chinese_forms(compact_value):
+                    candidates.add(f"{chinese_value}万")
+                if compact_value == "2":
+                    candidates.add("两万")
+            else:
+                candidates.add(f"{decimal_text(ten_thousands)}万")
+            return any(normalized_text(candidate) in translated_norm for candidate in candidates)
+
+        def _introductory_101_preserved(
+            original: str,
+            token: str,
+            translated_norm: str,
+        ) -> bool:
+            """Treat ``subject 101`` as an introductory-concept idiom in Chinese."""
+            if token != "101" or self.target_language.value not in {
+                "简体中文",
+                "繁体中文",
+                "粤语",
+            }:
+                return False
+            if re.search(
+                r"\b(?:route|highway|room|suite|flight|model|interstate)\s+101\b",
+                original,
+                flags=re.IGNORECASE,
+            ):
+                return False
+            if not re.search(
+                r"\b[A-Za-z][A-Za-z' -]{1,80}\s+101\b"
+                r"(?=\s*(?:[.!?,;:]|$|\bis\b|\bwas\b))",
+                original,
+                flags=re.IGNORECASE,
+            ):
+                return False
+            return any(
+                normalized_text(equivalent) in translated_norm
+                for equivalent in ("入门", "基础", "基本常识", "基础知识", "初级", "概论")
+            )
+
         def _asr_formatted_number_preserved(
             original: str,
             token: str,
@@ -2362,6 +2433,10 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 if _compound_model_preserved(token, translated):
                     continue
                 if _magnitude_preserved(original, translated_norm, token):
+                    continue
+                if _thousand_magnitude_preserved(original, translated_norm, token):
+                    continue
+                if _introductory_101_preserved(original, token, translated_norm):
                     continue
                 if _asr_formatted_number_preserved(
                     original,

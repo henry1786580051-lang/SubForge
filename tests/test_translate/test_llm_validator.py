@@ -978,6 +978,64 @@ class TestValidateLLmResponse:
         assert ok is True
         assert message == ""
 
+    @pytest.mark.parametrize(
+        ("source", "translation"),
+        [
+            (
+                "We had 20-some-odd thousand people sign a pledge to live a healthier life.",
+                "有两万多人签署了承诺 要过上更健康的生活",
+            ),
+            (
+                "The town has 20 thousand residents.",
+                "这座小镇有两万名居民",
+            ),
+            (
+                "because most of it is health promotion 101.",
+                "因为其中大部分只是健康促进的基础常识",
+            ),
+        ],
+    )
+    def test_accepts_natural_equivalents_for_thousands_and_101_idiom(
+        self,
+        source,
+        translation,
+    ):
+        translator = _make_minimax_reflect_translator()
+
+        ok, message = translator._validate_llm_response(
+            {"1": translation},
+            {"1": source},
+            require_reflect=False,
+        )
+
+        assert ok is True
+        assert message == ""
+
+    @pytest.mark.parametrize(
+        ("source", "translation", "missing_token"),
+        [
+            ("The town has 20 thousand residents.", "这座小镇有很多居民", "20"),
+            ("Take Route 101 north.", "沿这条公路向北行驶", "101"),
+            ("It makes 101 horsepower.", "它具备基础动力", "101"),
+        ],
+    )
+    def test_numeric_equivalents_do_not_relax_real_missing_facts(
+        self,
+        source,
+        translation,
+        missing_token,
+    ):
+        translator = _make_minimax_reflect_translator()
+
+        ok, message = translator._validate_llm_response(
+            {"1": translation},
+            {"1": source},
+            require_reflect=False,
+        )
+
+        assert ok is False
+        assert missing_token in message
+
     def test_rejects_lost_grand_magnitude(self):
         translator = _make_minimax_reflect_translator()
 

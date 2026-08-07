@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.6/SubForge-1.1.6-macos-arm64.dmg"><strong>下载 macOS Apple Silicon 版</strong></a>
+  <a href="https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.8/SubForge-1.1.8-macos-arm64.dmg"><strong>下载 macOS Apple Silicon 版</strong></a>
   · <a href="https://github.com/henry1786580051-lang/SubForge/releases">全部版本</a>
   · <a href="https://henry1786580051-lang.github.io/SubForge/">使用文档</a>
   · <a href="https://github.com/henry1786580051-lang/SubForge/issues">问题反馈</a>
@@ -34,13 +34,12 @@ SubForge 面向需要长期处理视频字幕的创作者和本地化工作流�
 | --- | --- | --- |
 | Apple Silicon 使用 MLX，Windows 使用 CTranslate2；WhisperX forced alignment 与 TEN-VAD 保守校准词级边界 | 按上下文和说话人轮次翻译，校验漏译、错位、重复、占位语和思考内容泄漏 | 实时进度、中间结果增量保存、失败条目局部重试、恢复字幕和聚合 LLM 日志 |
 
-### v1.1.6 新增
+### v1.1.8 更新
 
-- **面向中文的语义断句**：地点、车型、主语、时间状语、关系从句与谓语会优先保持为适合中文阅读的完整单元。
-- **中文边界流畅度审计**：在整份字幕范围内筛查语义留在上一条或下一条的问题，只修复经过确认的局部窗口。
-- **DeepSeek V4 思考预算分层**：机械断句关闭思考，翻译错位判断和首轮边界改写保留思考，减少空响应与无效 Token。
-- **严格原文锁定**：逐词验证不允许吞词、增词或改变词序，同时允许不影响内容的标点调整。
-- **临时故障恢复**：DeepSeek 等 OpenAI 兼容服务发生限流、5xx、超时或连接中断时进行有上限的退避重试。
+- **空译文快速定位**：字幕质量卡可直接跳到空译文并循环查看，目标行居中显示和短暂高亮，不改变当前勾选状态。
+- **自然数字表达校验**：允许 `20 thousand → 两万` 等可靠数量级换算，不再把正确中文误判为漏译。
+- **领域惯用语校验**：允许 `health promotion 101 → 健康促进基础常识` 等语义等价表达，同时继续严格保护年份、车型、路线编号、价格和规格。
+- **一致的完成度统计**：空字符串和仅含空格的译文统一计为空译文，表格、状态栏和质量卡不再出现统计差异。
 
 ## 工作流
 
@@ -111,7 +110,7 @@ flowchart LR
 
 ### 桌面版
 
-- **macOS**：当前 v1.1.6 提供 [Apple Silicon DMG](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.6/SubForge-1.1.6-macos-arm64.dmg)。Whisper、forced alignment 和 Community-1 模型按需下载，不会重复打包进应用。
+- **macOS**：当前 v1.1.8 提供 [Apple Silicon DMG](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.8/SubForge-1.1.8-macos-arm64.dmg)。Whisper、forced alignment 和 Community-1 模型按需下载，不会重复打包进应用。
 - **Windows**：项目支持 WhisperX CTranslate2/CUDA 或 CPU、forced alignment 与 Community-1。请在 [Releases](https://github.com/henry1786580051-lang/SubForge/releases) 查看带 Windows 安装包的版本，或按下方源码方式运行。
 - **Linux**：当前以 Web/CLI 源码运行和开发验证为主，尚未提供正式桌面安装包。
 

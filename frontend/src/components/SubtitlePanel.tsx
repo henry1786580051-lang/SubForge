@@ -5,9 +5,11 @@ import { useAppStore } from "@/store/appStore";
 import { subtitleApi, subtitlesApi, filesApi, configApi } from "@/lib/api";
 
 export function SubtitlePanel({
+  focusRequest = null,
   showPrompt = true,
   showTranslateActions = true,
 }: {
+  focusRequest?: { id: number; token: number } | null;
   showPrompt?: boolean;
   showTranslateActions?: boolean;
 } = {}) {
@@ -17,8 +19,21 @@ export function SubtitlePanel({
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: number | null } | null>(null);
   const [isTranslating, setIsTranslating] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
+  const [focusedRowId, setFocusedRowId] = useState<number | null>(null);
   const promptDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rowRefs = useRef(new Map<number, HTMLTableRowElement>());
   useEffect(() => () => { if (promptDebounceRef.current) clearTimeout(promptDebounceRef.current); }, []);
+
+  useEffect(() => {
+    if (!focusRequest) return;
+    const row = rowRefs.current.get(focusRequest.id);
+    if (!row) return;
+    row.scrollIntoView({ behavior: "smooth", block: "center" });
+    row.focus({ preventScroll: true });
+    setFocusedRowId(focusRequest.id);
+    const timer = window.setTimeout(() => setFocusedRowId(null), 2200);
+    return () => window.clearTimeout(timer);
+  }, [focusRequest]);
 
   const startEdit = useCallback((id: number, field: "text" | "translated", value: string) => { setEditingCell({ id, field }); setEditValue(value); }, []);
   const commitEdit = useCallback(() => { if (!editingCell) return; updateSubtitle(editingCell.id, editingCell.field, editValue); setEditingCell(null); }, [editingCell, editValue, updateSubtitle]);
@@ -360,7 +375,20 @@ export function SubtitlePanel({
             </thead>
             <tbody>
               {subtitles.map((sub, idx) => (
-                <tr key={sub.id} className={`subtitle-row group cursor-pointer transition-all duration-150 ${selectedIds.has(sub.id) ? "selected" : ""} ${idx % 2 === 0 ? "" : "bg-[rgba(0,0,0,0.015)]"}`}
+                <tr
+                  key={sub.id}
+                  ref={(row) => {
+                    if (row) rowRefs.current.set(sub.id, row);
+                    else rowRefs.current.delete(sub.id);
+                  }}
+                  tabIndex={-1}
+                  className={`subtitle-row group cursor-pointer transition-[background-color,box-shadow] duration-300 focus:outline-none ${selectedIds.has(sub.id) ? "selected" : ""} ${
+                    focusedRowId === sub.id
+                      ? "bg-amber-50 shadow-[inset_3px_0_0_#d97706]"
+                      : idx % 2 === 0
+                        ? ""
+                        : "bg-[rgba(0,0,0,0.015)]"
+                  }`}
                   onClick={() => toggleSelect(sub.id)} onContextMenu={(e) => handleContextMenu(e, sub.id)}>
                   <td className="px-3 py-2 border-b border-[rgba(0,0,0,0.04)]">
                     <input type="checkbox" checked={selectedIds.has(sub.id)} onChange={() => toggleSelect(sub.id)} onClick={(e) => e.stopPropagation()} className="accent-accent w-3 h-3" />
@@ -392,7 +420,7 @@ export function SubtitlePanel({
                       <input autoFocus className="inline-edit text-accent" value={editValue} onChange={(e) => setEditValue(e.target.value)} onBlur={commitEdit} onKeyDown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") setEditingCell(null); }} onClick={(e) => e.stopPropagation()} />
                     ) : (
                       <span className="text-text-muted group-hover:text-accent transition-colors">
-                        {sub.translated || <span className="text-text-muted italic">待翻译</span>}
+                        {sub.translated.trim() || <span className="text-amber-700 italic">待翻译</span>}
                       </span>
                     )}
                   </td>
@@ -408,12 +436,12 @@ export function SubtitlePanel({
         <div className="flex items-center justify-between px-4 py-1.5 border-t border-border bg-[rgba(0,0,0,0.015)]">
           <div className="flex items-center gap-3">
             <span className="text-[11px] text-text-muted">{subtitles.length} 条字幕</span>
-            <span className="text-[11px] text-text-muted">{subtitles.filter((s) => s.translated).length} 已翻译</span>
+            <span className="text-[11px] text-text-muted">{subtitles.filter((s) => s.translated.trim()).length} 已翻译</span>
           </div>
           <div className="flex items-center gap-4">
             <span className="text-[11px] text-text-muted">Delete 删除 · Ctrl+M 合并 · Ctrl+T 翻译 · 双击时间跳转</span>
             <div className="flex items-center gap-2">
-              {subtitles.every((s) => s.translated) ? (
+              {subtitles.every((s) => s.translated.trim()) ? (
                 <><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /><span className="text-[11px] text-emerald-600">翻译完成</span></>
               ) : (
                 <><span className="w-1.5 h-1.5 rounded-full bg-amber-400" /><span className="text-[11px] text-text-muted">待翻译</span></>

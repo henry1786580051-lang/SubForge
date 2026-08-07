@@ -6,13 +6,14 @@ export interface SubtitleQuality {
   longDurations: number[];
   tightGaps: number[];
   emptyTranslations: number;
+  emptyTranslationIds: number[];
 }
 
 export function analyzeSubtitleQuality(subtitles: SubtitleSegment[]): SubtitleQuality {
   const overlaps: number[] = [];
   const longDurations: number[] = [];
   const tightGaps: number[] = [];
-  let emptyTranslations = 0;
+  const emptyTranslationIds: number[] = [];
 
   subtitles.forEach((subtitle, index) => {
     const start = parseSrtTime(subtitle.start);
@@ -20,7 +21,7 @@ export function analyzeSubtitleQuality(subtitles: SubtitleSegment[]): SubtitleQu
     const next = subtitles[index + 1];
     const duration = end - start;
     if (duration > 7.5) longDurations.push(subtitle.id);
-    if (!subtitle.translated.trim()) emptyTranslations += 1;
+    if (!subtitle.translated.trim()) emptyTranslationIds.push(subtitle.id);
     if (next) {
       const nextStart = parseSrtTime(next.start);
       const gap = nextStart - end;
@@ -29,5 +30,11 @@ export function analyzeSubtitleQuality(subtitles: SubtitleSegment[]): SubtitleQu
     }
   });
 
-  return { overlaps, longDurations, tightGaps, emptyTranslations };
+  return {
+    overlaps,
+    longDurations,
+    tightGaps,
+    emptyTranslations: emptyTranslationIds.length,
+    emptyTranslationIds,
+  };
 }

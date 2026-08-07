@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.1.8 - 2026-08-07
+
+### Added
+
+- Added direct navigation from the subtitle-quality empty-translation indicator to the affected subtitle row.
+- Repeated clicks cycle through every empty translation while keeping the current selection unchanged and briefly highlighting the destination row.
+
+### Improved
+
+- Treats reliable Chinese magnitude conversions such as `20 thousand` to `两万` as preserved numeric meaning.
+- Recognizes domain-introduction idioms such as `health promotion 101` translated as `健康促进基础常识`, without relaxing route numbers, room numbers, years, prices, model names, or technical specifications.
+- Uses trimmed translation text consistently in quality totals, completion status, table placeholders, and translated-item counts.
+
+### Fixed
+
+- Fixed valid natural Chinese translations being rejected repeatedly by the numeric-fidelity validator, leaving empty cues in the recovery subtitle and failing the complete translation task.
+- Fixed whitespace-only translations appearing complete in parts of the interface while the quality report correctly counted them as empty.
+
+### Packaging
+
+- macOS Apple Silicon: `SubForge-1.1.8-macos-arm64.dmg`.
+- Windows x64: `SubForge-1.1.8-windows-x64-setup.exe`, built and smoke-tested by GitHub Actions.
+- Whisper, forced-alignment, Community-1, ECAPA, and DeepFilterNet models remain separate on-demand downloads.
+
 ## v1.1.7 - 2026-08-05
 
 ### Added
