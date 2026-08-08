@@ -12,6 +12,10 @@
 
 ### Fixed
 
+- Fixed DeepFilterNet3 first-run downloads hanging indefinitely at `Enhancing audio with DeepFilterNet3...` after a partial model archive was left in the cache.
+- Replaced DeepFilterNet's implicit unbounded model download with a pinned, size- and SHA-256-verified download using bounded connection/read timeouts and atomic extraction.
+- Added recovery for incomplete DeepFilterNet3 caches and fallback to the original audio when enhancement is unavailable, so ASR can continue instead of losing the transcription task.
+- Isolated DeepFilterNet3 in packaged desktop builds and added download, model-load, and audio-chunk progress reporting plus stalled-worker termination.
 - Fixed `in America / is because` being misclassified as a proper-name subject split, which could force a worse `resonate / so deeply` boundary.
 - Fixed fragmented English cues causing invented Chinese subjects and unnatural translations such as “我们之所以如此扎根美国”.
 - Fixed “之所以……部分原因” and “变得 / 如此” pairs bypassing the mandatory Chinese fluency-repair path.
@@ -20,7 +24,8 @@
 
 ### Validation
 
-- Python: `963 passed, 11 skipped`.
+- Python: `967 passed, 11 skipped`.
+- DeepFilterNet3 regression suite: `41 passed`; verified real inference in both the development runtime and the packaged macOS app.
 - Split and translation regression suite: `237 passed`.
 - Ruff, ESLint, TypeScript, and Next.js production build passed.
 - Verified the reported 153-cue Blue Zone subtitle: affected boundaries now enter repair while the `了解` false positive no longer does.

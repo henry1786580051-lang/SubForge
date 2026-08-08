@@ -121,9 +121,14 @@ def transcribe(
             if is_available():
                 callback(6, "Enhancing audio with DeepFilterNet3...")
                 logger.info("Enhancing audio with DeepFilterNet3...")
+
+                def _enhancement_progress(progress: int, message: str) -> None:
+                    callback(6 + int(max(0, min(100, progress)) * 0.18), message)
+
                 enhanced_path = enhance_audio(
                     audio_path,
                     cancel_event=getattr(config, "cancel_event", None),
+                    progress_callback=_enhancement_progress,
                 )
                 audio_for_asr = enhanced_path
                 logger.info("Using enhanced audio: %s", enhanced_path)
@@ -131,6 +136,7 @@ def transcribe(
                 logger.info("DeepFilterNet3 not available, using original audio")
         except Exception as e:
             logger.warning("Audio enhancement failed, using original: %s", e, exc_info=True)
+            callback(24, "Audio enhancement unavailable; continuing with original audio...")
             audio_for_asr = audio_path
     else:
         logger.info("Audio enhancement disabled, using original audio")

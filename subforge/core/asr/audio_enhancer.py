@@ -12,6 +12,8 @@ import tempfile
 import threading
 import time
 import traceback
+import zipfile
+from collections.abc import Callable
 from pathlib import Path
 
 from .worker_runtime import atomic_json_write as _atomic_json_write
@@ -30,6 +32,15 @@ _DENOISE_WORKER_REQUEST = "SUBFORGE_DENOISE_WORKER_REQUEST"
 _DENOISE_WORKER_RESULT = "SUBFORGE_DENOISE_WORKER_RESULT"
 _DENOISE_WORKER_HEARTBEAT = "SUBFORGE_DENOISE_WORKER_HEARTBEAT"
 _DENOISE_WORKER_IDLE_TIMEOUT = "SUBFORGE_DENOISE_WORKER_IDLE_TIMEOUT"
+_DEFAULT_MODEL_URL = (
+    "https://raw.githubusercontent.com/Rikorose/DeepFilterNet/"
+    "d375b2d8309e0935d165700c91da9de862a99c31/models/DeepFilterNet3.zip"
+)
+_DEFAULT_MODEL_SHA256 = "49c52edc8947ae1f9bf50d81530beaf3a2c3245aeaf34b6f31ff535cd22284d2"
+_DEFAULT_MODEL_DOWNLOAD_BYTES = 7_986_207
+_MODEL_DOWNLOAD_TIMEOUT = (10, 30)
+
+ProgressCallback = Callable[[int, str], None]
 
 
 def _worker_idle_timeout() -> float:
@@ -37,6 +48,19 @@ def _worker_idle_timeout() -> float:
         return max(30.0, float(os.environ.get(_DENOISE_WORKER_IDLE_TIMEOUT, "300")))
     except (TypeError, ValueError):
         return 300.0
+
+
+def _report_progress(
+    callback: ProgressCallback | None,
+    progress: int,
+    message: str,
+) -> None:
+    if callback is None:
+        return
+    try:
+        callback(max(0, min(100, int(progress))), message)
+    except Exception:
+        logger.debug("DeepFilterNet3 progress callback failed", exc_info=True)
 
 
 def _device_name(device) -> str:
@@ -130,36 +154,152 @@ def _move_model_to_device(device) -> None:
     logger.info("DeepFilterNet3 running on %s", _device_name(device))
 
 
+def _default_model_dir(enhance_module) -> Path | None:
+    """Resolve the default cache path without triggering DeepFilter's downloader."""
+    default_model = str(getattr(enhance_module, "DEFAULT_MODEL", "") or "").strip()
+    get_cache_dir = getattr(enhance_module, "get_cache_dir", None)
+    if not default_model or not callable(get_cache_dir):
+        return None
+    try:
+        return (Path(get_cache_dir()).expanduser().resolve() / default_model).resolve()
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def _model_cache_ready(model_dir: Path) -> bool:
+    checkpoints_dir = model_dir / "checkpoints"
+    try:
+        return (model_dir / "config.ini").is_file() and checkpoints_dir.is_dir() and any(
+            path.is_file() and path.stat().st_size > 0 for path in checkpoints_dir.iterdir()
+        )
+    except OSError:
+        return False
+
+
 def _repair_default_model_cache(enhance_module, *, force: bool = False) -> bool:
     """Discard a broken built-in model cache so DeepFilter can redownload it."""
-    default_model = getattr(enhance_module, "DEFAULT_MODEL", "")
-    get_model_basedir = getattr(enhance_module, "get_model_basedir", None)
-    if not default_model or not callable(get_model_basedir):
+    model_dir = _default_model_dir(enhance_module)
+    if model_dir is None:
         return False
     try:
-        resolved_model_dir = get_model_basedir(default_model)
-        if not isinstance(resolved_model_dir, (str, os.PathLike)):
+        removed = False
+        if model_dir.exists() and (force or not _model_cache_ready(model_dir)):
+            logger.warning("Removing invalid DeepFilterNet3 cache: %s", model_dir)
+            shutil.rmtree(model_dir)
+            removed = True
+        archive = model_dir.with_suffix(".zip")
+        if archive.exists() and (force or archive.stat().st_size != _DEFAULT_MODEL_DOWNLOAD_BYTES):
+            logger.warning("Removing incomplete DeepFilterNet3 download: %s", archive)
+            archive.unlink()
+            removed = True
+        if not force and _model_cache_ready(model_dir):
             return False
-        model_dir = Path(resolved_model_dir).expanduser().resolve()
-        if not model_dir.exists() or model_dir.name.casefold() != str(default_model).casefold():
-            return False
-        config_ready = (model_dir / "config.ini").is_file()
-        checkpoints_dir = model_dir / "checkpoints"
-        checkpoint_ready = checkpoints_dir.is_dir() and any(
-            path.is_file() and path.stat().st_size > 0
-            for path in checkpoints_dir.iterdir()
-        )
-        if not force and config_ready and checkpoint_ready:
-            return False
-        logger.warning("Removing invalid DeepFilterNet3 cache: %s", model_dir)
-        shutil.rmtree(model_dir)
-        return True
+        return removed
     except OSError as exc:
         logger.warning("Could not repair invalid DeepFilterNet3 cache: %s", exc)
         return False
 
 
-def _load_model(device=None):
+def _safe_extract_model(archive: Path, cache_dir: Path, model_dir: Path) -> None:
+    staging = Path(tempfile.mkdtemp(prefix=".deepfilter-extract-", dir=cache_dir))
+    try:
+        with zipfile.ZipFile(archive) as bundle:
+            bad_member = bundle.testzip()
+            if bad_member:
+                raise RuntimeError(f"DeepFilterNet3 archive is corrupt at {bad_member}")
+            staging_root = staging.resolve()
+            for member in bundle.infolist():
+                destination = (staging / member.filename).resolve()
+                if not destination.is_relative_to(staging_root):
+                    raise RuntimeError("DeepFilterNet3 archive contains an unsafe path")
+            bundle.extractall(staging)
+        extracted = staging / model_dir.name
+        if not _model_cache_ready(extracted):
+            raise RuntimeError("DeepFilterNet3 archive does not contain a complete model")
+        if model_dir.exists():
+            shutil.rmtree(model_dir)
+        extracted.replace(model_dir)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def _ensure_default_model(
+    enhance_module,
+    *,
+    progress_callback: ProgressCallback | None = None,
+    cancel_event=None,
+) -> Path:
+    """Prepare DeepFilterNet3 with bounded network waits and atomic extraction."""
+    import hashlib
+
+    import requests
+
+    model_dir = _default_model_dir(enhance_module)
+    if model_dir is None:
+        raise RuntimeError("Unable to resolve the DeepFilterNet3 model cache")
+    if _model_cache_ready(model_dir):
+        return model_dir
+
+    _repair_default_model_cache(enhance_module)
+    cache_dir = model_dir.parent
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    archive = model_dir.with_suffix(".zip")
+    partial = archive.with_suffix(f".zip.part-{os.getpid()}")
+    partial.unlink(missing_ok=True)
+    _report_progress(progress_callback, 2, "Downloading DeepFilterNet3 model...")
+    downloaded = 0
+    digest = hashlib.sha256()
+    try:
+        with requests.get(
+            _DEFAULT_MODEL_URL,
+            stream=True,
+            timeout=_MODEL_DOWNLOAD_TIMEOUT,
+        ) as response:
+            response.raise_for_status()
+            expected = int(response.headers.get("Content-Length") or _DEFAULT_MODEL_DOWNLOAD_BYTES)
+            with partial.open("wb") as output:
+                for chunk in response.iter_content(chunk_size=256 * 1024):
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise RuntimeError("Audio enhancement was cancelled")
+                    if not chunk:
+                        continue
+                    output.write(chunk)
+                    digest.update(chunk)
+                    downloaded += len(chunk)
+                    percent = min(100, int(downloaded * 100 / max(1, expected)))
+                    _report_progress(
+                        progress_callback,
+                        2 + int(percent * 0.16),
+                        f"Downloading DeepFilterNet3 model... {percent}%",
+                    )
+        if downloaded != _DEFAULT_MODEL_DOWNLOAD_BYTES:
+            raise RuntimeError(
+                "DeepFilterNet3 model download is incomplete "
+                f"({downloaded}/{_DEFAULT_MODEL_DOWNLOAD_BYTES} bytes)"
+            )
+        if digest.hexdigest() != _DEFAULT_MODEL_SHA256:
+            raise RuntimeError("DeepFilterNet3 model download failed integrity verification")
+        partial.replace(archive)
+        _report_progress(progress_callback, 19, "Installing DeepFilterNet3 model...")
+        _safe_extract_model(archive, cache_dir, model_dir)
+        archive.unlink(missing_ok=True)
+        return model_dir
+    except Exception:
+        partial.unlink(missing_ok=True)
+        try:
+            if archive.exists() and archive.stat().st_size != _DEFAULT_MODEL_DOWNLOAD_BYTES:
+                archive.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def _load_model(
+    device=None,
+    *,
+    progress_callback: ProgressCallback | None = None,
+    cancel_event=None,
+):
     """Lazy-load DeepFilterNet model."""
     global _df_model, _df_state, _df_device, _df_mps_failed
     with _df_lock:
@@ -179,14 +319,21 @@ def _load_model(device=None):
             df_enhance = importlib.import_module("df.enhance")
 
             logger.info("Loading DeepFilterNet3 model...")
-            _repair_default_model_cache(df_enhance)
+            model_dir = _ensure_default_model(
+                df_enhance,
+                progress_callback=progress_callback,
+                cancel_event=cancel_event,
+            )
+            _report_progress(progress_callback, 20, "Loading DeepFilterNet3 model...")
             try:
-                _df_model, _df_state, _ = df_enhance.init_df(log_file=None)
+                _df_model, _df_state, _ = df_enhance.init_df(
+                    model_base_dir=str(model_dir),
+                    log_file=None,
+                )
             except SystemExit:
                 if not _repair_default_model_cache(df_enhance, force=True):
                     raise
-                logger.warning("Retrying DeepFilterNet3 after refreshing its model cache")
-                _df_model, _df_state, _ = df_enhance.init_df(log_file=None)
+                raise RuntimeError("DeepFilterNet3 model checkpoint could not be loaded")
             try:
                 _move_model_to_device(device)
             except Exception as e:
@@ -202,6 +349,7 @@ def _load_model(device=None):
                 _df_mps_failed = True
                 _move_model_to_device(torch.device("cpu"))
             logger.info("DeepFilterNet3 model loaded")
+            _report_progress(progress_callback, 25, "DeepFilterNet3 model loaded")
         except SystemExit as exc:
             _df_model = None
             _df_state = None
@@ -222,6 +370,9 @@ def _enhance_with_python(
     output_path: str,
     atten_lim_db: float | None,
     sample_rate: int,
+    *,
+    progress_callback: ProgressCallback | None = None,
+    cancel_event=None,
 ) -> None:
     import soundfile as sf
     import torch
@@ -233,10 +384,15 @@ def _enhance_with_python(
     processed_frames = 0
     with _df_lock:
         device = _select_device()
-        _load_model(device)
+        _load_model(
+            device,
+            progress_callback=progress_callback,
+            cancel_event=cancel_event,
+        )
         if _df_model is None or _df_state is None:
             raise RuntimeError("DeepFilterNet3 model is not initialized")
 
+        total_frames = max(1, sf.info(input_path).frames)
         with sf.SoundFile(
             output_path,
             mode="w",
@@ -251,6 +407,8 @@ def _enhance_with_python(
                 dtype="float32",
                 always_2d=False,
             ):
+                if cancel_event is not None and cancel_event.is_set():
+                    raise RuntimeError("Audio enhancement was cancelled")
                 chunk_tensor = torch.from_numpy(chunk).float().unsqueeze(0)
                 try:
                     enhanced = enhance(
@@ -275,6 +433,12 @@ def _enhance_with_python(
                 enhanced_chunk = enhanced.squeeze(0).cpu().numpy()
                 output_file.write(enhanced_chunk)
                 processed_frames += len(chunk)
+                percent = min(100, int(processed_frames * 100 / total_frames))
+                _report_progress(
+                    progress_callback,
+                    25 + int(percent * 0.7),
+                    f"Enhancing audio with DeepFilterNet3... {percent}%",
+                )
                 logger.debug(
                     "Enhanced %.0fs - %.0fs",
                     (processed_frames - len(chunk)) / sample_rate,
@@ -287,6 +451,8 @@ def _enhance_audio_direct(
     output_path: str | None = None,
     *,
     atten_lim_db: float | None = None,
+    cancel_event=None,
+    progress_callback: ProgressCallback | None = None,
 ) -> str:
     """Enhance audio file using DeepFilterNet3.
 
@@ -345,7 +511,14 @@ def _enhance_audio_direct(
 
         fd, temp_enhanced_48k = tempfile.mkstemp(suffix="_enhanced_48k.wav")
         os.close(fd)
-        _enhance_with_python(temp_48k, temp_enhanced_48k, atten_lim_db, sr)
+        _enhance_with_python(
+            temp_48k,
+            temp_enhanced_48k,
+            atten_lim_db,
+            sr,
+            progress_callback=progress_callback,
+            cancel_event=cancel_event,
+        )
 
         subprocess.run(
             ["ffmpeg", "-y", "-i", temp_enhanced_48k, "-ac", "1", "-ar", "16000", output_path],
@@ -357,6 +530,7 @@ def _enhance_audio_direct(
         )
 
         logger.info(f"Enhanced audio saved: {output_path}")
+        _report_progress(progress_callback, 100, "Audio enhancement complete")
         return output_path
 
     finally:
@@ -370,6 +544,7 @@ def _enhance_in_packaged_worker(
     output_path: str | None,
     atten_lim_db: float | None,
     cancel_event=None,
+    progress_callback: ProgressCallback | None = None,
 ) -> str:
     if output_path is None:
         fd, output_path = tempfile.mkstemp(suffix="_enhanced.wav")
@@ -421,6 +596,17 @@ def _enhance_in_packaged_worker(
                         if heartbeat_mtime != last_heartbeat_mtime:
                             last_heartbeat_mtime = heartbeat_mtime
                             last_heartbeat_at = time.monotonic()
+                            try:
+                                heartbeat_payload = json.loads(
+                                    heartbeat_path.read_text(encoding="utf-8")
+                                )
+                                _report_progress(
+                                    progress_callback,
+                                    int(heartbeat_payload.get("progress", 0)),
+                                    str(heartbeat_payload.get("message", "")),
+                                )
+                            except (OSError, TypeError, ValueError):
+                                pass
                     except OSError:
                         pass
                     if time.monotonic() - last_heartbeat_at > _worker_idle_timeout():
@@ -459,11 +645,11 @@ def enhance_audio(
     *,
     atten_lim_db: float | None = None,
     cancel_event=None,
+    progress_callback: ProgressCallback | None = None,
 ) -> str:
-    """Enhance audio, isolating the native stack in packaged Windows builds."""
+    """Enhance audio, isolating the native stack in packaged desktop builds."""
     use_worker = (
-        platform.system() == "Windows"
-        and getattr(sys, "frozen", False)
+        getattr(sys, "frozen", False)
         and os.environ.get(_DENOISE_WORKER_FLAG) != "1"
     )
     if use_worker:
@@ -472,8 +658,15 @@ def enhance_audio(
             output_path,
             atten_lim_db,
             cancel_event,
+            progress_callback,
         )
-    return _enhance_audio_direct(input_path, output_path, atten_lim_db=atten_lim_db)
+    return _enhance_audio_direct(
+        input_path,
+        output_path,
+        atten_lim_db=atten_lim_db,
+        cancel_event=cancel_event,
+        progress_callback=progress_callback,
+    )
 
 
 def run_packaged_denoise_worker() -> None:
@@ -481,24 +674,21 @@ def run_packaged_denoise_worker() -> None:
     request_path = Path(os.environ[_DENOISE_WORKER_REQUEST])
     result_path = Path(os.environ[_DENOISE_WORKER_RESULT])
     heartbeat_path = Path(os.environ[_DENOISE_WORKER_HEARTBEAT])
-    stop_heartbeat = threading.Event()
 
-    def publish_heartbeat() -> None:
-        while not stop_heartbeat.is_set():
-            try:
-                _atomic_json_write(heartbeat_path, {"time": time.time()})
-            except OSError:
-                pass
-            stop_heartbeat.wait(2.0)
+    def publish_progress(progress: int, message: str) -> None:
+        _atomic_json_write(
+            heartbeat_path,
+            {"time": time.time(), "progress": progress, "message": message},
+        )
 
-    heartbeat = threading.Thread(target=publish_heartbeat, daemon=True)
-    heartbeat.start()
+    publish_progress(0, "Starting DeepFilterNet3...")
     try:
         request = json.loads(request_path.read_text(encoding="utf-8"))
         enhanced = _enhance_audio_direct(
             str(request["input_path"]),
             str(request["output_path"]),
             atten_lim_db=request.get("atten_lim_db"),
+            progress_callback=publish_progress,
         )
         _atomic_json_write(result_path, {"ok": True, "path": enhanced})
         exit_code = 0
@@ -508,9 +698,6 @@ def run_packaged_denoise_worker() -> None:
         except OSError:
             pass
         exit_code = 1
-    finally:
-        stop_heartbeat.set()
-        heartbeat.join(timeout=3)
     for stream in (sys.stdout, sys.stderr):
         try:
             if stream:

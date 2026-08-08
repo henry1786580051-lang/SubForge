@@ -442,6 +442,45 @@ def test_transcribe_whisperx_auto_language_skips_enhancement(monkeypatch, source
     assert "Using original audio to preserve language switches..." in progress_messages
 
 
+def test_transcribe_enhancement_failure_uses_original_audio(monkeypatch):
+    enhancer = importlib.import_module("subforge.core.asr.audio_enhancer")
+    speech_vad = importlib.import_module("subforge.core.asr.speech_vad")
+    asr_paths = []
+    progress_updates = []
+
+    monkeypatch.setattr(enhancer, "is_available", lambda: True)
+
+    def _failed_enhancement(*_args, progress_callback=None, **_kwargs):
+        progress_callback(20, "Loading DeepFilterNet3 model...")
+        raise TimeoutError("model download stalled")
+
+    monkeypatch.setattr(enhancer, "enhance_audio", _failed_enhancement)
+    monkeypatch.setattr(speech_vad, "is_available", lambda: False)
+    monkeypatch.setattr(
+        transcribe_module,
+        "_create_asr_instance",
+        lambda audio_path, *_args, **_kwargs: (
+            asr_paths.append(audio_path) or DummyWordTimestampASR()
+        ),
+    )
+    config = TranscribeConfig(
+        transcribe_model=TranscribeModelEnum.WHISPER_CPP,
+        transcribe_language="en",
+        enable_audio_enhancement=True,
+    )
+
+    transcribe_module.transcribe(
+        "original.wav",
+        config,
+        callback=lambda progress, message: progress_updates.append((progress, message)),
+    )
+
+    assert asr_paths == ["original.wav"]
+    assert (24, "Audio enhancement unavailable; continuing with original audio...") in (
+        progress_updates
+    )
+
+
 def test_transcribe_maps_engine_progress_without_regressing(monkeypatch):
     speech_vad = importlib.import_module("subforge.core.asr.speech_vad")
     progress_updates = []
