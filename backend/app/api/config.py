@@ -13,10 +13,15 @@ from pydantic import BaseModel, Field
 
 from subforge.core.split.length_policy import resolve_length_policy
 from subforge.settings import (
+    LEGACY_MINIMAX_URLS,
+    LLM_PROVIDER_URLS,
     SECRET_SETTING_KEYS,
+    LlmRuntimeConfig,
     coerce_flat_settings,
     coerce_setting_value,
     default_settings_dict,
+    detect_llm_provider,
+    validate_llm_runtime_config,
 )
 
 router = APIRouter()
@@ -103,37 +108,14 @@ def _write_settings(data: dict):
 _IS_APPLE_SILICON = platform.system() == "Darwin" and platform.machine().lower() == "arm64"
 _WHISPERX_SUPPORTED = _IS_APPLE_SILICON or platform.system() in {"Windows", "Linux"}
 
-_LLM_PROVIDER_URLS = {
-    "openai": "https://api.openai.com/v1",
-    "nvidia": "https://integrate.api.nvidia.com/v1",
-    "deepseek": "https://api.deepseek.com",
-    "mimo": "https://token-plan-cn.xiaomimimo.com/v1",
-    "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    "zhipu": "https://open.bigmodel.cn/api/paas/v4",
-    "moonshot": "https://api.moonshot.cn/v1",
-    "baichuan": "https://api.baichuan-ai.com/v1",
-    "yi": "https://api.lingyiwanwu.com/v1",
-    "minimax": "https://api.minimaxi.com/anthropic",
-    "siliconflow": "https://api.siliconflow.cn/v1",
-    "openrouter": "https://openrouter.ai/api/v1",
-    "custom": "",
-}
-_LEGACY_MINIMAX_URLS = {
-    "https://api.minimax.chat/v1",
-    "https://api.minimaxi.com/v1",
-}
+_LLM_PROVIDER_URLS = LLM_PROVIDER_URLS
+_LEGACY_MINIMAX_URLS = LEGACY_MINIMAX_URLS
 
 _DEFAULTS = default_settings_dict(apple_silicon=_IS_APPLE_SILICON)
 
 
 def _detect_llm_provider(base_url: str) -> str:
-    normalized = str(base_url or "").strip().rstrip("/")
-    if normalized.startswith(("https://api.minimax.chat", "https://api.minimaxi.com")):
-        return "minimax"
-    for provider, default_url in _LLM_PROVIDER_URLS.items():
-        if default_url and normalized.startswith(default_url.rstrip("/")):
-            return provider
-    return "custom"
+    return detect_llm_provider(base_url)
 
 
 def _sanitize_llm_profiles(value) -> dict[str, dict[str, str]]:
@@ -152,6 +134,24 @@ def _sanitize_llm_profiles(value) -> dict[str, dict[str, str]]:
             "model": str(profile.get("model") or "")[:256],
         }
     return profiles
+
+
+def _repair_llm_profile(provider: str, profile: dict[str, str]) -> dict[str, str]:
+    """Repair legacy mixed-provider fields without discarding credentials."""
+    repaired = {
+        "base_url": str(profile.get("base_url") or "").strip(),
+        "api_key": str(profile.get("api_key") or ""),
+        "model": str(profile.get("model") or "").strip(),
+    }
+    if provider != "custom" and _detect_llm_provider(repaired["base_url"]) != provider:
+        repaired["base_url"] = _LLM_PROVIDER_URLS[provider]
+    try:
+        validate_llm_runtime_config(
+            LlmRuntimeConfig(provider=provider, **repaired)
+        )
+    except ValueError:
+        repaired["model"] = ""
+    return repaired
 
 
 def _active_llm_provider(stored: dict) -> str:
@@ -188,6 +188,20 @@ def _effective_config(stored: dict) -> dict:
         config["llm_api_key"] = active_profile["api_key"]
         config["llm_model"] = active_profile["model"]
     return config
+
+
+def get_llm_runtime_config() -> LlmRuntimeConfig:
+    """Read and validate one atomic active-provider snapshot for a task."""
+    with _settings_lock:
+        config = _effective_config(_read_settings())
+        runtime = LlmRuntimeConfig(
+            provider=str(config.get("llm_provider") or "custom"),
+            base_url=str(config.get("llm_base_url") or "").strip(),
+            api_key=str(config.get("llm_api_key") or ""),
+            model=str(config.get("llm_model") or "").strip(),
+        )
+    validate_llm_runtime_config(runtime)
+    return runtime
 
 
 def _public_config(config: dict) -> dict:
@@ -349,6 +363,26 @@ async def update_config(update: ConfigUpdate):
             detail="当前平台不支持此 WhisperX 桌面运行时。",
         )
     stored = _read_settings()
+    if update.key in {"llm_base_url", "llm_model"}:
+        active = _effective_config(stored)
+        prospective = LlmRuntimeConfig(
+            provider=str(active.get("llm_provider") or "custom"),
+            base_url=(
+                str(value).strip()
+                if update.key == "llm_base_url"
+                else str(active.get("llm_base_url") or "").strip()
+            ),
+            api_key=str(active.get("llm_api_key") or ""),
+            model=(
+                str(value).strip()
+                if update.key == "llm_model"
+                else str(active.get("llm_model") or "").strip()
+            ),
+        )
+        try:
+            validate_llm_runtime_config(prospective)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     stored[update.key] = value
     if update.key in {"llm_base_url", "llm_api_key", "llm_model"}:
         provider = _active_llm_provider(stored)
@@ -384,12 +418,15 @@ async def switch_llm_provider(update: LlmProviderSwitch):
     current_provider = _active_llm_provider(stored)
     profiles = _sanitize_llm_profiles(stored.get("llm_profiles"))
     current_profile = profiles.get(current_provider, {})
-    profiles[current_provider] = {
-        "base_url": update.current_base_url.strip(),
-        "api_key": update.current_api_key
-        or str(current_profile.get("api_key") or stored.get("llm_api_key") or ""),
-        "model": update.current_model.strip(),
-    }
+    profiles[current_provider] = _repair_llm_profile(
+        current_provider,
+        {
+            "base_url": update.current_base_url,
+            "api_key": update.current_api_key
+            or str(current_profile.get("api_key") or stored.get("llm_api_key") or ""),
+            "model": update.current_model,
+        },
+    )
     target = profiles.get(update.provider)
     if target is None:
         target = {
@@ -398,6 +435,8 @@ async def switch_llm_provider(update: LlmProviderSwitch):
             "model": "",
         }
         profiles[update.provider] = target
+    target = _repair_llm_profile(update.provider, target)
+    profiles[update.provider] = target
 
     stored.update(
         {
@@ -422,15 +461,17 @@ async def switch_llm_provider(update: LlmProviderSwitch):
 @router.get("/test-llm")
 async def test_llm_connection():
     """Test LLM connection with current config."""
-    stored = _read_settings()
-    config = {**_DEFAULTS, **stored}
-
     from subforge.core.llm.client import is_anthropic_base_url, normalize_base_url
 
-    raw_base_url = (config.get("llm_base_url") or "").strip()
+    try:
+        runtime = get_llm_runtime_config()
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    raw_base_url = runtime.base_url
     base_url = normalize_base_url(raw_base_url).rstrip("/") if raw_base_url else ""
-    api_key = config.get("llm_api_key") or ""
-    model = config.get("llm_model") or ""
+    api_key = runtime.api_key
+    model = runtime.model
 
     if not base_url or not api_key:
         return {"ok": False, "error": "未配置 Base URL 或 API Key"}
@@ -567,14 +608,16 @@ async def list_llm_models():
     """Fetch available models from the configured LLM provider."""
     import httpx
 
-    stored = _read_settings()
-    config = {**_DEFAULTS, **stored}
-
     from subforge.core.llm.client import is_anthropic_base_url, normalize_base_url
 
-    raw_base_url = (config.get("llm_base_url") or "").strip()
+    try:
+        runtime = get_llm_runtime_config()
+    except ValueError as exc:
+        return {"error": str(exc), "models": []}
+
+    raw_base_url = runtime.base_url
     base_url = normalize_base_url(raw_base_url).rstrip("/") if raw_base_url else ""
-    api_key = config.get("llm_api_key") or ""
+    api_key = runtime.api_key
 
     if not base_url:
         return {"error": "未配置 Base URL", "models": []}

@@ -154,6 +154,7 @@ _MODIFIER_TAILS = {
     "other",
     "our",
     "public",
+    "puny",
     "red",
     "drastically",
     "her",
@@ -232,8 +233,10 @@ _DEPENDENCY_PAIRS = {
     ("performance", "pack"),
     ("pretty", "standard"),
     ("public", "college"),
+    ("rpm", "gauge"),
     ("same", "sort"),
     ("serrated", "edge"),
+    ("so", "much"),
     ("specialized", "employees"),
     ("traditional", "hybrid"),
     ("turn", "signals"),
@@ -248,6 +251,7 @@ _COPULA_COMPLEMENT_TAILS = {
     "point",
     "problem",
     "reason",
+    "story",
     "thing",
 }
 
@@ -262,6 +266,7 @@ _DEPENDENT_RIGHT_HEADS = {
     "of",
     "on",
     "over",
+    "than",
     "through",
     "to",
     "under",
@@ -379,6 +384,33 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     risk = 0
     reasons: list[str] = []
 
+    complete_does_clause = bool(
+        tail == "does"
+        and re.search(
+            r"\b(?:see|show|check|find\s+out)\s+how\s+"
+            r"(?:he|she|it|this|that)\s+does$",
+            left,
+            flags=re.IGNORECASE,
+        )
+    )
+    complete_degree_adverb = bool(
+        tail == "much"
+        and head in {"and", "but", "like"}
+        and re.search(
+            r"\b(?:elevate|help|improve|like|love|matter)\b[^.!?]*\bso\s+much$",
+            left,
+            flags=re.IGNORECASE,
+        )
+    )
+    complete_fixed_phrase = bool(
+        head in {"a", "an", "the"}
+        and re.search(
+            r"\b(?:don['’]t|do\s+not)\s+get\s+me\s+wrong$",
+            left,
+            flags=re.IGNORECASE,
+        )
+    )
+
     if _ends_with_phrase(left_tokens):
         risk += 36
         reasons.append("incomplete multi-word phrase")
@@ -388,13 +420,13 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     if tail in _SUBJECT_TAILS and right[:1].islower() and not _CLAUSE_RE.search(left):
         risk += 26
         reasons.append(f"dangling subject '{tail}'")
-    if tail in _INCOMPLETE_PREDICATE_TAILS:
+    if tail in _INCOMPLETE_PREDICATE_TAILS and not complete_does_clause:
         risk += 26
         reasons.append(f"incomplete predicate '{tail}'")
     if tail in _SUBJECT_AUX_TAILS and right[:1].islower():
         risk += 30
         reasons.append(f"subject and auxiliary stranded at '{tail}'")
-    if tail in _MODIFIER_TAILS:
+    if tail in _MODIFIER_TAILS and not complete_degree_adverb:
         risk += 24
         reasons.append(f"dangling modifier '{tail}'")
     if tail in _ATTRIBUTIVE_TAILS and right[:1].islower():
@@ -421,6 +453,19 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     if re.search(r"[.!?,;]\s+i\s+mean,?$", left, re.IGNORECASE):
         risk += 36
         reasons.append("sentence-opening filler belongs to the next cue")
+    if re.search(
+        r"[.!?]\s+(?:i|we|you)\s+(?:think|guess|believe),?$",
+        left,
+        re.IGNORECASE,
+    ):
+        risk += 36
+        reasons.append("sentence-opening opinion marker belongs to the next cue")
+    if (
+        head == "wrong"
+        and re.search(r"\b(?:don['’]t|do\s+not)\s+get\s+me$", left, re.IGNORECASE)
+    ):
+        risk += 38
+        reasons.append("fixed phrase split inside 'do not get me wrong'")
     if re.search(r"\bbecause\s+at\s+the\s+time,?$", left, re.IGNORECASE):
         risk += 36
         reasons.append("reason clause opener separated from its subject")
@@ -433,6 +478,12 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     if (tail, head) in _DEPENDENCY_PAIRS:
         risk += 34
         reasons.append(f"split lexical unit '{tail} {head}'")
+    if (
+        tail in {"one", "two", "three", "four", "five", "six", "seven", "eight", "nine"}
+        and re.match(r"^and\s+a\s+half\s+(?:foot|feet|inch|inches)\b", right, re.IGNORECASE)
+    ):
+        risk += 38
+        reasons.append("mixed-number measurement split before 'and a half'")
     if tail == "intake" and tuple(right_tokens[:2]) == ("and", "exhaust"):
         risk += 34
         reasons.append("coordinate automotive term split between intake and exhaust")
@@ -455,7 +506,28 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     if tail == "like" and head in {"this", "that", "it", "these", "those"}:
         risk += 32
         reasons.append(f"comparison complement split before '{head}'")
-    if head in _DEPENDENT_RIGHT_HEADS and right[:1].islower() and not _CLAUSE_RE.search(left):
+    if (
+        re.search(
+            r"\bwhat\s+(?:i|you|we|they|he|she|it)(?:['’][a-z]+)?"
+            r"(?:\s+[a-z]+){0,6}\s+use$",
+            left,
+            flags=re.IGNORECASE,
+        )
+        and re.match(
+            r"^(?:a|an|the|this|that|these|those|it|them|him|her|us)\b"
+            r"(?:\s+\S+){0,4}\s+for\b",
+            right,
+            flags=re.IGNORECASE,
+        )
+    ):
+        risk += 36
+        reasons.append("object split inside 'what ... use ... for' construction")
+    if (
+        head in _DEPENDENT_RIGHT_HEADS
+        and right[:1].islower()
+        and not _CLAUSE_RE.search(left)
+        and not complete_fixed_phrase
+    ):
         risk += 30
         reasons.append(f"dependent phrase beginning with '{head}'")
     that_starts_complement = head == "that" and any(
@@ -510,6 +582,39 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     ):
         risk += 30
         reasons.append("degree complement separated from its predicate")
+
+    if (
+        tail == "already"
+        and head in {"is", "are", "was", "were"}
+        and re.search(r"\bthan\b[^.!?]*\balready$", left, re.IGNORECASE)
+    ):
+        risk += 38
+        reasons.append("comparison auxiliary separated after 'already'")
+
+    if (
+        re.search(r"\b(?:a|an|the)\s+(?:19|20)\d{2}$", left, re.IGNORECASE)
+        and (
+            re.match(r"^[A-Z][A-Za-z0-9-]+\b", right)
+            or re.match(
+                r"^(?:acura|audi|bmw|cadillac|chevrolet|dodge|ford|gmc|honda|hyundai|"
+                r"jeep|kia|lexus|lincoln|mazda|mercedes|nissan|porsche|ram|subaru|"
+                r"tesla|toyota|volkswagen|volvo)\b",
+                right,
+                flags=re.IGNORECASE,
+            )
+        )
+    ):
+        risk += 38
+        reasons.append("model year separated from vehicle name")
+
+    if (
+        re.match(r"^(?:and\s+)?what\b", left, re.IGNORECASE)
+        and head == "and"
+        and len(right_tokens) >= 2
+        and right_tokens[1] in {"makes", "sets", "keeps", "gives", "gets", "drives"}
+    ):
+        risk += 34
+        reasons.append("coordinated predicate separated inside a what-clause")
 
     # Keep location names such as "Ypsilanti, Michigan" in one cue.  This is
     # deliberately limited to a capitalized comma-separated left tail and a
@@ -688,6 +793,7 @@ def _merge_compact_unstable_pairs(
         combined_text = _join_words(words)
         if (
             assessment.unstable
+            and "fixed phrase split inside 'do not get me wrong'" not in assessment.reasons
             and not _is_hard_boundary(left, right)
             and left.words
             and right.words
@@ -742,6 +848,8 @@ def _boundary_cost(
         cost -= 5.0
     if head in _PREFERRED_CLAUSE_HEADS:
         cost -= 10.0
+    if head == "like" and re.search(r"\bso\s+much$", left, re.IGNORECASE):
+        cost -= 12.0
     cost -= min(5.0, gap / 300.0)
     cost += abs(position - original_position) * 0.8
     if position == original_position:

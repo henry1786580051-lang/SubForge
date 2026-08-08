@@ -56,6 +56,7 @@ interface AppState {
     sourceLanguage: string;
     targetLanguage: string;
     translator: string;
+    llmProvider: string;
     llmModel: string;
     needOptimize: boolean;
     needTranslate: boolean;
@@ -152,7 +153,8 @@ export const useAppStore = create<AppState>((set) => ({
     sourceLanguage: "auto",
     targetLanguage: "chinese",
     translator: "bing",
-    llmModel: "gpt-4o-mini",
+    llmProvider: "custom",
+    llmModel: "",
     needOptimize: true,
     needTranslate: true,
     needReflect: false,

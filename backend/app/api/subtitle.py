@@ -72,8 +72,25 @@ class SubtitleRequest(BaseModel):
     need_optimize: bool = True
     need_translate: bool = True
     need_reflect: bool = False
+    llm_provider: str = Field(default="", max_length=64)
     llm_model: str = Field(default="", max_length=256)
     custom_prompt: str = Field(default="", max_length=100_000)
+
+
+def _validate_expected_llm_config(req: SubtitleRequest, runtime) -> None:
+    uses_llm = req.need_optimize or (req.need_translate and req.translator == "llm")
+    if req.llm_provider.strip() and req.llm_provider.strip() != runtime.provider:
+        raise ValueError(
+            f"LLM 服务已从 {req.llm_provider.strip()} 切换为 {runtime.provider}，"
+            "请刷新页面后重新开始任务。"
+        )
+    if uses_llm and (not runtime.base_url or not runtime.api_key or not runtime.model):
+        raise ValueError("LLM 配置不完整，请先在设置中选择模型并完成连接测试。")
+    if req.llm_model.strip() and req.llm_model.strip() != runtime.model:
+        raise ValueError(
+            f"LLM 模型已从 {req.llm_model.strip()} 切换为 {runtime.model}，"
+            "请刷新页面后重新开始任务。"
+        )
 
 
 @router.post("/start")
@@ -85,6 +102,13 @@ async def start_subtitle_processing(req: SubtitleRequest):
     if not file_path.exists():
         raise HTTPException(status_code=400, detail="Subtitle file not found")
     req = req.model_copy(update={"subtitle_file": str(file_path)})
+
+    from app.api.config import get_llm_runtime_config
+
+    try:
+        _validate_expected_llm_config(req, get_llm_runtime_config())
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     try:
         task_id = schedule_background_task(
@@ -106,18 +130,27 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
     asr_data = None
     context = create_pipeline_context(task_id)
     try:
-        from app.api.config import get_config_value
+        from app.api.config import get_config_value, get_llm_runtime_config
 
         custom_prompt = req.custom_prompt or get_config_value("custom_prompt", "")
 
-        # Use current config's model unless explicitly overridden by request.
-        llm_model = (req.llm_model or "").strip() or get_config_value("llm_model", "gpt-4o-mini")
+        # Snapshot the complete provider profile again inside the worker. This
+        # closes the small race where settings change after task scheduling.
+        llm_runtime = get_llm_runtime_config()
+        _validate_expected_llm_config(req, llm_runtime)
+        llm_model = llm_runtime.model
+        logger.info(
+            "Subtitle task %s using LLM provider=%s model=%s",
+            task_id,
+            llm_runtime.provider,
+            llm_model,
+        )
 
         # Build an explicit LLM client for this task. This avoids global
         # OPENAI_* environment mutation and prevents concurrent subtitle tasks
         # from using each other's credentials or base URLs.
-        api_key = get_config_value("llm_api_key", "")
-        base_url = get_config_value("llm_base_url", "")
+        api_key = llm_runtime.api_key
+        base_url = llm_runtime.base_url
         llm_client = None
         if api_key and base_url:
             from subforge.core.llm import create_client

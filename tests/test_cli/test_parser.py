@@ -55,6 +55,32 @@ def test_subtitle_rejects_invalid_translator():
     assert exc.value.code == 2
 
 
+def test_subtitle_rejects_mixed_llm_provider_before_network(tmp_path, capsys):
+    subtitle = tmp_path / "input.srt"
+    subtitle.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello world\n",
+        encoding="utf-8",
+    )
+
+    result = main(
+        [
+            "subtitle",
+            str(subtitle),
+            "--translator",
+            "llm",
+            "--api-key",
+            "test-key",
+            "--api-base",
+            "https://token-plan-cn.xiaomimimo.com/v1",
+            "--model",
+            "deepseek-chat",
+        ]
+    )
+
+    assert result == EXIT.USAGE_ERROR
+    assert "belongs to 'deepseek'" in capsys.readouterr().err
+
+
 def test_process_file_not_found():
     assert main(["process", "/nonexistent/file.mp4"]) == EXIT.FILE_NOT_FOUND
 

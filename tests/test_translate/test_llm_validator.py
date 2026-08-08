@@ -1894,6 +1894,37 @@ class TestValidateLLmResponse:
         assert len(captured) == 2
         assert "previous answer was invalid" in captured[1][-1]["content"]
 
+    def test_single_fallback_retries_literal_resultative_degree_calque(self, monkeypatch):
+        t = _make_translator()
+        contents = iter(
+            [
+                "这就是安静模式下它有多安静",
+                "静音模式下 它的声音就是这么轻",
+            ]
+        )
+        calls = []
+
+        def fake_call_llm(**kwargs):
+            calls.append(kwargs)
+            return _text_response(next(contents))
+
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm",
+            fake_call_llm,
+        )
+
+        result = t._translate_chunk_single(
+            [
+                SubtitleProcessData(
+                    index=389,
+                    original_text="That is how quiet this gets in quiet mode.",
+                )
+            ]
+        )
+
+        assert result[0].translated_text == "静音模式下 它的声音就是这么轻"
+        assert len(calls) == 2
+
     def test_single_fallback_keeps_individually_valid_repeated_phrasing(self, monkeypatch):
         t = _make_translator()
         chunk = [
@@ -2397,6 +2428,85 @@ class TestValidateLLmResponse:
     def test_chinese_boundary_signal_catches_full_run_failures(self, left, right):
         assert LLMTranslator._chinese_boundary_signal(left, right)
 
+    @pytest.mark.parametrize(
+        ("left", "right", "expected_signal"),
+        [
+            (
+                "我觉得你90%的使用场景里 这个转向机",
+                "都是好的 因为它让响应更快了一些",
+                "percentage use-case predicate is stranded",
+            ),
+            (
+                "就像会让这车",
+                "比现在还要出色得多 而且别误会",
+                "resultative predicate is stranded",
+            ),
+        ],
+    )
+    def test_chinese_boundary_signal_catches_raptor_full_run_failures(
+        self, left, right, expected_signal
+    ):
+        assert LLMTranslator._chinese_boundary_signal(left, right) == expected_signal
+
+    def test_chinese_boundary_signal_trims_chinese_ellipsis(self):
+        assert LLMTranslator._chinese_boundary_signal(
+            "就像它会让这台车变得……",
+            "比现在还要出色得多",
+        ) == "unfinished Chinese grammatical structure"
+
+    def test_deterministic_fallback_repairs_percentage_use_case_pair(self):
+        source = [
+            SubtitleProcessData(
+                index=268,
+                original_text=(
+                    "I think 90% of what you're going to use this truck for, "
+                    "like the steering rack,"
+                ),
+            ),
+            SubtitleProcessData(
+                index=269,
+                original_text="is a good thing because it quickened things up a bit.",
+            ),
+        ]
+        current = [
+            replace(source[0], translated_text="我认为90%的场景 比如转向机"),
+            replace(source[1], translated_text="都是好事 因为响应更快"),
+        ]
+
+        repaired = LLMTranslator._deterministic_chinese_fluency_fallback(source, current)
+
+        assert repaired is not None
+        assert [item.translated_text for item in repaired] == [
+            "我觉得在90%的使用场景里",
+            "这套转向系统都更好用 因为响应更快了",
+        ]
+
+    def test_deterministic_fallback_repairs_resultative_pair(self):
+        source = [
+            SubtitleProcessData(
+                index=360,
+                original_text="Like it would just make this thing.",
+            ),
+            SubtitleProcessData(
+                index=361,
+                original_text=(
+                    "So much more excellent than it already is and don't get me wrong."
+                ),
+            ),
+        ]
+        current = [
+            replace(source[0], translated_text="就像它会让这台车变得……"),
+            replace(source[1], translated_text="比现在还要出色得多 别误会"),
+        ]
+
+        repaired = LLMTranslator._deterministic_chinese_fluency_fallback(source, current)
+
+        assert repaired is not None
+        assert [item.translated_text for item in repaired] == [
+            "它仿佛能让这台车更上一层楼",
+            "尽管它本来就已经很优秀了 但别误会",
+        ]
+
     def test_chinese_boundary_signal_catches_stranded_i_mean(self):
         assert LLMTranslator._chinese_boundary_signal(
             "我不明白为什么没人开这种老式美国车 我是说",
@@ -2515,6 +2625,18 @@ class TestValidateLLmResponse:
                 "because I want to see what it is like to daily drive.",
                 "所以非常兴奋今天带大家城市通勤",
                 "因为我想看看它日常驾驶怎么样",
+            ),
+            (
+                "I think 90% of what you're going to use",
+                "this truck for, like the steering rack, is a good thing",
+                "我觉得你90%的使用场景",
+                "比如用这辆卡车 转向齿条是件好事",
+            ),
+            (
+                "And then if you're having trouble trying to follow this little puny",
+                "RPM gauge over here on the left, you can change the view.",
+                "然后如果你很难看清这个小小的",
+                "左边的RPM转速表 你可以切换显示模式",
             ),
         ],
     )
@@ -2870,6 +2992,49 @@ class TestValidateLLmResponse:
         assert '"previous_context": [{"index": "1", "source": "before"}]' in user_content
         assert '"next_context": [{"index": "3", "source": "after"}]' in user_content
 
+    def test_single_context_ownership_allows_numeric_alias_owned_by_plural_source(self):
+        t = _make_translator()
+        t._all_source_by_index = {
+            191: "Let's show you these tires.",
+            192: "Now, these are the 37s.",
+            193: "These are available in the Raptor 37 pack.",
+        }
+
+        t._validate_single_context_ownership(
+            {"192": t._all_source_by_index[192]},
+            "这些是37英寸轮胎",
+        )
+
+    def test_single_context_ownership_still_rejects_number_owned_only_by_neighbor(self):
+        t = _make_translator()
+        t._all_source_by_index = {
+            191: "Let's show you these tires.",
+            192: "Now, these are the tires.",
+            193: "These are available in the Raptor 37 pack.",
+        }
+
+        with pytest.raises(RuntimeError, match=r"borrowed.*37"):
+            t._validate_single_context_ownership(
+                {"192": t._all_source_by_index[192]},
+                "这些是37英寸轮胎",
+            )
+
+    def test_batch_context_ownership_allows_numeric_alias_owned_by_plural_source(self):
+        t = _make_translator()
+        source = {
+            "192": "Now, these are the 37s.",
+            "193": "These are available in the Raptor 37 pack.",
+        }
+        response = {
+            "192": "这些是37英寸轮胎",
+            "193": "这些也可通过Raptor 37套件选装",
+        }
+
+        ok, message = t._validate_cross_key_boundaries(response, source, str)
+
+        assert ok is True
+        assert message == ""
+
     def test_rejects_dropped_alphanumeric_model_tokens(self):
         t = _make_translator()
         resp = {"0": "今天来试试新款雷克萨斯。"}
@@ -2880,6 +3045,28 @@ class TestValidateLLmResponse:
         assert ok is False
         assert "2026" in msg
         assert "350" in msg
+
+    def test_allows_exact_chinese_ten_thousand_number_equivalent(self):
+        t = _make_translator()
+
+        ok, msg = t._validate_llm_response(
+            {"567": "这辆车的售价是11.7万美元"},
+            {"567": "This truck costs $117,000."},
+        )
+
+        assert ok is True
+        assert msg == ""
+
+    def test_rejects_wrong_chinese_ten_thousand_number_magnitude(self):
+        t = _make_translator()
+
+        ok, msg = t._validate_llm_response(
+            {"567": "这辆车的售价是117万美元"},
+            {"567": "This truck costs $117,000."},
+        )
+
+        assert ok is False
+        assert "117000" in msg
 
     def test_allows_standard_brand_translation_for_preserved_tokens(self):
         t = _make_translator()
@@ -2910,6 +3097,125 @@ class TestValidateLLmResponse:
 
         assert ok is True
         assert msg == ""
+
+    def test_rejects_literal_chinese_resultative_degree_calque(self):
+        t = _make_translator()
+
+        ok, message = t._validate_llm_response(
+            {"389": "这就是安静模式下它有多安静"},
+            {"389": "That is how quiet this gets in quiet mode."},
+        )
+
+        assert ok is False
+        assert "静音模式下 它的声音就是这么轻" in message
+
+    def test_accepts_natural_chinese_resultative_degree_translation(self):
+        t = _make_translator()
+
+        ok, message = t._validate_llm_response(
+            {"389": "静音模式下 它的声音就是这么轻"},
+            {"389": "That is how quiet this gets in quiet mode."},
+        )
+
+        assert ok is True
+        assert message == ""
+
+    def test_degree_calque_rule_does_not_reject_normal_how_much_expression(self):
+        t = _make_translator()
+
+        ok, message = t._validate_llm_response(
+            {"1": "这就是我有多爱它"},
+            {"1": "This is how much I love it."},
+        )
+
+        assert ok is True
+        assert message == ""
+
+    def test_chinese_style_prompt_explicitly_avoids_resultative_degree_calque(self):
+        t = _make_translator()
+
+        assert "这就是安静模式下它有多安静" in t._target_language_style_rules()
+        assert "在90%的使用场景里" in t._target_language_style_rules()
+        assert "福特推出了720马力版本" in t._target_language_style_rules()
+
+        t.target_language = TargetLanguage.ENGLISH
+        assert t._target_language_style_rules() == ""
+
+    def test_rejects_vehicle_use_case_translation_with_wrong_chinese_subject(self):
+        t = _make_translator()
+        source = (
+            "I think 90% of what you're going to use this truck for, like the steering "
+            "rack, is a good thing."
+        )
+
+        ok, message = t._validate_llm_response(
+            {"271": "你使用这辆卡车90%的场景 比如转向齿条 都是好事"},
+            {"271": source},
+        )
+
+        assert ok is False
+        assert "在90%的使用场景里" in message
+
+        ok, message = t._validate_llm_response(
+            {"271": "我认为在90%的使用场景里 这个转向齿条都是好东西"},
+            {"271": source},
+        )
+
+        assert ok is False
+        assert "转向响应都有帮助" in message
+
+    def test_accepts_vehicle_use_case_translation_with_feature_as_subject(self):
+        t = _make_translator()
+        source = (
+            "I think 90% of what you're going to use this truck for, like the steering "
+            "rack, is a good thing."
+        )
+
+        ok, message = t._validate_llm_response(
+            {"271": "我觉得在90%的使用场景里 更快的转向响应都有帮助"},
+            {"271": source},
+        )
+
+        assert ok is True
+        assert message == ""
+
+    def test_rejects_incomplete_chinese_numeric_shorthand_noun(self):
+        t = _make_translator()
+
+        ok, message = t._validate_llm_response(
+            {"294": "然后福特推出了这款720马力的"},
+            {"294": "and then Ford came in with this 720,"},
+        )
+
+        assert ok is False
+        assert "720马力版本" in message
+
+    def test_accepts_completed_chinese_numeric_shorthand_noun(self):
+        t = _make_translator()
+
+        ok, message = t._validate_llm_response(
+            {"294": "然后福特推出了720马力版本"},
+            {"294": "and then Ford came in with this 720,"},
+        )
+
+        assert ok is True
+        assert message == ""
+
+    def test_rejects_temporal_translation_for_standalone_now_discourse_marker(self):
+        t = _make_translator()
+
+        ok, message = t._validate_llm_response({"449": "现在"}, {"449": "Now."})
+
+        assert ok is False
+        assert "接下来" in message
+
+    def test_accepts_discourse_translation_for_standalone_now(self):
+        t = _make_translator()
+
+        ok, message = t._validate_llm_response({"449": "那么"}, {"449": "Now."})
+
+        assert ok is True
+        assert message == ""
 
     def test_allows_colloquial_plural_price_band_in_chinese(self):
         t = _make_translator()

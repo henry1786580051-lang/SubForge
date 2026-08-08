@@ -163,9 +163,109 @@ def test_assessment_rejects_cross_language_sensitive_vehicle_boundaries():
         ("what the Charger was like", "when it was reborn in 2006."),
         ("these days 48 grand gets you an RT392", "Durango with more equipment."),
         ("maybe you're going to go out after this video", "and go purchase it."),
+        (
+            "I think 90% of what you're going to use",
+            "this truck for, like the steering rack, is a good thing.",
+        ),
+        (
+            "And then if you're having trouble trying to follow this little puny",
+            "RPM gauge over here on the left, you can change the view.",
+        ),
     ]
 
     assert all(assess_english_boundary(left, right).unstable for left, right in boundaries)
+
+
+def test_assessment_does_not_confuse_complete_use_question_with_split_relative_object():
+    assessment = assess_english_boundary(
+        "What tool do you use",
+        "This truck is useful for hauling.",
+    )
+
+    assert not assessment.unstable
+
+
+def test_assessment_rejects_raptor_recovery_dependency_boundaries():
+    boundaries = [
+        (
+            "not so nice for other things. I think",
+            "90% of what you're going to use this truck for is a good thing",
+        ),
+        (
+            "but first want to show you this five",
+            "and a half foot bed with the optional liner",
+        ),
+        (
+            "it would make this thing so much more excellent than it already",
+            "is and don't get me wrong",
+        ),
+        (
+            "a taste of what it's like to live with a 2026",
+            "Ford F-150 Raptor R",
+        ),
+        (
+            "a taste of what it's like to live with a 2026",
+            "ford f-150 raptor r",
+        ),
+        (
+            "And what really sets it aside",
+            "and makes the extra cost worthwhile",
+        ),
+        (
+            "it is better than before and don't get me",
+            "wrong the old version still has its place",
+        ),
+    ]
+
+    assert all(assess_english_boundary(left, right).unstable for left, right in boundaries)
+
+
+def test_assessment_allows_complete_see_how_it_does_clause():
+    assessment = assess_english_boundary(
+        "Let's get this off the line and see how she does",
+        "Oh yes",
+    )
+
+    assert not assessment.unstable
+
+
+def test_normalizer_moves_opinion_marker_and_model_year_to_next_cue():
+    cues = _cues(
+        [
+            "not so nice for other things. I think",
+            "90% of what you're going to use this truck for is a good thing.",
+            "A taste of what it's like to live with a 2026",
+            "Ford F-150 Raptor R. Thanks for watching.",
+        ]
+    )
+
+    repaired = normalize_boundaries(cues)
+
+    assert repaired[0].text.endswith("other things.")
+    assert repaired[1].text.startswith("I think 90%")
+    assert any("2026 Ford F-150 Raptor R." in cue.text for cue in repaired)
+    assert all(not cue.text.endswith("a 2026") for cue in repaired)
+
+
+def test_normalizer_repairs_consecutive_degree_and_fixed_phrase_boundaries():
+    cues = _cues(
+        [
+            "I think that would elevate this experience so much like it would make this thing",
+            "so much better than it already is and don't get me",
+            "wrong the 10 speed still has a time and a place.",
+        ]
+    )
+
+    repaired = normalize_boundaries(cues)
+
+    assert repaired[0].text.endswith("experience so much")
+    assert repaired[1].text.startswith("like it would make this thing")
+    assert repaired[1].text.endswith("don't get me wrong")
+    assert all(
+        not assess_english_boundary(left.text, right.text).unstable
+        for left, right in zip(repaired, repaired[1:])
+    )
+    assert all(not cue.text.startswith("wrong") for cue in repaired)
 
 
 def test_normalizer_moves_because_to_the_following_clause():
@@ -319,6 +419,46 @@ def test_normalizer_merges_compact_pair_without_a_stable_internal_boundary():
     assert len(repaired) == 1
     assert repaired[0].text == (
         "But there are a lot of challenges for building nuclear in the U.S."
+    )
+
+
+def test_normalizer_merges_what_use_for_construction_from_reported_failure():
+    cues = _cues(
+        [
+            "I think 90% of what you're going to use",
+            "this truck for, like the steering rack, is a good thing",
+        ]
+    )
+
+    repaired = normalize_boundaries(cues)
+
+    assert len(repaired) == 1
+    assert repaired[0].text == (
+        "I think 90% of what you're going to use this truck for, like the steering rack, "
+        "is a good thing"
+    )
+
+
+def test_normalizer_moves_boundary_after_complete_puny_rpm_gauge_phrase():
+    cues = _cues(
+        [
+            "And then if you're having trouble trying to follow this little puny",
+            (
+                "RPM gauge over here on the left, you can actually put this into Porsche "
+                "911 Performance View Mode."
+            ),
+        ]
+    )
+
+    repaired = normalize_boundaries(cues)
+
+    assert len(repaired) == 2
+    assert repaired[0].text == (
+        "And then if you're having trouble trying to follow this little puny RPM gauge "
+        "over here on the left,"
+    )
+    assert repaired[1].text == (
+        "you can actually put this into Porsche 911 Performance View Mode."
     )
 
 

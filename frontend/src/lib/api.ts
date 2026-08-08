@@ -144,6 +144,7 @@ export const subtitleApi = {
     subtitle_file: string;
     target_language?: string;
     translator?: string;
+    llm_provider?: string;
     llm_model?: string;
     need_optimize?: boolean;
     need_translate?: boolean;

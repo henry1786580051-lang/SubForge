@@ -40,15 +40,39 @@ def _build_config(args: argparse.Namespace) -> dict:
     config["translate"]["reflect"] = False
     config["subtitle"]["layout"] = "target-above"
 
-    api_key = os.environ.get("MIMO_API_KEY") or os.environ.get("OPENAI_API_KEY")
-    api_base = os.environ.get("MIMO_BASE_URL") or os.environ.get("OPENAI_BASE_URL")
-    model = os.environ.get("MIMO_MODEL") or os.environ.get("OPENAI_MODEL")
+    # Keep this test runner provider-neutral. Provider-specific environment
+    # variables previously made MiMo silently override an explicitly requested
+    # DeepSeek run.
+    api_key = os.environ.get("SUBFORGE_TEST_LLM_API_KEY") or os.environ.get(
+        "OPENAI_API_KEY"
+    )
+    api_base = args.llm_api_base or os.environ.get(
+        "SUBFORGE_TEST_LLM_BASE_URL"
+    ) or os.environ.get("OPENAI_BASE_URL")
+    model = args.llm_model or os.environ.get("SUBFORGE_TEST_LLM_MODEL") or os.environ.get(
+        "OPENAI_MODEL"
+    )
     if api_key:
         config["llm"]["api_key"] = api_key
     if api_base:
         config["llm"]["api_base"] = api_base
     if model:
         config["llm"]["model"] = model
+
+    from subforge.settings import (
+        LlmRuntimeConfig,
+        detect_llm_provider,
+        validate_llm_runtime_config,
+    )
+
+    validate_llm_runtime_config(
+        LlmRuntimeConfig(
+            provider=detect_llm_provider(config["llm"]["api_base"]),
+            base_url=config["llm"]["api_base"],
+            api_key=config["llm"]["api_key"],
+            model=config["llm"]["model"],
+        )
+    )
     return config
 
 
@@ -76,6 +100,8 @@ def main() -> int:
     parser.add_argument("--whisper-batch-size", type=int, default=4)
     parser.add_argument("--llm-threads", type=int, default=2)
     parser.add_argument("--llm-batch-size", type=int, default=12)
+    parser.add_argument("--llm-api-base", help="Explicit LLM service URL for this test")
+    parser.add_argument("--llm-model", help="Explicit LLM model for this test")
     parser.add_argument("--skip-transcribe", action="store_true")
     args = parser.parse_args()
 

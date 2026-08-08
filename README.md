@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.9/SubForge-1.1.9-macos-arm64.dmg"><strong>下载 macOS Apple Silicon 版</strong></a>
+  <a href="https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.10/SubForge-1.1.10-macos-arm64.dmg"><strong>下载 macOS Apple Silicon 版</strong></a>
   · <a href="https://github.com/henry1786580051-lang/SubForge/releases">全部版本</a>
   · <a href="https://henry1786580051-lang.github.io/SubForge/">使用文档</a>
   · <a href="https://github.com/henry1786580051-lang/SubForge/issues">问题反馈</a>
@@ -34,12 +34,12 @@ SubForge 面向需要长期处理视频字幕的创作者和本地化工作流�
 | --- | --- | --- |
 | Apple Silicon 使用 MLX，Windows 使用 CTranslate2；WhisperX forced alignment 与 TEN-VAD 保守校准词级边界 | 按上下文和说话人轮次翻译，校验漏译、错位、重复、占位语和思考内容泄漏 | 实时进度、中间结果增量保存、失败条目局部重试、恢复字幕和聚合 LLM 日志 |
 
-### v1.1.9 更新
+### v1.1.10 更新
 
-- **更快的终稿阶段**：中文标点清理后只执行一次最终保存、预览序列化和状态发布，避免重复写盘与整份字幕重复传输。
-- **大字幕表格虚拟化**：编辑器只渲染可见字幕行，同时保留空译文跳转、勾选、双击编辑和动态行高。
-- **跨语言断句修复**：避免在 `resonate / so deeply`、`became / so widespread` 等程度补语中间断开，并允许 `in America / is because` 这类更合理的显示边界。
-- **中文流畅度增强**：强制复核“之所以……部分原因”“变得 / 如此”等残句，同时避免把“了解”误判为独立助词“了”。
+- **LLM 配置不再串线**：供应商、Base URL、API Key 与模型以同一配置档快照进入任务；页面状态过期或模型与服务不匹配时在联网前明确阻止。
+- **测试入口去除 MiMo 偏置**：全流程测试不再优先读取 `MIMO_*` 环境变量，可显式指定服务地址与模型并校验组合。
+- **车辆长句断句增强**：修复年份与车型、固定短语、混合数值、`what ... use ... for` 以及 `RPM gauge` 等结构被拆散的问题。
+- **中文表达质量增强**：拦截结果程度直译、错误使用场景主语、孤立话语标记与未完成数字简称，并在模型重试失败后保守修复少量已确认结构。
 
 ## 工作流
 
@@ -110,7 +110,7 @@ flowchart LR
 
 ### 桌面版
 
-- **macOS**：当前 v1.1.9 提供 [Apple Silicon DMG](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.9/SubForge-1.1.9-macos-arm64.dmg)。Whisper、forced alignment 和 Community-1 模型按需下载，不会重复打包进应用。
+- **macOS**：当前 v1.1.10 提供 [Apple Silicon DMG](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.10/SubForge-1.1.10-macos-arm64.dmg)。Whisper、forced alignment 和 Community-1 模型按需下载，不会重复打包进应用。
 - **Windows**：项目支持 WhisperX CTranslate2/CUDA 或 CPU、forced alignment 与 Community-1。请在 [Releases](https://github.com/henry1786580051-lang/SubForge/releases) 查看带 Windows 安装包的版本，或按下方源码方式运行。
 - **Linux**：当前以 Web/CLI 源码运行和开发验证为主，尚未提供正式桌面安装包。
 

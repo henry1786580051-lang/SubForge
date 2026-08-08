@@ -394,3 +394,143 @@ def test_effective_config_migrates_legacy_minimax_profile_url():
 
     assert config["llm_base_url"] == "https://api.minimaxi.com/anthropic"
     assert config["llm_profiles"]["minimax"]["base_url"] == ("https://api.minimaxi.com/anthropic")
+
+
+def test_runtime_config_uses_active_profile_as_one_snapshot(tmp_path, monkeypatch):
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setattr(config_module, "_SETTINGS_CANDIDATES", [settings_path])
+    config_module._write_settings(
+        {
+            "llm_provider": "deepseek",
+            "llm_base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+            "llm_api_key": "stale-flat-key",
+            "llm_model": "mimo-v2.5-pro",
+            "llm_profiles": {
+                "deepseek": {
+                    "base_url": "https://api.deepseek.com/v1",
+                    "api_key": "deepseek-key",
+                    "model": "deepseek-chat",
+                },
+                "mimo": {
+                    "base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+                    "api_key": "mimo-key",
+                    "model": "mimo-v2.5-pro",
+                },
+            },
+        }
+    )
+
+    runtime = config_module.get_llm_runtime_config()
+
+    assert runtime.provider == "deepseek"
+    assert runtime.base_url == "https://api.deepseek.com/v1"
+    assert runtime.api_key == "deepseek-key"
+    assert runtime.model == "deepseek-chat"
+
+
+def test_update_rejects_model_from_inactive_provider_without_writing(
+    tmp_path, monkeypatch
+):
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setattr(config_module, "_SETTINGS_CANDIDATES", [settings_path])
+    config_module._write_settings(
+        {
+            "llm_provider": "mimo",
+            "llm_base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+            "llm_api_key": "mimo-key",
+            "llm_model": "mimo-v2.5-pro",
+        }
+    )
+    before = settings_path.read_text(encoding="utf-8")
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            config_module.update_config(
+                config_module.ConfigUpdate(key="llm_model", value="deepseek-chat")
+            )
+        )
+
+    assert exc.value.status_code == 422
+    assert settings_path.read_text(encoding="utf-8") == before
+
+
+def test_update_rejects_endpoint_from_inactive_provider_without_writing(
+    tmp_path, monkeypatch
+):
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setattr(config_module, "_SETTINGS_CANDIDATES", [settings_path])
+    config_module._write_settings(
+        {
+            "llm_provider": "deepseek",
+            "llm_base_url": "https://api.deepseek.com/v1",
+            "llm_api_key": "deepseek-key",
+            "llm_model": "deepseek-chat",
+        }
+    )
+    before = settings_path.read_text(encoding="utf-8")
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            config_module.update_config(
+                config_module.ConfigUpdate(
+                    key="llm_base_url",
+                    value="https://token-plan-cn.xiaomimimo.com/v1",
+                )
+            )
+        )
+
+    assert exc.value.status_code == 422
+    assert settings_path.read_text(encoding="utf-8") == before
+
+
+def test_switch_provider_repairs_corrupted_profile_and_preserves_key(
+    tmp_path, monkeypatch
+):
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setattr(config_module, "_SETTINGS_CANDIDATES", [settings_path])
+    config_module._write_settings(
+        {
+            "llm_provider": "mimo",
+            "llm_base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+            "llm_api_key": "mimo-key",
+            "llm_model": "mimo-v2.5-pro",
+            "llm_profiles": {
+                "deepseek": {
+                    "base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+                    "api_key": "deepseek-key",
+                    "model": "mimo-v2.5-pro",
+                }
+            },
+        }
+    )
+
+    result = asyncio.run(
+        config_module.switch_llm_provider(
+            config_module.LlmProviderSwitch(
+                provider="deepseek",
+                current_base_url="https://token-plan-cn.xiaomimimo.com/v1",
+                current_api_key="mimo-key",
+                current_model="mimo-v2.5-pro",
+            )
+        )
+    )
+
+    assert result == {
+        "status": "ok",
+        "provider": "deepseek",
+        "base_url": "https://api.deepseek.com",
+        "api_key_configured": True,
+        "model": "",
+    }
+
+
+def test_model_listing_rejects_corrupted_runtime_before_network(monkeypatch):
+    monkeypatch.setattr(
+        config_module,
+        "get_llm_runtime_config",
+        lambda: (_ for _ in ()).throw(ValueError("mixed LLM profile")),
+    )
+
+    result = asyncio.run(config_module.list_llm_models())
+
+    assert result == {"error": "mixed LLM profile", "models": []}

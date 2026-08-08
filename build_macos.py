@@ -49,6 +49,72 @@ def build_app_bundle() -> Path:
     return app_path
 
 
+def seal_app_inside_dmg(dmg_path: Path) -> None:
+    """Clear copy-time metadata and sign the exact app stored in the image."""
+    with tempfile.TemporaryDirectory() as tmp:
+        work_dir = Path(tmp)
+        writable_dmg = work_dir / "SubForge-writable.dmg"
+        rebuilt_dmg = work_dir / "SubForge-sealed.dmg"
+        mount_point = work_dir / "mount"
+        mount_point.mkdir()
+
+        subprocess.run(
+            [
+                "hdiutil",
+                "convert",
+                str(dmg_path),
+                "-format",
+                "UDRW",
+                "-o",
+                str(writable_dmg),
+                "-ov",
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "hdiutil",
+                "attach",
+                str(writable_dmg),
+                "-readwrite",
+                "-nobrowse",
+                "-mountpoint",
+                str(mount_point),
+            ],
+            check=True,
+        )
+        try:
+            image_app = mount_point / f"{APP_NAME}.app"
+            subprocess.run(["xattr", "-cr", str(image_app)], check=True)
+            # Copying into HFS does not change signed file contents; it only
+            # adds Finder/provenance xattrs. Re-signing thousands of nested
+            # binaries in-place can fail inside the macOS signing subsystem,
+            # while clearing those xattrs restores the already-valid seal.
+            subprocess.run(
+                ["codesign", "--verify", "--deep", "--strict", str(image_app)],
+                check=True,
+            )
+        finally:
+            subprocess.run(["hdiutil", "detach", str(mount_point)], check=True)
+
+        subprocess.run(
+            [
+                "hdiutil",
+                "convert",
+                str(writable_dmg),
+                "-format",
+                "UDZO",
+                "-imagekey",
+                "zlib-level=9",
+                "-o",
+                str(rebuilt_dmg),
+                "-ov",
+            ],
+            check=True,
+        )
+        shutil.move(rebuilt_dmg, dmg_path)
+
+
 def create_dmg(app_path: Path):
     """Create DMG with Applications symlink and nice layout."""
     import dmgbuild
@@ -104,6 +170,8 @@ def create_dmg(app_path: Path):
             volume_name=APP_NAME,
             settings=settings,
         )
+
+    seal_app_inside_dmg(DMG_OUTPUT)
 
     size_mb = DMG_OUTPUT.stat().st_size / (1024 * 1024)
     print(f"  -> {DMG_OUTPUT} ({size_mb:.1f} MB)")

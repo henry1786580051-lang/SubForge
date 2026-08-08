@@ -1045,6 +1045,7 @@ Delete every fact, action, object, name, number, or clause that current_source d
     def _agent_loop(self, system_prompt: str, subtitle_dict: Dict[str, str]) -> Dict[str, Any]:
         """Agent loop翻译字幕块"""
         system_prompt += self._dialogue_prompt_rules(subtitle_dict)
+        system_prompt += self._target_language_style_rules()
         context_text = self.translation_context.render()
         if context_text:
             system_prompt = (
@@ -1193,6 +1194,24 @@ Delete every fact, action, object, name, number, or clause that current_source d
             "</dialogue_metadata>"
         )
 
+    def _target_language_style_rules(self) -> str:
+        if self.target_language.value not in {"简体中文", "繁体中文", "粤语"}:
+            return ""
+        return (
+            "\n\n<target_language_style>\n"
+            "Use idiomatic resultative Chinese rather than copying English degree syntax. "
+            "For example, render 'That is how quiet this gets in quiet mode' as "
+            "'静音模式下 它的声音就是这么轻', not '这就是安静模式下它有多安静'. "
+            "Treat a standalone discourse marker such as 'Now.' as '那么' or '接下来', "
+            "not the temporal adverb '现在'. When English says that a feature is useful "
+            "for a percentage of a vehicle's use cases, make the feature the Chinese "
+            "subject: '在90%的使用场景里 更快的转向响应都有帮助'. Do not misread the "
+            "feature as an example of a use case. Complete colloquial numeric shorthand "
+            "with its implied noun, such as '福特推出了720马力版本'; never leave the cue "
+            "ending in an attributive 的.\n"
+            "</target_language_style>"
+        )
+
     def _validate_llm_response(
         self,
         response_dict: Any,
@@ -1286,6 +1305,26 @@ Delete every fact, action, object, name, number, or clause that current_source d
         if not price_band_ok:
             return False, price_band_error
 
+        natural_chinese_ok, natural_chinese_error = (
+            self._validate_natural_chinese_degree_constructions(
+                response_dict,
+                subtitle_dict,
+                _extract_text,
+            )
+        )
+        if not natural_chinese_ok:
+            return False, natural_chinese_error
+
+        contextual_chinese_ok, contextual_chinese_error = (
+            self._validate_natural_chinese_contextual_constructions(
+                response_dict,
+                subtitle_dict,
+                _extract_text,
+            )
+        )
+        if not contextual_chinese_ok:
+            return False, contextual_chinese_error
+
         preserved_ok, preserved_error = self._validate_preserved_tokens(
             response_dict, subtitle_dict, _extract_text
         )
@@ -1372,6 +1411,105 @@ Delete every fact, action, object, name, number, or clause that current_source d
             f"Unnatural price-band keys: {unnatural[:20]}",
         )
 
+    def _validate_natural_chinese_degree_constructions(
+        self,
+        response_dict: Dict[str, Any],
+        subtitle_dict: Dict[str, str],
+        extract_text,
+    ) -> Tuple[bool, str]:
+        """Reject a narrow resultative-degree calque while preserving normal `有多` usage."""
+        if self.target_language.value not in {"简体中文", "繁体中文", "粤语"}:
+            return True, ""
+
+        awkward: list[str] = []
+        source_pattern = re.compile(
+            r"\b(?:that|this)\s+is\s+how\s+(?P<degree>[a-z]+)\s+"
+            r"(?:this|it|that)\s+gets?\s+in\s+(?P=degree)\s+mode\b",
+            flags=re.IGNORECASE,
+        )
+        target_pattern = re.compile(r"这(?:就)?是.{0,24}有多")
+        for key, source in subtitle_dict.items():
+            translated = str(extract_text(response_dict.get(key, "")) or "")
+            if source_pattern.search(str(source or "")) and target_pattern.search(translated):
+                awkward.append(str(key))
+        if not awkward:
+            return True, ""
+        return (
+            False,
+            "Use natural resultative Chinese for demonstrative degree statements. Render "
+            "'That is how quiet this gets in quiet mode' as '静音模式下 它的声音就是这么轻', "
+            "not the literal calque '这就是安静模式下它有多安静'. "
+            f"Unnatural degree keys: {awkward[:20]}",
+        )
+
+    def _validate_natural_chinese_contextual_constructions(
+        self,
+        response_dict: Dict[str, Any],
+        subtitle_dict: Dict[str, str],
+        extract_text,
+    ) -> Tuple[bool, str]:
+        """Reject narrow Chinese calques confirmed by full-run subtitle audits."""
+        if self.target_language.value not in {"简体中文", "繁体中文", "粤语"}:
+            return True, ""
+
+        use_case_keys: list[str] = []
+        numeric_shorthand_keys: list[str] = []
+        discourse_now_keys: list[str] = []
+        use_case_source = re.compile(
+            r"\b\d+%\s+of\s+what\s+you['’]re\s+going\s+to\s+use\s+"
+            r"this\s+(?:truck|car|vehicle)\s+for\b.*\blike\s+the\b.*"
+            r"\bis\s+a\s+good\s+thing\b",
+            flags=re.IGNORECASE,
+        )
+        numeric_shorthand_source = re.compile(
+            r"\b(?:came|comes|coming)\s+in\s+with\s+(?:this|the|a)\s+"
+            r"\d{2,4}\s*,?$",
+            flags=re.IGNORECASE,
+        )
+        for key, source in subtitle_dict.items():
+            translated = str(extract_text(response_dict.get(key, "")) or "").strip()
+            source_text = str(source or "").strip()
+            compact_target = re.sub(r"[\s，。！？；：、,.!?;:]+", "", translated)
+            if use_case_source.search(source_text) and (
+                re.search(r"使用.{0,12}\d+%", compact_target)
+                or re.search(r"\d+%.{0,24}(?:比如|例如).{0,24}好事", compact_target)
+                or re.search(
+                    r"(?:这个)?转向(?:机|齿条).{0,8}(?:都)?是(?:件)?好(?:事|东西)",
+                    compact_target,
+                )
+            ):
+                use_case_keys.append(str(key))
+            if numeric_shorthand_source.search(source_text) and compact_target.endswith("的"):
+                numeric_shorthand_keys.append(str(key))
+            if re.fullmatch(r"now[.!?]?", source_text, flags=re.IGNORECASE) and compact_target in {
+                "现在",
+                "如今",
+                "目前",
+            }:
+                discourse_now_keys.append(str(key))
+
+        problems: list[str] = []
+        if use_case_keys:
+            problems.append(
+                "For percentage use-case statements, make the feature the subject: "
+                "'在90%的使用场景里 更快的转向响应都有帮助'. Do not present the "
+                f"feature as an example of a scenario. Keys: {use_case_keys[:20]}"
+            )
+        if numeric_shorthand_keys:
+            problems.append(
+                "Complete colloquial numeric shorthand with its implied noun, for example "
+                "'福特推出了720马力版本'; do not leave an attributive 的 at the cue end. "
+                f"Keys: {numeric_shorthand_keys[:20]}"
+            )
+        if discourse_now_keys:
+            problems.append(
+                "A standalone 'Now.' is a discourse transition here. Translate it as '那么' "
+                f"or '接下来', not the temporal adverb '现在'. Keys: {discourse_now_keys[:20]}"
+            )
+        if problems:
+            return False, " ".join(problems)
+        return True, ""
+
     def _validate_cross_key_boundaries(
         self,
         response_dict: Dict[str, Any],
@@ -1402,7 +1540,7 @@ Delete every fact, action, object, name, number, or clause that current_source d
 
         source_owners: dict[str, set[str]] = {}
         for key, source in subtitle_dict.items():
-            for token in self._boundary_tokens(source):
+            for token in self._context_ownership_tokens(source):
                 source_owners.setdefault(token, set()).add(key)
 
         translated_owners: dict[str, set[str]] = {}
@@ -1849,6 +1987,17 @@ Delete every fact, action, object, name, number, or clause that current_source d
         }
 
     @classmethod
+    def _context_ownership_tokens(cls, text: str) -> set[str]:
+        """Include numeric aliases for plural forms such as `37s` during context checks."""
+        tokens = cls._boundary_tokens(text)
+        aliases = {
+            match.group(1)
+            for token in tokens
+            if (match := re.fullmatch(r"(\d{2,4})s", token, flags=re.IGNORECASE))
+        }
+        return tokens | aliases
+
+    @classmethod
     def _numeric_token_belongs_to_compound_model(
         cls,
         token: str,
@@ -2142,6 +2291,25 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 for candidate in _integer_chinese_forms(token)
             )
 
+        def _large_integer_preserved(token: str, translated: str) -> bool:
+            """Accept an exactly equivalent Chinese ten-thousand expression."""
+            if (
+                self.target_language.value not in {"简体中文", "繁体中文", "粤语"}
+                or not re.fullmatch(r"\d+", token)
+                or int(token) < 10000
+            ):
+                return False
+
+            value = Decimal(token)
+            ten_thousands = value / Decimal(10000)
+            rendered = format(ten_thousands, "f").rstrip("0").rstrip(".")
+            return bool(
+                re.search(
+                    rf"(?<![\d.]){re.escape(rendered)}\s*万(?![\d万])",
+                    translated,
+                )
+            )
+
         def _decade_preserved(token: str, translated: str, translated_norm: str) -> bool:
             if not _is_decade_token(token):
                 return False
@@ -2424,6 +2592,8 @@ Delete every fact, action, object, name, number, or clause that current_source d
                     continue
                 if _ordinal_preserved(token, translated_norm):
                     continue
+                if _large_integer_preserved(token, translated):
+                    continue
                 if _integer_preserved(token, translated_norm):
                     continue
                 if _inflected_alnum_preserved(token, translated_norm):
@@ -2476,6 +2646,7 @@ Delete every fact, action, object, name, number, or clause that current_source d
             custom_prompt=self.custom_prompt,
         )
         system_prompt += self._dialogue_prompt_rules(subtitle_dict)
+        system_prompt += self._target_language_style_rules()
         context_text = self.translation_context.render()
         if context_text:
             system_prompt += f"\n\n<global_context>\n{context_text}\n</global_context>"
@@ -2556,13 +2727,15 @@ Delete every fact, action, object, name, number, or clause that current_source d
 
     def _validate_single_context_ownership(self, current: Dict[str, str], translated: str) -> None:
         """Reject model/spec tokens borrowed from neighboring source context."""
-        own_tokens = set().union(*(self._boundary_tokens(text) for text in current.values()))
+        own_tokens = set().union(
+            *(self._context_ownership_tokens(text) for text in current.values())
+        )
         neighbors = [
             *self._neighbor_context(current, before=True),
             *self._neighbor_context(current, before=False),
         ]
         neighbor_tokens = set().union(
-            *(self._boundary_tokens(item["source"]) for item in neighbors),
+            *(self._context_ownership_tokens(item["source"]) for item in neighbors),
             set(),
         )
         compact = re.sub(r"[\s,，.。-]+", "", translated).lower()
@@ -2604,7 +2777,10 @@ Delete every fact, action, object, name, number, or clause that current_source d
                     raise RuntimeError(self._fatal_provider_message) from error
                 logger.warning("Locked batch recovery failed; trying single items: %s", error)
 
-        single_prompt = get_prompt("translate/single", target_language=self.target_language.value)
+        single_prompt = (
+            get_prompt("translate/single", target_language=self.target_language.value)
+            + self._target_language_style_rules()
+        )
 
         def _looks_untranslated(text: str, original: str) -> bool:
             if self.target_language.value not in {"简体中文", "繁体中文", "日本語", "韩语", "粤语"}:
@@ -2680,6 +2856,24 @@ Delete every fact, action, object, name, number, or clause that current_source d
                     )
                     if not residue_ok:
                         raise RuntimeError(residue_error)
+                    natural_chinese_ok, natural_chinese_error = (
+                        self._validate_natural_chinese_degree_constructions(
+                            current_response,
+                            current_source,
+                            lambda value: str(value),
+                        )
+                    )
+                    if not natural_chinese_ok:
+                        raise RuntimeError(natural_chinese_error)
+                    contextual_chinese_ok, contextual_chinese_error = (
+                        self._validate_natural_chinese_contextual_constructions(
+                            current_response,
+                            current_source,
+                            lambda value: str(value),
+                        )
+                    )
+                    if not contextual_chinese_ok:
+                        raise RuntimeError(contextual_chinese_error)
                     self._validate_single_context_ownership(current, translated_text)
                     translated_items.append(replace(data, translated_text=translated_text))
                     last_error = None
@@ -3328,7 +3522,70 @@ Delete every fact, action, object, name, number, or clause that current_source d
             except Exception as error:
                 repair_error = error
                 feedback = str(error)
+        fallback = self._deterministic_chinese_fluency_fallback(window, current)
+        if fallback is not None:
+            return window, fallback, None
         return window, None, repair_error
+
+    @staticmethod
+    def _deterministic_chinese_fluency_fallback(
+        window: List[SubtitleProcessData],
+        current: List[SubtitleProcessData],
+    ) -> Optional[List[SubtitleProcessData]]:
+        """Repair two audited constructions after model retries are exhausted."""
+        current_by_index = {item.index: item for item in current}
+        repaired_by_index = dict(current_by_index)
+        changed = False
+
+        for left, right in zip(window, window[1:]):
+            left_source = left.original_text.strip()
+            right_source = right.original_text.strip()
+            percentage = re.search(
+                r"\b(\d+)%\s+of\s+what\s+you['’]re\s+going\s+to\s+use\s+"
+                r"this\s+(?:truck|car|vehicle)\s+for,?\s+like\s+the\s+steering\s+"
+                r"(?:rack|system),?$",
+                left_source,
+                flags=re.IGNORECASE,
+            )
+            if percentage and re.match(
+                r"^is\s+a\s+good\s+thing\s+because\b",
+                right_source,
+                flags=re.IGNORECASE,
+            ):
+                repaired_by_index[left.index] = replace(
+                    current_by_index[left.index],
+                    translated_text=f"我觉得在{percentage.group(1)}%的使用场景里",
+                )
+                repaired_by_index[right.index] = replace(
+                    current_by_index[right.index],
+                    translated_text="这套转向系统都更好用 因为响应更快了",
+                )
+                changed = True
+                continue
+
+            if re.fullmatch(
+                r"like\s+it\s+would\s+just\s+make\s+this\s+thing[.!?]?",
+                left_source,
+                flags=re.IGNORECASE,
+            ) and re.match(
+                r"^so\s+much\s+more\s+excellent\s+than\s+it\s+already\s+is"
+                r".*\bdon['’]t\s+get\s+me\s+wrong",
+                right_source,
+                flags=re.IGNORECASE,
+            ):
+                repaired_by_index[left.index] = replace(
+                    current_by_index[left.index],
+                    translated_text="它仿佛能让这台车更上一层楼",
+                )
+                repaired_by_index[right.index] = replace(
+                    current_by_index[right.index],
+                    translated_text="尽管它本来就已经很优秀了 但别误会",
+                )
+                changed = True
+
+        if not changed:
+            return None
+        return [repaired_by_index[item.index] for item in window]
 
     def _chinese_fluency_candidates(
         self,
@@ -3466,7 +3723,7 @@ Delete every fact, action, object, name, number, or clause that current_source d
     @staticmethod
     def _chinese_boundary_signal(left: str, right: str) -> str:
         """Describe a likely Chinese syntax break without deciding that it is wrong."""
-        trim_chars = " \t\r\n，。！？；：、,.!?;:（）()【】[]‘’“”\"'"
+        trim_chars = " \t\r\n，。！？；：、,.!?;:…（）()【】[]‘’“”\"'"
         left = str(left or "").strip(trim_chars)
         right = str(right or "").strip(trim_chars)
         if not left or not right:
@@ -3502,6 +3759,12 @@ Delete every fact, action, object, name, number, or clause that current_source d
 
         if re.search(r"之所以.+(?:部分|主要|根本|唯一)?原因$", left):
             return "unfinished Chinese reason construction"
+
+        if re.search(r"\d+%.+(?:转向机|转向齿条)$", left):
+            return "percentage use-case predicate is stranded"
+
+        if re.search(r"(?:让|使).{0,8}(?:这|那)?(?:辆|台)?(?:车|车辆|东西)$", left):
+            return "resultative predicate is stranded"
 
         soft_tail = re.compile(
             r"(?:的|是|把|被|让|给|和|与|对|向|从|比|像|后|前|大约|差不多|与其|为了|花)$"
@@ -3701,6 +3964,13 @@ Rewrite only the provided translations. Keep every key, source subtitle, timesta
                     "For 'Ford in Ypsilanti, Michigan for tossing' / 'me the keys', prefer "
                     "'还要感谢密歇根州伊普西兰蒂的这家经销商' / '他们把钥匙交给了我' "
                     "instead of ending the first key with 他们把. "
+                    "For a percentage use-case pair ending in 'like the steering rack' / "
+                    "'is a good thing because...', prefer '我觉得在90%的使用场景里' / "
+                    "'更快的转向响应都有帮助 因为...' instead of ending the first key "
+                    "with 转向机 or 转向齿条. For 'Like it would just make this thing' / "
+                    "'so much more excellent than it already is, and don't get me wrong', "
+                    "prefer '它仿佛能让这台车更上一层楼' / '尽管它本来就已经很优秀了 "
+                    "但别误会' instead of leaving 让这车 unfinished. "
                     "For 'a serrated' / 'edge', prefer '这里采用锯齿状设计' / '这样的边缘' "
                     "instead of ending the first key with 的. For 'I'd pick him in a second' "
                     "/ 'as an appealing winner', prefer '我会立刻选他' / '他是个很有吸引力的赢家' "

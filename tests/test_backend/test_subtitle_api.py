@@ -1,10 +1,12 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 
 import app.api.config as config_module
-from app.api.subtitle import SubtitleRequest, _run_subtitle
+from app.api.subtitle import SubtitleRequest, _run_subtitle, _validate_expected_llm_config
 from app.api.subtitles import parse_srt
 from app.core.task_manager import task_manager
 
@@ -12,12 +14,44 @@ import subforge.core.llm as llm_module
 import subforge.core.split.split as split_module
 from subforge.core.entities import SubtitleProcessData
 from subforge.core.translate.factory import TranslatorFactory
+from subforge.settings import LlmRuntimeConfig, detect_llm_provider
+
+
+def _mock_llm_runtime(monkeypatch, settings):
+    base_url = str(settings.get("llm_base_url", ""))
+    monkeypatch.setattr(
+        config_module,
+        "get_llm_runtime_config",
+        lambda: LlmRuntimeConfig(
+            provider=detect_llm_provider(base_url),
+            base_url=base_url,
+            api_key=str(settings.get("llm_api_key", "")),
+            model=str(settings.get("llm_model", "gpt-4o-mini")),
+        ),
+    )
 
 
 def test_subtitle_request_does_not_default_to_stale_llm_model():
     req = SubtitleRequest(subtitle_file="/tmp/example.srt")
 
     assert req.llm_model == ""
+
+
+def test_stale_task_profile_is_rejected_before_llm_call():
+    req = SubtitleRequest(
+        subtitle_file="/tmp/example.srt",
+        llm_provider="mimo",
+        llm_model="mimo-v2.5-pro",
+    )
+    runtime = LlmRuntimeConfig(
+        provider="deepseek",
+        base_url="https://api.deepseek.com/v1",
+        api_key="test-key",
+        model="deepseek-chat",
+    )
+
+    with pytest.raises(ValueError, match="LLM 服务已从 mimo 切换为 deepseek"):
+        _validate_expected_llm_config(req, runtime)
 
 
 def test_result_path_moves_session_uploads_to_durable_work_dir(tmp_path, monkeypatch):
@@ -87,6 +121,7 @@ def test_subtitle_pipeline_uses_explicit_llm_client_without_env_mutation(
     monkeypatch.setattr(
         config_module, "get_config_value", lambda key, default=None: settings.get(key, default)
     )
+    _mock_llm_runtime(monkeypatch, settings)
 
     created = {}
     client = object()
@@ -117,6 +152,8 @@ def test_subtitle_pipeline_uses_explicit_llm_client_without_env_mutation(
     task = task_manager.create_task("subtitle")
     req = SubtitleRequest(
         subtitle_file=str(subtitle_path),
+        llm_provider="custom",
+        llm_model="mimo-v2.5",
         need_optimize=False,
         need_translate=False,
     )
@@ -153,6 +190,7 @@ def test_subtitle_pipeline_cleans_chinese_translation_punctuation(tmp_path, monk
         "get_config_value",
         lambda key, default=None: settings.get(key, default),
     )
+    _mock_llm_runtime(monkeypatch, settings)
 
     class FakeSplitter:
         def __init__(self, **_kwargs):
@@ -211,6 +249,7 @@ def test_subtitle_pipeline_hides_speaker_markers_in_final_output(tmp_path, monke
             "replace_chinese_punctuation": True,
         }.get(key, default),
     )
+    _mock_llm_runtime(monkeypatch, {})
 
     class FakeSplitter:
         def __init__(self, **_kwargs):
@@ -287,6 +326,7 @@ def test_subtitle_pipeline_does_not_split_bilingual_cues_after_translation(
             "replace_chinese_punctuation": True,
         }.get(key, default),
     )
+    _mock_llm_runtime(monkeypatch, {})
 
     class FakeSplitter:
         def __init__(self, **_kwargs):
@@ -351,6 +391,7 @@ def test_failed_translation_saves_punctuation_cleaned_recovery_file(
             "replace_chinese_punctuation": True,
         }.get(key, default),
     )
+    _mock_llm_runtime(monkeypatch, {})
 
     class FakeSplitter:
         def __init__(self, **_kwargs):

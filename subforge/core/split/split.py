@@ -274,6 +274,13 @@ class SubtitleSplitter:
                 hard_max_words=self.hard_max_word_count_english,
             )
             self.merge_short_segment(final_segments)
+            # Short-cue merging changes neighboring pairs and can expose a
+            # dependency that did not exist during the first global pass.
+            final_segments = normalize_boundaries(
+                final_segments,
+                soft_max_words=self.max_word_count_english,
+                hard_max_words=self.hard_max_word_count_english,
+            )
 
             return ASRData(final_segments)
 

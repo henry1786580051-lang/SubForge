@@ -1,5 +1,41 @@
 # Changelog
 
+## v1.1.10 - 2026-08-08
+
+### Improved
+
+- Reads the active LLM provider, Base URL, API key, and model as one immutable task snapshot instead of combining independently cached fields.
+- Sends the frontend's expected provider and model with each subtitle task and rejects stale page state before any model request is issued.
+- Makes the full-pipeline test runner provider-neutral, with explicit service and model overrides plus preflight validation.
+- Extends English boundary normalization for vehicle model years, mixed-number measurements, opinion markers, fixed phrases, coordinated predicates, `what ... use ... for`, and instrument-name boundaries.
+- Adds focused Chinese style validation for resultative degree statements, vehicle use-case subjects, discourse markers, numeric shorthand, and exact ten-thousand number equivalents.
+- Runs boundary normalization again after short-cue merging so a merge cannot expose a new unchecked dependency.
+
+### Fixed
+
+- Fixed the video pipeline test silently preferring legacy `MIMO_*` variables over an explicitly requested DeepSeek-compatible configuration.
+- Fixed task requests silently ignoring a user-visible model change and calling whichever provider happened to remain active in backend settings.
+- Fixed model discovery and connection tests reading stale flat LLM fields instead of the active provider profile.
+- Fixed legacy mixed-provider profiles retaining another provider's endpoint or model after switching services; credentials remain isolated and preserved.
+- Fixed invalid combinations such as a MiMo endpoint with a DeepSeek model reaching the network.
+- Fixed DMG assembly adding Finder/provenance metadata after signing; the exact app inside the writable image is now cleaned and strictly verified before final compression.
+- Fixed subtitle boundaries splitting `2026 / Ford F-150`, `five / and a half`, `don't get me / wrong`, `little puny / RPM gauge`, and related dependent structures.
+- Fixed literal or incomplete Chinese results such as “这就是安静模式下它有多安静”, vehicle-use percentages with the wrong subject, and cue-final attributive `的`.
+
+### Validation
+
+- Python: `1013 passed, 11 skipped`.
+- LLM routing regression suite: `63 passed`.
+- Ruff and Next.js production build passed.
+- Verified that MiMo endpoint plus DeepSeek model is rejected before network access and that legacy MiMo variables no longer override a DeepSeek test run.
+- Verified the mounted DMG checksum, `/Applications` link, app signature, and `1.1.10` bundle version.
+
+### Packaging
+
+- macOS Apple Silicon: `SubForge-1.1.10-macos-arm64.dmg`.
+- Windows x64: `SubForge-1.1.10-windows-x64-setup.exe`, built and smoke-tested by GitHub Actions.
+- Whisper, forced-alignment, Community-1, ECAPA, and DeepFilterNet models remain separate on-demand downloads.
+
 ## v1.1.9 - 2026-08-08
 
 ### Improved

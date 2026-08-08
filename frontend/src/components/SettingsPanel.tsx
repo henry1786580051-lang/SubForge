@@ -73,6 +73,7 @@ export function SettingsPanel() {
       if (data.source_language !== undefined) storeUpdates.sourceLanguage = data.source_language as string;
       if (data.target_language !== undefined) storeUpdates.targetLanguage = data.target_language as string;
       if (data.translator !== undefined) storeUpdates.translator = data.translator as string;
+      if (data.llm_provider !== undefined) storeUpdates.llmProvider = data.llm_provider as string;
       if (data.llm_model !== undefined) storeUpdates.llmModel = data.llm_model as string;
       if (data.whisper_model_size !== undefined) storeUpdates.whisperModelSize = data.whisper_model_size as string;
       if (data.whisperx_alignment_strategy !== undefined) {
@@ -204,7 +205,10 @@ export function SettingsPanel() {
         llm_api_key_configured: result.api_key_configured,
         llm_model: result.model,
       }));
-      useAppStore.getState().setConfig({ llmModel: result.model });
+      useAppStore.getState().setConfig({
+        llmProvider: result.provider,
+        llmModel: result.model,
+      });
       setLlmTestResult(null);
     } catch (err) {
       useAppStore.getState().setError(

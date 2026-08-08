@@ -149,6 +149,25 @@ def run(args: Namespace, config: dict) -> int:
     llm_api_key = get(config, "llm.api_key", "")
     llm_api_base = get(config, "llm.api_base", "")
     llm_model = get(config, "llm.model", "")
+    if needs_llm:
+        from subforge.settings import (
+            LlmRuntimeConfig,
+            detect_llm_provider,
+            validate_llm_runtime_config,
+        )
+
+        try:
+            validate_llm_runtime_config(
+                LlmRuntimeConfig(
+                    provider=detect_llm_provider(llm_api_base),
+                    base_url=llm_api_base,
+                    api_key=llm_api_key,
+                    model=llm_model,
+                )
+            )
+        except ValueError as exc:
+            output.error(str(exc))
+            return EXIT.USAGE_ERROR
     if llm_api_key:
         os.environ["OPENAI_API_KEY"] = llm_api_key
     if llm_api_base:

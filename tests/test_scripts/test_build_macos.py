@@ -15,6 +15,7 @@ def test_create_dmg_resigns_exact_staged_app(tmp_path, monkeypatch):
 
     commands: list[list[str]] = []
     captured: dict[str, object] = {}
+    sealed: list[Path] = []
 
     def fake_run(command, **kwargs):
         commands.append(command)
@@ -27,6 +28,11 @@ def test_create_dmg_resigns_exact_staged_app(tmp_path, monkeypatch):
 
     monkeypatch.setattr(build_macos.subprocess, "run", fake_run)
     monkeypatch.setattr(build_macos, "DMG_OUTPUT", tmp_path / "SubForge.dmg")
+    monkeypatch.setattr(
+        build_macos,
+        "seal_app_inside_dmg",
+        lambda path: sealed.append(path),
+    )
 
     # Import inside the function just as production code does.
     import dmgbuild
@@ -42,3 +48,32 @@ def test_create_dmg_resigns_exact_staged_app(tmp_path, monkeypatch):
         ["codesign", "--force", "--deep", "--sign", "-", str(staged_app)],
         ["codesign", "--verify", "--deep", "--strict", str(staged_app)],
     ]
+    assert sealed == [tmp_path / "SubForge.dmg"]
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="DMG signing is macOS-only")
+def test_seal_app_inside_dmg_clears_metadata_and_verifies_image_copy(
+    tmp_path, monkeypatch
+):
+    dmg_path = tmp_path / "SubForge.dmg"
+    dmg_path.write_bytes(b"initial")
+    commands: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        commands.append(command)
+        if command[:2] == ["hdiutil", "convert"]:
+            output = Path(command[command.index("-o") + 1])
+            output.write_bytes(b"converted")
+
+    monkeypatch.setattr(build_macos.subprocess, "run", fake_run)
+
+    build_macos.seal_app_inside_dmg(dmg_path)
+
+    image_app = Path(commands[1][-1]) / "SubForge.app"
+    assert commands[0][:2] == ["hdiutil", "convert"]
+    assert commands[1][:2] == ["hdiutil", "attach"]
+    assert commands[2] == ["xattr", "-cr", str(image_app)]
+    assert commands[3][:2] == ["codesign", "--verify"]
+    assert commands[4][:2] == ["hdiutil", "detach"]
+    assert commands[5][:2] == ["hdiutil", "convert"]
+    assert dmg_path.read_bytes() == b"converted"

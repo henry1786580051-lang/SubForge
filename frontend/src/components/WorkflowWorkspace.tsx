@@ -1059,6 +1059,7 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
       subtitle_file: subtitleFile,
       target_language: config.targetLanguage,
       translator: config.translator,
+      llm_provider: config.llmProvider,
       llm_model: config.llmModel,
       need_optimize: config.needOptimize,
       need_translate: config.needTranslate,
@@ -1067,6 +1068,7 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
     });
   }, [
     config.customPrompt,
+    config.llmProvider,
     config.llmModel,
     config.needOptimize,
     config.needReflect,
