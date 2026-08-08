@@ -3440,6 +3440,13 @@ Delete every fact, action, object, name, number, or clause that current_source d
         ):
             return "source continuation may require different target-language order"
 
+        if re.match(
+            r"^so\s+(?:[a-z]+ly\b|far\b|long\b|many\b|much\b|strong\b|well\b|"
+            r"widespread\b)",
+            right_lower,
+        ):
+            return "degree complement crosses the subtitle boundary"
+
         if re.match(r"^(?:and|or)\b", right_lower) and not re.search(r"[,;:]\s*$", left):
             return "coordinate phrase crosses the subtitle boundary"
 
@@ -3493,6 +3500,9 @@ Delete every fact, action, object, name, number, or clause that current_source d
         if re.search(r"(?:我|你|他|她|它|我们|你们|他们|她们|它们)(?:还|又|也|就|刚)?把$", left):
             return "unfinished Chinese grammatical structure"
 
+        if re.search(r"之所以.+(?:部分|主要|根本|唯一)?原因$", left):
+            return "unfinished Chinese reason construction"
+
         soft_tail = re.compile(
             r"(?:的|是|把|被|让|给|和|与|对|向|从|比|像|后|前|大约|差不多|与其|为了|花)$"
         )
@@ -3501,7 +3511,7 @@ Delete every fact, action, object, name, number, or clause that current_source d
 
         structural_tail = re.compile(
             r"(?:作为|没有|不会|不能|可以|应该|能够|正在|已经|只是|其实|确实|"
-            r"相当|非常|更|最|几乎|如今|现在|目前|当时|后来|最终|像是|就像|就是|"
+            r"相当|非常|更|最|几乎|变得|如今|现在|目前|当时|后来|最终|像是|就像|就是|"
             r"我是说|我的意思是|来说|例如|比如)$"
         )
         if structural_tail.search(left):
@@ -3532,7 +3542,7 @@ Delete every fact, action, object, name, number, or clause that current_source d
         if re.search(r"(?:这个|这些|那种)$", left) and len(re.sub(r"\s+", "", left)) <= 10:
             return "possible demonstrative split"
 
-        if right.startswith(("了", "的", "得")):
+        if right in {"了", "的", "得"}:
             return "particle stranded at next subtitle start"
 
         left_connector = re.search(r"(所以|因为|不过|但是|而且|并且)$", left)

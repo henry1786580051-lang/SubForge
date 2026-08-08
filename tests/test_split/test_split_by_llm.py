@@ -61,6 +61,35 @@ def test_validation_allows_complete_clause_boundary():
     assert message == ""
 
 
+def test_validation_prefers_blue_zone_reason_boundary_over_degree_complement_split():
+    original = (
+        "And maybe part of the reason blue zones resonate so deeply in America "
+        "is because so much of modern American life is designed against longevity."
+    )
+    preferred = [
+        "And maybe part of the reason blue zones resonate so deeply in America",
+        "is because so much of modern American life is designed against longevity.",
+    ]
+    broken = [
+        "And maybe part of the reason blue zones resonate",
+        "so deeply in America is because so much of modern American life is designed against longevity.",
+    ]
+
+    preferred_ok, preferred_message = _validate_split_result(
+        original,
+        preferred,
+        25,
+        18,
+        22,
+    )
+    broken_ok, broken_message = _validate_split_result(original, broken, 25, 18, 22)
+
+    assert preferred_ok is True
+    assert preferred_message == ""
+    assert broken_ok is False
+    assert "Unnatural split boundaries" in broken_message
+
+
 def test_validation_rejects_dropped_words_despite_high_character_similarity():
     original = (
         "You know this is a deliberately long sentence with enough surrounding words "

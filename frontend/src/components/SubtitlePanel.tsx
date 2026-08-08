@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useAppStore } from "@/store/appStore";
 import { subtitleApi, subtitlesApi, filesApi, configApi } from "@/lib/api";
 
@@ -21,19 +22,44 @@ export function SubtitlePanel({
   const [promptExpanded, setPromptExpanded] = useState(false);
   const [focusedRowId, setFocusedRowId] = useState<number | null>(null);
   const promptDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tableScrollRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef(new Map<number, HTMLTableRowElement>());
+  // TanStack Virtual intentionally exposes mutable measurement helpers.
+  // eslint-disable-next-line react-hooks/incompatible-library
+  const rowVirtualizer = useVirtualizer({
+    count: subtitles.length,
+    getScrollElement: () => tableScrollRef.current,
+    estimateSize: () => 64,
+    getItemKey: (index) => subtitles[index]?.id ?? index,
+    measureElement: (element) => element.getBoundingClientRect().height,
+    overscan: 8,
+  });
   useEffect(() => () => { if (promptDebounceRef.current) clearTimeout(promptDebounceRef.current); }, []);
 
   useEffect(() => {
     if (!focusRequest) return;
-    const row = rowRefs.current.get(focusRequest.id);
-    if (!row) return;
-    row.scrollIntoView({ behavior: "smooth", block: "center" });
-    row.focus({ preventScroll: true });
+    const rowIndex = subtitles.findIndex((subtitle) => subtitle.id === focusRequest.id);
+    if (rowIndex < 0) return;
+    rowVirtualizer.scrollToIndex(rowIndex, { align: "center" });
     setFocusedRowId(focusRequest.id);
+    let attempts = 0;
+    let focusFrame = 0;
+    const focusRow = () => {
+      const row = rowRefs.current.get(focusRequest.id);
+      if (row) {
+        row.focus({ preventScroll: true });
+        return;
+      }
+      attempts += 1;
+      if (attempts < 12) focusFrame = window.requestAnimationFrame(focusRow);
+    };
+    focusFrame = window.requestAnimationFrame(focusRow);
     const timer = window.setTimeout(() => setFocusedRowId(null), 2200);
-    return () => window.clearTimeout(timer);
-  }, [focusRequest]);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      window.clearTimeout(timer);
+    };
+  }, [focusRequest, rowVirtualizer, subtitles]);
 
   const startEdit = useCallback((id: number, field: "text" | "translated", value: string) => { setEditingCell({ id, field }); setEditValue(value); }, []);
   const commitEdit = useCallback(() => { if (!editingCell) return; updateSubtitle(editingCell.id, editingCell.field, editValue); setEditingCell(null); }, [editingCell, editValue, updateSubtitle]);
@@ -353,7 +379,7 @@ export function SubtitlePanel({
       )}
 
       {/* Table */}
-      <div className="flex-1 overflow-auto">
+      <div ref={tableScrollRef} className="flex-1 overflow-auto">
         {subtitles.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center px-8">
             <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-accent-dim to-[rgba(37,99,235,0.04)] flex items-center justify-center mb-4 border border-accent/10">
@@ -363,9 +389,9 @@ export function SubtitlePanel({
             <p className="text-[12px] text-text-muted">转录完成后字幕将在此显示</p>
           </div>
         ) : (
-          <table className="w-full text-[13px] border-collapse">
-            <thead className="sticky top-0 z-10">
-              <tr className="bg-surface border-b border-border">
+          <table className="grid w-full text-[13px]">
+            <thead className="sticky top-0 z-10 grid">
+              <tr className="grid grid-cols-[40px_40px_148px_minmax(0,1fr)_minmax(0,1fr)] bg-surface border-b border-border">
                 <th className="text-left px-3 py-2 text-[11px] text-text-muted font-medium w-10"><input type="checkbox" checked={allSelected} onChange={allSelected ? deselectAll : selectAll} className="accent-accent w-3 h-3" /></th>
                 <th className="text-left px-3 py-2 text-[11px] text-text-muted font-medium w-10">#</th>
                 <th className="text-left px-3 py-2 text-[11px] text-text-muted font-medium w-36">时间</th>
@@ -373,35 +399,46 @@ export function SubtitlePanel({
                 <th className="text-left px-3 py-2 text-[11px] text-text-muted font-medium">译文</th>
               </tr>
             </thead>
-            <tbody>
-              {subtitles.map((sub, idx) => (
+            <tbody
+              className="relative grid"
+              style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
+            >
+              {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                const sub = subtitles[virtualRow.index];
+                const idx = virtualRow.index;
+                return (
                 <tr
                   key={sub.id}
+                  data-index={virtualRow.index}
                   ref={(row) => {
-                    if (row) rowRefs.current.set(sub.id, row);
-                    else rowRefs.current.delete(sub.id);
+                    if (row) {
+                      rowRefs.current.set(sub.id, row);
+                      rowVirtualizer.measureElement(row);
+                    } else {
+                      rowRefs.current.delete(sub.id);
+                    }
                   }}
                   tabIndex={-1}
-                  className={`subtitle-row group cursor-pointer transition-[background-color,box-shadow] duration-300 focus:outline-none ${selectedIds.has(sub.id) ? "selected" : ""} ${
+                  className={`subtitle-row group absolute left-0 top-0 grid w-full grid-cols-[40px_40px_148px_minmax(0,1fr)_minmax(0,1fr)] cursor-pointer transition-[background-color,box-shadow] duration-300 focus:outline-none ${selectedIds.has(sub.id) ? "selected" : ""} ${
                     focusedRowId === sub.id
                       ? "bg-amber-50 shadow-[inset_3px_0_0_#d97706]"
                       : idx % 2 === 0
                         ? ""
                         : "bg-[rgba(0,0,0,0.015)]"
                   }`}
+                  style={{ transform: `translateY(${virtualRow.start}px)` }}
                   onClick={() => toggleSelect(sub.id)} onContextMenu={(e) => handleContextMenu(e, sub.id)}>
                   <td className="px-3 py-2 border-b border-[rgba(0,0,0,0.04)]">
                     <input type="checkbox" checked={selectedIds.has(sub.id)} onChange={() => toggleSelect(sub.id)} onClick={(e) => e.stopPropagation()} className="accent-accent w-3 h-3" />
                   </td>
                   <td className="px-3 py-2 text-[12px] text-text-muted font-mono border-b border-[rgba(0,0,0,0.04)]">{sub.id}</td>
-                  <td className="px-3 py-2 border-b border-[rgba(0,0,0,0.04)]">
-                    <div className="flex items-center gap-1">
+                  <td className="min-w-0 overflow-hidden px-3 py-2 border-b border-[rgba(0,0,0,0.04)]">
+                    <div className="flex flex-col gap-0.5 leading-tight">
                       <span className="text-[12px] text-text-muted font-mono">{sub.start}</span>
-                      <span className="text-[11px] text-text-muted">&rarr;</span>
-                      <span className="text-[12px] text-text-muted font-mono">{sub.end}</span>
+                      <span className="text-[12px] text-text-muted font-mono">&rarr; {sub.end}</span>
                     </div>
                   </td>
-                  <td className="px-3 py-2 border-b border-[rgba(0,0,0,0.04)]" onDoubleClick={(e) => { e.stopPropagation(); startEdit(sub.id, "text", sub.text); }}>
+                  <td className="min-w-0 overflow-hidden px-3 py-2 border-b border-[rgba(0,0,0,0.04)]" onDoubleClick={(e) => { e.stopPropagation(); startEdit(sub.id, "text", sub.text); }}>
                     {editingCell?.id === sub.id && editingCell?.field === "text" ? (
                       <input autoFocus className="inline-edit text-text-primary" value={editValue} onChange={(e) => setEditValue(e.target.value)} onBlur={commitEdit} onKeyDown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") setEditingCell(null); }} onClick={(e) => e.stopPropagation()} />
                     ) : (
@@ -411,21 +448,22 @@ export function SubtitlePanel({
                             {formatSpeakerLabel(sub.speaker)}
                           </span>
                         )}
-                        <span>{sub.text}</span>
+                        <span className="min-w-0 break-words">{sub.text}</span>
                       </span>
                     )}
                   </td>
-                  <td className="px-3 py-2 border-b border-[rgba(0,0,0,0.04)]" onDoubleClick={(e) => { e.stopPropagation(); startEdit(sub.id, "translated", sub.translated); }}>
+                  <td className="min-w-0 overflow-hidden px-3 py-2 border-b border-[rgba(0,0,0,0.04)]" onDoubleClick={(e) => { e.stopPropagation(); startEdit(sub.id, "translated", sub.translated); }}>
                     {editingCell?.id === sub.id && editingCell?.field === "translated" ? (
                       <input autoFocus className="inline-edit text-accent" value={editValue} onChange={(e) => setEditValue(e.target.value)} onBlur={commitEdit} onKeyDown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") setEditingCell(null); }} onClick={(e) => e.stopPropagation()} />
                     ) : (
-                      <span className="text-text-muted group-hover:text-accent transition-colors">
+                      <span className="block min-w-0 break-words text-text-muted group-hover:text-accent transition-colors">
                         {sub.translated.trim() || <span className="text-amber-700 italic">待翻译</span>}
                       </span>
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}

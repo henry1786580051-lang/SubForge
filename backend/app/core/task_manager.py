@@ -81,6 +81,12 @@ class TaskManager:
         with self._lock:
             return [task.model_copy(deep=True) for task in self._tasks.values()]
 
+    def get_preview_revision(self, task_id: str) -> int:
+        """Read preview revision without copying the full subtitle snapshot."""
+        with self._lock:
+            task = self._tasks.get(task_id)
+            return task.preview_revision if task else 0
+
     def is_cancelled(self, task_id: str) -> bool:
         with self._lock:
             task = self._tasks.get(task_id)
@@ -162,8 +168,22 @@ class TaskManager:
             }
 
         if len(previous) == len(current):
-            changed = [segment for old, segment in zip(previous, current) if old != segment]
-            if len(changed) <= max(20, len(current) // 2):
+            changed = []
+            for old, segment in zip(previous, current):
+                if old == segment:
+                    continue
+                if old.get("id") != segment.get("id"):
+                    break
+                patch = {"id": segment.get("id")}
+                patch.update(
+                    {
+                        key: value
+                        for key, value in segment.items()
+                        if key != "id" and old.get(key) != value
+                    }
+                )
+                changed.append(patch)
+            else:
                 return {"mode": "patch", "segments": changed, "total": len(current)}
 
         return {"mode": "replace", "segments": current, "total": len(current)}
@@ -180,6 +200,7 @@ class TaskManager:
             task.status = TaskStatus.COMPLETED
             task.progress = 100
             task.result = result
+            task.preview_segments = None
             task.attention = None
             self._running_tasks.pop(task_id, None)
             self._cancel_callbacks.pop(task_id, None)
@@ -349,7 +370,19 @@ class TaskManager:
             task = self._tasks.get(task_id)
             if not task:
                 return
-            task_data = task.model_dump(exclude={"preview_segments"})
+            result = task.result
+            if (
+                task.status == TaskStatus.COMPLETED
+                and isinstance(result, dict)
+                and "preview_revision" in result
+                and "segments" in result
+            ):
+                task_data = task.model_dump(exclude={"preview_segments", "result"})
+                task_data["result"] = {
+                    key: value for key, value in result.items() if key != "segments"
+                }
+            else:
+                task_data = task.model_dump(exclude={"preview_segments"})
             if preview_delta is not None:
                 task_data["preview_delta"] = preview_delta
             listeners = list(self._listeners)

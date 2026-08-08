@@ -137,6 +137,25 @@ def test_assessment_allows_complete_comma_clauses_ending_in_pronouns():
     assert all(not assess_english_boundary(left, right).unstable for left, right in boundaries)
 
 
+def test_assessment_allows_location_inside_subject_before_predicate():
+    assessment = assess_english_boundary(
+        "And maybe part of the reason blue zones resonate so deeply in America",
+        "is because so much of modern American life is designed against longevity.",
+    )
+
+    assert not assessment.unstable
+    assert "proper-name subject separated from its predicate" not in assessment.reasons
+
+
+def test_assessment_rejects_degree_complement_split_from_predicate():
+    boundaries = [
+        ("And maybe part of the reason blue zones resonate", "so deeply in America"),
+        ("And loneliness and isolation became", "so widespread that it was an epidemic"),
+    ]
+
+    assert all(assess_english_boundary(left, right).unstable for left, right in boundaries)
+
+
 def test_assessment_rejects_cross_language_sensitive_vehicle_boundaries():
     boundaries = [
         ("Gene Buttman Ford in Ypsilanti,", "Michigan, we're driving this Charger."),

@@ -77,7 +77,10 @@ export function useTaskMonitor() {
         setSubtitles([...current, ...delta.segments]);
       } else {
         const changed = new Map(delta.segments.map((segment) => [segment.id, segment]));
-        setSubtitles(current.map((segment) => changed.get(segment.id) || segment));
+        setSubtitles(current.map((segment) => {
+          const patch = changed.get(segment.id);
+          return patch ? { ...segment, ...patch } : segment;
+        }));
       }
       previewRevisionRef.current = previewRevision;
     }
@@ -123,6 +126,15 @@ export function useTaskMonitor() {
         setSubtitleFile(result.subtitle_file as string);
         if (Array.isArray(result.segments)) {
           setSubtitles(result.segments as import("@/lib/api").SubtitleSegment[]);
+          return;
+        }
+        const completedRevision = Number(result.preview_revision || 0);
+        if (completedRevision > 0 && completedRevision <= previewRevisionRef.current) {
+          return;
+        }
+        if (Array.isArray(task.preview_segments)) {
+          setSubtitles(task.preview_segments);
+          previewRevisionRef.current = Math.max(previewRevisionRef.current, previewRevision);
           return;
         }
         subtitlesApi

@@ -161,6 +161,66 @@ def test_preview_updates_emit_small_deltas_and_keep_full_snapshot():
     assert snapshot.preview_revision == 3
 
 
+def test_preview_patch_only_contains_changed_fields_even_for_large_updates():
+    manager = TaskManager()
+    task = manager.create_task("subtitle")
+    events = []
+    manager.add_listener(lambda _task_id, data: events.append(data))
+    initial = [
+        {
+            "id": index,
+            "start": f"00:00:{index:02d},000",
+            "end": f"00:00:{index:02d},900",
+            "text": f"source {index}",
+            "translated": f"译文，{index}。",
+            "speaker": "",
+        }
+        for index in range(1, 41)
+    ]
+    finalized = [
+        {**segment, "translated": segment["translated"].replace("，", " ").replace("。", "")}
+        for segment in initial
+    ]
+
+    manager.publish_preview(task.id, initial)
+    manager.publish_preview(task.id, finalized)
+
+    delta = events[-1]["preview_delta"]
+    assert delta["mode"] == "patch"
+    assert len(delta["segments"]) == len(initial)
+    assert delta["segments"][0] == {"id": 1, "translated": "译文 1"}
+    assert all(set(segment) == {"id", "translated"} for segment in delta["segments"])
+
+
+def test_completed_websocket_event_omits_redundant_preview_but_snapshot_keeps_it():
+    manager = TaskManager()
+    task = manager.create_task("subtitle")
+    events = []
+    manager.add_listener(lambda _task_id, data: events.append(data))
+    segments = [{"id": 1, "text": "source", "translated": "译文"}]
+    manager.publish_preview(task.id, segments)
+    revision = manager.get_task(task.id).preview_revision
+
+    manager.complete_task(
+        task.id,
+        {
+            "subtitle_file": "/tmp/result.srt",
+            "preview_revision": revision,
+            "segments": segments,
+        },
+    )
+
+    assert events[-1]["result"] == {
+        "subtitle_file": "/tmp/result.srt",
+        "preview_revision": revision,
+    }
+    snapshot = manager.get_task(task.id)
+    assert snapshot is not None
+    assert snapshot.result["segments"] == segments
+    assert snapshot.preview_segments is None
+    assert manager.get_preview_revision(task.id) == revision
+
+
 def test_progress_is_clamped_and_does_not_move_backwards():
     manager = TaskManager()
     task = manager.create_task("subtitle")

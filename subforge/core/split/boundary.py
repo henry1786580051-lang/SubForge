@@ -491,11 +491,25 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
         risk += 32
         reasons.append("way-clause subject separated from its predicate")
 
-    if head in {"is", "are", "was", "were"} and re.search(
-        r"\b[A-Z][A-Za-z0-9'’.+-]*,?$", left
+    if (
+        head in {"is", "are", "was", "were"}
+        and re.search(r"\b[A-Z][A-Za-z0-9'’.+-]*,?$", left)
+        and (len(left_tokens) < 2 or left_tokens[-2] not in _DEPENDENT_RIGHT_HEADS)
     ):
         risk += 34
         reasons.append("proper-name subject separated from its predicate")
+
+    if (
+        head == "so"
+        and right[:1].islower()
+        and len(right_tokens) >= 2
+        and (
+            right_tokens[1].endswith("ly")
+            or right_tokens[1] in {"far", "long", "many", "much", "strong", "well", "widespread"}
+        )
+    ):
+        risk += 30
+        reasons.append("degree complement separated from its predicate")
 
     # Keep location names such as "Ypsilanti, Michigan" in one cue.  This is
     # deliberately limited to a capitalized comma-separated left tail and a

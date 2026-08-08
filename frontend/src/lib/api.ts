@@ -219,11 +219,18 @@ export interface TaskInfo {
   preview_segments?: SubtitleSegment[] | null;
   preview_revision?: number;
   attention?: TaskAttention | null;
-  preview_delta?: {
-    mode: "append" | "patch" | "replace";
-    segments: SubtitleSegment[];
-    total: number;
-  } | null;
+  preview_delta?: (
+    | {
+        mode: "append" | "replace";
+        segments: SubtitleSegment[];
+        total: number;
+      }
+    | {
+        mode: "patch";
+        segments: (Partial<SubtitleSegment> & Pick<SubtitleSegment, "id">)[];
+        total: number;
+      }
+  ) | null;
 }
 
 export interface MissingAlignmentModel {

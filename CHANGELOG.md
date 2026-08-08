@@ -1,5 +1,36 @@
 # Changelog
 
+## v1.1.9 - 2026-08-08
+
+### Improved
+
+- Finalizes Chinese subtitle punctuation with one final save, one preview serialization, and one editor update instead of repeating temporary SRT writes and full snapshot publication.
+- Sends field-level preview patches for large same-shape subtitle updates and removes duplicate completed-task subtitle payloads from WebSocket events while retaining REST and reconnect compatibility.
+- Virtualizes the subtitle editor so long files render only visible rows while preserving dynamic row heights, empty-translation navigation, selection, keyboard focus, and inline editing.
+- Prefers semantically safer English display boundaries around degree complements such as `resonate so deeply` and `became so widespread`.
+- Expands the conservative Chinese boundary audit to cover incomplete reason constructions and stranded `变得` predicates without changing timestamps or source text.
+
+### Fixed
+
+- Fixed `in America / is because` being misclassified as a proper-name subject split, which could force a worse `resonate / so deeply` boundary.
+- Fixed fragmented English cues causing invented Chinese subjects and unnatural translations such as “我们之所以如此扎根美国”.
+- Fixed “之所以……部分原因” and “变得 / 如此” pairs bypassing the mandatory Chinese fluency-repair path.
+- Fixed Chinese words beginning with `了`, such as `了解`, being mistaken for a standalone aspect particle and triggering unnecessary repair attempts.
+- Fixed the final punctuation stage appearing slow because saving, serialization, WebSocket transfer, and full-table rendering were grouped under the same progress message.
+
+### Validation
+
+- Python: `963 passed, 11 skipped`.
+- Split and translation regression suite: `237 passed`.
+- Ruff, ESLint, TypeScript, and Next.js production build passed.
+- Verified the reported 153-cue Blue Zone subtitle: affected boundaries now enter repair while the `了解` false positive no longer does.
+
+### Packaging
+
+- macOS Apple Silicon: `SubForge-1.1.9-macos-arm64.dmg`.
+- Windows x64: `SubForge-1.1.9-windows-x64-setup.exe`, built and smoke-tested by GitHub Actions.
+- Whisper, forced-alignment, Community-1, ECAPA, and DeepFilterNet models remain separate on-demand downloads.
+
 ## v1.1.8 - 2026-08-07
 
 ### Added

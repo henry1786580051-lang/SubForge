@@ -387,12 +387,11 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
             if req.target_language.lower() in {"chinese", "cantonese"} and bool(
                 get_config_value("replace_chinese_punctuation", True)
             ):
-                context.report(96, "Cleaning Chinese subtitle punctuation...")
+                context.report(96, "Finalizing subtitle formatting...")
                 asr_data.replace_chinese_translation_punctuation()
-            _save_partial(asr_data, "Bilingual subtitles validated", force=True)
 
         # Save result
-        context.report(97, "Saving result...")
+        context.report(97, "Saving subtitle file...")
         output_path = _result_path(
             req.subtitle_file,
             "_processed",
@@ -411,12 +410,21 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
             )
         )
 
+        context.report(99, "Updating subtitle editor...")
+        final_preview = subtitle_preview_segments(asr_data)
+        context.publish_preview(
+            final_preview,
+            subtitle_file=str(output_path),
+            message="Subtitle file saved",
+        )
+        final_preview_revision = task_manager.get_preview_revision(task_id)
         context.report(100, "Done")
         task_manager.complete_task(
             task_id,
             {
                 "subtitle_file": str(output_path),
-                "segments": subtitle_preview_segments(asr_data),
+                "preview_revision": final_preview_revision,
+                "segments": final_preview,
             },
         )
 

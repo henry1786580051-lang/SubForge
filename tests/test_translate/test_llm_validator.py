@@ -2403,6 +2403,26 @@ class TestValidateLLmResponse:
             "与其花八万美元买新车",
         )
 
+    @pytest.mark.parametrize(
+        ("left", "right", "expected_signal"),
+        [
+            (
+                "也许蓝色地带之所以能引起如此强烈共鸣的部分原因",
+                "我们之所以如此扎根美国 是因为现代美国生活与长寿背道而驰",
+                "unfinished Chinese reason construction",
+            ),
+            ("而孤独和孤立变得", "如此普遍", "unfinished Chinese grammatical structure"),
+        ],
+    )
+    def test_chinese_boundary_signal_catches_blue_zone_failures(self, left, right, expected_signal):
+        assert LLMTranslator._chinese_boundary_signal(left, right) == expected_signal
+
+    def test_chinese_boundary_signal_does_not_treat_lexical_le_as_particle(self):
+        assert not LLMTranslator._chinese_boundary_signal(
+            "请前往Patreon获取更多故事",
+            "了解我们的最新工作",
+        )
+
     @pytest.mark.parametrize("tail", ["我觉得可以买到一辆", "就接近程度来说"])
     def test_chinese_boundary_signal_catches_incomplete_charger_tails(self, tail):
         assert LLMTranslator._chinese_boundary_signal(tail, "下一条内容")
@@ -2507,6 +2527,65 @@ class TestValidateLLmResponse:
             left_translation,
             right_translation,
         )
+
+    def test_source_boundary_signal_shortlists_degree_complement(self):
+        assert LLMTranslator._source_boundary_signal(
+            "And maybe part of the reason blue zones resonate",
+            "so deeply in America is because modern life is designed against longevity.",
+            "也许蓝色地带之所以能引起如此强烈共鸣的部分原因",
+            "我们之所以如此扎根美国 是因为现代生活与长寿背道而驰",
+        )
+
+    def test_blue_zone_failures_are_mandatory_fluency_candidates(self):
+        translator = _make_minimax_reflect_translator()
+        source = [
+            SubtitleProcessData(
+                index=130,
+                original_text="And maybe part of the reason blue zones resonate",
+            ),
+            SubtitleProcessData(
+                index=131,
+                original_text=(
+                    "so deeply in America is because so much of modern American life "
+                    "is designed against longevity."
+                ),
+            ),
+            SubtitleProcessData(
+                index=132,
+                original_text="Most Americans do not live in walkable communities.",
+            ),
+            SubtitleProcessData(
+                index=133,
+                original_text="Ultra processed food makes up much of the American diet.",
+            ),
+            SubtitleProcessData(
+                index=134,
+                original_text="And loneliness and isolation became",
+            ),
+            SubtitleProcessData(
+                index=135,
+                original_text=(
+                    "so widespread that the Surgeon General considered it a public health "
+                    "epidemic in 2023."
+                ),
+            ),
+        ]
+        translated = {
+            130: replace(
+                source[0],
+                translated_text="也许蓝色地带之所以能引起如此强烈共鸣的部分原因",
+            ),
+            131: replace(
+                source[1],
+                translated_text="我们之所以如此扎根美国 是因为现代美国生活与长寿背道而驰",
+            ),
+            132: replace(source[2], translated_text="大多数美国人并不住在适合步行的社区"),
+            133: replace(source[3], translated_text="超加工食品占美国饮食的很大一部分"),
+            134: replace(source[4], translated_text="而孤独和孤立变得"),
+            135: replace(source[5], translated_text="如此普遍 以至于这被视为公共卫生流行病"),
+        }
+
+        assert translator._mandatory_chinese_fluency_candidates(source, translated) == [130, 134]
 
     def test_pronoun_ending_remains_a_soft_contextual_signal(self):
         assert (
