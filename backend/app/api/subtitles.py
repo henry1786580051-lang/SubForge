@@ -6,7 +6,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, field_validator
 
 from app.security import validate_path
-from subforge.core.utils.atomic_write import atomic_write_text
+from subforge.core.utils.atomic_write import atomic_write_srt, atomic_write_text, encode_srt_text
 
 _ASS_TAG_RE = re.compile(r"\{[^}]*\}")
 
@@ -165,7 +165,7 @@ async def load_subtitle(path: str = Query(..., description="Subtitle file path")
     suffix = file_path.suffix.lower()
 
     try:
-        content = file_path.read_text(encoding="utf-8")
+        content = file_path.read_text(encoding="utf-8-sig")
     except UnicodeDecodeError:
         content = file_path.read_text(encoding="gbk")
 
@@ -226,7 +226,7 @@ async def export_subtitle(
                      for i, seg in enumerate(asr_data.segments)]
     except ImportError:
         try:
-            content = file_path.read_text(encoding="utf-8")
+            content = file_path.read_text(encoding="utf-8-sig")
         except UnicodeDecodeError:
             content = file_path.read_text(encoding="gbk")
 
@@ -247,7 +247,7 @@ async def export_subtitle(
     output, media_type = _export_segments(segments, format)
     filename = file_path.stem + f".{format}"
     return Response(
-        content=output.encode("utf-8"),
+        content=encode_srt_text(output) if format == "srt" else output.encode("utf-8"),
         media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
@@ -302,7 +302,7 @@ async def export_subtitle_post(req: ExportRequest):
     segments = _apply_language_mode(segments, req.mode)
     output, media_type = _export_segments(segments, req.format)
     return Response(
-        content=output.encode("utf-8"),
+        content=encode_srt_text(output) if req.format == "srt" else output.encode("utf-8"),
         media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{req.filename}"'},
     )
@@ -338,7 +338,10 @@ async def save_subtitle(req: SaveRequest):
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported format: {suffix}")
 
-    atomic_write_text(file_path, content)
+    if suffix == ".srt":
+        atomic_write_srt(file_path, content)
+    else:
+        atomic_write_text(file_path, content)
     return {"status": "ok", "file_path": str(file_path), "count": len(segments)}
 
 

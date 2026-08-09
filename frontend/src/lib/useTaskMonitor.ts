@@ -128,13 +128,13 @@ export function useTaskMonitor() {
           setSubtitles(result.segments as import("@/lib/api").SubtitleSegment[]);
           return;
         }
-        const completedRevision = Number(result.preview_revision || 0);
-        if (completedRevision > 0 && completedRevision <= previewRevisionRef.current) {
-          return;
-        }
         if (Array.isArray(task.preview_segments)) {
           setSubtitles(task.preview_segments);
           previewRevisionRef.current = Math.max(previewRevisionRef.current, previewRevision);
+          return;
+        }
+        const completedRevision = Number(result.preview_revision || 0);
+        if (completedRevision > 0 && completedRevision <= previewRevisionRef.current) {
           return;
         }
         subtitlesApi

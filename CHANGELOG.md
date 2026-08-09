@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.1.11 - 2026-08-09
+
+### Improved
+
+- Publishes the final subtitle snapshot with the task-completion event so the editor can update immediately without waiting for a later poll.
+- Writes SRT files through one atomic UTF-8 BOM and CRLF path for reliable Microsoft Word, WPS, macOS, and Windows interoperability.
+- Extends conservative English boundary normalization for hyphenated attributive phrases, `what`-clause subjects, `one of these/those` noun phrases, and vehicle-type compounds.
+- Preserves a natural boundary after complete phrases such as `ease of use` when the following prepositional phrase belongs to the next readable subtitle.
+
+### Fixed
+
+- Fixed completed translation results occasionally remaining stale in the preview because the completion event raced the final preview update.
+- Fixed exported SRT files opening as mojibake in Microsoft Word despite appearing correct in WPS or UTF-8-aware editors.
+- Fixed sentence ownership errors around `day-to-day / life`, `Toyota electric / vehicles`, and `what I really wanted to show / was`, which could move Chinese meaning into the wrong cue.
+- Fixed SRT reads preserving a BOM as subtitle content by decoding with `utf-8-sig`.
+
+### Validation
+
+- Python: `1020 passed, 11 skipped`.
+- Ruff, whitespace validation, and Next.js production build passed.
+- Added focused regression coverage for terminal task snapshots, SRT byte encoding, import/export round trips, and translation boundary validation.
+
+### Packaging
+
+- macOS Apple Silicon: `SubForge-1.1.11-macos-arm64.dmg`.
+- Windows x64: `SubForge-1.1.11-windows-x64-setup.exe`, built and smoke-tested by GitHub Actions.
+- Whisper, forced-alignment, Community-1, ECAPA, and DeepFilterNet models remain separate on-demand downloads.
+
 ## v1.1.10 - 2026-08-08
 
 ### Improved

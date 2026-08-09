@@ -200,7 +200,8 @@ class TaskManager:
             task.status = TaskStatus.COMPLETED
             task.progress = 100
             task.result = result
-            task.preview_segments = None
+            final_segments = result.get("segments") if isinstance(result, dict) else None
+            task.preview_segments = final_segments if isinstance(final_segments, list) else None
             task.attention = None
             self._running_tasks.pop(task_id, None)
             self._cancel_callbacks.pop(task_id, None)
@@ -381,6 +382,11 @@ class TaskManager:
                 task_data["result"] = {
                     key: value for key, value in result.items() if key != "segments"
                 }
+                # Completion must be self-contained. The preceding preview
+                # broadcast and this terminal event are scheduled separately,
+                # so clients may otherwise observe completion first and keep a
+                # stale editor snapshot until they reload the file manually.
+                task_data["preview_segments"] = result["segments"]
             else:
                 task_data = task.model_dump(exclude={"preview_segments"})
             if preview_delta is not None:

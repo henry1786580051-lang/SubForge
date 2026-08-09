@@ -192,7 +192,7 @@ def test_preview_patch_only_contains_changed_fields_even_for_large_updates():
     assert all(set(segment) == {"id", "translated"} for segment in delta["segments"])
 
 
-def test_completed_websocket_event_omits_redundant_preview_but_snapshot_keeps_it():
+def test_completed_websocket_event_carries_final_preview_snapshot():
     manager = TaskManager()
     task = manager.create_task("subtitle")
     events = []
@@ -214,10 +214,11 @@ def test_completed_websocket_event_omits_redundant_preview_but_snapshot_keeps_it
         "subtitle_file": "/tmp/result.srt",
         "preview_revision": revision,
     }
+    assert events[-1]["preview_segments"] == segments
     snapshot = manager.get_task(task.id)
     assert snapshot is not None
     assert snapshot.result["segments"] == segments
-    assert snapshot.preview_segments is None
+    assert snapshot.preview_segments == segments
     assert manager.get_preview_revision(task.id) == revision
 
 

@@ -2638,6 +2638,12 @@ class TestValidateLLmResponse:
                 "然后如果你很难看清这个小小的",
                 "左边的RPM转速表 你可以切换显示模式",
             ),
+            (
+                "But what I really wanted to show was mostly the ease of use in day-to-day",
+                "life for one of these Toyota electric vehicles,",
+                "但我真正想展示的主要是日常使用的便利性",
+                "这些丰田电动汽车的使用寿命",
+            ),
         ],
     )
     def test_source_boundary_signal_shortlists_translation_order_risks(

@@ -32,3 +32,15 @@ def test_atomic_write_failure_keeps_previous_file(tmp_path, monkeypatch):
 
     assert destination.read_text(encoding="utf-8") == "previous subtitle"
     assert list(tmp_path.glob(".subtitle.srt.*.tmp")) == []
+
+
+def test_atomic_write_srt_uses_utf8_bom_and_crlf(tmp_path):
+    destination = tmp_path / "subtitle.srt"
+
+    atomic_write.atomic_write_srt(destination, "1\n时间轴\n字幕\n")
+
+    payload = destination.read_bytes()
+    assert payload.startswith(b"\xef\xbb\xbf")
+    assert b"\r\n" in payload
+    assert b"\n" not in payload.replace(b"\r\n", b"")
+    assert destination.read_text(encoding="utf-8-sig") == "1\n时间轴\n字幕\n"

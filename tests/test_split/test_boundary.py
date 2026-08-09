@@ -176,6 +176,55 @@ def test_assessment_rejects_cross_language_sensitive_vehicle_boundaries():
     assert all(assess_english_boundary(left, right).unstable for left, right in boundaries)
 
 
+def test_assessment_rejects_hyphenated_attributive_split_from_noun():
+    assessment = assess_english_boundary(
+        "But what I wanted to show was the ease of use in day-to-day",
+        "life for one of these Toyota electric vehicles,",
+    )
+
+    assert assessment.unstable
+    assert any("hyphenated attributive" in reason for reason in assessment.reasons)
+
+
+def test_assessment_rejects_internal_toyota_vehicle_phrase_boundaries():
+    boundaries = [
+        ("for one of these", "Toyota electric vehicles,"),
+        ("for one of these Toyota", "electric vehicles,"),
+        ("for one of these Toyota electric", "vehicles,"),
+    ]
+
+    assert all(assess_english_boundary(left, right).unstable for left, right in boundaries)
+
+
+def test_assessment_allows_complete_ease_of_use_before_daily_context():
+    assessment = assess_english_boundary(
+        "But what I really wanted to show was mostly the ease of use",
+        "in day-to-day life for one of these Toyota electric vehicles,",
+    )
+
+    assert not assessment.unstable
+
+
+def test_normalizer_keeps_day_to_day_life_together():
+    cues = _cues(
+        [
+            "But what I really wanted to show was mostly the ease of use in day-to-day",
+            "life for one of these Toyota electric vehicles,",
+            "because most of the things that you interact with in here are fine.",
+        ]
+    )
+
+    repaired = normalize_boundaries(cues)
+
+    assert any("day-to-day life" in cue.text for cue in repaired)
+    assert all(not cue.text.endswith("day-to-day") for cue in repaired)
+    assert all(not cue.text.endswith("wanted to show") for cue in repaired)
+    assert all(
+        not assess_english_boundary(left.text, right.text).unstable
+        for left, right in zip(repaired, repaired[1:])
+    )
+
+
 def test_assessment_does_not_confuse_complete_use_question_with_split_relative_object():
     assessment = assess_english_boundary(
         "What tool do you use",

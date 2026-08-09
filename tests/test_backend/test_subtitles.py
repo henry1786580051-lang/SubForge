@@ -16,6 +16,8 @@ from app.api.subtitles import (
     segments_to_vtt,
 )
 
+from subforge.core.utils.atomic_write import encode_srt_text
+
 
 def test_normalize_segment_timing_removes_overlap():
     segments = [
@@ -61,6 +63,14 @@ def test_bilingual_exports_put_translation_above_source():
     assert "这张图展示的是航空燃油成本。\nThis chart shows jet fuel costs." in vtt
     assert txt.startswith("这张图展示的是航空燃油成本。\nThis chart shows jet fuel costs.")
     assert "这张图展示的是航空燃油成本。\\NThis chart shows jet fuel costs." in ass
+
+
+def test_srt_download_encoding_is_word_compatible():
+    payload = encode_srt_text("1\n00:00:00,000 --> 00:00:01,000\n中文\n")
+
+    assert payload.startswith(b"\xef\xbb\xbf")
+    assert b"\r\n" in payload
+    assert payload.decode("utf-8-sig").splitlines()[-1] == "中文"
 
 
 @pytest.mark.parametrize("value", ["", "not-a-time", "00:61:00.000", -1, float("nan")])

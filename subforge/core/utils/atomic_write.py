@@ -37,3 +37,19 @@ def atomic_write_bytes(path: str | Path, data: bytes) -> None:
 def atomic_write_text(path: str | Path, text: str, *, encoding: str = "utf-8") -> None:
     """Encode and atomically replace a text file."""
     atomic_write_bytes(path, text.encode(encoding))
+
+
+def encode_srt_text(text: str) -> bytes:
+    """Encode SRT for broad desktop-editor compatibility.
+
+    Word does not reliably detect BOM-less UTF-8 subtitle files, especially on
+    Windows. A UTF-8 BOM and CRLF line endings keep the file unambiguous while
+    remaining valid SRT for players and subtitle editors.
+    """
+    normalized = text.removeprefix("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
+    return normalized.replace("\n", "\r\n").encode("utf-8-sig")
+
+
+def atomic_write_srt(path: str | Path, text: str) -> None:
+    """Atomically write a Word-compatible UTF-8 SRT file."""
+    atomic_write_bytes(path, encode_srt_text(text))

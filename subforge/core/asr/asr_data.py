@@ -11,7 +11,7 @@ from typing import List, Literal, Optional, Tuple, cast
 from langdetect import LangDetectException, detect
 
 from ..entities import SubtitleLayoutEnum
-from ..utils.atomic_write import atomic_write_text
+from ..utils.atomic_write import atomic_write_srt, atomic_write_text
 from ..utils.text_utils import is_mainly_cjk
 
 # 多语言分词模式(支持词级和字符级语言)
@@ -509,7 +509,7 @@ class ASRData:
         srt_text = "\n".join(srt_lines)
         if save_path:
             save_path = handle_long_path(save_path)
-            atomic_write_text(save_path, srt_text)
+            atomic_write_srt(save_path, srt_text)
         return srt_text
 
     def to_lrc(self, save_path=None) -> str:
@@ -2030,7 +2030,7 @@ class ASRData:
             raise FileNotFoundError(f"File not found: {file_path_obj}")
 
         try:
-            content = file_path_obj.read_text(encoding="utf-8")
+            content = file_path_obj.read_text(encoding="utf-8-sig")
         except UnicodeDecodeError:
             content = file_path_obj.read_text(encoding="gbk")
 

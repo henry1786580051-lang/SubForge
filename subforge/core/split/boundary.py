@@ -137,6 +137,7 @@ _MODIFIER_TAILS = {
     "big",
     "closest",
     "each",
+    "electric",
     "every",
     "few",
     "good",
@@ -205,6 +206,8 @@ _DANGLING_PHRASES = {
     ("need", "to"),
     ("not", "only"),
     ("one", "of"),
+    ("one", "of", "these"),
+    ("one", "of", "those"),
     ("start", "generating"),
     ("tends", "to"),
     ("used", "to"),
@@ -292,6 +295,47 @@ _PREFERRED_CLAUSE_HEADS = {
 
 _RELATIVE_CLAUSE_HEADS = {"that", "which", "who", "whom", "whose"}
 _TRANSLATION_SENSITIVE_HEADS = {"after", "before", "when", "where"}
+_HYPHENATED_ATTRIBUTIVE_TAILS = {
+    "all-wheel",
+    "day-to-day",
+    "end-to-end",
+    "four-wheel",
+    "front-wheel",
+    "high-speed",
+    "long-term",
+    "low-speed",
+    "one-on-one",
+    "point-to-point",
+    "real-world",
+    "rear-wheel",
+    "short-term",
+}
+_VEHICLE_BRANDS = {
+    "acura",
+    "audi",
+    "bmw",
+    "cadillac",
+    "chevrolet",
+    "dodge",
+    "ford",
+    "gmc",
+    "honda",
+    "hyundai",
+    "jeep",
+    "kia",
+    "lexus",
+    "lincoln",
+    "mazda",
+    "mercedes",
+    "nissan",
+    "porsche",
+    "ram",
+    "subaru",
+    "tesla",
+    "toyota",
+    "volkswagen",
+    "volvo",
+}
 _US_STATE_NAMES = {
     "alabama",
     "alaska",
@@ -410,6 +454,10 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
             flags=re.IGNORECASE,
         )
     )
+    complete_ease_of_use_phrase = bool(
+        head == "in"
+        and re.search(r"\b(?:the\s+)?ease\s+of\s+use$", left, flags=re.IGNORECASE)
+    )
 
     if _ends_with_phrase(left_tokens):
         risk += 36
@@ -432,6 +480,32 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     if tail in _ATTRIBUTIVE_TAILS and right[:1].islower():
         risk += 24
         reasons.append(f"dangling attributive '{tail}'")
+    raw_tail = re.search(r"([A-Za-z]+(?:-[A-Za-z]+)+)$", left)
+    if (
+        raw_tail
+        and raw_tail.group(1).lower() in _HYPHENATED_ATTRIBUTIVE_TAILS
+        and right[:1].islower()
+    ):
+        risk += 36
+        reasons.append(
+            f"hyphenated attributive '{raw_tail.group(1).lower()}' separated from its noun"
+        )
+    if tail in _VEHICLE_BRANDS and head in {
+        "car",
+        "cars",
+        "crossover",
+        "electric",
+        "hybrid",
+        "model",
+        "models",
+        "sedan",
+        "suv",
+        "truck",
+        "vehicle",
+        "vehicles",
+    }:
+        risk += 34
+        reasons.append(f"vehicle brand '{tail}' separated from its model or type")
     if tail in _OPEN_COMPLEMENT_TAILS and right[:1].islower():
         risk += 26
         reasons.append(f"open complement after '{tail}'")
@@ -527,6 +601,7 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
         and right[:1].islower()
         and not _CLAUSE_RE.search(left)
         and not complete_fixed_phrase
+        and not complete_ease_of_use_phrase
     ):
         risk += 30
         reasons.append(f"dependent phrase beginning with '{head}'")
@@ -570,6 +645,13 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     ):
         risk += 34
         reasons.append("proper-name subject separated from its predicate")
+
+    if (
+        head in {"is", "are", "was", "were"}
+        and re.match(r"^(?:(?:and|but)\s+)?what\b", left, flags=re.IGNORECASE)
+    ):
+        risk += 36
+        reasons.append("what-clause subject separated from its predicate")
 
     if (
         head == "so"
