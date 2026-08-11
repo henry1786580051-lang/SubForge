@@ -1,5 +1,38 @@
 # Changelog
 
+## v1.1.12 - 2026-08-11
+
+### Improved
+
+- Uses DeepSeek V4 Flash native reasoning selectively for difficult semantic ownership, terminology, and Chinese word-order repairs instead of spending the reasoning budget on routine translation and JSON-format checks.
+- Records reasoning requests, final-answer availability, accepted and rejected repairs, and fallback requests so reasoning efficiency can be diagnosed without exposing chain-of-thought content.
+- Adds bounded whole-document evidence for vehicle names, trims, brands, and technical terms that may be absent from sampled context windows.
+- Promotes explicit ASR corrections from global terminology while requiring repeated document support before applying a phonetic model-name correction.
+- Strengthens Chinese subtitle fidelity for negated comparisons, irony, direct answers, colloquial acronyms, elliptical units, numeric self-corrections, automotive controls, suspension descriptions, and trim names.
+- Expands conservative English boundary protection for `rev matching`, ordinal gear names, separated `take ... away` constructions, revised-component phrases, and negated comparisons.
+
+### Fixed
+
+- Fixed native-reasoning calls occasionally returning reasoning without a usable final JSON answer; the task now retries through a bounded non-reasoning fallback instead of losing the repair.
+- Fixed globally sampled context missing a recurring model or phonetic ASR variant that appeared outside the beginning, middle, and ending transcript windows.
+- Fixed correct source meaning being weakened or changed by literal translations of domain phrases such as racing line, fresh slate, vehicle trim names, and ride-quality terms.
+- Fixed abandoned spoken numbers being translated twice and elliptical automotive values such as `20 softer` or `1 to 2,000 RPM` losing their intended scale.
+- Fixed added editorial labels such as “讽刺地” entering the final subtitle when the label was not spoken in the source.
+- Removed stale Finder-style ` 2` source and test copies that could be collected by pytest and fail CI against obsolete interfaces.
+
+### Validation
+
+- Python: `1111 passed, 11 skipped`.
+- Translation and boundary regression suite: `337 passed`.
+- Ruff, whitespace validation, and Next.js production build passed.
+- Verified that repair validation preserves subtitle keys, source ownership, timeline data, and already-correct neighboring translations.
+
+### Packaging
+
+- macOS Apple Silicon: `SubForge-1.1.12-macos-arm64.dmg`.
+- Windows x64: `SubForge-1.1.12-windows-x64-setup.exe`, built and smoke-tested by GitHub Actions.
+- Whisper, forced-alignment, Community-1, ECAPA, and DeepFilterNet models remain separate on-demand downloads.
+
 ## v1.1.11 - 2026-08-09
 
 ### Improved

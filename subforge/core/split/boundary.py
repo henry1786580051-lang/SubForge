@@ -157,6 +157,7 @@ _MODIFIER_TAILS = {
     "public",
     "puny",
     "red",
+    "revised",
     "drastically",
     "her",
     "his",
@@ -226,6 +227,12 @@ _DEPENDENCY_PAIRS = {
     ("exhaust", "tips"),
     ("fall", "out"),
     ("flip", "switch"),
+    ("first", "gear"),
+    ("second", "gear"),
+    ("third", "gear"),
+    ("fourth", "gear"),
+    ("fifth", "gear"),
+    ("sixth", "gear"),
     ("generating", "power"),
     ("good", "jobs"),
     ("high", "end"),
@@ -236,6 +243,7 @@ _DEPENDENCY_PAIRS = {
     ("performance", "pack"),
     ("pretty", "standard"),
     ("public", "college"),
+    ("rev", "matching"),
     ("rpm", "gauge"),
     ("same", "sort"),
     ("serrated", "edge"),
@@ -512,6 +520,13 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     if head in _PHRASAL_PARTICLES and tail in {"fall", "get", "gets", "go", "look", "take"}:
         risk += 32
         reasons.append(f"split phrasal verb '{tail} {head}'")
+    if head == "away" and re.search(
+        r"\b(?:take|takes|took|taken|taking)\b(?:\s+\S+){1,6}$",
+        left,
+        flags=re.IGNORECASE,
+    ):
+        risk += 34
+        reasons.append("split phrasal construction 'take ... away'")
     if head in {"is", "are", "was", "were"} and tail in _COPULA_COMPLEMENT_TAILS:
         risk += 28
         reasons.append(f"subject complement split before '{head}'")
@@ -567,6 +582,17 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     if tail == "same" and head == "as":
         risk += 36
         reasons.append("comparison split between 'same' and 'as'")
+    if (
+        head in {"as", "than"}
+        and re.search(
+            r"\b(?:isn['’]t|is\s+not|aren['’]t|are\s+not|wasn['’]t|was\s+not|"
+            r"weren['’]t|were\s+not)\s+(?:quite|nearly|almost|as|so)$",
+            left,
+            flags=re.IGNORECASE,
+        )
+    ):
+        risk += 38
+        reasons.append("negated comparison split from its complement")
     if re.search(r"\bthis\s+is\s+what['’]s$", left, re.IGNORECASE) and head == "so":
         risk += 36
         reasons.append("'what is so' complement split")

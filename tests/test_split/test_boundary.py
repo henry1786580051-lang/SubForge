@@ -85,6 +85,46 @@ def test_assessment_rejects_real_spoken_english_dependency_boundaries():
     assert all(assess_english_boundary(left, right).unstable for left, right in boundaries)
 
 
+def test_assessment_keeps_rev_matching_technical_term_together():
+    assessment = assess_english_boundary(
+        "which is their fancy way of saying rev",
+        "matching which helps in city driving",
+    )
+
+    assert assessment.unstable
+    assert "split lexical unit 'rev matching'" in assessment.reasons
+
+
+def test_assessment_keeps_separated_take_away_construction_together():
+    assessment = assess_english_boundary(
+        "because this car sort of takes that ability",
+        "away from you and encourages you to push it",
+    )
+
+    assert assessment.unstable
+    assert "split phrasal construction 'take ... away'" in assessment.reasons
+
+
+def test_assessment_keeps_revised_component_with_its_noun():
+    assessment = assess_english_boundary(
+        "Why don't we show you this newly revised",
+        "nine speaker JBL sound system",
+    )
+
+    assert assessment.unstable
+    assert "dangling modifier 'revised'" in assessment.reasons
+
+
+def test_assessment_keeps_ordinal_gear_term_together():
+    assessment = assess_english_boundary(
+        "and you do have the torque, even here in fourth",
+        "gear at 30 miles an hour, half throttle",
+    )
+
+    assert assessment.unstable is True
+    assert "split lexical unit 'fourth gear'" in assessment.reasons
+
+
 def test_assessment_rejects_charger_recovery_dependency_boundaries():
     boundaries = [
         ("European influence here with this first", "generation of the new era Charger."),
@@ -95,6 +135,16 @@ def test_assessment_rejects_charger_recovery_dependency_boundaries():
     ]
 
     assert all(assess_english_boundary(left, right).unstable for left, right in boundaries)
+
+
+def test_assessment_rejects_negated_comparison_split_from_complement():
+    assessment = assess_english_boundary(
+        "But it isn't quite",
+        "as juvenile and crazy as the Elantra.",
+    )
+
+    assert assessment.unstable
+    assert "negated comparison split from its complement" in assessment.reasons
 
 
 def test_assessment_rejects_charger_full_run_dependency_boundaries():

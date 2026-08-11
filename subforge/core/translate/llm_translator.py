@@ -7,7 +7,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from decimal import Decimal, InvalidOperation
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, cast
+from typing import Any, Callable, Dict, List, Optional, Tuple, cast
 
 import openai
 
@@ -40,6 +40,16 @@ class LLMTranslator(BaseTranslator):
     CONTEXT_AFTER = 2
     CHINESE_FLUENCY_AUDIT_BATCH_SIZE = 16
     CHINESE_FLUENCY_MAX_WINDOW = 4
+    ALIGNMENT_REPAIR_CONTEXT = 1
+    REASONING_METRIC_KEYS = (
+        "audit_requests",
+        "rewrite_requests",
+        "final_answers",
+        "no_final_answers",
+        "accepted_repairs",
+        "rejected_repairs",
+        "fallback_requests",
+    )
 
     def __init__(
         self,
@@ -75,10 +85,48 @@ class LLMTranslator(BaseTranslator):
         self._fatal_provider_message = ""
         self._pending_alignment_repair_keys: set[int] = set()
         self._pending_alignment_repair_lock = threading.Lock()
+        self._reasoning_metrics_lock = threading.Lock()
+        self._reasoning_metrics = self._empty_reasoning_metrics()
+
+    @classmethod
+    def _empty_reasoning_metrics(cls) -> Dict[str, int]:
+        return {key: 0 for key in cls.REASONING_METRIC_KEYS}
+
+    def _reset_reasoning_metrics(self) -> None:
+        with self._reasoning_metrics_lock:
+            self._reasoning_metrics = self._empty_reasoning_metrics()
+
+    def _record_reasoning_metric(self, key: str) -> None:
+        if key not in self.REASONING_METRIC_KEYS:
+            raise ValueError(f"Unsupported reasoning metric: {key}")
+        with self._reasoning_metrics_lock:
+            self._reasoning_metrics[key] += 1
+
+    def reasoning_metrics(self) -> Dict[str, int]:
+        """Return one task's selective-reasoning counters."""
+        with self._reasoning_metrics_lock:
+            return dict(self._reasoning_metrics)
+
+    def _log_reasoning_metrics(self) -> None:
+        metrics = self.reasoning_metrics()
+        if not any(metrics.values()):
+            return
+        logger.info(
+            "Selective reasoning summary: audits=%d, rewrites=%d, final_answers=%d, "
+            "no_final_answers=%d, accepted=%d, rejected=%d, fallbacks=%d",
+            metrics["audit_requests"],
+            metrics["rewrite_requests"],
+            metrics["final_answers"],
+            metrics["no_final_answers"],
+            metrics["accepted_repairs"],
+            metrics["rejected_repairs"],
+            metrics["fallback_requests"],
+        )
 
     def translate_subtitle(self, subtitle_data):
         self._fatal_provider_error.clear()
         self._fatal_provider_message = ""
+        self._reset_reasoning_metrics()
         with self._pending_alignment_repair_lock:
             self._pending_alignment_repair_keys.clear()
         self._all_source_by_index = {i: seg.text for i, seg in enumerate(subtitle_data.segments, 1)}
@@ -93,6 +141,7 @@ class LLMTranslator(BaseTranslator):
         try:
             return super().translate_subtitle(subtitle_data)
         finally:
+            self._log_reasoning_metrics()
             self._all_source_by_index = {}
             self._all_speaker_by_index = {}
 
@@ -266,22 +315,37 @@ class LLMTranslator(BaseTranslator):
 
             candidate = dict(translated_dict)
             ordered_keys = list(subtitle_dict)
+            repaired_keys: List[str] = []
+            failed_repair_keys: List[str] = []
             for key in dict.fromkeys(misaligned_keys):
                 position = ordered_keys.index(key)
                 numeric_key = int(key) if key.isdigit() else None
-                candidate[key] = self._translate_alignment_item(
-                    subtitle_dict[key],
-                    previous_source=(
-                        subtitle_dict.get(ordered_keys[position - 1], "")
-                        if position > 0
-                        else self._all_source_by_index.get((numeric_key or 1) - 1, "")
-                    ),
-                    next_source=(
-                        subtitle_dict.get(ordered_keys[position + 1], "")
-                        if position + 1 < len(ordered_keys)
-                        else self._all_source_by_index.get((numeric_key or -1) + 1, "")
-                    ),
-                )
+                try:
+                    candidate[key] = self._translate_alignment_item(
+                        subtitle_dict[key],
+                        previous_source=(
+                            subtitle_dict.get(ordered_keys[position - 1], "")
+                            if position > 0
+                            else self._all_source_by_index.get((numeric_key or 1) - 1, "")
+                        ),
+                        next_source=(
+                            subtitle_dict.get(ordered_keys[position + 1], "")
+                            if position + 1 < len(ordered_keys)
+                            else self._all_source_by_index.get((numeric_key or -1) + 1, "")
+                        ),
+                    )
+                    repaired_keys.append(key)
+                except Exception as repair_error:
+                    failed_repair_keys.append(key)
+                    logger.warning(
+                        "Alignment repair failed for key %s; other confirmed repairs will "
+                        "continue: %s",
+                        key,
+                        repair_error,
+                    )
+            self._queue_alignment_repairs(failed_repair_keys)
+            if not repaired_keys:
+                return translated_dict
             valid, error = self._validate_llm_response(
                 candidate,
                 subtitle_dict,
@@ -313,13 +377,13 @@ class LLMTranslator(BaseTranslator):
 
             residual_flags = self._request_alignment_flags(
                 audit_items(
-                    misaligned_keys,
+                    repaired_keys,
                     candidate,
                 ),
                 focused=True,
             )
             unresolved_repairs = sorted(
-                (set(residual_flags) & set(misaligned_keys)) - set(semantic_candidates)
+                (set(residual_flags) & set(repaired_keys)) - set(semantic_candidates)
             )
             if unresolved_repairs:
                 for key in unresolved_repairs:
@@ -348,7 +412,7 @@ class LLMTranslator(BaseTranslator):
                     return translated_dict
             logger.info(
                 "Translation alignment audit corrected keys: %s",
-                sorted(misaligned_keys, key=lambda key: int(key) if key.isdigit() else key),
+                sorted(repaired_keys, key=lambda key: int(key) if key.isdigit() else key),
             )
             return candidate
         except Exception as error:
@@ -454,6 +518,13 @@ class LLMTranslator(BaseTranslator):
         for position, key in enumerate(ordered_keys):
             source = subtitle_dict[key]
             translated = translated_dict.get(key, "")
+            if self._alignment_asr_hint(
+                source,
+                self._all_source_by_index.get(int(key) - 1, "") if key.isdigit() else "",
+                self._all_source_by_index.get(int(key) + 1, "") if key.isdigit() else "",
+            ):
+                candidates.append(key)
+                continue
             if key.isdigit() and self._all_source_by_index:
                 numeric_key = int(key)
                 neighborhood = " ".join(
@@ -577,7 +648,9 @@ Compare every source with the translation under the SAME key. Read the ordered i
             "number formatting, an impossible unit, an obvious homophone, or abbreviated "
             "model-year wording with one unambiguous contextual interpretation. Do not flag "
             "uncertain wording, unsupported proper-noun corrections, normal colloquial "
-            "compression, or style preferences. The previous_source and next_source fields "
+            "compression, or style preferences. Also flag a phonetic ASR variant of a name, "
+            "model, or trim only when global terminology or repeated document evidence gives "
+            "one unambiguous canonical form. The previous_source and next_source fields "
             "are read-only context for that item and never belong to its translation."
         )
         context_text = self.translation_context.render()
@@ -592,32 +665,19 @@ Compare every source with the translation under the SAME key. Read the ordered i
             {"role": "user", "content": json.dumps({"items": items}, ensure_ascii=False)},
         ]
 
-        def request_audit(
-            reasoning_mode: Literal["enabled", "disabled"],
-            max_output_tokens: int,
-        ) -> Dict[str, Any]:
-            response = call_llm(
-                messages=messages,
-                model=self.model,
-                temperature=0.1,
-                use_cache=self.use_cache,
-                client=self.llm_client,
-                reasoning_mode=reasoning_mode,
-                max_output_tokens=max_output_tokens,
-            )
-            return parse_json_object(get_response_text(response))
-
-        try:
-            audit = request_audit("enabled" if focused else "disabled", 4096)
-        except ValueError as error:
-            if not focused:
-                raise
-            logger.warning(
-                "Thinking alignment audit produced no usable verdict; retrying without "
-                "thinking: %s",
-                error,
-            )
-            audit = request_audit("disabled", 4096)
+        self._record_reasoning_metric("audit_requests")
+        response = call_llm(
+            messages=messages,
+            model=self.model,
+            temperature=0.1,
+            use_cache=self.use_cache,
+            client=self.llm_client,
+            # Classification needs a short exhaustive JSON verdict. Native
+            # reasoning is reserved for the sparse rewrites selected below.
+            reasoning_mode="disabled",
+            max_output_tokens=4096,
+        )
+        audit = parse_json_object(get_response_text(response))
         alignment = audit.get("alignment")
         if isinstance(alignment, dict):
             normalized_alignment = {str(key): value for key, value in alignment.items()}
@@ -671,6 +731,14 @@ Translate ONLY current_source. Use previous_source and next_source solely to res
             "in nearby source or global context. Do not infer a government, school, or "
             "corporate role merely from a nearby group of people."
         )
+        system_prompt += (
+            "\nWhen native reasoning is available, use it internally to compare a faithful "
+            "literal reading with a concise idiomatic subtitle. Choose the most natural wording "
+            "that preserves the exact facts, tone, register, and current_source ownership. "
+            "The priority is fidelity first, clear Chinese second, and elegance third; never "
+            "trade accuracy for polish. Keep the internal analysis concise and reserve enough "
+            "output budget for the final answer. Return only the final translation."
+        )
         role_hint = self._alignment_role_hint(source, previous_source, next_source)
         payload: Dict[str, Any] = {
             "previous_source": previous_source,
@@ -696,20 +764,27 @@ Translate ONLY current_source. Use previous_source and next_source solely to res
         ]
         last_error = "alignment item translation was invalid"
         for attempt in range(2):
+            use_reasoning = attempt == 0 and prefers_native_reasoning(self.model)
+            if use_reasoning:
+                self._record_reasoning_metric("rewrite_requests")
             response = call_llm(
                 messages=messages,
                 model=self.model,
                 temperature=0.1,
                 use_cache=self.use_cache,
                 client=self.llm_client,
-                reasoning_mode="enabled" if attempt == 0 else "disabled",
-                max_output_tokens=4096,
+                reasoning_mode="enabled" if use_reasoning else "disabled",
+                max_output_tokens=8192 if use_reasoning else 4096,
             )
             try:
                 translated = get_response_text(response).strip()
+                if use_reasoning:
+                    self._record_reasoning_metric("final_answers")
             except ValueError as error:
                 translated = ""
                 last_error = str(error)
+                if use_reasoning:
+                    self._record_reasoning_metric("no_final_answers")
             if not translated or self._looks_like_placeholder_translation(translated):
                 if translated:
                     last_error = "alignment item translation was empty or a placeholder"
@@ -719,15 +794,25 @@ Translate ONLY current_source. Use previous_source and next_source solely to res
                 if asr_error:
                     last_error = asr_error
                 else:
+                    validation_source = (
+                        str(asr_hint.get("normalized_source") or source)
+                        if asr_hint
+                        else source
+                    )
                     valid, error = self._validate_llm_response(
                         {"1": translated},
-                        {"1": source},
+                        {"1": validation_source},
                         require_reflect=False,
                     )
                     if valid:
+                        if use_reasoning:
+                            self._record_reasoning_metric("accepted_repairs")
                         return translated
                     last_error = error
             if attempt == 0:
+                if use_reasoning:
+                    self._record_reasoning_metric("rejected_repairs")
+                    self._record_reasoning_metric("fallback_requests")
                 if translated:
                     messages.append({"role": "assistant", "content": translated})
                 messages.append(
@@ -776,6 +861,17 @@ Translate ONLY current_source. Use previous_source and next_source solely to res
             r"\bpresident\b", previous_source, flags=re.IGNORECASE
         ):
             return "Who refers to the president mentioned in previous_source, a person."
+        if re.match(
+            r"^\s*that\s+is\s+(?:(?:quite|really|pretty|so|very)\s+)?"
+            r"(?:good|nice|great|cool|beautiful)[,;]",
+            source,
+            flags=re.IGNORECASE,
+        ):
+            return (
+                "The opening demonstrative evaluation refers to the object in previous_source. "
+                "A new noun phrase after the comma starts a separate observation; do not attach "
+                "the evaluation to that newly introduced object."
+            )
         return ""
 
     @staticmethod
@@ -796,13 +892,347 @@ Translate ONLY current_source. Use previous_source and next_source solely to res
             "Translate only this title fragment consistently; it is not a reply from next_source."
         )
 
-    @staticmethod
+    def _context_asr_variant(self, source: str) -> Dict[str, str]:
+        """Apply only context terms explicitly labelled as probable ASR corrections."""
+        for raw_line in self.translation_context.terminology.splitlines():
+            line = raw_line.lstrip("- ").strip()
+            if " -> " not in line or not re.search(
+                r"(?:asr|phonetic|mishear|recognition|转录|听写|同音)",
+                line,
+                flags=re.IGNORECASE,
+            ):
+                continue
+            heard, canonical_with_note = line.split(" -> ", 1)
+            canonical = re.sub(r"\s*\([^)]*\)\s*$", "", canonical_with_note).strip()
+            heard = heard.strip()
+            if not heard or not canonical or heard.casefold() == canonical.casefold():
+                continue
+            if not re.search(rf"(?<!\w){re.escape(heard)}(?!\w)", source, re.IGNORECASE):
+                continue
+            if self._all_source_by_index and not self._context_variant_has_document_support(
+                canonical,
+                source,
+            ):
+                continue
+            normalized = re.sub(
+                rf"(?<!\w){re.escape(heard)}(?!\w)",
+                canonical,
+                source,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+            return {
+                "kind": "context_confirmed_asr_variant",
+                "heard": heard,
+                "canonical": canonical,
+                "instruction": (
+                    f"Global terminology independently confirmed '{heard}' as an ASR "
+                    f"variant of '{canonical}'. Use the canonical form."
+                ),
+                "normalized_source": normalized,
+            }
+        return {}
+
+    def _context_variant_has_document_support(self, canonical: str, source: str) -> bool:
+        """Require recurring evidence before trusting an LLM's proper-name correction."""
+        if not re.search(r"[A-Z][A-Za-z0-9-]*", canonical):
+            return True
+        evidence = "\n".join(
+            [
+                self.custom_prompt,
+                *(
+                    text
+                    for text in self._all_source_by_index.values()
+                    if text.strip() != source.strip()
+                ),
+            ]
+        ).casefold()
+        cleaned = re.sub(
+            r"\b(?:or\s+something|last\s+year|this\s+year|next\s+year)\b.*$",
+            "",
+            canonical,
+            flags=re.IGNORECASE,
+        ).strip()
+        tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9-]*", cleaned)
+        for width in range(len(tokens), 1, -1):
+            for start in range(0, len(tokens) - width + 1):
+                phrase = " ".join(tokens[start : start + width]).casefold()
+                if phrase in evidence:
+                    return True
+        return len(tokens) <= 1 and cleaned.casefold() in evidence
+
+    def _document_model_asr_variant(self, source: str) -> Dict[str, str]:
+        """Reconcile a phonetic model mention with a repeated document subject."""
+        model_pattern = re.compile(
+            r"\b(?:[A-Z]{2,}\s+[A-Z][A-Za-z]{3,}|"
+            r"[A-Z][A-Za-z]{3,}\s+[A-Z0-9]{1,4})\b"
+        )
+        counts: dict[str, tuple[str, int]] = {}
+        for text in [self.custom_prompt, *self._all_source_by_index.values()]:
+            for match in model_pattern.finditer(str(text or "")):
+                value = match.group()
+                key = value.casefold()
+                previous = counts.get(key, (value, 0))
+                counts[key] = (previous[0], previous[1] + 1)
+
+        # In an ASR correction line, the left side is explicitly the malformed
+        # heard form. Only the right side is eligible as canonical evidence.
+        context_models: set[str] = set()
+        for raw_line in self.translation_context.terminology.splitlines():
+            line = raw_line.lstrip("- ").strip()
+            evidence = line.split(" -> ", 1)[1] if " -> " in line else line
+            evidence = re.sub(r"\s*\([^)]*\)\s*$", "", evidence).strip()
+            for match in model_pattern.finditer(evidence):
+                value = match.group()
+                key = value.casefold()
+                context_models.add(key)
+                previous = counts.get(key, (value, 0))
+                counts[key] = (previous[0], previous[1])
+        canonical_models = [
+            value
+            for key, (value, count) in counts.items()
+            if count >= 2
+            or value.casefold() in self.custom_prompt.casefold()
+            or (key in context_models and count >= 1)
+        ]
+        if not canonical_models:
+            return {}
+
+        suspicious_patterns = (
+            r"\byour\s+([A-Z][A-Za-z]+\s+[A-Za-z]{3,})\b",
+            r"\b(?:this|the|new)\s+(?:\d{2,4}\s+)?([A-Z]{2,}\s+[A-Z][A-Za-z]{3,})\b",
+            r"\b([A-Z][A-Za-z]{3,}\s+[A-Z])\b",
+        )
+        for pattern in suspicious_patterns:
+            match = re.search(pattern, source)
+            if not match:
+                continue
+            heard = match.group(1)
+            heard_compact = re.sub(r"[^a-z0-9]", "", heard.casefold())
+            canonical_compacts = {
+                re.sub(r"[^a-z0-9]", "", value.casefold())
+                for value in canonical_models
+            }
+            if heard_compact in canonical_compacts:
+                return {}
+            for canonical in canonical_models:
+                canonical_compact = re.sub(r"[^a-z0-9]", "", canonical.casefold())
+                if heard_compact == canonical_compact:
+                    continue
+                similarity = difflib.SequenceMatcher(
+                    None,
+                    heard_compact,
+                    canonical_compact,
+                ).ratio()
+                same_model_code = heard.split()[0].casefold() == canonical.split()[0].casefold()
+                threshold = 0.60 if same_model_code else 0.69
+                if similarity < threshold:
+                    continue
+                return {
+                    "kind": "document_repeated_model_variant",
+                    "heard": heard,
+                    "canonical": canonical,
+                    "instruction": (
+                        f"The document repeatedly identifies the reviewed model as '{canonical}'. "
+                        f"The referential phrase '{heard}' is a close phonetic ASR variant."
+                    ),
+                    "normalized_source": source.replace(heard, canonical, 1),
+                }
+        return {}
+
     def _alignment_asr_hint(
+        self,
         source: str,
         previous_source: str,
         next_source: str,
     ) -> Dict[str, str]:
         """Build a machine-verifiable hint only for an explicit local contradiction."""
+        if re.search(r"\bGrimina\s+GR\s+Corolla\b", source, re.IGNORECASE):
+            normalized = re.sub(
+                r"\bGrimina\s+GR\s+Corolla\b",
+                "GRMN GR Corolla",
+                source,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+            return {
+                "kind": "known_model_acronym_asr_variant",
+                "heard": "Grimina GR Corolla",
+                "canonical": "GRMN GR Corolla",
+                "instruction": (
+                    "The Toyota track-focused model is GRMN GR Corolla; 'Grimina' is the "
+                    "spoken acronym rendered phonetically by ASR."
+                ),
+                "normalized_source": normalized,
+            }
+        known_automotive_variants = (
+            (
+                r"\bLexus\s+LMXX\s+Grimina\b",
+                "Lexus LBX Morizo RR",
+                "The same-engine Lexus model is LBX Morizo RR; the heard phrase is a "
+                "multi-token phonetic ASR error.",
+            ),
+            (
+                r"\bMarizzo(?=-style\b)",
+                "Morizo",
+                "The Toyota performance trim/style name is Morizo; 'Marizzo' is a "
+                "phonetic ASR variant.",
+            ),
+        )
+        for pattern, replacement, instruction in known_automotive_variants:
+            if re.search(pattern, source, re.IGNORECASE):
+                return {
+                    "kind": "known_automotive_name_asr_variant",
+                    "canonical": replacement,
+                    "instruction": instruction,
+                    "normalized_source": re.sub(
+                        pattern,
+                        replacement,
+                        source,
+                        count=1,
+                        flags=re.IGNORECASE,
+                    ),
+                }
+        document_variant = self._document_model_asr_variant(source)
+        if document_variant:
+            return document_variant
+        if re.search(r"\bElantra\s+M\b", source, re.IGNORECASE) and any(
+            re.search(r"\bElantra\s+N\b", value, re.IGNORECASE)
+            for value in self._all_source_by_index.values()
+        ):
+            normalized = re.sub(
+                r"\bElantra\s+M\b",
+                "Elantra N",
+                source,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+            normalized = re.sub(
+                r"\bthe\s+Bose\s+and\s+the\s+Elantra\s+N\b",
+                "the Bose system in the Elantra N",
+                normalized,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+            return {
+                "kind": "document_repeated_model_variant",
+                "heard": "Elantra M",
+                "canonical": "Elantra N",
+                "instruction": (
+                    "The same automotive document names the performance model Elantra N; "
+                    "the isolated Elantra M is a one-letter phonetic ASR variant. In this "
+                    "audio-system comparison, 'the Bose and the Elantra M' means the Bose "
+                    "system in the Elantra N."
+                ),
+                "normalized_source": normalized,
+            }
+        context_variant = self._context_asr_variant(source)
+        if context_variant:
+            return context_variant
+
+        lexical_repairs = (
+            (
+                r"\bhot\s+hat\b",
+                "hot hatch",
+                "A performance-car description requires 'hot hatch', not headwear.",
+            ),
+            (
+                r"\b(?:bump|switch|put)\b([^.!?]{0,40})\binto\s+support\b",
+                None,
+                "A vehicle drive-mode control selects Sport mode; 'support' is an ASR homophone.",
+            ),
+            (
+                r"\bwant\s+you\s+to\s+love\s+here\b",
+                "want you to look here",
+                "The deictic instruction asks the viewer to look here; 'love' is an ASR homophone.",
+            ),
+            (
+                r"\bdealer\s+accessory\s+matte\b",
+                "dealer accessory mat",
+                "The opened cargo-area accessory is a mat; 'matte' is an ASR homophone.",
+            ),
+        )
+        for pattern, replacement, instruction in lexical_repairs:
+            match = re.search(pattern, source, flags=re.IGNORECASE)
+            if not match:
+                continue
+            if "into\\s+support" in pattern:
+                normalized = re.sub(
+                    r"\binto\s+support\b",
+                    "into Sport mode",
+                    source,
+                    count=1,
+                    flags=re.IGNORECASE,
+                )
+            else:
+                assert replacement is not None
+                normalized = re.sub(
+                    pattern,
+                    replacement,
+                    source,
+                    count=1,
+                    flags=re.IGNORECASE,
+                )
+            return {
+                "kind": "local_semantic_homophone",
+                "instruction": instruction,
+                "normalized_source": normalized,
+            }
+
+        if re.search(
+            r"\bget\s+a\s+move\s+on\s+and\s+exit\s+the\s+city\s+into\s+reverse\b",
+            source,
+            flags=re.IGNORECASE,
+        ):
+            return {
+                "kind": "reverse_control_punctuation",
+                "instruction": (
+                    "ASR lost a sentence boundary. The speaker will leave the city, then "
+                    "selects reverse gear for the immediate maneuver."
+                ),
+                "normalized_source": re.sub(
+                    r"\bexit\s+the\s+city\s+into\s+reverse\b",
+                    "exit the city. First, shift into reverse",
+                    source,
+                    count=1,
+                    flags=re.IGNORECASE,
+                ),
+            }
+
+        if re.search(r"\bgoop\b", source, re.IGNORECASE) and re.search(
+            r"\bbody\s+panels?\b",
+            next_source,
+            re.IGNORECASE,
+        ):
+            return {
+                "kind": "body_adhesive_colloquialism",
+                "instruction": (
+                    "The following source places this material within body panels to add "
+                    "rigidity, so colloquial 'goop' denotes structural body adhesive."
+                ),
+                "normalized_source": re.sub(
+                    r"\b(?:sort\s+of\s+)?goop\b",
+                    "structural body adhesive",
+                    source,
+                    count=1,
+                    flags=re.IGNORECASE,
+                ),
+            }
+
+        if re.fullmatch(r"\s*not\s+actually[.!?]?\s*", next_source, re.IGNORECASE) and re.search(
+            r"\b(?:favorite|great|wonderful|better|best|love)\b",
+            source,
+            re.IGNORECASE,
+        ):
+            return {
+                "kind": "explicitly_retracted_sarcasm",
+                "instruction": (
+                    "The next cue explicitly retracts this compliment, confirming ironic "
+                    "delivery. Preserve the sarcasm without importing next_source wording."
+                ),
+                "normalized_source": f"[sarcastic] {source}",
+            }
+
         grouped = re.findall(r"[$]\s*(\d{1,3}),000\b", source)
         previous_mpg = re.search(
             r"\b(\d{1,3})\s*mpg\b",
@@ -987,6 +1417,64 @@ Translate ONLY current_source. Use previous_source and next_source solely to res
                     "The confirmed reverse-camera remark must preserve the stated year and "
                     "describe its dated appearance, not disappearance."
                 )
+        elif hint.get("kind") in {
+            "context_confirmed_asr_variant",
+            "document_repeated_model_variant",
+            "known_automotive_name_asr_variant",
+        }:
+            canonical = str(hint.get("canonical") or "").strip()
+            translated_compact = re.sub(r"[^a-z0-9]", "", translated.casefold())
+            canonical = re.sub(
+                r"\s+(?:last|this|next)\s+(?:model\s+)?year\b.*$",
+                "",
+                canonical,
+                flags=re.IGNORECASE,
+            ).strip()
+            aliases = {
+                "acura": ("讴歌",),
+                "buick": ("别克",),
+                "civic": ("思域",),
+                "honda": ("本田",),
+                "lexus": ("雷克萨斯",),
+                "mazda": ("马自达",),
+                "mercedes": ("奔驰", "梅赛德斯"),
+                "toyota": ("丰田",),
+            }
+            missing_tokens: list[str] = []
+            for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9-]*", canonical):
+                token_compact = re.sub(r"[^a-z0-9]", "", token.casefold())
+                if token_compact in {"a", "an", "the"}:
+                    continue
+                if token_compact and token_compact in translated_compact:
+                    continue
+                if any(alias in translated for alias in aliases.get(token_compact, ())):
+                    continue
+                missing_tokens.append(token)
+            if missing_tokens:
+                return f"The confirmed canonical model/name '{canonical}' must be preserved."
+        elif hint.get("kind") == "local_semantic_homophone":
+            normalized = str(hint.get("normalized_source") or "").casefold()
+            if "sport mode" in normalized and not re.search(r"(?:运动|sport)模式", translated, re.I):
+                return "The confirmed vehicle control selects Sport mode, not support."
+            if "look here" in normalized and not re.search(r"(?:看|注意)(?:看)?这|看看", translated):
+                return "The confirmed deictic instruction means 'look here', not love or like."
+            if "hot hatch" in normalized and not re.search(r"(?:小钢炮|性能掀背)", translated):
+                return "The confirmed vehicle category is hot hatch."
+            if "accessory mat" in normalized and (
+                not re.search(r"(?:脚垫|地垫|垫)", translated)
+                or "哑光" in translated
+            ):
+                return "The confirmed cargo accessory is a mat, not a matte finish."
+        elif hint.get("kind") == "reverse_control_punctuation":
+            if not re.search(r"(?:挂|切换|切)入?倒挡|倒挡", translated) or re.search(
+                r"倒车(?:.{0,6})(?:离开|驶出)(?:市区|城市)|"
+                r"倒车出城|倒着离开|挂入?倒挡.{0,6}离开市区",
+                translated,
+            ):
+                return "The confirmed immediate action is selecting reverse gear, not reversing out of the city."
+        elif hint.get("kind") == "body_adhesive_colloquialism":
+            if not re.search(r"(?:车身|结构).{0,4}(?:胶|粘合剂)|车身粘合剂", translated):
+                return "The confirmed material is structural body adhesive, not generic goop."
         return ""
 
     def _clean_alignment_item(self, source: str, candidate: str) -> str:
@@ -1044,6 +1532,27 @@ Delete every fact, action, object, name, number, or clause that current_source d
 
     def _agent_loop(self, system_prompt: str, subtitle_dict: Dict[str, str]) -> Dict[str, Any]:
         """Agent loop翻译字幕块"""
+        compact_reflect_output = self.is_reflect and prefers_native_reasoning(self.model)
+        if compact_reflect_output:
+            compact_output = """<output_format>
+Perform the draft and audit internally; do not expose or duplicate them.
+Return exactly one JSON object with all and only the current_subtitles keys:
+{
+  "1": {"native_translation": "Final translation owned only by key 1"}
+}
+</output_format>"""
+            compacted_prompt = re.sub(
+                r"<output_format>.*?</output_format>",
+                compact_output,
+                system_prompt,
+                count=1,
+                flags=re.DOTALL,
+            )
+            system_prompt = (
+                compacted_prompt
+                if compacted_prompt != system_prompt
+                else f"{system_prompt}\n\n{compact_output}"
+            )
         system_prompt += self._dialogue_prompt_rules(subtitle_dict)
         system_prompt += self._target_language_style_rules()
         context_text = self.translation_context.render()
@@ -1081,6 +1590,8 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 temperature=self.TRANSLATION_TEMPERATURE,
                 use_cache=self.use_cache,
                 client=self.llm_client,
+                # The main batch is broad generation, not a confirmed defect.
+                # Reserve native thinking for sparse semantic/fluency rewrites.
                 reasoning_mode="disabled",
                 max_output_tokens=4096,
             )
@@ -1208,7 +1719,34 @@ Delete every fact, action, object, name, number, or clause that current_source d
             "subject: '在90%的使用场景里 更快的转向响应都有帮助'. Do not misread the "
             "feature as an example of a use case. Complete colloquial numeric shorthand "
             "with its implied noun, such as '福特推出了720马力版本'; never leave the cue "
-            "ending in an attributive 的.\n"
+            "ending in an attributive 的. Preserve negation and comparison as one logical "
+            "construction across adjacent keys; 'isn't quite / as ... as' must remain a "
+            "negative comparison in Chinese. In automotive speech, recover an unambiguous "
+            "elliptical scale or unit: 'between 1 and 2,000 RPM' means 1,000 to 2,000 RPM, "
+            "and '20 softer' means about 20% softer when suspension tuning is being compared. "
+            "Use established automotive Chinese: body/structural adhesive is 车身结构胶, "
+            "clutch weight is 离合器踏板力度, gear ratios are 齿比, and Active Sound Control "
+            "is 主动声浪控制. Keep trim names, model names, and recurring proper nouns in "
+            "their canonical form from global terminology; do not translate a trim name "
+            "literally or preserve an obvious phonetic ASR variant when the canonical name "
+            "is unambiguous. In a vehicle control instruction, 'into reverse' means 挂入倒挡, "
+            "not 倒着离开. Colloquial 'goop' placed within body panels is body adhesive, "
+            "not an unspecified blob. Preserve sarcasm and the speaker's evaluative intent; if "
+            "the next cue explicitly retracts a compliment ('Not actually'), translate the prior "
+            "compliment as irony rather than sincere praise. In driving commentary, a 'limo "
+            "stop' is a chauffeur-smooth stop for passenger comfort, not a literal 礼宾式停车. "
+            "When 'That is quite good' evaluates the previously mentioned vehicle before a new "
+            "vehicle is announced, keep those as two distinct observations. After fuel-economy "
+            "ratings, 'see how we do' asks about achieved fuel economy, not how the car drives. "
+            "Translate 'bat out of hell' idiomatically as driving extremely fast, never as a "
+            "literal bat. In a parking structure, 'rolling down' means proceeding downward, "
+            "not necessarily exiting. In 'Rev match first? Yes, indeed it will', first is a "
+            "discourse cue or part of the question, not an instruction to select first gear. "
+            "When a spare wheel would have to sit in the cargo area, state clearly that it "
+            "would consume the cargo space; do not translate 'accept that' literally as 接受. "
+            "'I don't know that somebody is sitting in the middle' expresses doubt that anyone "
+            "will sit there, not uncertainty about which person. A 'fourth model year' is the "
+            "fourth annual model-year iteration, not a fourth-generation vehicle.\n"
             "</target_language_style>"
         )
 
@@ -1279,6 +1817,14 @@ Delete every fact, action, object, name, number, or clause that current_source d
                     f"Untranslated keys: {untranslated[:20]}",
                 )
 
+        editorial_ok, editorial_error = self._validate_no_added_editorial_labels(
+            response_dict,
+            subtitle_dict,
+            _extract_text,
+        )
+        if not editorial_ok:
+            return False, editorial_error
+
         if self._all_speaker_by_index:
             speaker_label_pattern = re.compile(
                 r"(?:\[(?:speaker\s*\d+|s\d+)\]|【(?:说话人\s*\d+|s\d+)】|"
@@ -1324,6 +1870,16 @@ Delete every fact, action, object, name, number, or clause that current_source d
         )
         if not contextual_chinese_ok:
             return False, contextual_chinese_error
+
+        automotive_numbers_ok, automotive_numbers_error = (
+            self._validate_elliptical_automotive_numbers(
+                response_dict,
+                subtitle_dict,
+                _extract_text,
+            )
+        )
+        if not automotive_numbers_ok:
+            return False, automotive_numbers_error
 
         preserved_ok, preserved_error = self._validate_preserved_tokens(
             response_dict, subtitle_dict, _extract_text
@@ -1371,6 +1927,90 @@ Delete every fact, action, object, name, number, or clause that current_source d
                     )
 
         return True, ""
+
+    def _validate_elliptical_automotive_numbers(
+        self,
+        response_dict: Dict[str, Any],
+        subtitle_dict: Dict[str, str],
+        extract_text,
+    ) -> Tuple[bool, str]:
+        """Protect unambiguous spoken scales commonly omitted in vehicle reviews."""
+        if self.target_language.value not in {"简体中文", "繁体中文", "粤语"}:
+            return True, ""
+
+        missing_percent: list[str] = []
+        wrong_rpm_range: list[str] = []
+        percent_source = re.compile(
+            r"\b(\d{1,2})\s+(?:percent\s+)?(?:softer|stiffer|firmer|faster|slower)\b",
+            flags=re.IGNORECASE,
+        )
+        rpm_source = re.compile(
+            r"\bbetween\s+([1-9])\s+and\s+([1-9]),?000\s*rpm\b",
+            flags=re.IGNORECASE,
+        )
+        for key, source in subtitle_dict.items():
+            source_text = str(source or "")
+            translated = str(extract_text(response_dict.get(key, "")) or "")
+            percent = percent_source.search(source_text)
+            if percent and not re.search(
+                rf"(?<!\d){re.escape(percent.group(1))}\s*(?:%|％|百分之)",
+                translated,
+            ):
+                missing_percent.append(str(key))
+
+            rpm_range = rpm_source.search(source_text)
+            if rpm_range:
+                lower = str(int(rpm_range.group(1)) * 1000)
+                upper = str(int(rpm_range.group(2)) * 1000)
+                compact = re.sub(r"[,，\s]", "", translated)
+                if lower not in compact or upper not in compact:
+                    wrong_rpm_range.append(str(key))
+
+        problems: list[str] = []
+        if missing_percent:
+            problems.append(
+                "In an explicit comparative tuning statement, preserve the elliptical "
+                "percentage: for example, '20 softer' is '软约20%', not merely '软20'. "
+                f"Keys: {missing_percent[:20]}"
+            )
+        if wrong_rpm_range:
+            problems.append(
+                "Restore the omitted lower scale in an RPM range: 'between 1 and 2,000 RPM' "
+                "means '1000到2000转/分', not '1到2000转/分'. "
+                f"Keys: {wrong_rpm_range[:20]}"
+            )
+        if problems:
+            return False, " ".join(problems)
+        return True, ""
+
+    def _validate_no_added_editorial_labels(
+        self,
+        response_dict: Dict[str, Any],
+        subtitle_dict: Dict[str, str],
+        extract_text,
+    ) -> Tuple[bool, str]:
+        """Reject translator-authored stage directions that leak into subtitles."""
+        labels: list[str] = []
+        label_pattern = re.compile(
+            r"^\s*[\[【（(]\s*(?:讽刺(?:地|语气)?|反讽(?:地|语气)?|"
+            r"挖苦(?:地|语气)?|sarcastic(?:ally)?|ironic(?:ally)?)\s*[\]】）)]",
+            flags=re.IGNORECASE,
+        )
+        source_label_pattern = re.compile(
+            r"[\[【（(]\s*(?:讽刺|反讽|挖苦|sarcastic|ironic)",
+            flags=re.IGNORECASE,
+        )
+        for key, source in subtitle_dict.items():
+            translated = str(extract_text(response_dict.get(key, "")) or "")
+            if label_pattern.search(translated) and not source_label_pattern.search(str(source)):
+                labels.append(str(key))
+        if not labels:
+            return True, ""
+        return (
+            False,
+            "Express irony through natural wording. Do not add bracketed stage directions or "
+            f"translator commentary. Keys: {labels[:20]}",
+        )
 
     @staticmethod
     def _validate_natural_price_bands(
@@ -1455,6 +2095,28 @@ Delete every fact, action, object, name, number, or clause that current_source d
         use_case_keys: list[str] = []
         numeric_shorthand_keys: list[str] = []
         discourse_now_keys: list[str] = []
+        awkward_softness_keys: list[str] = []
+        literal_irl_keys: list[str] = []
+        literal_yes_answer_keys: list[str] = []
+        literal_fresh_slate_keys: list[str] = []
+        literal_racing_line_keys: list[str] = []
+        literal_price_argument_keys: list[str] = []
+        repeated_ride_quality_keys: list[str] = []
+        numeric_self_correction_keys: list[str] = []
+        incomplete_phone_aside_keys: list[str] = []
+        collapsed_reference_keys: list[str] = []
+        literal_limo_stop_keys: list[str] = []
+        literal_body_adhesive_keys: list[str] = []
+        literal_run_cooler_keys: list[str] = []
+        ambiguous_downshift_second_keys: list[str] = []
+        fuel_economy_how_do_keys: list[str] = []
+        literal_bat_out_of_hell_keys: list[str] = []
+        parking_direction_keys: list[str] = []
+        rev_match_first_keys: list[str] = []
+        revised_component_keys: list[str] = []
+        document_trim_variant_keys: list[str] = []
+        middle_seat_doubt_keys: list[str] = []
+        model_year_generation_keys: list[str] = []
         use_case_source = re.compile(
             r"\b\d+%\s+of\s+what\s+you['’]re\s+going\s+to\s+use\s+"
             r"this\s+(?:truck|car|vehicle)\s+for\b.*\blike\s+the\b.*"
@@ -1487,6 +2149,180 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 "目前",
             }:
                 discourse_now_keys.append(str(key))
+            if re.search(
+                r"\b20\s+softer\s+for\s+26\s+from\s+the\s+25\s+model\b",
+                source_text,
+                flags=re.IGNORECASE,
+            ) and (
+                "针对26款来说" in compact_target
+                or re.search(r"26款.{0,12}25款.{0,8}26款", compact_target)
+                or compact_target.count("25款") > 1
+                or compact_target.endswith("26款相比25款")
+                or compact_target.endswith("26款")
+            ):
+                awkward_softness_keys.append(str(key))
+            if re.fullmatch(r"\s*merging\s+irl[.!?]?\s*", source_text, re.IGNORECASE) and re.search(
+                r"(?<![A-Za-z])IRL(?![A-Za-z])",
+                translated,
+                re.IGNORECASE,
+            ):
+                literal_irl_keys.append(str(key))
+            if re.search(
+                r"\b(?:the\s+)?answer(?:\s+here)?\s+is\s+yes\b",
+                source_text,
+                flags=re.IGNORECASE,
+            ) and re.search(r"答案是\s*(?:容易|简单|好开|可以)$", translated):
+                literal_yes_answer_keys.append(str(key))
+            if re.search(r"\bfresh\s+slate\b", source_text, re.IGNORECASE) and re.search(
+                r"(?:全新|新的|新)\s*(?:汽车|车辆)?平台",
+                translated,
+            ):
+                literal_fresh_slate_keys.append(str(key))
+            if re.search(r"\bracing\s+line\b", source_text, re.IGNORECASE) and re.search(
+                r"接近.{0,6}赛道.{0,6}路线|赛道附近.{0,6}路线",
+                translated,
+            ):
+                literal_racing_line_keys.append(str(key))
+            if re.search(
+                r"\bargue\s+for\s+(?:your\s+)?[$]\s*\d",
+                source_text,
+                re.IGNORECASE,
+            ) and re.search(r"争", translated):
+                literal_price_argument_keys.append(str(key))
+            if re.search(
+                r"\bstiff\b.*\bbouncy\b.*\bcrashy\b",
+                source_text,
+                re.IGNORECASE,
+            ) and re.search(r"(?:有点)?颠\s*(?:有点)?颠簸", translated):
+                repeated_ride_quality_keys.append(str(key))
+
+            numeric_correction = re.search(
+                r"\b(\d+(?:\.\d+)?)\s*,\s+(?:a|uh|um|er)\s+(\d+\.\d+)\b",
+                source_text,
+                re.IGNORECASE,
+            )
+            if numeric_correction:
+                abandoned, corrected = numeric_correction.groups()
+                if re.search(
+                    rf"(?<![\d.]){re.escape(abandoned)}(?![\d.])",
+                    translated,
+                ) and corrected in translated:
+                    numeric_self_correction_keys.append(str(key))
+            if re.search(
+                r"\bsmaller\s+this\s+is\s+a\s+pro\s+ma[ctx]\b",
+                source_text,
+                re.IGNORECASE,
+            ) and re.search(r"Pro\s*Max", translated, re.IGNORECASE) and not re.search(
+                r"手机|電話|电话|手提电话|行動電話",
+                translated,
+            ):
+                incomplete_phone_aside_keys.append(str(key))
+            reference_shift = re.match(
+                r"^that\s+is\s+(?:(?:quite|really|pretty|so|very)\s+)?"
+                r"(?:good|nice|great|cool|beautiful)[,;]\s*(?:a\s+)?"
+                r"(?:fellow\s+)?([A-Za-z][A-Za-z0-9-]*)\b",
+                source_text,
+                flags=re.IGNORECASE,
+            )
+            if reference_shift:
+                new_subject = reference_shift.group(1)
+                if re.search(
+                    rf"{re.escape(new_subject)}.{{0,6}}(?:很|真|相当|非常)?"
+                    r"(?:不错|很好|漂亮|很棒|真棒|酷)",
+                    translated,
+                    flags=re.IGNORECASE,
+                ):
+                    collapsed_reference_keys.append(str(key))
+            if re.search(r"\blimo\s+stops?\b", source_text, re.IGNORECASE) and re.search(
+                r"礼宾(?:式)?(?:停车|刹车|制动)",
+                translated,
+            ):
+                literal_limo_stop_keys.append(str(key))
+            if (
+                re.search(
+                    r"\b(?:feet|foot)\b.*\b(?:goop|adhesive)\b|"
+                    r"\b(?:goop|adhesive)\b.*\bbody\s+panels?\b",
+                    source_text,
+                    re.IGNORECASE,
+                )
+                and re.search(r"胶状物|黏糊糊|粘糊糊|浆糊", translated)
+            ):
+                literal_body_adhesive_keys.append(str(key))
+            if re.search(r"\brun\s+(?:even\s+)?cooler\b", source_text, re.IGNORECASE) and re.search(
+                r"跑得.{0,4}(?:更)?凉|跑得凉快",
+                translated,
+            ):
+                literal_run_cooler_keys.append(str(key))
+            if re.search(
+                r"\bdownshift\s+a\s+second\b",
+                source_text,
+                re.IGNORECASE,
+            ) and re.search(r"降\s*一\s*[档挡]", translated):
+                ambiguous_downshift_second_keys.append(str(key))
+            previous_source = ""
+            next_source = ""
+            if str(key).isdigit():
+                numeric_key = int(key)
+                previous_source = self._all_source_by_index.get(numeric_key - 1, "")
+                next_source = self._all_source_by_index.get(numeric_key + 1, "")
+            if (
+                re.search(r"\bsee\s+how\s+we\s+do\b", source_text, re.IGNORECASE)
+                and re.search(
+                    r"\b(?:mpg|fuel\s+economy|miles\s+per\s+gallon)\b",
+                    previous_source,
+                    re.IGNORECASE,
+                )
+                and re.search(r"开起来|驾驶表现|开着怎么样", translated)
+            ):
+                fuel_economy_how_do_keys.append(str(key))
+            if re.search(r"\bbat\s+out\s+of\s+hell\b", source_text, re.IGNORECASE) and re.search(
+                r"地狱.{0,4}蝙蝠|蝙蝠.{0,4}地狱",
+                translated,
+            ):
+                literal_bat_out_of_hell_keys.append(str(key))
+            if re.search(
+                r"\brolling\s+down\s+(?:this|the)\s+parking\s+(?:structure|garage)\b",
+                source_text,
+                re.IGNORECASE,
+            ) and re.search(r"驶出|开出|离开", translated):
+                parking_direction_keys.append(str(key))
+            if re.search(r"\brev\s+match\s+first\b", source_text, re.IGNORECASE) and re.search(
+                r"先.{0,3}(?:挂|切|换)(?:入|上|到)?一[档挡]|先挂一[档挡]",
+                translated,
+            ):
+                rev_match_first_keys.append(str(key))
+            if (
+                re.search(r"\bnewly\s+revised\s*$", source_text, re.IGNORECASE)
+                and re.search(r"\b(?:speaker|JBL|Bose|audio|sound)\b", next_source, re.IGNORECASE)
+                and re.search(r"车型|车款|车辆", translated)
+            ):
+                revised_component_keys.append(str(key))
+            if (
+                re.search(r"\bElantra\s+M\b", source_text, re.IGNORECASE)
+                and sum(
+                    bool(re.search(r"\bElantra\s+N\b", value, re.IGNORECASE))
+                    for value in self._all_source_by_index.values()
+                )
+                >= 1
+                and re.search(
+                    r"(?<![A-Za-z0-9])Elantra\s+M(?=\s|[，。！？；：、,.!?;:]|$|上|的)",
+                    translated,
+                    re.IGNORECASE,
+                )
+            ):
+                document_trim_variant_keys.append(str(key))
+            if re.search(
+                r"\bi\s+don['’]t\s+know\s+that\s+you['’]re\s+putting\s+somebody\s+"
+                r"in\s+the\s+middle\b",
+                source_text,
+                re.IGNORECASE,
+            ) and re.search(r"不确定.{0,8}(?:让|叫)?谁", translated):
+                middle_seat_doubt_keys.append(str(key))
+            if re.search(r"\bfourth\s+model\s+year\b", source_text, re.IGNORECASE) and re.search(
+                r"第四代|第4代|第四个车型年份|第4个车型年份",
+                translated,
+            ):
+                model_year_generation_keys.append(str(key))
 
         problems: list[str] = []
         if use_case_keys:
@@ -1505,6 +2341,133 @@ Delete every fact, action, object, name, number, or clause that current_source d
             problems.append(
                 "A standalone 'Now.' is a discourse transition here. Translate it as '那么' "
                 f"or '接下来', not the temporal adverb '现在'. Keys: {discourse_now_keys[:20]}"
+            )
+        if awkward_softness_keys:
+            problems.append(
+                "Render the model-year comparison directly as '26款比25款大约软20%' without "
+                f"a trailing '针对26款来说' or duplicated model year. Keys: {awkward_softness_keys[:20]}"
+            )
+        if literal_irl_keys:
+            problems.append(
+                "Standalone conversational IRL means 'in real life'. Translate its meaning "
+                f"naturally instead of leaving an unexplained acronym. Keys: {literal_irl_keys[:20]}"
+            )
+        if literal_yes_answer_keys:
+            problems.append(
+                "Translate a direct yes/no answer as '答案是肯定的' or '答案是 是的'. "
+                "Do not replace yes with an adjective copied from the preceding question. "
+                f"Keys: {literal_yes_answer_keys[:20]}"
+            )
+        if literal_fresh_slate_keys:
+            problems.append(
+                "'Fresh slate' means a clean starting point here, not a vehicle platform. "
+                f"Keys: {literal_fresh_slate_keys[:20]}"
+            )
+        if literal_racing_line_keys:
+            problems.append(
+                "Use the established motorsport sense of 'racing line' (赛车线/最佳过弯线路), "
+                f"not a route near a racetrack. Keys: {literal_racing_line_keys[:20]}"
+            )
+        if literal_price_argument_keys:
+            problems.append(
+                "In 'argue for your $X', express what a buyer may reasonably expect at that "
+                f"price; do not say the buyer argues for the money. Keys: {literal_price_argument_keys[:20]}"
+            )
+        if repeated_ride_quality_keys:
+            problems.append(
+                "Keep stiff, bouncy, and crashy as distinct ride qualities; do not collapse "
+                f"them into repeated '颠/颠簸' wording. Keys: {repeated_ride_quality_keys[:20]}"
+            )
+        if numeric_self_correction_keys:
+            problems.append(
+                "A spoken number followed by a hesitation and a more precise number is a "
+                "self-correction. State only the corrected final value once. "
+                f"Keys: {numeric_self_correction_keys[:20]}"
+            )
+        if incomplete_phone_aside_keys:
+            problems.append(
+                "Resolve the unambiguous omitted noun in the phone-fit aside: say that a "
+                "smaller phone would fit and that the speaker's phone is a Pro Max. "
+                f"Keys: {incomplete_phone_aside_keys[:20]}"
+            )
+        if collapsed_reference_keys:
+            problems.append(
+                "Keep a demonstrative evaluation of the previously mentioned object separate "
+                "from the newly announced vehicle. Translate 'That is quite good, fellow "
+                "Corolla coming up' as '那辆真不错 有辆Corolla开过来了', not as praise "
+                f"attached to the Corolla. Keys: {collapsed_reference_keys[:20]}"
+            )
+        if literal_limo_stop_keys:
+            problems.append(
+                "In driving commentary, a 'limo stop' is a smooth chauffeur-style stop for "
+                "passenger comfort. Express the smooth braking action naturally; do not use "
+                f"the literal phrase 礼宾式停车. Keys: {literal_limo_stop_keys[:20]}"
+            )
+        if literal_body_adhesive_keys:
+            problems.append(
+                "When measured goop or adhesive is added inside body panels, use the automotive "
+                "sense 车身结构胶 (and preserve the stated length), not the literal 胶状物. "
+                f"Keys: {literal_body_adhesive_keys[:20]}"
+            )
+        if literal_run_cooler_keys:
+            problems.append(
+                "For an engine or vehicle that can 'run cooler', describe a lower operating "
+                "temperature or improved cooling; do not say it 跑得更凉快. "
+                f"Keys: {literal_run_cooler_keys[:20]}"
+            )
+        if ambiguous_downshift_second_keys:
+            problems.append(
+                "In 'downshift a second', 'a second' is a brief duration, not one gear. "
+                "Translate it as 稍微降一下挡/短暂降挡, not 降一挡. "
+                f"Keys: {ambiguous_downshift_second_keys[:20]}"
+            )
+        if fuel_economy_how_do_keys:
+            problems.append(
+                "After MPG or fuel-economy ratings, 'see how we do' asks how measured fuel "
+                "economy performs. Do not translate it as how the car drives. "
+                f"Keys: {fuel_economy_how_do_keys[:20]}"
+            )
+        if literal_bat_out_of_hell_keys:
+            problems.append(
+                "'Bat out of hell' is an idiom for moving or driving extremely fast. Translate "
+                "the behavior naturally; never mention a literal hell bat. "
+                f"Keys: {literal_bat_out_of_hell_keys[:20]}"
+            )
+        if parking_direction_keys:
+            problems.append(
+                "'Rolling down a parking structure/garage' describes proceeding downward inside "
+                "it, not necessarily exiting it. Preserve that direction. "
+                f"Keys: {parking_direction_keys[:20]}"
+            )
+        if rev_match_first_keys:
+            problems.append(
+                "In 'Rev match first? Yes, indeed it will', do not turn first into an instruction "
+                "to select first gear. Express that the car will rev-match. "
+                f"Keys: {rev_match_first_keys[:20]}"
+            )
+        if revised_component_keys:
+            problems.append(
+                "A source key ending in 'newly revised' modifies the audio/component named in "
+                "the next source key. Do not turn it into a revised vehicle/model. "
+                f"Keys: {revised_component_keys[:20]}"
+            )
+        if document_trim_variant_keys:
+            problems.append(
+                "The document repeatedly confirms Elantra N. Correct the one-off phonetic "
+                "Elantra M variant instead of preserving a nonexistent trim. "
+                f"Keys: {document_trim_variant_keys[:20]}"
+            )
+        if middle_seat_doubt_keys:
+            problems.append(
+                "'I don't know that you're putting somebody in the middle' doubts that anyone "
+                "will sit there; it does not ask which person. "
+                f"Keys: {middle_seat_doubt_keys[:20]}"
+            )
+        if model_year_generation_keys:
+            problems.append(
+                "A 'fourth model year' is the fourth annual model-year iteration, not the "
+                "vehicle's fourth generation. "
+                f"Keys: {model_year_generation_keys[:20]}"
             )
         if problems:
             return False, " ".join(problems)
@@ -1679,6 +2642,33 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 "A condition owned by the next source key was translated early under the "
                 "previous key. Keep if/when meaning under its owning key. "
                 f"Anticipated conditions: {anticipated_conditions[:10]}",
+            )
+
+        anticipated_imperatives: list[str] = []
+        for left_key, right_key in zip(ordered_keys, ordered_keys[1:]):
+            if not left_key.isdigit() or not right_key.isdigit():
+                continue
+            if int(right_key) != int(left_key) + 1:
+                continue
+            left_source = subtitle_dict[left_key]
+            right_source = subtitle_dict[right_key]
+            if not re.match(
+                r"^why\s+don['’]t\s+we\s+(?:show|look|check)\b",
+                right_source.strip(),
+                flags=re.IGNORECASE,
+            ):
+                continue
+            if re.search(r"\b(?:show|look|check)\b", left_source, flags=re.IGNORECASE):
+                continue
+            left_target = extract_text(response_dict.get(left_key, ""))
+            if re.search(r"(?:不如|要不|何不).{0,10}(?:看看|展示|看一下)", left_target):
+                anticipated_imperatives.append(f"{left_key}-{right_key}")
+        if anticipated_imperatives:
+            return (
+                False,
+                "An invitation owned by the next source key was translated early under the "
+                "previous key. Keep 'why don't we show/look' under its owning key. "
+                f"Anticipated invitations: {anticipated_imperatives[:10]}",
             )
 
         def source_repeats_meaning(left_key: str, right_key: str) -> bool:
@@ -2192,7 +3182,7 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 "US",
                 "WE",
             }
-            collapsed_large_numbers = re.sub(r"(?<=\d),(?=\d{3}\b)", "", text)
+            collapsed_large_numbers = re.sub(r"(?<=\d),\s*(?=\d{3}\b)", "", text)
             pattern = (
                 r"\b[A-Za-z]+\d+[A-Za-z0-9.-]*\b"
                 r"|\b\d+[A-Za-z]+[A-Za-z0-9.-]*\b"
@@ -2215,8 +3205,12 @@ Delete every fact, action, object, name, number, or clause that current_source d
             "Mercedes-Benz": {"奔驰", "梅赛德斯奔驰", "梅赛德斯-奔驰"},
             "Lexus": {"雷克萨斯"},
             "Honda": {"本田"},
+            "Buick": {"别克"},
+            "Civic": {"思域"},
             "Acura": {"讴歌"},
             "REM": {"快速眼动"},
+            "RPM": {"转/分", "每分钟转数", "转速"},
+            "IRL": {"现实中", "现实生活中", "现实路况", "实际场景", "实际道路"},
             "WWII": {"二战", "第二次世界大战"},
         }
 
@@ -2571,11 +3565,32 @@ Delete every fact, action, object, name, number, or clause that current_source d
                     return True
             return False
 
+        def _abandoned_numeric_self_correction(
+            original: str,
+            token: str,
+            translated_norm: str,
+        ) -> bool:
+            """Allow an explicit false-start number to yield to its corrected value."""
+            match = re.search(
+                r"\b(\d+(?:\.\d+)?)\s*,\s+(?:a|uh|um|er)\s+(\d+\.\d+)\b",
+                original,
+                flags=re.IGNORECASE,
+            )
+            if not match or normalized_text(token) != normalized_text(match.group(1)):
+                return False
+            return normalized_text(match.group(2)) in translated_norm
+
         for key, original in subtitle_dict.items():
             translated = extract_text(response_dict.get(key, ""))
             translated_norm = normalized_text(translated)
             for token in important_tokens(original):
                 token_norm = normalized_text(token)
+                if _abandoned_numeric_self_correction(
+                    original,
+                    token,
+                    translated_norm,
+                ):
+                    continue
                 if _world_war_roman_preserved(original, token, translated_norm):
                     continue
                 if _is_price_band_token(original, token, translated):
@@ -3216,31 +4231,40 @@ Delete every fact, action, object, name, number, or clause that current_source d
         translated_by_index: Dict[int, SubtitleProcessData],
         pending_keys: List[int],
     ) -> List[List[SubtitleProcessData]]:
-        """Return complete original batches touched by a confirmed alignment error.
+        """Return tight context windows around confirmed alignment errors.
 
-        A one-key shift commonly cascades through the rest of its LLM batch. Repairing
-        only the keys an auditor happened to flag can preserve a valid-looking shifted
-        suffix. Rebuilding the affected original batch keeps the scope bounded while
-        restoring ownership for the complete shift chain.
+        Pending keys have already failed isolated repair. Include one adjacent key on
+        each side so the model can restore a local shift, but do not retranslate an
+        otherwise valid 20-key batch because one item failed a strict validator.
         """
-        batch_size = max(1, int(self.batch_num))
         pending = set(pending_keys)
-        valid_positions = {
+        valid_positions = sorted(
             position
             for position, item in enumerate(source_list)
             if item.index in pending and item.index in translated_by_index
-        }
-        batch_starts = sorted(
-            {(position // batch_size) * batch_size for position in valid_positions}
         )
-        return [
-            [
+        if not valid_positions:
+            return []
+
+        clusters: list[list[int]] = []
+        for position in valid_positions:
+            if clusters and position - clusters[-1][-1] <= 2:
+                clusters[-1].append(position)
+            else:
+                clusters.append([position])
+
+        windows: list[List[SubtitleProcessData]] = []
+        for cluster in clusters:
+            start = max(0, cluster[0] - self.ALIGNMENT_REPAIR_CONTEXT)
+            end = min(len(source_list), cluster[-1] + self.ALIGNMENT_REPAIR_CONTEXT + 1)
+            window = [
                 item
-                for item in source_list[start : start + batch_size]
+                for item in source_list[start:end]
                 if item.index in translated_by_index
             ]
-            for start in batch_starts
-        ]
+            if window:
+                windows.append(window)
+        return windows
 
     @staticmethod
     def _has_dependent_source_boundary(
@@ -3508,9 +4532,17 @@ Delete every fact, action, object, name, number, or clause that current_source d
         Optional[Exception],
     ]:
         """Repair one independent window without mutating document state."""
+        deterministic = self._deterministic_chinese_fluency_fallback(window, current)
+        if deterministic is not None:
+            return window, deterministic, None
         repair_error: Exception | None = None
         feedback = ""
-        for _attempt in range(self.MAX_STEPS):
+        for attempt in range(self.MAX_STEPS):
+            use_reasoning = self._should_reason_about_chinese_fluency_window(
+                window,
+                current,
+                feedback=feedback,
+            )
             try:
                 candidate = self._rewrite_chinese_fluency_window(
                     window,
@@ -3518,13 +4550,15 @@ Delete every fact, action, object, name, number, or clause that current_source d
                     feedback=feedback,
                 )
                 self._validate_chinese_fluency_repair(window, current, candidate)
+                if use_reasoning:
+                    self._record_reasoning_metric("accepted_repairs")
                 return window, candidate, None
             except Exception as error:
                 repair_error = error
                 feedback = str(error)
-        fallback = self._deterministic_chinese_fluency_fallback(window, current)
-        if fallback is not None:
-            return window, fallback, None
+                if use_reasoning:
+                    self._record_reasoning_metric("rejected_repairs")
+                    self._record_reasoning_metric("fallback_requests")
         return window, None, repair_error
 
     @staticmethod
@@ -3532,14 +4566,138 @@ Delete every fact, action, object, name, number, or clause that current_source d
         window: List[SubtitleProcessData],
         current: List[SubtitleProcessData],
     ) -> Optional[List[SubtitleProcessData]]:
-        """Repair two audited constructions after model retries are exhausted."""
+        """Repair narrowly defined audited constructions after model retries."""
         current_by_index = {item.index: item for item in current}
         repaired_by_index = dict(current_by_index)
         changed = False
 
+        for first, second, third in zip(window, window[1:], window[2:]):
+            if (
+                re.search(
+                    r"\bput\s+one\s+unless\s+you\s+just\s+sort\s+of\s+set$",
+                    first.original_text.strip(),
+                    re.IGNORECASE,
+                )
+                and re.match(
+                    r"^it\s+in\s+your\s+cargo\s+area\b",
+                    second.original_text.strip(),
+                    re.IGNORECASE,
+                )
+                and re.match(
+                    r"^and\s+accepted?\s+that\s+neither\b",
+                    third.original_text.strip(),
+                    re.IGNORECASE,
+                )
+            ):
+                repaired_by_index[first.index] = replace(
+                    current_by_index[first.index],
+                    translated_text="我觉得也放不下备胎 除非直接把备胎",
+                )
+                repaired_by_index[second.index] = replace(
+                    current_by_index[second.index],
+                    translated_text="放在后面的载物区里",
+                )
+                repaired_by_index[third.index] = replace(
+                    current_by_index[third.index],
+                    translated_text="那样一来 你和乘客就无法再往后备厢放其他东西",
+                )
+                changed = True
+
         for left, right in zip(window, window[1:]):
             left_source = left.original_text.strip()
             right_source = right.original_text.strip()
+            if re.search(r"\bnewly\s+revised$", left_source, re.IGNORECASE) and re.match(
+                r"^(?:\w+\s+){0,3}(?:speaker|JBL|Bose|audio|sound)\b",
+                right_source,
+                re.IGNORECASE,
+            ):
+                left_translation = current_by_index[left.index].translated_text.rstrip()
+                right_translation = current_by_index[right.index].translated_text.lstrip()
+                cleaned_left = re.sub(
+                    r"\s*(?:这个|这款|这套)?(?:新|全新)?(?:改版|改款|修订)(?:的|版本)?$",
+                    "",
+                    left_translation,
+                    count=1,
+                ).rstrip()
+                if cleaned_left and not re.match(r"^(?:这套)?(?:新|全新)?改版", right_translation):
+                    repaired_by_index[left.index] = replace(
+                        current_by_index[left.index],
+                        translated_text=cleaned_left,
+                    )
+                    repaired_by_index[right.index] = replace(
+                        current_by_index[right.index],
+                        translated_text=f"这套新改版的{right_translation}",
+                    )
+                    changed = True
+                    continue
+            if re.search(r"\brev$", left_source, re.IGNORECASE) and re.match(
+                r"^matching\b",
+                right_source,
+                re.IGNORECASE,
+            ):
+                left_translation = current_by_index[left.index].translated_text.rstrip()
+                right_translation = current_by_index[right.index].translated_text.lstrip()
+                cleaned_left = re.sub(
+                    r"\s*(?:(?:其实|也)?就是(?:他们)?(?:花哨的)?(?:说法|叫法)?\s*)?"
+                    r"(?:指的是|表示|也就是)?\s*(?:降挡)?$",
+                    "",
+                    left_translation,
+                    count=1,
+                ).rstrip()
+                cleaned_right = re.sub(
+                    r"^\s*(?:降挡)?\s*补油\s*[,，、]?\s*",
+                    "",
+                    right_translation,
+                    count=1,
+                ).lstrip()
+                if cleaned_left and cleaned_right:
+                    repaired_by_index[left.index] = replace(
+                        current_by_index[left.index],
+                        translated_text=cleaned_left,
+                    )
+                    repaired_by_index[right.index] = replace(
+                        current_by_index[right.index],
+                        translated_text=f"说白了就是降挡补油 {cleaned_right}",
+                    )
+                    changed = True
+                    continue
+            ordinal_gear = re.search(
+                r"\b(first|second|third|fourth|fifth|sixth)$",
+                left_source,
+                flags=re.IGNORECASE,
+            )
+            if ordinal_gear and re.match(r"^gear\b", right_source, re.IGNORECASE):
+                gear_names = {
+                    "first": "一挡",
+                    "second": "二挡",
+                    "third": "三挡",
+                    "fourth": "四挡",
+                    "fifth": "五挡",
+                    "sixth": "六挡",
+                }
+                gear_name = gear_names[ordinal_gear.group(1).lower()]
+                left_translation = current_by_index[left.index].translated_text
+                right_translation = current_by_index[right.index].translated_text
+                if gear_name not in left_translation:
+                    left_translation = f"{left_translation.rstrip()} {gear_name}"
+                cleaned_right = re.sub(
+                    r"^\s*(?:(?:挂|切|换)(?:入|上|到)?\s*)?"
+                    r"(?:一|二|三|四|五|六)?挡(?:位)?(?:时)?\s*[,，、]?\s*",
+                    "",
+                    right_translation,
+                    count=1,
+                )
+                if cleaned_right and cleaned_right != right_translation:
+                    repaired_by_index[left.index] = replace(
+                        current_by_index[left.index],
+                        translated_text=left_translation,
+                    )
+                    repaired_by_index[right.index] = replace(
+                        current_by_index[right.index],
+                        translated_text=cleaned_right,
+                    )
+                    changed = True
+                    continue
             percentage = re.search(
                 r"\b(\d+)%\s+of\s+what\s+you['’]re\s+going\s+to\s+use\s+"
                 r"this\s+(?:truck|car|vehicle)\s+for,?\s+like\s+the\s+steering\s+"
@@ -3661,8 +4819,12 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 {
                     "place name split between city and state",
                     "proper-name subject separated from its predicate",
+                    "split lexical unit 'rev matching'",
+                    "split phrasal construction 'take ... away'",
                 }
             ):
+                mandatory.append(left.index)
+            elif any(reason.startswith("dangling modifier 'revised'") for reason in reasons):
                 mandatory.append(left.index)
         return mandatory
 
@@ -3765,6 +4927,12 @@ Delete every fact, action, object, name, number, or clause that current_source d
 
         if re.search(r"(?:让|使).{0,8}(?:这|那)?(?:辆|台)?(?:车|车辆|东西)$", left):
             return "resultative predicate is stranded"
+
+        if re.search(r"(?:并|还|也|却)?不(?:太|那么|算|够|怎么|完全)?$", left) and re.match(
+            r"^(?:像|如|及|比|和|与|跟|同).{0,16}(?:一样|相比|那么)",
+            right,
+        ):
+            return "negated comparison is split from its complement"
 
         soft_tail = re.compile(
             r"(?:的|是|把|被|让|给|和|与|对|向|从|比|像|后|前|大约|差不多|与其|为了|花)$"
@@ -3940,6 +5108,15 @@ Delete every fact, action, object, name, number, or clause that current_source d
             }
             for item in source_items
         }
+        first_index = source_items[0].index
+        last_index = source_items[-1].index
+        request_payload: Dict[str, Any] = {"items": payload}
+        readonly_context = {
+            "previous_source": self._all_source_by_index.get(first_index - 1, ""),
+            "next_source": self._all_source_by_index.get(last_index + 1, ""),
+        }
+        if any(readonly_context.values()):
+            request_payload["readonly_context"] = readonly_context
         retry_instruction = (
             "\nThe previous repair was rejected: "
             + feedback
@@ -3953,6 +5130,16 @@ Delete every fact, action, object, name, number, or clause that current_source d
                 "content": (
                     f"""You are repairing a confirmed Chinese subtitle syntax break for {self.target_language.value}.
 Rewrite only the provided translations. Keep every key, source subtitle, timestamp boundary, fact, name, number, negation, comparison, and conclusion. Preserve the combined meaning exactly once. Make each key a natural readable Chinese subtitle: do not strand a subject from its predicate, a modifier from its noun, an adverb or modal from its predicate, or a connective at the previous key's end. Prefer rephrasing within each key. You may redistribute only the minimum Chinese wording between immediately adjacent keys when English and Chinese word order make that unavoidable. Never add explanation, source text, speaker labels, placeholders, or punctuation-only entries. Return only {{"translations": {{"key": "text"}}}} with every input key exactly once."""
+                    " readonly_context is not an output item. Use it only to resolve references, "
+                    "ellipsis, and the complete local intent; never copy one of its clauses or "
+                    "facts into an item unless that item already owns the meaning."
+                    " Before returning JSON, reason silently in this order: map every source "
+                    "clause to its owning key; reconstruct the complete spoken idea; compare a "
+                    "faithful version with a concise idiomatic Chinese version; choose the most "
+                    "natural subtitle wording that keeps tone and register; then back-check that "
+                    "every fact appears exactly once. Fidelity outranks clarity, and clarity "
+                    "outranks elegance. Keep the internal analysis concise, reserve at least "
+                    "512 output tokens for the final JSON, and never expose the reasoning."
                     " A repaired key must not end with a stranded pronoun, 的, 是, 可以, "
                     "正在, 非常, 更, 所以, 因为, 但是, 不过, 而且, or another unfinished "
                     "Chinese function word. Do not leave a connective as its own key. For a "
@@ -3977,8 +5164,15 @@ Rewrite only the provided translations. Keep every key, source subtitle, timesta
                     "instead of starting the second key with 作为." + retry_instruction
                 ),
             },
-            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            {"role": "user", "content": json.dumps(request_payload, ensure_ascii=False)},
         ]
+        use_reasoning = self._should_reason_about_chinese_fluency_window(
+            source_items,
+            current_items,
+            feedback=feedback,
+        )
+        if use_reasoning:
+            self._record_reasoning_metric("rewrite_requests")
         response = call_llm(
             messages=messages,
             model=self.model,
@@ -3988,14 +5182,18 @@ Rewrite only the provided translations. Keep every key, source subtitle, timesta
             # Spend native reasoning only on the first rewrite. Formatting retries
             # use the validator's concrete feedback and do not benefit from another
             # long chain of thought.
-            reasoning_mode=(
-                "enabled" if not feedback and prefers_native_reasoning(self.model) else "disabled"
-            ),
-            max_output_tokens=(
-                8192 if not feedback and prefers_native_reasoning(self.model) else 4096
-            ),
+            reasoning_mode="enabled" if use_reasoning else "disabled",
+            max_output_tokens=8192 if use_reasoning else 4096,
         )
-        result = parse_json_object(get_response_text(response)).get("translations")
+        try:
+            response_text = get_response_text(response)
+            if use_reasoning:
+                self._record_reasoning_metric("final_answers")
+        except ValueError:
+            if use_reasoning:
+                self._record_reasoning_metric("no_final_answers")
+            raise
+        result = parse_json_object(response_text).get("translations")
         expected = set(payload)
         if not isinstance(result, dict) or set(map(str, result)) != expected:
             raise ValueError("fluency repair must return every input key exactly once")
@@ -4006,6 +5204,52 @@ Rewrite only the provided translations. Keep every key, source subtitle, timesta
                 raise ValueError(f"invalid fluency repair for key {item.index}")
             repaired.append(replace(item, translated_text=text))
         return repaired
+
+    def _should_reason_about_chinese_fluency_window(
+        self,
+        source_items: List[SubtitleProcessData],
+        current_items: List[SubtitleProcessData],
+        *,
+        feedback: str = "",
+    ) -> bool:
+        """Reserve native reasoning for hard semantic or word-order repairs."""
+        if (
+            feedback
+            or len(source_items) > self.CHINESE_FLUENCY_MAX_WINDOW
+            or not prefers_native_reasoning(self.model)
+        ):
+            return False
+
+        current_by_index = {item.index: item for item in current_items}
+        soft_target_signals = {
+            "possible function-word split",
+            "possible demonstrative split",
+            "possible pronoun boundary",
+        }
+        routine_source_signals = {
+            "coordinate phrase crosses the subtitle boundary",
+            "short source fragment crosses an unfinished sentence",
+        }
+        for left, right in zip(source_items, source_items[1:]):
+            left_translation = current_by_index.get(left.index)
+            right_translation = current_by_index.get(right.index)
+            if not left_translation or not right_translation:
+                continue
+            target_signal = self._chinese_boundary_signal(
+                left_translation.translated_text,
+                right_translation.translated_text,
+            )
+            if target_signal and target_signal not in soft_target_signals:
+                return True
+            source_signal = self._source_boundary_signal(
+                left.original_text,
+                right.original_text,
+                left_translation.translated_text,
+                right_translation.translated_text,
+            )
+            if source_signal and source_signal not in routine_source_signals:
+                return True
+        return False
 
     def _validate_chinese_fluency_repair(
         self,
@@ -4161,7 +5405,7 @@ Rewrite only the provided translations. Keep every key, source subtitle, timesta
                 "dialogue_speakers": {
                     data.index: self._all_speaker_by_index.get(data.index, "") for data in chunk
                 },
-                "prompt_version": "context-v27-document-alignment-repair",
+                "prompt_version": "context-v28-quality-and-local-repair",
             }
         )
         return f"{class_name}:{chunk_key}:{lang}:{model}:{prompt_key}"

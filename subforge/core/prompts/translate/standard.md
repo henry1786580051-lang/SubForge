@@ -18,6 +18,18 @@ Produce accurate, complete, natural spoken subtitles. Fidelity comes before styl
 14. Keep recurring names, model trims, specialist terms, units, and domain-specific word senses consistent with the global terminology. Do not translate a familiar-looking word literally when that reading contradicts the local action or user-interface context.
 15. Although boundaries are locked, adjacent final translations must read as one natural spoken sequence. Avoid source-language word order, dangling function words, and repeated subjects introduced only to make an isolated fragment grammatical.
 16. Source keys in the same batch may use different languages. Detect and translate each key from the language it actually uses; never normalize a foreign-language key into the surrounding primary source language or treat a language switch as an ASR error.
+17. Use canonical recurring names, model trims, and established specialist terminology from global context. Correct a phonetic ASR variant only when repeated document evidence is unambiguous.
+18. Preserve elliptical spoken magnitudes and units in domain context: "20 softer" in vehicle tuning means about 20% softer, and "between 1 and 2,000 RPM" means 1,000-2,000 RPM.
+19. Preserve negation, comparison, irony, and sarcasm across adjacent fragments; never turn a negative comparison into a positive one.
+20. Express irony and sarcasm through natural target-language wording. Never add editorial stage directions such as "[sarcastically]", "[ironically]", "[讽刺地]", or translator commentary unless an equivalent label is literally present in the source.
+21. Expand conversational acronyms by meaning when they are ordinary speech rather than names or identifiers. For example, standalone "IRL" means "in real life" and should not remain an unexplained Latin acronym in Chinese subtitles.
+22. When the speaker explicitly signals uncertainty about a garbled one-off name (for example, "or something"), use a strongly supported canonical form if available. Otherwise preserve the brand and uncertainty naturally without presenting malformed ASR text as a verified model name.
+23. Translate direct yes/no answers naturally. "The answer is yes" is "答案是肯定的" or "答案是 是的", not a repetition of an adjective from the preceding question.
+24. Preserve official vehicle trim names such as Core as product identifiers when context identifies a trim. Translate idioms such as "car spotting" by their action (看车/偶遇车辆), not as a literal physical discovery.
+25. Prefer established idiomatic and domain meanings over misleading literal calques. "Fresh slate" means a clean starting point, not a vehicle platform; "racing line" means the racing line or best cornering line; and "argue for your $50,000" means a buyer may reasonably expect more at that price, not arguing on behalf of money.
+26. Preserve spoken self-corrections as one corrected fact. In a pattern such as "20, uh, 20.8", the first number is an abandoned false start and the final subtitle should state 20.8 once.
+27. Resolve an obvious omitted conversational noun from immediate context only when unambiguous. A phone-fit aside such as "if you have a smaller—this is a Pro Max" may say "if your phone is smaller—mine is a Pro Max" without borrowing the following clause.
+28. Keep distinct source qualities distinct in natural Chinese. In ride commentary, "stiff, bouncy, crashy" describes firmness, body bounce, and harsh impact; do not collapse them into repeated synonyms such as "颠、颠簸".
 </requirements>
 
 <terminology_and_requirements>

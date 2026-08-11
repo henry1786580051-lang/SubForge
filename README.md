@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.11/SubForge-1.1.11-macos-arm64.dmg"><strong>下载 macOS Apple Silicon 版</strong></a>
+  <a href="https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.12/SubForge-1.1.12-macos-arm64.dmg"><strong>下载 macOS Apple Silicon 版</strong></a>
   · <a href="https://github.com/henry1786580051-lang/SubForge/releases">全部版本</a>
   · <a href="https://henry1786580051-lang.github.io/SubForge/">使用文档</a>
   · <a href="https://github.com/henry1786580051-lang/SubForge/issues">问题反馈</a>
@@ -34,12 +34,12 @@ SubForge 面向需要长期处理视频字幕的创作者和本地化工作流�
 | --- | --- | --- |
 | Apple Silicon 使用 MLX，Windows 使用 CTranslate2；WhisperX forced alignment 与 TEN-VAD 保守校准词级边界 | 按上下文和说话人轮次翻译，校验漏译、错位、重复、占位语和思考内容泄漏 | 实时进度、中间结果增量保存、失败条目局部重试、恢复字幕和聚合 LLM 日志 |
 
-### v1.1.11 更新
+### v1.1.12 更新
 
-- **完成结果即时同步**：任务完成事件携带最终字幕快照，避免进度到 100% 后预览区仍停留在旧内容。
-- **SRT 兼容性增强**：统一以 UTF-8 BOM 和 Windows/macOS 均可识别的 CRLF 换行导出，Microsoft Word 打开中文不再乱码。
-- **英文边界继续收紧**：保护 `day-to-day life`、`one of these Toyota electric vehicles` 和 `what ... show was` 等依赖结构，减少译文提前、延后或主语错位。
-- **回归测试扩充**：新增任务完成竞态、SRT 编码及高风险断句边界测试，覆盖最终保存、导出和翻译校验链路。
+- **思考预算用于难点**：DeepSeek V4 Flash 的原生思考集中用于专名纠错、语义错位和复杂中文语序修复；常规翻译与格式审计使用轻量请求，避免只返回推理却没有最终 JSON。
+- **全局术语与专名校正**：在受控长度内补充全文车型、品牌和技术术语证据，仅在上下文重复支持时修正 ASR 同音词，不对一次性名称作猜测。
+- **信达雅质量门增强**：新增否定比较、反讽、口语缩写、数字省略、口误自纠和汽车专业词义检查，并阻止说明性舞台标签进入字幕。
+- **字幕边界更稳健**：保护 `rev matching`、挡位名称、分离式 `take ... away` 和否定比较补语，修复时保持英文词序、时间轴和正确字幕不变。
 
 ## 工作流
 
@@ -110,7 +110,7 @@ flowchart LR
 
 ### 桌面版
 
-- **macOS**：当前 v1.1.11 提供 [Apple Silicon DMG](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.11/SubForge-1.1.11-macos-arm64.dmg)。Whisper、forced alignment 和 Community-1 模型按需下载，不会重复打包进应用。
+- **macOS**：当前 v1.1.12 提供 [Apple Silicon DMG](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.12/SubForge-1.1.12-macos-arm64.dmg)。Whisper、forced alignment 和 Community-1 模型按需下载，不会重复打包进应用。
 - **Windows**：项目支持 WhisperX CTranslate2/CUDA 或 CPU、forced alignment 与 Community-1。请在 [Releases](https://github.com/henry1786580051-lang/SubForge/releases) 查看带 Windows 安装包的版本，或按下方源码方式运行。
 - **Linux**：当前以 Web/CLI 源码运行和开发验证为主，尚未提供正式桌面安装包。
 
