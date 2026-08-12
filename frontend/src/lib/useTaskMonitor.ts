@@ -10,6 +10,11 @@ import {
   API_BASE,
   type TaskInfo,
 } from "@/lib/api";
+import {
+  isStaleAfterTerminal,
+  shouldApplyLegacyPartial,
+  shouldLoadLegacyPartial,
+} from "@/lib/taskPreviewPolicy";
 
 function getWebSocketBase(): string {
   if (API_BASE) return API_BASE.replace(/^http/, "ws");
@@ -47,11 +52,13 @@ export function useTaskMonitor() {
   // optimization/translation often changes text without changing segment count.
   const lastPartialKeyRef = useRef<string | null>(null);
   const previewRevisionRef = useRef(0);
+  const terminalTaskIdRef = useRef<string | null>(null);
 
   function handleTaskUpdate(task: TaskInfo) {
     // Guard against stale task updates (e.g., after cancel)
     const store = useAppStore.getState();
     if (task.id !== store.currentTaskId) return;
+    if (isStaleAfterTerminal(task.id, task.status, terminalTaskIdRef.current)) return;
 
     const uiStatus = task.status === "cancelled" ? "idle" : task.status;
     setTaskState(
@@ -86,20 +93,29 @@ export function useTaskMonitor() {
     }
 
     // Compatibility fallback for older backends that only expose a partial file.
-    if (task.status === "running" && task.subtitle_file) {
+    if (shouldLoadLegacyPartial(task) && task.subtitle_file) {
       const partialKey = `${task.subtitle_file}:${task.progress}:${task.message}`;
       if (partialKey === lastPartialKeyRef.current) return;
       lastPartialKeyRef.current = partialKey;
       subtitlesApi
         .load(task.subtitle_file)
         .then((subFile) => {
-          if (task.id !== useAppStore.getState().currentTaskId) return;
-          if (!task.preview_segments) setSubtitles(subFile.segments);
+          const latest = useAppStore.getState();
+          if (
+            !shouldApplyLegacyPartial(
+              task.id,
+              latest.currentTaskId,
+              latest.taskStatus,
+              terminalTaskIdRef.current
+            )
+          ) return;
+          setSubtitles(subFile.segments);
         })
         .catch(() => {});
     }
 
     if (task.status === "completed") {
+      terminalTaskIdRef.current = task.id;
       if (pollRef.current) clearInterval(pollRef.current);
       setIsProcessing(false);
       setTaskAttention(null);
@@ -151,6 +167,7 @@ export function useTaskMonitor() {
     }
 
     if (task.status === "failed") {
+      terminalTaskIdRef.current = task.id;
       if (pollRef.current) clearInterval(pollRef.current);
       setIsProcessing(false);
       setTaskAttention(null);
@@ -158,6 +175,7 @@ export function useTaskMonitor() {
     }
 
     if (task.status === "cancelled") {
+      terminalTaskIdRef.current = task.id;
       if (pollRef.current) clearInterval(pollRef.current);
       setIsProcessing(false);
       setTaskAttention(null);
@@ -266,6 +284,7 @@ export function useTaskMonitor() {
             payload as Parameters<typeof subtitleApi.start>[0]
           );
         }
+        terminalTaskIdRef.current = null;
         setCurrentTaskId(result.task_id);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to start task");
@@ -279,6 +298,7 @@ export function useTaskMonitor() {
   const cancelTask = useCallback(async () => {
     const taskId = useAppStore.getState().currentTaskId;
     if (taskId) {
+      terminalTaskIdRef.current = taskId;
       try {
         await tasksApi.cancel(taskId);
       } catch {
