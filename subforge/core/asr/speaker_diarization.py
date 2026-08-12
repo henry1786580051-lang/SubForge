@@ -1005,6 +1005,43 @@ def smooth_speaker_assignments(
                 labels[index:end] = [candidate] * (end - index)
             index = end
 
+    if "assign_interjections" in enabled:
+        index = 0
+        while index < len(labels):
+            if labels[index]:
+                index += 1
+                continue
+            end = index + 1
+            while end < len(labels) and not labels[end]:
+                end += 1
+            previous = labels[index - 1] if index > 0 else ""
+            following = labels[end] if end < len(labels) else ""
+            duration = segments[end - 1].end_time - segments[index].start_time
+            previous_gap = (
+                segments[index].start_time - segments[index - 1].end_time
+                if index > 0
+                else max_edge_gap + 1
+            )
+            following_gap = (
+                segments[end].start_time - segments[end - 1].end_time
+                if end < len(segments)
+                else max_edge_gap + 1
+            )
+            if (
+                previous
+                and following
+                and previous != following
+                and duration <= 350
+                and previous_gap <= max_edge_gap
+                and following_gap <= max_edge_gap
+                and _is_short_interjection(segments[index:end])
+                and not _intersects_overlap(segments, index, end, overlap_regions)
+            ):
+                # Acknowledgements commonly introduce the following speaker's
+                # turn. This remains only a proposal until acoustics confirm it.
+                labels[index:end] = [following] * (end - index)
+            index = end
+
     if "suppress_islands" in enabled:
         changed = True
         while changed:

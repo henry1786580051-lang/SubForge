@@ -1,6 +1,5 @@
 """subtitle command — optimize and/or translate subtitle files."""
 
-import os
 from argparse import Namespace
 from pathlib import Path
 
@@ -149,6 +148,7 @@ def run(args: Namespace, config: dict) -> int:
     llm_api_key = get(config, "llm.api_key", "")
     llm_api_base = get(config, "llm.api_base", "")
     llm_model = get(config, "llm.model", "")
+    llm_client = None
     if needs_llm:
         from subforge.settings import (
             LlmRuntimeConfig,
@@ -168,10 +168,11 @@ def run(args: Namespace, config: dict) -> int:
         except ValueError as exc:
             output.error(str(exc))
             return EXIT.USAGE_ERROR
-    if llm_api_key:
-        os.environ["OPENAI_API_KEY"] = llm_api_key
-    if llm_api_base:
-        os.environ["OPENAI_BASE_URL"] = llm_api_base
+        from subforge.core.llm import create_client
+        from subforge.core.llm.client import set_client_log_context
+
+        llm_client = create_client(base_url=llm_api_base, api_key=llm_api_key)
+        set_client_log_context(llm_client, file_name=input_path.name)
 
     # Load custom prompt (only if LLM features are needed)
     custom_prompt = getattr(args, "prompt", None) or ""
@@ -221,6 +222,7 @@ def run(args: Namespace, config: dict) -> int:
                 target_language=target_lang_code if need_translate else "",
                 max_word_count_cjk=max_cjk,
                 max_word_count_english=max_english,
+                llm_client=llm_client,
             )
             asr_data = splitter.split_subtitle(asr_data)
 
@@ -235,6 +237,8 @@ def run(args: Namespace, config: dict) -> int:
                 model=llm_model,
                 custom_prompt=custom_prompt,
                 update_callback=callback,
+                use_cache=False,
+                llm_client=llm_client,
             )
             asr_data = optimizer.optimize_subtitle(asr_data)
             asr_data.remove_punctuation()
@@ -272,6 +276,8 @@ def run(args: Namespace, config: dict) -> int:
                     model=llm_model,
                     target_language=target_language,
                     custom_prompt=custom_prompt,
+                    use_cache=False,
+                    llm_client=llm_client,
                 )
                 if progress:
                     progress.update(65, f"Translating to {target_lang_code}...")
@@ -286,7 +292,9 @@ def run(args: Namespace, config: dict) -> int:
                 custom_prompt=custom_prompt,
                 is_reflect=need_reflect,
                 update_callback=callback,
+                use_cache=False,
                 translation_context=translation_context,
+                llm_client=llm_client,
                 azure_translator_key=runtime_settings.azure_translator_key,
                 azure_translator_region=runtime_settings.azure_translator_region,
                 azure_translator_endpoint=runtime_settings.azure_translator_endpoint,
@@ -301,7 +309,7 @@ def run(args: Namespace, config: dict) -> int:
         # 4. Save
         from subforge.cli.validators import resolve_layout
         layout = resolve_layout(layout_str)
-        asr_data.save(save_path=output_path, layout=layout)
+        asr_data.save(save_path=output_path, layout=layout, speaker_style="none")
 
         if progress:
             n = len(asr_data.segments)

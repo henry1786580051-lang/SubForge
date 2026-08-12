@@ -28,6 +28,7 @@ from .anthropic_client import MiniMaxAnthropicClient
 from .request_logger import create_logging_http_client, log_llm_error, log_llm_response
 
 _global_client: Optional[Any] = None
+_global_client_identity: Optional[tuple[str, str]] = None
 _client_lock = threading.Lock()
 
 logger = setup_logger("llm_client")
@@ -104,21 +105,21 @@ def set_client_log_context(client: Any, **context: str) -> None:
 
 def get_llm_client() -> Any:
     """Get global LLM client instance (thread-safe singleton)."""
-    global _global_client
+    global _global_client, _global_client_identity
 
-    if _global_client is None:
+    base_url = normalize_base_url(os.getenv("OPENAI_BASE_URL", "").strip())
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not base_url or not api_key:
+        raise ValueError(
+            "OPENAI_BASE_URL and OPENAI_API_KEY environment variables must be set"
+        )
+    identity = (base_url, api_key)
+
+    if _global_client is None or _global_client_identity != identity:
         with _client_lock:
-            if _global_client is None:
-                base_url = os.getenv("OPENAI_BASE_URL", "").strip()
-                base_url = normalize_base_url(base_url)
-                api_key = os.getenv("OPENAI_API_KEY", "").strip()
-
-                if not base_url or not api_key:
-                    raise ValueError(
-                        "OPENAI_BASE_URL and OPENAI_API_KEY environment variables must be set"
-                    )
-
+            if _global_client is None or _global_client_identity != identity:
                 _global_client = create_client(base_url, api_key)
+                _global_client_identity = identity
 
     return _global_client
 
@@ -233,6 +234,9 @@ def _call_llm_once(
 
     reasoning_mode = kwargs.pop("_subforge_reasoning_mode", "default")
     max_output_tokens = kwargs.pop("_subforge_max_output_tokens", None)
+    # This value only separates disk-cache namespaces for global clients. It
+    # must never be forwarded to an OpenAI-compatible provider.
+    kwargs.pop("_subforge_cache_namespace", None)
     request_kwargs = dict(kwargs)
     deepseek_request = _is_deepseek_client(client) and _is_deepseek_model(model)
     if deepseek_request and reasoning_mode != "default":
@@ -240,7 +244,7 @@ def _call_llm_once(
         extra_body["thinking"] = {"type": reasoning_mode}
         request_kwargs["extra_body"] = extra_body
         if reasoning_mode == "enabled":
-            request_kwargs["reasoning_effort"] = "high"
+            request_kwargs.setdefault("reasoning_effort", "high")
     if deepseek_request and max_output_tokens is not None:
         request_kwargs["max_tokens"] = max(256, int(max_output_tokens))
 
@@ -401,7 +405,15 @@ def call_llm(
         response = _call_llm_api(messages, model, temperature, **kwargs)
     else:
         # Global singleton path: use cache
-        response = _call_llm_cached(messages, model, temperature, **kwargs)
+        response = _call_llm_cached(
+            messages,
+            model,
+            temperature,
+            _subforge_cache_namespace=normalize_base_url(
+                os.getenv("OPENAI_BASE_URL", "").strip()
+            ),
+            **kwargs,
+        )
 
     return response
 

@@ -30,6 +30,29 @@ def test_target_script_detection_preserves_model_only_caption():
     )
 
 
+@pytest.mark.parametrize(
+    "source,output",
+    [
+        ("Talkiatry.com slash grayarea.", "Talkiatry.com/grayarea"),
+        ("patreon dot com slash vox", "patreon.com/vox"),
+    ],
+)
+def test_target_script_detection_allows_standalone_url(source, output):
+    assert not is_untranslated_output(
+        output,
+        source,
+        TargetLanguage.SIMPLIFIED_CHINESE,
+    )
+
+
+def test_target_script_detection_still_translates_url_call_to_action():
+    assert is_untranslated_output(
+        "Visit example.com",
+        "Visit example.com",
+        TargetLanguage.SIMPLIFIED_CHINESE,
+    )
+
+
 def test_batch_report_collects_every_completeness_failure():
     source = [
         SubtitleProcessData(1, "One"),

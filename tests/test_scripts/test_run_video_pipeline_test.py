@@ -33,6 +33,18 @@ def test_pipeline_runner_does_not_prefer_legacy_mimo_environment(monkeypatch):
         "api_base": "https://api.deepseek.com/v1",
         "model": "deepseek-v4-flash",
     }
+    assert config["subtitle"]["max_word_count_english"] == 16
+
+
+def test_pipeline_runner_accepts_explicit_subtitle_length_policy(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "deepseek-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.deepseek.com/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "deepseek-v4-flash")
+
+    config = _build_config(_args(max_english=18, max_cjk=20))
+
+    assert config["subtitle"]["max_word_count_english"] == 18
+    assert config["subtitle"]["max_word_count_cjk"] == 20
 
 
 def test_pipeline_runner_rejects_explicit_mixed_provider(monkeypatch):
@@ -45,3 +57,18 @@ def test_pipeline_runner_rejects_explicit_mixed_provider(monkeypatch):
                 llm_model="deepseek-v4-flash",
             )
         )
+
+
+def test_pipeline_runner_rejects_implicit_default_model(monkeypatch):
+    for key in (
+        "SUBFORGE_TEST_LLM_API_KEY",
+        "SUBFORGE_TEST_LLM_BASE_URL",
+        "SUBFORGE_TEST_LLM_MODEL",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "OPENAI_MODEL",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    with pytest.raises(ValueError, match="explicit LLM runtime"):
+        _build_config(_args())

@@ -127,6 +127,70 @@ def test_acoustic_verifier_accepts_when_both_models_agree(monkeypatch):
     assert stats.skipped_consensus == 0
 
 
+def test_acoustic_verifier_assigns_unlabeled_interjection_with_dual_consensus(monkeypatch):
+    data = ASRData(
+        [
+            ASRDataSeg("host reference", 0, 2_500, speaker_id="Speaker 1"),
+            ASRDataSeg("guest reference", 3_000, 5_500, speaker_id="Speaker 2"),
+            ASRDataSeg("Yeah.", 6_000, 6_200),
+        ]
+    )
+    monkeypatch.setattr(
+        verification,
+        "_proposed_labels",
+        lambda _data: ["Speaker 1", "Speaker 2", "Speaker 2"],
+    )
+
+    stats = verification.verify_speaker_assignment_proposals(
+        data,
+        read_audio=_read_audio,
+        embedding=_identity_embedding,
+        confirmation_embedding=_identity_embedding,
+    )
+
+    assert data.segments[-1].speaker_id == "Speaker 2"
+    assert stats.accepted == 1
+
+
+def test_acoustic_verifier_keeps_unlabeled_interjection_without_dual_consensus(monkeypatch):
+    data = ASRData(
+        [
+            ASRDataSeg("host reference", 0, 2_500, speaker_id="Speaker 1"),
+            ASRDataSeg("guest reference", 3_000, 5_500, speaker_id="Speaker 2"),
+            ASRDataSeg("Yeah.", 6_000, 6_200),
+        ]
+    )
+    monkeypatch.setattr(
+        verification,
+        "_proposed_labels",
+        lambda _data: ["Speaker 1", "Speaker 2", "Speaker 2"],
+    )
+
+    def distinguish_intervals(start_ms: int, _end_ms: int) -> np.ndarray:
+        if start_ms < 3_000:
+            return np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        if start_ms < 6_000:
+            return np.array([0.0, 1.0, 0.0], dtype=np.float32)
+        return np.array([0.0, 0.0, 1.0], dtype=np.float32)
+
+    def primary_embedding(samples: np.ndarray) -> np.ndarray:
+        return np.array([samples[0], samples[1] + samples[2]], dtype=np.float32)
+
+    def disagreeing_embedding(samples: np.ndarray) -> np.ndarray:
+        return np.array([samples[0] + samples[2], samples[1]], dtype=np.float32)
+
+    stats = verification.verify_speaker_assignment_proposals(
+        data,
+        read_audio=distinguish_intervals,
+        embedding=primary_embedding,
+        confirmation_embedding=disagreeing_embedding,
+    )
+
+    assert data.segments[-1].speaker_id == ""
+    assert stats.accepted == 0
+    assert stats.skipped_consensus == 1
+
+
 def test_acoustic_verifier_rescues_near_threshold_when_confirmation_is_strong(monkeypatch):
     data = _speaker_data()
     monkeypatch.setattr(

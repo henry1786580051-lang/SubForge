@@ -808,9 +808,16 @@ class SubtitleSplitter:
                 and has_continuation_shape
                 and total_words <= max_word_count
             )
+            connector_handoff = (
+                current_words == 1
+                and current_text.rstrip(",;:").lower() in {"and", "but", "or", "so"}
+                and current_text.endswith((",", ";", ":"))
+                and time_gap <= 1200
+                and total_words <= max_word_count
+            )
 
             # 判断是否合并
-            should_merge = same_speaker and (
+            should_merge = connector_handoff or same_speaker and (
                 (
                     time_gap < MERGE_SHORT_GAP
                     and (current_words < MERGE_MIN_WORDS or next_words < MERGE_MIN_WORDS)
@@ -849,7 +856,11 @@ class SubtitleSplitter:
                         )
                         if text
                     ),
-                    speaker_id=current_seg.speaker_id or next_seg.speaker_id,
+                    speaker_id=(
+                        next_seg.speaker_id
+                        if connector_handoff
+                        else current_seg.speaker_id or next_seg.speaker_id
+                    ),
                 )
 
                 segments.pop(i + 1)

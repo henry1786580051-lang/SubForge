@@ -312,6 +312,46 @@ def test_transcribe_bounds_automatic_speaker_count(monkeypatch):
     assert received == {"num_speakers": None, "min_speakers": 2, "max_speakers": 10}
 
 
+def test_transcribe_two_speaker_mode_allows_short_incidental_voices(monkeypatch):
+    diarization = importlib.import_module("subforge.core.asr.speaker_diarization")
+    speech_vad = importlib.import_module("subforge.core.asr.speech_vad")
+    received: dict[str, int | None] = {}
+
+    monkeypatch.setattr(
+        transcribe_module,
+        "_create_asr_instance",
+        lambda *_args, **_kwargs: DummyWordTimestampASR(),
+    )
+    monkeypatch.setattr(
+        diarization,
+        "require_local_diarization_model",
+        lambda *_args, **_kwargs: "/tmp/diarization-model",
+    )
+
+    def _diarize(_audio_path, **kwargs):
+        received.update(
+            {
+                "num_speakers": kwargs["num_speakers"],
+                "min_speakers": kwargs["min_speakers"],
+                "max_speakers": kwargs["max_speakers"],
+            }
+        )
+        return [diarization.SpeakerTurn(0, 4_000, "Speaker 1")]
+
+    monkeypatch.setattr(diarization, "diarize_audio", _diarize)
+    monkeypatch.setattr(speech_vad, "is_available", lambda: False)
+    config = TranscribeConfig(
+        transcribe_model=TranscribeModelEnum.WHISPERX,
+        need_word_time_stamp=True,
+        enable_audio_enhancement=False,
+        speaker_diarization="two",
+    )
+
+    transcribe_module.transcribe("original.wav", config)
+
+    assert received == {"num_speakers": None, "min_speakers": 2, "max_speakers": 4}
+
+
 def test_transcribe_auto_diarization_failure_continues_without_labels(monkeypatch):
     diarization = importlib.import_module("subforge.core.asr.speaker_diarization")
     speech_vad = importlib.import_module("subforge.core.asr.speech_vad")

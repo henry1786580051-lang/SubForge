@@ -74,7 +74,7 @@ class SubtitleRequest(BaseModel):
     need_reflect: bool = False
     llm_provider: str = Field(default="", max_length=64)
     llm_model: str = Field(default="", max_length=256)
-    custom_prompt: str = Field(default="", max_length=100_000)
+    custom_prompt: str | None = Field(default=None, max_length=100_000)
 
 
 def _validate_expected_llm_config(req: SubtitleRequest, runtime) -> None:
@@ -91,6 +91,11 @@ def _validate_expected_llm_config(req: SubtitleRequest, runtime) -> None:
             f"LLM 模型已从 {req.llm_model.strip()} 切换为 {runtime.model}，"
             "请刷新页面后重新开始任务。"
         )
+
+
+def _resolve_custom_prompt(request_prompt: str | None, persisted_prompt: str) -> str:
+    """Treat an explicitly cleared task prompt as authoritative."""
+    return persisted_prompt if request_prompt is None else request_prompt
 
 
 @router.post("/start")
@@ -132,7 +137,10 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
     try:
         from app.api.config import get_config_value, get_llm_runtime_config
 
-        custom_prompt = req.custom_prompt or get_config_value("custom_prompt", "")
+        custom_prompt = _resolve_custom_prompt(
+            req.custom_prompt,
+            get_config_value("custom_prompt", ""),
+        )
 
         # Snapshot the complete provider profile again inside the worker. This
         # closes the small race where settings change after task scheduling.

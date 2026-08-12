@@ -59,6 +59,21 @@ def is_untranslated_output(output: str, source: str, target_language: TargetLang
     ):
         return True
 
+    # A standalone web address is already language-neutral subtitle content.
+    # Calls to action such as "visit example.com" still require translation.
+    url_only = re.compile(
+        r"^\s*(?:https?://)?[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+"
+        r"(?:\s*(?:/|slash)\s*[A-Za-z0-9_-]+)*[.!]?\s*$",
+        flags=re.IGNORECASE,
+    )
+    spoken_url_only = re.compile(
+        r"^\s*[A-Za-z0-9-]+\s+(?:dot\s+)?(?:com|org|net|io)"
+        r"(?:\s+(?:slash\s+)?[A-Za-z0-9_-]+)*[.!]?\s*$",
+        flags=re.IGNORECASE,
+    )
+    if url_only.fullmatch(source) or spoken_url_only.fullmatch(source):
+        return False
+
     source_words = re.findall(r"[A-Za-z]+", source)
     if not source_words:
         return False

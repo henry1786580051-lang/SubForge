@@ -310,6 +310,24 @@ def test_smooth_speaker_assignments_fills_short_unlabeled_edge():
     assert [segment.speaker_id for segment in data] == ["Speaker 2", "Speaker 2"]
 
 
+def test_smooth_speaker_assignments_proposes_short_unlabeled_interjection():
+    data = ASRData(
+        [
+            ASRDataSeg("I understand.", 0, 700, speaker_id="Speaker 1"),
+            ASRDataSeg("Yeah.", 820, 1_050),
+            ASRDataSeg("That matters.", 1_160, 1_900, speaker_id="Speaker 2"),
+        ]
+    )
+
+    smooth_speaker_assignments(data, stages=frozenset({"assign_interjections"}))
+
+    assert [segment.speaker_id for segment in data] == [
+        "Speaker 1",
+        "Speaker 2",
+        "Speaker 2",
+    ]
+
+
 def test_smooth_speaker_assignments_repairs_longer_incomplete_island():
     data = ASRData(
         [
@@ -366,6 +384,32 @@ def test_smooth_speaker_assignments_moves_lowercase_tail_to_previous_speaker():
         "Speaker 1",
         "Speaker 1",
         "Speaker 2",
+        "Speaker 2",
+    ]
+
+
+def test_smooth_speaker_assignments_proposes_sentence_tail_across_322ms_gap():
+    data = ASRData(
+        [
+            ASRDataSeg("They are better than most other", 0, 1_000, speaker_id="Speaker 1"),
+            ASRDataSeg("socks", 1_322, 1_550, speaker_id="Speaker 2"),
+            ASRDataSeg("that", 1_570, 1_690, speaker_id="Speaker 2"),
+            ASRDataSeg("I found.", 1_710, 2_100, speaker_id="Speaker 2"),
+            ASRDataSeg("Next", 2_300, 2_500, speaker_id="Speaker 2"),
+        ]
+    )
+
+    smooth_speaker_assignments(
+        data,
+        nearest_gap_ms=225,
+        stages=frozenset({"snap_continuations"}),
+    )
+
+    assert [segment.speaker_id for segment in data] == [
+        "Speaker 1",
+        "Speaker 1",
+        "Speaker 1",
+        "Speaker 1",
         "Speaker 2",
     ]
 

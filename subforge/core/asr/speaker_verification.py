@@ -21,6 +21,7 @@ REFERENCE_LIMIT_PER_SPEAKER = 12
 PROPOSAL_STAGES = frozenset(
     {
         "fill_blanks",
+        "assign_interjections",
         "suppress_islands",
         "move_prefix",
         "move_subject",
@@ -68,7 +69,13 @@ def _proposed_labels(asr_data: ASRData) -> list[str]:
 
     original = [segment.speaker_id for segment in asr_data.segments]
     try:
-        smooth_speaker_assignments(asr_data, stages=PROPOSAL_STAGES)
+        # The wider edge window is proposal-only. Every changed label still has
+        # to pass the acoustic verifier below before it reaches production data.
+        smooth_speaker_assignments(
+            asr_data,
+            nearest_gap_ms=225,
+            stages=PROPOSAL_STAGES,
+        )
         return [segment.speaker_id for segment in asr_data.segments]
     finally:
         for segment, label in zip(asr_data.segments, original):
@@ -198,35 +205,55 @@ def verify_speaker_assignment_proposals(
         if _intersects(start_ms, end_ms, regions):
             skipped_overlap += 1
             continue
-        if (
-            not current_label
-            or not proposed_label
-            or current_label not in centroids
-            or proposed_label not in centroids
-        ):
+        if not proposed_label or proposed_label not in centroids:
             skipped_reference += 1
             continue
         samples = read_audio(start_ms, end_ms)
         vector = embedding(samples)
-        current_score = float(np.dot(vector, centroids[current_label]))
         proposed_score = float(np.dot(vector, centroids[proposed_label]))
+        if current_label:
+            if current_label not in centroids:
+                skipped_reference += 1
+                continue
+            current_score = float(np.dot(vector, centroids[current_label]))
+        else:
+            alternative_scores = [
+                float(np.dot(vector, centroid))
+                for label, centroid in centroids.items()
+                if label != proposed_label
+            ]
+            if not alternative_scores:
+                skipped_reference += 1
+                continue
+            current_score = max(alternative_scores)
         primary_delta = proposed_score - current_score
         if confirmation_embedding is None and primary_delta < similarity_margin:
             continue
         if confirmation_embedding is not None:
-            if (
-                current_label not in confirmation_centroids
-                or proposed_label not in confirmation_centroids
-            ):
+            if proposed_label not in confirmation_centroids:
                 skipped_reference += 1
                 continue
             confirmation_vector = confirmation_embedding(samples)
-            confirmation_current = float(
-                np.dot(confirmation_vector, confirmation_centroids[current_label])
-            )
             confirmation_proposed = float(
                 np.dot(confirmation_vector, confirmation_centroids[proposed_label])
             )
+            if current_label:
+                if current_label not in confirmation_centroids:
+                    skipped_reference += 1
+                    continue
+                confirmation_current = float(
+                    np.dot(confirmation_vector, confirmation_centroids[current_label])
+                )
+            else:
+                alternative_scores = [
+                    float(np.dot(confirmation_vector, centroid))
+                    for label, centroid in confirmation_centroids.items()
+                    if label != proposed_label
+                ]
+                if not alternative_scores:
+                    skipped_reference += 1
+                    continue
+                confirmation_current = max(alternative_scores)
             confirmation_delta = confirmation_proposed - confirmation_current
             standard_supported = (
                 primary_delta >= similarity_margin

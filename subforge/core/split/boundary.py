@@ -16,6 +16,7 @@ HARD_MAX_WORDS = 22
 MAX_BOUNDARY_SHIFT_WORDS = 8
 MAX_RELOCATABLE_GAP_MS = 1800
 MAX_DIARIZATION_GLITCH_GAP_MS = 250
+MAX_STRONG_DEPENDENCY_DIARIZATION_GLITCH_GAP_MS = 350
 MAX_DUPLICATE_CORRECTION_GAP_MS = 600
 MIN_REPAIR_IMPROVEMENT = 8.0
 
@@ -34,6 +35,7 @@ _HARD_DANGLING_TAILS = {
     "although",
     "though",
     "unless",
+    "when",
     "while",
     "whereas",
     "how",
@@ -132,6 +134,7 @@ _SUBJECT_AUX_TAILS = {
 }
 
 _MODIFIER_TAILS = {
+    "also",
     "another",
     "any",
     "big",
@@ -159,6 +162,7 @@ _MODIFIER_TAILS = {
     "red",
     "revised",
     "drastically",
+    "definitely",
     "her",
     "his",
     "its",
@@ -180,12 +184,15 @@ _MODIFIER_TAILS = {
 _ATTRIBUTIVE_TAILS = {"first", "old", "same", "second", "similar"}
 
 _OPEN_COMPLEMENT_TAILS = {
+    "devoting",
     "give",
     "gives",
     "gave",
     "get",
     "gets",
+    "getting",
     "got",
+    "grabbing",
     "just",
     "spend",
     "spending",
@@ -225,6 +232,7 @@ _DEPENDENCY_PAIRS = {
     ("damn", "near"),
     ("european", "influence"),
     ("exhaust", "tips"),
+    ("experimental", "standards"),
     ("fall", "out"),
     ("flip", "switch"),
     ("first", "gear"),
@@ -237,14 +245,21 @@ _DEPENDENCY_PAIRS = {
     ("good", "jobs"),
     ("high", "end"),
     ("higher", "echelon"),
+    ("grabbing", "attention"),
     ("nuclear", "plants"),
     ("nuclear", "power"),
+    ("only", "way"),
+    ("main", "way"),
+    ("matters", "what"),
+    ("other", "socks"),
+    ("past", "experiences"),
     ("power", "plants"),
     ("performance", "pack"),
     ("pretty", "standard"),
     ("public", "college"),
     ("rev", "matching"),
     ("rpm", "gauge"),
+    ("right", "now"),
     ("same", "sort"),
     ("serrated", "edge"),
     ("so", "much"),
@@ -483,7 +498,7 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
         risk += 30
         reasons.append(f"subject and auxiliary stranded at '{tail}'")
     if tail in _MODIFIER_TAILS and not complete_degree_adverb:
-        risk += 24
+        risk += 30 if tail in {"also", "definitely", "really"} else 24
         reasons.append(f"dangling modifier '{tail}'")
     if tail in _ATTRIBUTIVE_TAILS and right[:1].islower():
         risk += 24
@@ -515,7 +530,7 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
         risk += 34
         reasons.append(f"vehicle brand '{tail}' separated from its model or type")
     if tail in _OPEN_COMPLEMENT_TAILS and right[:1].islower():
-        risk += 26
+        risk += 30 if tail in {"devoting", "getting"} else 26
         reasons.append(f"open complement after '{tail}'")
     if head in _PHRASAL_PARTICLES and tail in {"fall", "get", "gets", "go", "look", "take"}:
         risk += 32
@@ -543,12 +558,46 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
         risk += 36
         reasons.append("sentence-opening filler belongs to the next cue")
     if re.search(
+        r"\b(?:am|is|are|was|were|be|been|being|have|has|had|do|does|did|"
+        r"can|could|may|might|must|shall|should|will|would|not),?\s+"
+        r"(?:you\s+know|i\s+mean),?$",
+        left,
+        re.IGNORECASE,
+    ):
+        risk += 36
+        reasons.append("incomplete predicate before trailing discourse filler")
+    if re.search(
+        r"\b(?:it|this|that)(?:['’]s|\s+is)\s+actually,?\s+"
+        r"(?:you\s+know|i\s+mean),?$",
+        left,
+        re.IGNORECASE,
+    ):
+        risk += 36
+        reasons.append("predicate separated after a discourse modifier")
+    if re.search(r"\bthere(?:['’]s|\s+is)\s+no,?$", left, re.IGNORECASE):
+        risk += 36
+        reasons.append("negative existential separated from its complement")
+    if re.search(
+        r"\b(?:it|this|that)(?:['’]s|\s+is)\s+actually,?$",
+        left,
+        re.IGNORECASE,
+    ):
+        risk += 34
+        reasons.append("predicate separated after a discourse modifier")
+    if re.search(
         r"[.!?]\s+(?:i|we|you)\s+(?:think|guess|believe),?$",
         left,
         re.IGNORECASE,
     ):
         risk += 36
         reasons.append("sentence-opening opinion marker belongs to the next cue")
+    if re.search(
+        r"[.!?]\s+(?:today|tomorrow|tonight|meanwhile|instead),?$",
+        left,
+        re.IGNORECASE,
+    ):
+        risk += 36
+        reasons.append("sentence-opening time marker belongs to the next cue")
     if (
         head == "wrong"
         and re.search(r"\b(?:don['’]t|do\s+not)\s+get\s+me$", left, re.IGNORECASE)
@@ -606,6 +655,66 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     if tail == "like" and head in {"this", "that", "it", "these", "those"}:
         risk += 32
         reasons.append(f"comparison complement split before '{head}'")
+    if tail == "like" and re.match(r"^[A-Z][A-Za-z'’-]+\b", right):
+        risk += 34
+        reasons.append("comparative marker separated from its example")
+    if re.search(
+        r"\bbetween\s+(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|\d+)$",
+        left,
+        re.IGNORECASE,
+    ) and re.match(
+        r"^and\s+(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|\d+)\b",
+        right,
+        re.IGNORECASE,
+    ):
+        risk += 38
+        reasons.append("numeric range split at conjunction")
+    if re.search(
+        r"\b(?:i|we|you|they)\s+(?:(?:can|could|do|did)\s+)?"
+        r"(?:see|saw|notice|noticed|find|found),?$",
+        left,
+        re.IGNORECASE,
+    ) and re.match(
+        r"^(?:a|an|the|some|many|several|changes?)\b",
+        right,
+        re.IGNORECASE,
+    ):
+        risk += 34
+        reasons.append("transitive predicate separated from its object")
+    if re.search(
+        r"\b(?:i|we|you|they)\s+(?:(?:can|could|do|did)\s+)?"
+        r"(?:see|saw|notice|noticed|find|found),?\s+"
+        r"(?:you\s+know|i\s+mean),?$",
+        left,
+        re.IGNORECASE,
+    ) and re.match(
+        r"^(?:a|an|the|some|many|several|changes?)\b",
+        right,
+        re.IGNORECASE,
+    ):
+        risk += 36
+        reasons.append("transitive predicate separated before trailing discourse filler")
+    if (
+        head in {"become", "becomes", "became", "is", "are", "was", "were"}
+        and re.search(
+            r"\b[a-z][a-z'’-]*(?:\s+[a-z][a-z'’-]*){0,3}\s+and\s+"
+            r"[a-z][a-z'’-]*$",
+            left,
+            flags=re.IGNORECASE,
+        )
+    ):
+        risk += 34
+        reasons.append("coordinated subject separated from its predicate")
+    if (
+        re.search(r"\bat\s+the\s+same\s+time,?$", left, re.IGNORECASE)
+        and re.match(
+            r"^(?:i|you|he|she|it|we|they)(?:['’](?:m|re|s|ve|d|ll))?\b",
+            right,
+            flags=re.IGNORECASE,
+        )
+    ):
+        risk += 30
+        reasons.append("discourse frame separated from its following clause")
     if (
         re.search(
             r"\bwhat\s+(?:i|you|we|they|he|she|it)(?:['’][a-z]+)?"
@@ -671,6 +780,16 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     ):
         risk += 34
         reasons.append("proper-name subject separated from its predicate")
+
+    # Preserve adjacent title-cased name tokens ("Donald Trump", "The
+    # Atlantic") as one atomic span. The left side must not end a sentence and
+    # both tokens must retain source casing, which avoids treating ordinary
+    # lowercase continuations as names.
+    left_name = re.search(r"(?:^|\s)([A-Z][A-Za-z'’-]{1,})$", left)
+    right_name = re.match(r"^([A-Z][A-Za-z'’-]{1,})\b", right)
+    if left_name and right_name:
+        risk += 38
+        reasons.append("proper name split between adjacent tokens")
 
     if (
         head in {"is", "are", "was", "were"}
@@ -878,9 +997,15 @@ def _is_hard_boundary(left: ASRDataSeg, right: ASRDataSeg) -> bool:
     if left.speaker_id and right.speaker_id and left.speaker_id != right.speaker_id:
         gap = max(0, right.start_time - left.end_time)
         assessment = assess_english_boundary(left.text, right.text)
-        # Diarization can briefly flip speaker IDs inside one sentence. Only a
-        # very short gap plus a strong syntactic dependency may override it.
-        if gap > MAX_DIARIZATION_GLITCH_GAP_MS or assessment.risk < 30:
+        # Diarization can briefly flip speaker IDs inside one sentence. Give a
+        # slightly wider tolerance only to an exceptionally strong dependency,
+        # such as a modifier split from its noun.
+        allowed_gap = (
+            MAX_STRONG_DEPENDENCY_DIARIZATION_GLITCH_GAP_MS
+            if assessment.risk >= 50
+            else MAX_DIARIZATION_GLITCH_GAP_MS
+        )
+        if gap > allowed_gap or assessment.risk < 30:
             return True
     return right.start_time - left.end_time > MAX_RELOCATABLE_GAP_MS
 

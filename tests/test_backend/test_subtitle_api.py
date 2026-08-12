@@ -6,7 +6,12 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 
 import app.api.config as config_module
-from app.api.subtitle import SubtitleRequest, _run_subtitle, _validate_expected_llm_config
+from app.api.subtitle import (
+    SubtitleRequest,
+    _resolve_custom_prompt,
+    _run_subtitle,
+    _validate_expected_llm_config,
+)
 from app.api.subtitles import parse_srt
 from app.core.task_manager import task_manager
 
@@ -35,6 +40,14 @@ def test_subtitle_request_does_not_default_to_stale_llm_model():
     req = SubtitleRequest(subtitle_file="/tmp/example.srt")
 
     assert req.llm_model == ""
+    assert req.custom_prompt is None
+
+
+def test_explicitly_cleared_prompt_does_not_restore_stale_setting():
+    assert _resolve_custom_prompt("", "stale task-specific prompt") == ""
+    assert _resolve_custom_prompt(None, "persisted default prompt") == (
+        "persisted default prompt"
+    )
 
 
 def test_stale_task_profile_is_rejected_before_llm_call():

@@ -1,3 +1,5 @@
+import pytest
+
 from subforge.core.asr.asr_data import ASRDataSeg, ASRWord
 from subforge.core.split.boundary import (
     assess_english_boundary,
@@ -123,6 +125,50 @@ def test_assessment_keeps_ordinal_gear_term_together():
 
     assert assessment.unstable is True
     assert "split lexical unit 'fourth gear'" in assessment.reasons
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "reason"),
+    [
+        (
+            "predicted the rise of a figure like",
+            "Donald Trump that would use populist messaging",
+            "comparative marker separated from its example",
+        ),
+        (
+            "teachers said they assigned between zero",
+            "and four books a year",
+            "numeric range split at conjunction",
+        ),
+        (
+            "And so I think that we see,",
+            "a lot of changes in schools",
+            "transitive predicate separated from its object",
+        ),
+        (
+            "they did not have the same experimental",
+            "standards that we have now",
+            "split lexical unit 'experimental standards'",
+        ),
+    ],
+)
+def test_assessment_rejects_dialogue_translation_sensitive_boundaries(
+    left, right, reason
+):
+    assessment = assess_english_boundary(left, right)
+
+    assert assessment.unstable
+    assert reason in assessment.reasons
+
+
+def test_high_value_dialogue_modifier_reaches_strong_risk_threshold():
+    assessment = assess_english_boundary(
+        "And I think that would need to be a really,",
+        "large scale shift for people to make.",
+    )
+
+    assert assessment.risk >= 30
+    assert "dangling modifier 'really'" in assessment.reasons
 
 
 def test_assessment_rejects_charger_recovery_dependency_boundaries():
@@ -452,6 +498,24 @@ def test_normalizer_repairs_a_short_diarization_flip_inside_a_sentence():
     assert repaired[1].text.startswith("There's thousands")
 
 
+def test_normalizer_repairs_a_strong_dependency_across_a_320ms_speaker_flip():
+    cues = _cues(
+        ["They're much better quality than most other", "socks that I've found."],
+        speakers=["S1", "S2"],
+    )
+    shift = 300
+    cues[1].start_time += shift
+    cues[1].end_time += shift
+    for word in cues[1].words:
+        word.start_time += shift
+        word.end_time += shift
+
+    repaired = normalize_boundaries(cues)
+
+    assert len(repaired) == 1
+    assert "most other socks" in repaired[0].text
+
+
 def test_normalizer_keeps_relative_clause_with_its_antecedent():
     cues = _cues(
         [
@@ -573,3 +637,173 @@ def test_normalizer_moves_but_for_them_to_the_following_sentence():
 
     assert repaired[0].text == "It will take at least a decade."
     assert repaired[1].text == "But for them, it could really be worth the headache."
+
+
+def test_assessment_keeps_adjacent_proper_name_tokens_together():
+    assessment = assess_english_boundary(
+        "A lot of them predicted the rise of a figure like Donald",
+        "Trump that would use populist messaging",
+    )
+
+    assert assessment.unstable
+    assert "proper name split between adjacent tokens" in assessment.reasons
+
+
+def test_normalizer_moves_boundary_out_of_a_proper_name():
+    cues = _cues(
+        [
+            "A lot of them predicted the rise of a figure like Donald",
+            "Trump that would use populist messaging and succeed in politics.",
+        ]
+    )
+
+    repaired = normalize_boundaries(cues)
+
+    assert all(
+        not (left.text.endswith("Donald") and right.text.startswith("Trump"))
+        for left, right in zip(repaired, repaired[1:])
+    )
+    assert "Donald Trump" in " ".join(cue.text for cue in repaired)
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "reason"),
+    [
+        ("the way I grew up and my past", "experiences shaped me", "past experiences"),
+        ("if that's the only", "way people take in information", "only way"),
+        ("the broader phenomenon occurring right", "now is that text", "right now"),
+    ],
+)
+def test_assessment_keeps_translation_sensitive_lexical_units_together(
+    left,
+    right,
+    reason,
+):
+    assessment = assess_english_boundary(left, right)
+
+    assert assessment.unstable
+    assert any(reason in item for item in assessment.reasons)
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "reason"),
+    [
+        (
+            "He contradicts himself as though there's no",
+            "record of his previous words.",
+            "negative existential separated from its complement",
+        ),
+        (
+            "A figure like Donald Trump that would, you know,",
+            "use populist messaging.",
+            "incomplete predicate before trailing discourse filler",
+        ),
+        (
+            "In many ways, it's actually,",
+            "sometimes a more effective way to get information.",
+            "predicate separated after a discourse modifier",
+        ),
+        (
+            "time spent devoting and kind of getting,",
+            "really connected to a complex text.",
+            "open complement after 'getting'",
+        ),
+    ],
+)
+def test_assessment_looks_past_discourse_fillers_and_open_complements(
+    left,
+    right,
+    reason,
+):
+    assessment = assess_english_boundary(left, right)
+
+    assert assessment.risk >= 34
+    assert reason in assessment.reasons
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "reason"),
+    [
+        (
+            "One person described how when",
+            "you are trying to set something up",
+            "dangling function word 'when'",
+        ),
+        (
+            "It shaped my past experiences that it definitely",
+            "is something I value.",
+            "dangling modifier 'definitely'",
+        ),
+        (
+            "I am filling in for Sean. Today,",
+            "I am talking with Rose.",
+            "sentence-opening time marker belongs to the next cue",
+        ),
+    ],
+)
+def test_assessment_keeps_dialogue_time_and_modifier_units_together(left, right, reason):
+    assessment = assess_english_boundary(left, right)
+
+    assert assessment.unstable
+    assert reason in assessment.reasons
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "reason"),
+    [
+        (
+            "text is no longer kind of the main",
+            "way that people transmit information",
+            "main way",
+        ),
+        (
+            "it really matters",
+            "what we're choosing over and over again",
+            "matters what",
+        ),
+        (
+            "there will be more emphasis on grabbing",
+            "attention in the first 10 seconds",
+            "grabbing attention",
+        ),
+        (
+            "we have seen books and text",
+            "become much more widely available",
+            "coordinated subject separated from its predicate",
+        ),
+        (
+            "I think at the same time,",
+            "it's interesting that books are more available",
+            "discourse frame separated from its following clause",
+        ),
+    ],
+)
+def test_assessment_keeps_multispeaker_translation_units_together(left, right, reason):
+    assessment = assess_english_boundary(left, right)
+
+    assert assessment.unstable
+    assert any(reason in item for item in assessment.reasons)
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "reason"),
+    [
+        (
+            "And so I think that we see, you know,",
+            "a lot of changes in schools",
+            "transitive predicate separated before trailing discourse filler",
+        ),
+        (
+            "In many ways, it's actually, you know,",
+            "sometimes a more effective way",
+            "predicate separated after a discourse modifier",
+        ),
+    ],
+)
+def test_assessment_looks_through_trailing_fillers_for_translation_units(
+    left, right, reason
+):
+    assessment = assess_english_boundary(left, right)
+
+    assert assessment.unstable
+    assert reason in assessment.reasons

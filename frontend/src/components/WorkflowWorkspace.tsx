@@ -28,6 +28,7 @@ import {
   analyzeSubtitleQuality,
   type SubtitleQuality,
 } from "@/features/workflow/quality";
+import { LLM_PROVIDERS } from "@/features/settings/catalog";
 
 type TaskStarter = (
   type: "transcribe" | "subtitle",
@@ -633,7 +634,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                 <div>
                   <p className="text-[12px] font-semibold text-text-primary">说话人识别</p>
                   <p className="mt-1 text-[10px] leading-4 text-text-muted">
-                    区分双人或多人对话，并使用原始音轨保护较弱说话人的语音覆盖率。
+                    区分对话中的说话人，并使用原始音轨保护较弱声音与短促插话。
                   </p>
                 </div>
                 <span className={`shrink-0 rounded-md px-2 py-1 text-[9px] font-semibold ${
@@ -667,11 +668,17 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                 ))}
               </div>
 
+              {config.speakerDiarization === "two" && (
+                <p className="rounded-md bg-background px-3 py-2 text-[10px] leading-4 text-text-muted">
+                  以两位主要对话者为基准，也允许广告或插播中出现短暂的第三声音。
+                </p>
+              )}
+
               {config.speakerDiarization === "fixed" && (
                 <label className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2">
                   <span>
                     <span className="block text-[11px] font-semibold text-text-primary">说话人数</span>
-                    <span className="mt-0.5 block text-[9px] text-text-muted">已知人数时可避免自动模式过度聚类</span>
+                    <span className="mt-0.5 block text-[9px] text-text-muted">严格按指定人数聚类，适合人数确定且无插播的素材</span>
                   </span>
                   <input
                     type="number"
@@ -1005,6 +1012,12 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
   const promptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const focusTokenRef = useRef(0);
   const quality = useMemo(() => analyzeSubtitleQuality(subtitles), [subtitles]);
+  const llmProviderName = useMemo(
+    () =>
+      LLM_PROVIDERS.find((provider) => provider.id === config.llmProvider)?.name ||
+      config.llmProvider,
+    [config.llmProvider]
+  );
   const translatedCount = subtitles.filter((sub) => sub.translated.trim()).length;
   const completion = subtitles.length ? Math.round((translatedCount / subtitles.length) * 100) : 0;
 
@@ -1031,7 +1044,6 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
       const map: Record<string, keyof AppConfig> = {
         target_language: "targetLanguage",
         translator: "translator",
-        llm_model: "llmModel",
         need_optimize: "needOptimize",
         need_translate: "needTranslate",
         need_reflect: "needReflect",
@@ -1064,7 +1076,7 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
       need_optimize: config.needOptimize,
       need_translate: config.needTranslate,
       need_reflect: config.needReflect,
-      custom_prompt: config.customPrompt || undefined,
+      custom_prompt: config.customPrompt,
     });
   }, [
     config.customPrompt,
@@ -1143,16 +1155,17 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
                   ))}
                 </select>
               </label>
-              <label className="space-y-1.5">
-                <span className="text-[11px] font-medium text-text-muted">LLM 模型</span>
-                <input
-                  value={config.llmModel}
-                  onChange={(event) => setConfig({ llmModel: event.target.value })}
-                  onBlur={(event) => void saveConfig("llm_model", event.target.value)}
-                  className="input-field"
-                  placeholder="mimo-v2.5-pro"
-                />
-              </label>
+              <div className="space-y-1.5">
+                <span className="text-[11px] font-medium text-text-muted">当前 LLM</span>
+                <div className="flex min-h-11 items-center gap-2 rounded-md border border-border bg-background px-3 py-2">
+                  <span className="shrink-0 rounded bg-accent-dim px-2 py-1 text-[10px] font-semibold text-accent">
+                    {llmProviderName}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-primary" title={config.llmModel}>
+                    {config.llmModel || "未选择模型"}
+                  </span>
+                </div>
+              </div>
               <div className="pt-3">
                 <ToggleLine
                   label="翻译复核"

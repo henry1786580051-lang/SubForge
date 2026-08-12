@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.12/SubForge-1.1.12-macos-arm64.dmg"><strong>下载 macOS Apple Silicon 版</strong></a>
+  <a href="https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.13/SubForge-1.1.13-macos-arm64.dmg"><strong>下载 macOS Apple Silicon 版</strong></a>
   · <a href="https://github.com/henry1786580051-lang/SubForge/releases">全部版本</a>
   · <a href="https://henry1786580051-lang.github.io/SubForge/">使用文档</a>
   · <a href="https://github.com/henry1786580051-lang/SubForge/issues">问题反馈</a>
@@ -34,12 +34,13 @@ SubForge 面向需要长期处理视频字幕的创作者和本地化工作流�
 | --- | --- | --- |
 | Apple Silicon 使用 MLX，Windows 使用 CTranslate2；WhisperX forced alignment 与 TEN-VAD 保守校准词级边界 | 按上下文和说话人轮次翻译，校验漏译、错位、重复、占位语和思考内容泄漏 | 实时进度、中间结果增量保存、失败条目局部重试、恢复字幕和聚合 LLM 日志 |
 
-### v1.1.12 更新
+### v1.1.13 更新
 
-- **思考预算用于难点**：DeepSeek V4 Flash 的原生思考集中用于专名纠错、语义错位和复杂中文语序修复；常规翻译与格式审计使用轻量请求，避免只返回推理却没有最终 JSON。
-- **全局术语与专名校正**：在受控长度内补充全文车型、品牌和技术术语证据，仅在上下文重复支持时修正 ASR 同音词，不对一次性名称作猜测。
-- **信达雅质量门增强**：新增否定比较、反讽、口语缩写、数字省略、口误自纠和汽车专业词义检查，并阻止说明性舞台标签进入字幕。
-- **字幕边界更稳健**：保护 `rev matching`、挡位名称、分离式 `take ... away` 和否定比较补语，修复时保持英文词序、时间轴和正确字幕不变。
+- **单人和多人策略分离**：单人内容继续使用成熟的局部修复；多人内容增加匿名轮次上下文、对话边界审计和跨条语义归位，不把说话人标签写入成品。
+- **多人识别更稳健**：短插话和可疑标签必须通过双声纹模型确认；双人预设允许广告或插播中出现短暂第三声音，固定人数模式仍严格执行指定人数。
+- **思考模式更高效**：DeepSeek V4 Flash 只对确认的语义错位和复杂中文语序启用低强度思考，普通翻译、格式检查和确定性收尾均不消耗思考 token。
+- **跨条错位与重复修复**：加强数字范围、专名、比较结构、转折框架和紧密说话人切换检查，阻止相邻字幕重复结论或出现“合并至上一条”等占位内容。
+- **配置与供应商隔离**：字幕页明确显示设置中当前生效的供应商和模型；切换供应商后不会复用旧 Base URL、API Key 或缓存结果，清空 Prompt 也会立即生效。
 
 ## 工作流
 
@@ -110,7 +111,7 @@ flowchart LR
 
 ### 桌面版
 
-- **macOS**：当前 v1.1.12 提供 [Apple Silicon DMG](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.12/SubForge-1.1.12-macos-arm64.dmg)。Whisper、forced alignment 和 Community-1 模型按需下载，不会重复打包进应用。
+- **macOS**：当前 v1.1.13 提供 [Apple Silicon DMG](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.13/SubForge-1.1.13-macos-arm64.dmg)。Whisper、forced alignment 和 Community-1 模型按需下载，不会重复打包进应用。
 - **Windows**：项目支持 WhisperX CTranslate2/CUDA 或 CPU、forced alignment 与 Community-1。请在 [Releases](https://github.com/henry1786580051-lang/SubForge/releases) 查看带 Windows 安装包的版本，或按下方源码方式运行。
 - **Linux**：当前以 Web/CLI 源码运行和开发验证为主，尚未提供正式桌面安装包。
 

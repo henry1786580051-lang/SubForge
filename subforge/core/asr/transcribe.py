@@ -63,12 +63,17 @@ def transcribe(
                 getattr(config, "diarization_model_dir", "") or None,
             )
             callback(2, "Analyzing speakers from the original audio...")
-            if diarization_mode == "two":
-                num_speakers = 2
-            elif diarization_mode == "fixed":
+            if diarization_mode == "fixed":
                 num_speakers = max(2, min(10, int(getattr(config, "speaker_count", 2))))
             else:
                 num_speakers = None
+
+            if diarization_mode == "two":
+                min_speakers, max_speakers = 2, 4
+            elif num_speakers is None:
+                min_speakers, max_speakers = 2, 10
+            else:
+                min_speakers = max_speakers = None
 
             def _diarization_progress(_progress: int, message: str) -> None:
                 callback(4, message)
@@ -79,8 +84,8 @@ def transcribe(
                 token=getattr(config, "diarization_token", ""),
                 model_dir=getattr(config, "diarization_model_dir", "") or None,
                 num_speakers=num_speakers,
-                min_speakers=2 if num_speakers is None else None,
-                max_speakers=10 if num_speakers is None else None,
+                min_speakers=min_speakers,
+                max_speakers=max_speakers,
                 callback=_diarization_progress,
             )
             detected_speakers = len({turn.speaker_id for turn in diarization_turns})

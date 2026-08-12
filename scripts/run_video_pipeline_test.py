@@ -30,14 +30,18 @@ def _build_config(args: argparse.Namespace) -> dict:
     config["subtitle"]["split"] = True
     config["subtitle"]["thread_num"] = args.llm_threads
     config["subtitle"]["batch_size"] = args.llm_batch_size
-    config["subtitle"]["max_word_count_cjk"] = 18
-    config["subtitle"]["max_word_count_english"] = 12
+    config["subtitle"]["max_word_count_cjk"] = int(
+        getattr(args, "max_cjk", None) or 16
+    )
+    config["subtitle"]["max_word_count_english"] = int(
+        getattr(args, "max_english", None) or 16
+    )
     config["subtitle"]["max_chars_en"] = 42
     config["subtitle"]["max_chars_cjk"] = 16
 
     config["translate"]["service"] = "llm"
     config["translate"]["target_language"] = "zh-Hans"
-    config["translate"]["reflect"] = False
+    config["translate"]["reflect"] = bool(getattr(args, "reflect", False))
     config["subtitle"]["layout"] = "target-above"
 
     # Keep this test runner provider-neutral. Provider-specific environment
@@ -52,12 +56,22 @@ def _build_config(args: argparse.Namespace) -> dict:
     model = args.llm_model or os.environ.get("SUBFORGE_TEST_LLM_MODEL") or os.environ.get(
         "OPENAI_MODEL"
     )
-    if api_key:
-        config["llm"]["api_key"] = api_key
-    if api_base:
-        config["llm"]["api_base"] = api_base
-    if model:
-        config["llm"]["model"] = model
+    missing = [
+        name
+        for name, value in (
+            ("API key", api_key),
+            ("Base URL", api_base),
+            ("model", model),
+        )
+        if not str(value or "").strip()
+    ]
+    if missing:
+        raise ValueError(
+            "Pipeline tests require an explicit LLM runtime; missing " + ", ".join(missing)
+        )
+    config["llm"]["api_key"] = api_key
+    config["llm"]["api_base"] = api_base
+    config["llm"]["model"] = model
 
     from subforge.settings import (
         LlmRuntimeConfig,
@@ -100,8 +114,16 @@ def main() -> int:
     parser.add_argument("--whisper-batch-size", type=int, default=4)
     parser.add_argument("--llm-threads", type=int, default=2)
     parser.add_argument("--llm-batch-size", type=int, default=12)
+    parser.add_argument(
+        "--max-english",
+        type=int,
+        default=16,
+        help="English soft subtitle limit; the hard limit is four words higher",
+    )
+    parser.add_argument("--max-cjk", type=int, default=16)
     parser.add_argument("--llm-api-base", help="Explicit LLM service URL for this test")
     parser.add_argument("--llm-model", help="Explicit LLM model for this test")
+    parser.add_argument("--reflect", action="store_true", help="Enable translation review")
     parser.add_argument("--skip-transcribe", action="store_true")
     args = parser.parse_args()
 

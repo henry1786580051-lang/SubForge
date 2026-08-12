@@ -600,6 +600,24 @@ class TestMergeShortSegment:
             "Speaker 2",
         ]
 
+    def test_merges_standalone_comma_connector_into_following_speaker_cue(self):
+        segments = [
+            ASRDataSeg("And,", 0, 500, speaker_id="Speaker 1"),
+            ASRDataSeg(
+                "I understand the motivation.",
+                1_000,
+                2_200,
+                speaker_id="Speaker 2",
+            ),
+        ]
+        splitter = SubtitleSplitter(thread_num=1, model="gpt-4o-mini")
+
+        splitter.merge_short_segment(segments)
+
+        assert len(segments) == 1
+        assert segments[0].text == "And, I understand the motivation."
+        assert segments[0].speaker_id == "Speaker 2"
+
     def test_merges_short_continuation_across_hesitation_pause(self):
         segments = [
             ASRDataSeg("I mean,", 0, 500, speaker_id="Speaker 1"),

@@ -1,5 +1,41 @@
 # Changelog
 
+## v1.1.13 - 2026-08-12
+
+### Improved
+
+- Separates single-speaker and multi-speaker subtitle strategies: monologues retain the proven local repair path, while dialogue receives anonymous speaker context, turn-aware boundary auditing, and narrowly scoped multi-turn repairs.
+- Uses DeepSeek V4 Flash native reasoning only for confirmed semantic ownership or difficult Chinese word-order repairs. Routine translation, formatting checks, candidate audits, retries, and deterministic dialogue cleanup remain non-reasoning operations.
+- Adds conservative dialogue boundary protection for numeric ranges, proper names, comparison complements, discourse frames, trailing fillers, modifiers, coordinated subjects, and tightly edited speaker handoffs.
+- Uses a second speaker-embedding pass to confirm proposed short-interjection and label corrections before changing production speaker assignments.
+- Treats the two-speaker preset as two primary speakers with room for short advertisement or inserted voices; fixed-count mode remains strict.
+- Extends global terminology context to use spoken letter-by-letter spellings as strong evidence for one canonical person or product name.
+
+### Fixed
+
+- Fixed multi-speaker translations shifting questions, subjects, comparisons, temporal frames, or conclusions into adjacent subtitle keys.
+- Fixed repeated Chinese conclusions, isolated conjunction subtitles, stranded numeric ranges, and placeholders such as “merged into previous” surviving final validation.
+- Fixed native-reasoning requests consuming the output budget without returning final JSON by using low reasoning effort, a larger final-answer budget, and bounded non-reasoning fallback.
+- Fixed LLM provider changes reusing a stale global client or cache entry from a different Base URL or API key.
+- Fixed an explicitly cleared custom prompt falling back to an older persisted prompt.
+- Fixed the subtitle workspace allowing the active model to diverge from Settings; it now displays the selected provider and model as read-only task configuration.
+- Fixed standalone web addresses being reported as untranslated content while retaining translation requirements for URL calls to action.
+- Fixed exported dialogue subtitles exposing internal speaker labels.
+
+### Validation
+
+- Python: `1201 passed, 11 skipped`.
+- Multi-speaker translation regression suite: `22 passed` after final dialogue-sequence additions.
+- Ruff, whitespace validation, and Next.js production build passed.
+- Full 54-minute two-speaker DeepSeek V4 Flash test: 826 bilingual cues, zero real empty translations, zero placeholders, zero suspicious duplicates, and zero hard Chinese boundary failures.
+- Compared with the initial dialogue run, reasoning requests fell from 68 to 32 and reasoning tokens from 260,392 to 79,528 while preserving the final quality audit.
+
+### Packaging
+
+- macOS Apple Silicon: `SubForge-1.1.13-macos-arm64.dmg`.
+- Windows x64: `SubForge-1.1.13-windows-x64-setup.exe`, built and smoke-tested by GitHub Actions.
+- Whisper, forced-alignment, Community-1, ECAPA, and DeepFilterNet models remain separate on-demand downloads.
+
 ## v1.1.12 - 2026-08-11
 
 ### Improved

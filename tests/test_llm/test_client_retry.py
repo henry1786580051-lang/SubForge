@@ -317,6 +317,22 @@ def test_deepseek_thinking_request_uses_official_controls(monkeypatch):
     assert "temperature" not in completions.kwargs
 
 
+def test_deepseek_thinking_request_honors_explicit_reasoning_effort(monkeypatch):
+    client, completions = _capturing_client("https://api.deepseek.com/v1")
+    monkeypatch.setattr(client_module, "log_llm_response", lambda _response: None)
+
+    client_module.call_llm(
+        [{"role": "user", "content": "translate"}],
+        "deepseek-v4-flash",
+        client=client,
+        reasoning_mode="enabled",
+        reasoning_effort="medium",
+        max_output_tokens=8192,
+    )
+
+    assert completions.kwargs["reasoning_effort"] == "medium"
+
+
 def test_deepseek_non_thinking_request_keeps_sampling(monkeypatch):
     client, completions = _capturing_client("https://api.deepseek.com")
     monkeypatch.setattr(client_module, "log_llm_response", lambda _response: None)
