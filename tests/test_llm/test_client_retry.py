@@ -280,6 +280,28 @@ def test_deepseek_retries_transient_timeouts_but_not_forever(monkeypatch):
     assert sleeps == [2.0, 4.0]
 
 
+def test_persistent_rate_limit_wait_is_interrupted_by_task_cancellation(monkeypatch):
+    client = SimpleNamespace(
+        _subforge_base_url="https://api.deepseek.com/v1",
+        _subforge_cancel_event=client_module.threading.Event(),
+    )
+
+    monkeypatch.setattr(
+        client_module,
+        "_call_llm_once",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(_rate_limit_error()),
+    )
+    monkeypatch.setattr(
+        client_module,
+        "_persistent_rate_limit_wait_seconds",
+        lambda _error, _attempt: 60.0,
+    )
+    client._subforge_cancel_event.set()
+
+    with pytest.raises(client_module.LLMRequestCancelled):
+        client_module._call_llm_api([], "deepseek-v4-flash", client=client)
+
+
 class _CapturingCompletions:
     def __init__(self):
         self.kwargs = None

@@ -10,7 +10,8 @@ You will receive a JSON object with numbered subtitle entries.
 
 <instructions>
 1. **Minimal changes only** — If a subtitle is already correct, return it unchanged
-2. **Remove filler words only**: um, uh, ah, er, like (when used as filler), you know (when filler)
+2. **Remove only unambiguous filler words**: um, uh, ah, er, and parenthetical "you know". Preserve "like" because it can carry comparison or quotation meaning; the translation stage can omit it when it is merely delivery noise
+   - Keep every source occurrence of "like" unchanged in this optimization stage
 3. **Do NOT remove**: discourse markers that serve a purpose (well, so, now, actually, basically)
 4. **Fix obvious typos only**: clear misspellings that are clearly wrong (e.g. "pathagrian" → "Pythagorean")
 5. **Do NOT fix**: technical terms you're unsure about, brand names, proper nouns — leave them as-is

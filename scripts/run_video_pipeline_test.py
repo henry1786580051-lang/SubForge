@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """Run SubForge transcription + subtitle processing for one local video."""
 
 from __future__ import annotations
 
 import argparse
 import os
+import sys
 from argparse import Namespace
 from copy import deepcopy
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from subforge.cli import exit_codes as EXIT
 from subforge.cli.commands import subtitle as subtitle_cmd
@@ -34,7 +40,7 @@ def _build_config(args: argparse.Namespace) -> dict:
         getattr(args, "max_cjk", None) or 16
     )
     config["subtitle"]["max_word_count_english"] = int(
-        getattr(args, "max_english", None) or 16
+        getattr(args, "max_english", None) or 18
     )
     config["subtitle"]["max_chars_en"] = 42
     config["subtitle"]["max_chars_cjk"] = 16
@@ -117,7 +123,7 @@ def main() -> int:
     parser.add_argument(
         "--max-english",
         type=int,
-        default=16,
+        default=18,
         help="English soft subtitle limit; the hard limit is four words higher",
     )
     parser.add_argument("--max-cjk", type=int, default=16)
@@ -125,14 +131,25 @@ def main() -> int:
     parser.add_argument("--llm-model", help="Explicit LLM model for this test")
     parser.add_argument("--reflect", action="store_true", help="Enable translation review")
     parser.add_argument("--skip-transcribe", action="store_true")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="Processed SRT path; defaults to the media directory",
+    )
     args = parser.parse_args()
 
-    video = args.video.expanduser().resolve()
+    # Keep symlink paths intact so an isolated test fixture cannot silently write
+    # its result beside the original media file.
+    video = Path(os.path.abspath(os.path.expanduser(str(args.video))))
     if not video.exists():
         raise FileNotFoundError(video)
 
     raw_srt = video.with_suffix(".srt")
-    processed_srt = video.with_name(f"{video.stem}_processed.srt")
+    processed_srt = (
+        Path(os.path.abspath(os.path.expanduser(str(args.output))))
+        if args.output
+        else video.with_name(f"{video.stem}_processed.srt")
+    )
     config = _build_config(args)
 
     if not args.skip_transcribe:

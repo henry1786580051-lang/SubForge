@@ -91,7 +91,12 @@ jobs:
       - name: Build desktop bundle
         run: uv run --no-sync ${{ matrix.uv-extra }} --with pyinstaller --with pywebview python scripts/build_desktop.py --clean
 
-      - name: Smoke test packaged app
+      - name: Smoke test packaged macOS app
+        if: runner.os == 'macOS'
+        run: uv run --no-sync python scripts/smoke_desktop.py dist/SubForge.app
+
+      - name: Smoke test packaged Windows app
+        if: runner.os == 'Windows'
         run: uv run --no-sync python scripts/smoke_desktop.py dist/SubForge
 
       - name: Build Windows installer

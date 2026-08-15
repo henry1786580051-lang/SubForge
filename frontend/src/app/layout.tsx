@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { Providers } from "./providers";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import "./globals.css";
 
@@ -20,7 +19,7 @@ export default function RootLayout({
     <html lang="zh-CN" suppressHydrationWarning>
       <body className="min-h-dvh bg-background text-foreground antialiased">
         <ErrorBoundary>
-          <Providers>{children}</Providers>
+          {children}
         </ErrorBoundary>
       </body>
     </html>

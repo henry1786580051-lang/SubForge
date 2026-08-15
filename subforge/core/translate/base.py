@@ -1,5 +1,6 @@
 """翻译器基类"""
 
+import threading
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, List, Optional
@@ -26,10 +27,12 @@ class PartialTranslationError(RuntimeError):
         message: str,
         completed: List[SubtitleProcessData],
         failed_indices: List[int],
+        provisional: Optional[List[SubtitleProcessData]] = None,
     ):
         super().__init__(message)
         self.completed = completed
         self.failed_indices = failed_indices
+        self.provisional = provisional or []
 
 
 class BaseTranslator(ABC):
@@ -55,6 +58,7 @@ class BaseTranslator(ABC):
         self.update_callback = update_callback
         self.use_cache = use_cache
         self.executor = None
+        self._executor_lock = threading.Lock()
         self._cache = get_translate_cache()
 
         self._init_thread_pool()
@@ -123,7 +127,7 @@ class BaseTranslator(ABC):
         return translated_list
 
     def _is_chunk_result_stable(self, translated_list: List[SubtitleProcessData]) -> bool:
-        """Return whether a provisional chunk is safe to preview and cache."""
+        """Return whether a provisional chunk is safe to reuse from cache."""
         return True
 
     def _parallel_translate(
@@ -154,12 +158,13 @@ class BaseTranslator(ABC):
                 if isinstance(e, PartialTranslationError):
                     translated_list.extend(e.completed)
                     failed_count += len(e.failed_indices)
-                    if (
-                        self.update_callback
-                        and e.completed
-                        and self._is_chunk_result_stable(e.completed)
-                    ):
-                        self.update_callback(e.completed)
+                    # Recovery is a best-known checkpoint, not a completion verdict.
+                    # Publish every usable item even when a later alignment pass is
+                    # still required, otherwise one suspect key can erase its whole
+                    # batch from the recovery file.
+                    progress_items = [*e.completed, *e.provisional]
+                    if self.update_callback and progress_items:
+                        self.update_callback(progress_items)
                 else:
                     failed_count += len(future_to_chunk[future])
 
@@ -261,7 +266,9 @@ class BaseTranslator(ABC):
             self._validate_translated_list(chunk, result)
 
             result_is_stable = self._is_chunk_result_stable(result)
-            if self.update_callback and result_is_stable:
+            # Valid translations are always safe to checkpoint. Stability only
+            # controls reusable cache entries and the final quality verdict.
+            if self.update_callback:
                 self.update_callback(result)
 
             if self.use_cache and result_is_stable and is_cache_enabled():
@@ -298,16 +305,25 @@ class BaseTranslator(ABC):
         """翻译字幕块"""
         pass
 
-    def stop(self):
-        """停止翻译器"""
-        if not self.is_running:
-            return
-
+    def cancel(self) -> None:
+        """Request prompt cancellation without blocking the caller thread."""
         self.is_running = False
-        if hasattr(self, "executor") and self.executor is not None:
+        with self._executor_lock:
+            executor = self.executor
+        if executor is not None:
             try:
-                self.executor.shutdown(wait=False, cancel_futures=True)
+                executor.shutdown(wait=False, cancel_futures=True)
             except Exception as e:
                 logger.error(f"Error closing thread pool: {str(e)}")
-            finally:
-                self.executor = None
+
+    def stop(self):
+        """Stop the translator and wait until its worker threads have exited."""
+        self.is_running = False
+        with self._executor_lock:
+            executor = self.executor
+            self.executor = None
+        if executor is not None:
+            try:
+                executor.shutdown(wait=True, cancel_futures=True)
+            except Exception as e:
+                logger.error(f"Error closing thread pool: {str(e)}")

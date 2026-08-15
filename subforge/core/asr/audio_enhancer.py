@@ -161,7 +161,10 @@ def _default_model_dir(enhance_module) -> Path | None:
     if not default_model or not callable(get_cache_dir):
         return None
     try:
-        return (Path(get_cache_dir()).expanduser().resolve() / default_model).resolve()
+        cache_dir = get_cache_dir()
+        if not isinstance(cache_dir, (str, os.PathLike)):
+            return None
+        return (Path(cache_dir).expanduser().resolve() / default_model).resolve()
     except (OSError, TypeError, ValueError):
         return None
 

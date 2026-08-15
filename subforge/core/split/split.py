@@ -1,9 +1,11 @@
 import difflib
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, List, Optional, Union
 
 from subforge.core.asr.asr_data import ASRData, ASRDataSeg
+from subforge.core.llm.client import LLMRequestCancelled
 from subforge.core.split.boundary import normalize_boundaries
 from subforge.core.split.length_policy import (
     DEFAULT_CJK_HARD_LIMIT,
@@ -207,6 +209,9 @@ class SubtitleSplitter:
         self.llm_client = llm_client
         self.target_language = str(target_language or "").strip()
         self.is_running = True
+        self.fallback_count = 0
+        self._fallback_lock = threading.Lock()
+        self._executor_lock = threading.Lock()
         self._init_thread_pool()
 
     def _init_thread_pool(self):
@@ -281,6 +286,11 @@ class SubtitleSplitter:
                 soft_max_words=self.max_word_count_english,
                 hard_max_words=self.hard_max_word_count_english,
             )
+            # Boundary normalization may move a connector such as ``And,``
+            # back into a standalone cue. Run the conservative short-cue merge
+            # once more after the final boundary pass so translation never sees
+            # a one-word connective that belongs to the following utterance.
+            self.merge_short_segment(final_segments)
 
             return ASRData(final_segments)
 
@@ -401,6 +411,10 @@ class SubtitleSplitter:
         try:
             return self._process_by_llm(asr_data_part.segments)
         except Exception as e:
+            if isinstance(e, LLMRequestCancelled) or not self.is_running:
+                raise
+            with self._fallback_lock:
+                self.fallback_count += 1
             logger.warning(f"LLM processing failed, falling back to rules: {str(e)}")
             return self._process_by_rules(asr_data_part.segments)
 
@@ -815,9 +829,22 @@ class SubtitleSplitter:
                 and time_gap <= 1200
                 and total_words <= max_word_count
             )
+            discourse_bridge = (
+                same_speaker
+                and current_words <= 4
+                and bool(
+                    re.fullmatch(
+                        r"(?:and|but|so)(?:\s+so)?(?:,?\s+(?:you\s+know|i\s+mean))?[,]?",
+                        current_text,
+                        re.IGNORECASE,
+                    )
+                )
+                and time_gap <= 1200
+                and total_words <= self.hard_max_word_count_english
+            )
 
             # 判断是否合并
-            should_merge = connector_handoff or same_speaker and (
+            should_merge = connector_handoff or discourse_bridge or same_speaker and (
                 (
                     time_gap < MERGE_SHORT_GAP
                     and (current_words < MERGE_MIN_WORDS or next_words < MERGE_MIN_WORDS)
@@ -990,15 +1017,25 @@ class SubtitleSplitter:
 
         return new_segments
 
-    def stop(self):
-        """停止分割器并清理资源"""
-        if not self.is_running:
-            return
+    def cancel(self) -> None:
+        """Request prompt cancellation without blocking the caller thread."""
         self.is_running = False
-        if hasattr(self, "executor") and self.executor is not None:
+        with self._executor_lock:
+            executor = self.executor
+        if executor is not None:
             try:
-                self.executor.shutdown(wait=False, cancel_futures=True)
+                executor.shutdown(wait=False, cancel_futures=True)
             except Exception as e:
                 logger.error(f"Error closing thread pool:{str(e)}")
-            finally:
-                self.executor = None
+
+    def stop(self):
+        """Stop the splitter and wait until its worker threads have exited."""
+        self.is_running = False
+        with self._executor_lock:
+            executor = self.executor
+            self.executor = None
+        if executor is not None:
+            try:
+                executor.shutdown(wait=True, cancel_futures=True)
+            except Exception as e:
+                logger.error(f"Error closing thread pool:{str(e)}")

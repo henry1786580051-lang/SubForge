@@ -33,7 +33,7 @@ def test_pipeline_runner_does_not_prefer_legacy_mimo_environment(monkeypatch):
         "api_base": "https://api.deepseek.com/v1",
         "model": "deepseek-v4-flash",
     }
-    assert config["subtitle"]["max_word_count_english"] == 16
+    assert config["subtitle"]["max_word_count_english"] == 18
 
 
 def test_pipeline_runner_accepts_explicit_subtitle_length_policy(monkeypatch):

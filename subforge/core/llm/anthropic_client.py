@@ -60,6 +60,10 @@ class MiniMaxAnthropicClient:
         self._gates: dict[str, _PromptCacheGate] = {}
         self._gates_lock = threading.Lock()
 
+    def close(self) -> None:
+        """Release the underlying Anthropic/httpx connection pool."""
+        self._client.close()
+
     @staticmethod
     def _convert_messages(messages: list[dict[str, Any]]) -> tuple[list[dict], list[dict]]:
         system_parts: list[str] = []

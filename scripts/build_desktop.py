@@ -61,6 +61,7 @@ FFMPEG_ARCHIVES = {
         ),
     ),
 }
+MANAGED_DIST_OUTPUT_PATTERN = re.compile(r"^SubForge(?: \d+)?(?:\.app)?$")
 
 
 def _run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
@@ -91,6 +92,21 @@ def _version() -> str:
     if explicit_version:
         return _release_version(explicit_version)
 
+    # Generated version files can remain stale between releases. Prefer the
+    # latest version tag reachable from the checked-out commit whenever VCS
+    # metadata is available, including normal CI tag builds.
+    try:
+        result = subprocess.run(
+            ["git", "describe", "--tags", "--match", "v[0-9]*", "--abbrev=0"],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return _release_version(result.stdout)
+    except OSError:
+        pass
+
     version_file = ROOT / "subforge" / "_version.py"
     if version_file.is_file():
         match = re.search(
@@ -100,24 +116,6 @@ def _version() -> str:
         )
         if match:
             return _release_version(match.group(1))
-    try:
-        result = subprocess.run(
-            [sys.executable, "-m", "hatchling", "version"],
-            cwd=str(ROOT),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return _release_version(result.stdout)
-    except Exception:
-        result = subprocess.run(
-            ["git", "describe", "--tags", "--always"],
-            cwd=str(ROOT),
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return _release_version(result.stdout)
     try:
         import importlib.metadata
 
@@ -149,6 +147,36 @@ def clean() -> None:
         if path.exists():
             print(f"Removing {path.relative_to(ROOT)}")
             shutil.rmtree(path)
+
+
+def clean_managed_dist_outputs() -> list[Path]:
+    """Remove stale SubForge bundles without touching unrelated dist artifacts."""
+    if not DIST_DIR.is_dir():
+        return []
+
+    removed: list[Path] = []
+    for path in DIST_DIR.iterdir():
+        if not MANAGED_DIST_OUTPUT_PATTERN.fullmatch(path.name):
+            continue
+        print(f"Removing stale build output {path}")
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
+        removed.append(path)
+    return removed
+
+
+def discard_standalone_macos_bundle() -> bool:
+    """Keep only the user-facing .app after the macOS bundle is verified."""
+    if platform.system() != "Darwin":
+        return False
+    standalone_bundle = DIST_DIR / "SubForge"
+    if not standalone_bundle.exists():
+        return False
+    print(f"Removing intermediate macOS bundle {standalone_bundle}")
+    shutil.rmtree(standalone_bundle)
+    return True
 
 
 def build_frontend(version: str, skip: bool = False) -> None:
@@ -368,6 +396,7 @@ def prepare_whisper_cpp() -> None:
 
 
 def build_pyinstaller(version: str) -> None:
+    clean_managed_dist_outputs()
     env = os.environ.copy()
     env["VIDEOCAPTIONER_DESKTOP_RUNTIME_DIR"] = str(RUNTIME_DIR)
     env["SUBFORGE_BUILD_VERSION"] = version
@@ -704,6 +733,7 @@ def main() -> int:
         verify_bundle(version)
         if not args.no_archive:
             archive(version)
+        discard_standalone_macos_bundle()
     finally:
         restore_version_file(original_version_file)
     return 0

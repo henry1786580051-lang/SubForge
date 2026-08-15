@@ -129,6 +129,53 @@ def _verify_ffmpeg_runtime(ffmpeg: Path, ffprobe: Path) -> None:
         raise RuntimeError("Bundled FFmpeg is missing the PCM encoder required by ASR")
 
 
+def _run_macos_aqua_check(
+    bundle: Path,
+    env: dict[str, str],
+    required_markers: tuple[str, ...],
+    *,
+    timeout_seconds: float = 120.0,
+) -> None:
+    """Run a packaged check through LaunchServices so Metal sees the Aqua session."""
+    if bundle.suffix != ".app":
+        raise RuntimeError("Aqua runtime checks require a macOS .app bundle")
+
+    with tempfile.TemporaryDirectory(prefix="subforge-aqua-smoke-") as tmp:
+        stdout_path = Path(tmp) / "stdout.log"
+        stderr_path = Path(tmp) / "stderr.log"
+        command = ["open", "-W", "-n", "-g"]
+        for name, value in sorted(env.items()):
+            command.extend(["--env", f"{name}={value}"])
+        command.extend(
+            [
+                "-o",
+                str(stdout_path),
+                "--stderr",
+                str(stderr_path),
+                str(bundle),
+            ]
+        )
+        print("+ " + " ".join(command))
+        try:
+            result = subprocess.run(command, check=False, timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("Timed out waiting for the macOS Aqua runtime check") from exc
+
+        stdout = stdout_path.read_text(encoding="utf-8") if stdout_path.exists() else ""
+        stderr = stderr_path.read_text(encoding="utf-8") if stderr_path.exists() else ""
+        if stdout:
+            print(stdout, end="" if stdout.endswith("\n") else "\n")
+        if stderr:
+            print(stderr, end="" if stderr.endswith("\n") else "\n")
+
+        missing = [marker for marker in required_markers if marker not in stdout]
+        if result.returncode != 0 or missing:
+            details = f"; missing output: {', '.join(missing)}" if missing else ""
+            raise RuntimeError(
+                f"macOS Aqua runtime check failed with exit code {result.returncode}{details}"
+            )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("bundle", help="Path to dist/SubForge or an executable")
@@ -187,11 +234,20 @@ def main() -> int:
             print("Verified packaged pyannote speaker diarization imports")
 
         if platform.system() == "Darwin" and platform.machine() == "arm64":
-            env = os.environ.copy()
-            env["SUBFORGE_CHECK_ASR"] = "1"
-            env.setdefault("TORCH_USE_RTLD_GLOBAL", "1")
-            _run([str(exe)], env=env)
-            print("Verified packaged MLX Whisper and WhisperX imports")
+            _run_macos_aqua_check(
+                bundle,
+                {
+                    "SUBFORGE_CHECK_ASR": "1",
+                    "TORCH_USE_RTLD_GLOBAL": "1",
+                },
+                (
+                    "MLX Whisper import: ok",
+                    "MLX Metal inference: ok",
+                    "PyTorch MPS inference: ok",
+                    "WhisperX alignment import: ok",
+                ),
+            )
+            print("Verified packaged MLX Metal, PyTorch MPS, and WhisperX imports")
 
             env = os.environ.copy()
             env["SUBFORGE_CHECK_DIARIZATION"] = "1"

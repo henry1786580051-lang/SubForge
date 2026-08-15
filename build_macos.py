@@ -18,6 +18,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent
 APP_NAME = "SubForge"
 DMG_OUTPUT = Path.home() / "Desktop" / f"{APP_NAME}.dmg"
+DMG_BACKGROUND = PROJECT_ROOT / "resource" / "assets" / "dmg-background.png"
 
 
 def build_app_bundle() -> Path:
@@ -39,6 +40,7 @@ def build_app_bundle() -> Path:
         build_desktop.patch_packaged_mlx_metallib()
         build_desktop.resign_macos_app()
         build_desktop.verify_bundle(version)
+        build_desktop.discard_standalone_macos_bundle()
     finally:
         build_desktop.restore_version_file(original_version_file)
     app_path = PROJECT_ROOT / "dist" / f"{APP_NAME}.app"
@@ -155,12 +157,18 @@ def create_dmg(app_path: Path):
             "files": [str(staging / f"{APP_NAME}.app")],
             "symlinks": {"Applications": "/Applications"},
             "icon_locations": {
-                f"{APP_NAME}.app": (160, 190),
-                "Applications": (500, 190),
+                f"{APP_NAME}.app": (190, 250),
+                "Applications": (530, 250),
             },
-            "window_rect": ((200, 120), (660, 400)),
-            "background": "builtin-arrow",
-            "icon_size": 96,
+            "window_rect": ((200, 120), (720, 440)),
+            "background": str(DMG_BACKGROUND),
+            "icon_size": 104,
+            "text_size": 14,
+            "show_status_bar": False,
+            "show_tab_view": False,
+            "show_toolbar": False,
+            "show_pathbar": False,
+            "show_sidebar": False,
             "size": f"{dmg_size_mb}M",
             "format": "UDZO",
         }

@@ -138,6 +138,20 @@ def test_lexical_guard_allows_explicit_fillers_and_adjacent_duplicates():
     )
 
 
+def test_lexical_guard_allows_joining_split_spelling_without_changing_letters():
+    assert not _lexical_edit_violations(
+        "I had a Black berry Pearl",
+        "I had a Blackberry Pearl",
+    )
+
+
+def test_lexical_guard_still_rejects_semantic_multiword_replacement():
+    assert _lexical_edit_violations(
+        "I had a black berry pie",
+        "I had a blueberry pie",
+    )
+
+
 def test_global_ownership_check_repairs_copy_across_batch_boundary(monkeypatch):
     optimizer = SubtitleOptimizer.__new__(SubtitleOptimizer)
     optimizer.batch_num = 1

@@ -117,6 +117,62 @@ def test_assessment_keeps_revised_component_with_its_noun():
     assert "dangling modifier 'revised'" in assessment.reasons
 
 
+@pytest.mark.parametrize(
+    ("left", "right", "reason"),
+    [
+        (
+            "Do you draw a meaningful distinction between constraints on the one hand",
+            "and impediments on the other?",
+            "paired contrast frame split before its counterpart",
+        ),
+        (
+            "which means I'm going to be doing a lot of long distance",
+            "walking with a small child",
+            "dangling attributive 'distance'",
+        ),
+        (
+            "he is the same person in his personal",
+            "life as in his work",
+            "dangling attributive 'personal'",
+        ),
+        (
+            "he is the same person in his personal life",
+            "as in his work",
+            "comparison frame separated from its counterpart",
+        ),
+        (
+            "These ideas are useless",
+            "if you do not find ways to apply them",
+            "condition separated from the predicate it qualifies",
+        ),
+        (
+            "if you do not find ways to concretize",
+            "them",
+            "transitive predicate separated from its pronoun object",
+        ),
+        (
+            "these ideas are useless if you don't find",
+            "ways to concretize them",
+            "transitive predicate separated from its object",
+        ),
+        (
+            "ways to concretize them in your own",
+            "life so they create change",
+            "dangling attributive 'own'",
+        ),
+    ],
+)
+def test_assessment_catches_generic_modifier_and_condition_dependencies(
+    left,
+    right,
+    reason,
+):
+    assessment = assess_english_boundary(left, right)
+
+    assert assessment.unstable
+    assert reason in assessment.reasons
+
+
 def test_assessment_keeps_ordinal_gear_term_together():
     assessment = assess_english_boundary(
         "and you do have the torque, even here in fourth",
@@ -152,9 +208,7 @@ def test_assessment_keeps_ordinal_gear_term_together():
         ),
     ],
 )
-def test_assessment_rejects_dialogue_translation_sensitive_boundaries(
-    left, right, reason
-):
+def test_assessment_rejects_dialogue_translation_sensitive_boundaries(left, right, reason):
     assessment = assess_english_boundary(left, right)
 
     assert assessment.unstable
@@ -169,6 +223,75 @@ def test_high_value_dialogue_modifier_reaches_strong_risk_threshold():
 
     assert assessment.risk >= 30
     assert "dangling modifier 'really'" in assessment.reasons
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "modifier"),
+    [
+        ("which is an interesting", "choice for this cabin", "interesting"),
+        ("it has a medium", "firmness to it", "medium"),
+    ],
+)
+def test_assessment_detects_common_adjective_noun_splits(left, right, modifier):
+    assessment = assess_english_boundary(left, right)
+
+    assert assessment.unstable
+    assert f"dangling modifier '{modifier}'" in assessment.reasons
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "reason"),
+    [
+        ("I don't think you're sacrificing a whole", "lot here", "split lexical unit"),
+        ("the suspension has medium", "firmness", "split lexical unit"),
+        ("the vents are up", "here above the screen", "directional phrase split"),
+        (
+            "it has medium firmness, which I think",
+            "is unnecessary for this car",
+            "parenthetical opinion separated",
+        ),
+        (
+            "something that would ignite excitement",
+            "within me while driving",
+            "dependent phrase beginning with 'within'",
+        ),
+    ],
+)
+def test_assessment_detects_general_dependency_boundaries(left, right, reason):
+    assessment = assess_english_boundary(left, right)
+
+    assert assessment.unstable
+    assert any(reason in item for item in assessment.reasons)
+
+
+@pytest.mark.parametrize(
+    "texts",
+    [
+        [
+            "I don't think you're sacrificing a whole",
+            "lot with this roof design.",
+        ],
+        [
+            "the climate vents are up",
+            "here which is an interesting choice for this cabin.",
+        ],
+        [
+            "It has a medium firmness to it, which I think",
+            "is unnecessary for this car.",
+        ],
+        [
+            "something that would ignite some excitement",
+            "within me while driving this.",
+        ],
+    ],
+)
+def test_normalizer_repairs_general_dependency_boundaries(texts):
+    repaired = normalize_boundaries(_cues(texts), soft_max_words=18, hard_max_words=22)
+
+    assert all(
+        not assess_english_boundary(left.text, right.text).unstable
+        for left, right in zip(repaired, repaired[1:])
+    )
 
 
 def test_assessment_rejects_charger_recovery_dependency_boundaries():
@@ -296,6 +419,68 @@ def test_assessment_allows_complete_ease_of_use_before_daily_context():
     assessment = assess_english_boundary(
         "But what I really wanted to show was mostly the ease of use",
         "in day-to-day life for one of these Toyota electric vehicles,",
+    )
+
+    assert not assessment.unstable
+
+
+def test_assessment_rejects_auxiliary_adverb_split_from_participle():
+    assessment = assess_english_boundary(
+        "and college graduates and women have historically",
+        "been the groups that read the most and declined as well.",
+    )
+
+    assert assessment.unstable
+    assert "auxiliary phrase separated from its participle" in assessment.reasons
+
+
+def test_assessment_rejects_numeric_compound_modifier_before_product_name():
+    assessment = assess_english_boundary(
+        "why don't we show you this newly revised nine speaker",
+        "jbl with the old school sound system test song",
+    )
+
+    assert assessment.unstable
+    assert "numeric compound modifier separated from its head noun" in assessment.reasons
+
+
+def test_assessment_rejects_compound_member_split_in_reported_subject():
+    assessment = assess_english_boundary(
+        "I note in the piece that retirees and college",
+        "graduates and women have historically been the groups that read the most.",
+    )
+
+    assert assessment.unstable
+    assert "compound member split inside a coordinated reported subject" in assessment.reasons
+
+
+def test_normalizer_repairs_auxiliary_adverb_participle_boundary():
+    cues = _cues(
+        [
+            "I note in the piece that retirees",
+            "and college graduates and women have historically",
+            "been the groups that read the most and they have seen collapses as well.",
+        ]
+    )
+
+    repaired = normalize_boundaries(cues, soft_max_words=16, hard_max_words=20)
+
+    assert len(repaired) == 2
+    assert repaired[0].text.endswith("retirees and college graduates and women")
+    assert repaired[1].text.startswith("have historically been")
+    assert "college graduates" in " ".join(cue.text for cue in repaired)
+    assert all(
+        "auxiliary phrase separated from its participle"
+        not in assess_english_boundary(left.text, right.text).reasons
+        for left, right in zip(repaired, repaired[1:])
+    )
+    assert "have historically been" in " ".join(cue.text for cue in repaired)
+
+
+def test_assessment_allows_completed_superlative_before_coordinated_predicate():
+    assessment = assess_english_boundary(
+        "have historically been the groups that read the most",
+        "and they have seen declines as well.",
     )
 
     assert not assessment.unstable
@@ -620,9 +805,7 @@ def test_normalizer_moves_boundary_after_complete_puny_rpm_gauge_phrase():
         "And then if you're having trouble trying to follow this little puny RPM gauge "
         "over here on the left,"
     )
-    assert repaired[1].text == (
-        "you can actually put this into Porsche 911 Performance View Mode."
-    )
+    assert repaired[1].text == ("you can actually put this into Porsche 911 Performance View Mode.")
 
 
 def test_normalizer_moves_but_for_them_to_the_following_sentence():
@@ -785,6 +968,26 @@ def test_assessment_keeps_multispeaker_translation_units_together(left, right, r
     assert any(reason in item for item in assessment.reasons)
 
 
+def test_assessment_keeps_coordinated_complement_subject_with_have_predicate():
+    assessment = assess_english_boundary(
+        "I note in the piece that retirees and college graduates and women",
+        "have historically been the groups that read the most.",
+    )
+
+    assert assessment.unstable
+    assert "coordinated subject separated from its predicate" in assessment.reasons
+
+
+def test_assessment_keeps_case_studies_compound_together():
+    assessment = assess_english_boundary(
+        "And he wrote about these kind of case",
+        "studies that this neuropsychologist had done in the Soviet Union.",
+    )
+
+    assert assessment.unstable
+    assert "split lexical unit 'case studies'" in assessment.reasons
+
+
 @pytest.mark.parametrize(
     ("left", "right", "reason"),
     [
@@ -800,10 +1003,458 @@ def test_assessment_keeps_multispeaker_translation_units_together(left, right, r
         ),
     ],
 )
-def test_assessment_looks_through_trailing_fillers_for_translation_units(
+def test_assessment_looks_through_trailing_fillers_for_translation_units(left, right, reason):
+    assessment = assess_english_boundary(left, right)
+
+    assert assessment.unstable
+    assert reason in assessment.reasons
+
+
+def test_assessment_detects_complement_before_trailing_filler():
+    assessment = assess_english_boundary(
+        "And so it is interesting that, you know,",
+        "reading and writing require continued effort.",
+    )
+
+    assert assessment.unstable
+    assert "dangling function word 'that' before trailing discourse filler" in assessment.reasons
+
+
+def test_assessment_detects_relative_subject_split_before_predicate():
+    assessment = assess_english_boundary(
+        "This was uncomfortable to people who you know previously",
+        "had a monopoly on sharing information.",
+    )
+
+    assert assessment.unstable
+    assert "relative-clause subject separated from its predicate" in assessment.reasons
+
+
+def test_assessment_detects_open_expect_to_always_continuation():
+    assessment = assess_english_boundary(
+        "We could just kind of expect to always",
+        "continue without effort.",
+    )
+
+    assert assessment.unstable
+    assert "open continuation after 'expect to always'" in assessment.reasons
+
+
+def test_assessment_keeps_important_role_together():
+    assessment = assess_english_boundary(
+        "Print played a really important",
+        "role in the revolution.",
+    )
+
+    assert assessment.unstable
+    assert "dangling modifier 'important'" in assessment.reasons
+
+
+def test_assessment_keeps_short_noun_subject_with_predicate():
+    assessment = assess_english_boundary(
+        "The founding fathers",
+        "used newspapers to spread their message.",
+    )
+
+    assert assessment.unstable
+    assert "short noun subject separated from its predicate" in assessment.reasons
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "reason"),
+    [
+        (
+            "people adjusted as more",
+            "and more people gained access",
+            "repeated degree phrase split inside 'more and more'",
+        ),
+        (
+            "they can have any value",
+            "judgment on the change that they want",
+            "split lexical unit 'value judgment'",
+        ),
+        (
+            "there may be advantages I wanted to point",
+            "out to the audience",
+            "split lexical unit 'point out'",
+        ),
+        (
+            "print played an important role the founding fathers",
+            "used newspapers and pamphlets",
+            "trailing noun subject separated from its finite predicate",
+        ),
+        (
+            "we saw in the revolution that print",
+            "played a central role",
+            "trailing noun subject separated from its finite predicate",
+        ),
+        (
+            "changes that would almost further",
+            "people reading less",
+            "dangling modifier 'further'",
+        ),
+    ],
+)
+def test_assessment_catches_full_run_dependency_failures(left, right, reason):
+    assessment = assess_english_boundary(left, right)
+
+    assert assessment.unstable
+    assert reason in assessment.reasons
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "reason"),
+    [
+        (
+            "we have definitely seen,",
+            "tablets and laptops entering classrooms",
+            "perfect reporting predicate separated after its adverb",
+        ),
+        (
+            "we often think of literacy",
+            "and reading as something inevitable",
+            "coordinated noun subject split before its shared predicate",
+        ),
+        (
+            "we have seen books",
+            "and text become more widely available",
+            "coordinated noun subject split before its shared predicate",
+        ),
+        (
+            "tablets, Chromebooks and laptops,",
+            "entering the classroom much more",
+            "coordinated noun list separated from its progressive predicate",
+        ),
+        (
+            "the founders thought that print and newspapers",
+            "and were crucial to an informed public",
+            "reported subject separated from its predicate",
+        ),
+    ],
+)
+def test_assessment_catches_remaining_full_run_structures(left, right, reason):
+    assessment = assess_english_boundary(left, right)
+
+    assert assessment.unstable
+    assert reason in assessment.reasons
+
+
+def test_assessment_keeps_so_many_degree_phrase_together():
+    assessment = assess_english_boundary(
+        "It is something so",
+        "many people take for granted.",
+    )
+
+    assert assessment.unstable
+    assert "degree phrase split inside 'so many'" in assessment.reasons
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "reason"),
+    [
+        (
+            "we've already kind of seen them, both",
+            "responding to this and making changes",
+            "dangling modifier 'both'",
+        ),
+        (
+            "particularly towards what,",
+            "college is for now for people",
+            "interrogative complement separated after 'what'",
+        ),
+        (
+            "And so, you know,",
+            "but I do think there are lessons from that time",
+            "standalone discourse bridge belongs to the following clause",
+        ),
+        (
+            "the point that I was trying to make",
+            "was that repeated choices matter",
+            "reporting frame separated from its copular content",
+        ),
+        (
+            "I cannot say whether I think",
+            "which way this will go",
+            "embedded question frame separated from its complement",
+        ),
+    ],
+)
+def test_assessment_keeps_discourse_and_reporting_units_together(left, right, reason):
+    assessment = assess_english_boundary(left, right)
+
+    assert assessment.unstable
+    assert reason in assessment.reasons
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "reason"),
+    [
+        (
+            "And we might be reading",
+            "more words than ever",
+            "progressive predicate separated from its object",
+        ),
+        (
+            "when you think about the number of like",
+            "emails and text messages",
+            "quantifying phrase separated from its noun",
+        ),
+        (
+            "one thing that I think is interesting is, with schools,",
+            "we've already seen them responding",
+            "topic frame separated from its following predicate",
+        ),
+        (
+            "But at the same time, you know,",
+            "it was not a purely rosy picture",
+            "standalone contrast frame belongs to the following clause",
+        ),
+        (
+            "I think as we continue to see,",
+            "new inventions proliferating",
+            "reporting predicate separated from its content",
+        ),
+    ],
+)
+def test_assessment_keeps_additional_translation_sensitive_units_together(
     left, right, reason
 ):
     assessment = assess_english_boundary(left, right)
 
     assert assessment.unstable
     assert reason in assessment.reasons
+
+
+def test_assessment_looks_past_leading_filler_in_embedded_question():
+    assessment = assess_english_boundary(
+        "I cannot say whether I think,",
+        "you know, which way this will go.",
+    )
+
+    assert assessment.unstable
+    assert "embedded question frame separated from its complement" in assessment.reasons
+
+
+def test_assessment_keeps_perfect_reporting_predicate_with_content():
+    assessment = assess_english_boundary(
+        "At the same time that we've seen,",
+        "books leaving the classroom.",
+    )
+
+    assert assessment.unstable
+    assert "perfect reporting predicate separated from its content" in assessment.reasons
+
+
+def test_normalizer_rehomes_sentence_fragment_after_internal_terminal():
+    words = [
+        ASRWord("current", 0, 100, speaker_id="S1"),
+        ASRWord("environment.", 120, 300, speaker_id="S1"),
+        ASRWord("He", 400, 500, speaker_id="S1"),
+        ASRWord("speaks", 520, 700, speaker_id="S1"),
+        ASRWord("and", 720, 800, speaker_id="S1"),
+        ASRWord("contradicts", 820, 1_100, speaker_id="S1"),
+        ASRWord("himself.", 1_120, 1_400, speaker_id="S1"),
+    ]
+    segments = [
+        ASRDataSeg.from_segments(
+            [
+                ASRDataSeg(
+                    word.text,
+                    word.start_time,
+                    word.end_time,
+                    speaker_id=word.speaker_id,
+                    words=[word],
+                    timestamp_granularity="word",
+                )
+                for word in words[:4]
+            ],
+            text="current environment. He speaks",
+            speaker_id="S1",
+        ),
+        ASRDataSeg.from_segments(
+            [
+                ASRDataSeg(
+                    word.text,
+                    word.start_time,
+                    word.end_time,
+                    speaker_id=word.speaker_id,
+                    words=[word],
+                    timestamp_granularity="word",
+                )
+                for word in words[4:]
+            ],
+            text="and contradicts himself.",
+            speaker_id="S1",
+        ),
+    ]
+
+    normalized = normalize_boundaries(segments)
+
+    assert [segment.text for segment in normalized] == [
+        "current environment.",
+        "He speaks and contradicts himself.",
+    ]
+
+
+def test_normalizer_repairs_open_linking_complement_from_reported_failure():
+    segments = _cues(
+        [
+            "So while CERN may have become",
+            "one of the world's best-known scientific organisations thanks to the LHC,",
+            "it was Brookhaven where most of the early breakthroughs were made.",
+        ]
+    )
+
+    normalized = normalize_boundaries(segments)
+
+    assert [segment.text for segment in normalized] == [
+        "So while CERN may have become one of the world's best-known scientific organisations thanks to the LHC,",
+        "it was Brookhaven where most of the early breakthroughs were made.",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "reason"),
+    [
+        (
+            "they reach temperatures that were around 250,000",
+            "times higher than the core of our sun.",
+            "numeric value separated from its multiplier or unit",
+        ),
+        (
+            "let's get back to the world of particle",
+            "physics.",
+            "single-word completion stranded in the next subtitle",
+        ),
+        (
+            "The main",
+            "one being how the quarks and gluons are structured.",
+            "dangling modifier 'main'",
+        ),
+    ],
+)
+def test_assessment_catches_general_open_completions(left, right, reason):
+    assessment = assess_english_boundary(left, right)
+
+    assert assessment.unstable
+    assert reason in assessment.reasons
+
+
+def test_normalizer_repairs_single_word_completion_across_short_speaker_flip():
+    left_words = [
+        ASRWord(token, index * 120, index * 120 + 100, speaker_id="S1")
+        for index, token in enumerate("let's get back to the world of particle".split())
+    ]
+    right_word = ASRWord(
+        "physics.",
+        left_words[-1].end_time + 300,
+        left_words[-1].end_time + 700,
+        speaker_id="S2",
+    )
+    segments = [
+        ASRDataSeg(
+            "let's get back to the world of particle",
+            left_words[0].start_time,
+            left_words[-1].end_time,
+            speaker_id="S1",
+            words=left_words,
+            timestamp_granularity="sentence",
+        ),
+        ASRDataSeg(
+            "physics.",
+            right_word.start_time,
+            right_word.end_time,
+            speaker_id="S2",
+            words=[right_word],
+            timestamp_granularity="sentence",
+        ),
+    ]
+
+    normalized = normalize_boundaries(segments)
+
+    assert [segment.text for segment in normalized] == [
+        "let's get back to the world of particle physics."
+    ]
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "reason"),
+    [
+        (
+            "And it is ironic to write about how nobody",
+            "reads in an almost 9,000 word piece.",
+            "dangling subject 'nobody'",
+        ),
+        (
+            "The point that I was",
+            "trying to make was that repeated choices matter.",
+            "incomplete predicate 'was'",
+        ),
+        (
+            "Obviously, they did not have the exact",
+            "same experimental standards that we have now.",
+            "dangling modifier 'exact'",
+        ),
+        (
+            "Ong's larger point was that literate",
+            "cultures value sustained argumentation.",
+            "dangling modifier 'literate'",
+        ),
+        (
+            "but that he is really well suited",
+            "and he has figured out how to reach people",
+            "context-dependent adjective separated from its continuation",
+        ),
+        (
+            "we have definitely seen tablets and Chromebooks",
+            "and laptops entering the classroom much more",
+            "final coordinated noun separated with its progressive predicate",
+        ),
+        (
+            "but to hold our digital age",
+            "and our print age at the same time",
+            "coordinated noun phrase split at conjunction",
+        ),
+        (
+            "not valuing or choosing to access",
+            "what is widely available to us",
+            "transitive predicate separated from its nominal clause",
+        ),
+        (
+            "And so, you know, but yeah, I think it's, you know,",
+            "reading was fundamental to the way I grew up",
+            "filler-only discourse frame belongs to the following clause",
+        ),
+        (
+            "And so, but yeah, I think it's reading",
+            "was fundamental to the way I grew up",
+            "gerund subject separated from its finite predicate",
+        ),
+        (
+            "my past experiences gave me a fondness for it",
+            "and wanted to work on this piece",
+            "omitted subject separated from its coordinated predicate",
+        ),
+    ],
+)
+def test_assessment_catches_full_quality_audit_dependency_chains(left, right, reason):
+    assessment = assess_english_boundary(left, right)
+
+    assert assessment.unstable
+    assert reason in assessment.reasons
+
+
+def test_assessment_keeps_thank_you_together():
+    assessment = assess_english_boundary("Thank", "you.")
+
+    assert assessment.unstable
+    assert "split lexical unit 'thank you'" in assessment.reasons
+
+
+def test_assessment_accepts_this_as_a_complete_demonstrative_object():
+    assessment = assess_english_boundary(
+        "I really don't want to hear this",
+        "Emily was riding in the car yesterday.",
+    )
+
+    assert assessment.unstable is False

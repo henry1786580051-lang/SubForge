@@ -58,7 +58,7 @@ class TaskManager:
             if resource_key:
                 owner_id = self._resource_owners.get(resource_key)
                 owner = self._tasks.get(owner_id) if owner_id else None
-                if owner and owner.status in {TaskStatus.PENDING, TaskStatus.RUNNING}:
+                if owner is not None:
                     raise TaskResourceBusyError(
                         f"Another {owner.type} task is already processing this file"
                     )
@@ -241,9 +241,12 @@ class TaskManager:
             self._running_tasks[task_id] = async_task
 
     def unregister_running_task(self, task_id: str):
-        """Forget a finished asyncio task without changing user-visible state."""
+        """Forget a finished worker and release resources deferred by cancellation."""
         with self._lock:
             self._running_tasks.pop(task_id, None)
+            task = self._tasks.get(task_id)
+            if task and task.status == TaskStatus.CANCELLED:
+                self._release_resource(task_id)
 
     def register_cancel_callback(self, task_id: str, callback: Callable[[], Any]) -> None:
         with self._lock:
@@ -319,11 +322,12 @@ class TaskManager:
                 return False
             task.status = TaskStatus.CANCELLED
             task.attention = None
-            async_task = self._running_tasks.pop(task_id, None)
+            async_task = self._running_tasks.get(task_id)
             callbacks = self._cancel_callbacks.pop(task_id, [])
             condition = self._attention_conditions.pop(task_id, None)
             self._attention_resolutions.pop(task_id, None)
-            self._release_resource(task_id)
+            if async_task is None:
+                self._release_resource(task_id)
         if condition is not None:
             with condition:
                 condition.notify_all()
@@ -344,6 +348,7 @@ class TaskManager:
                 t
                 for t in self._tasks.values()
                 if t.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED)
+                and t.id not in self._running_tasks
             ]
             if len(terminal) <= keep:
                 return
@@ -387,6 +392,15 @@ class TaskManager:
                 # so clients may otherwise observe completion first and keep a
                 # stale editor snapshot until they reload the file manually.
                 task_data["preview_segments"] = result["segments"]
+            elif (
+                task.status == TaskStatus.FAILED
+                and isinstance(result, dict)
+                and result.get("recovery_file")
+            ):
+                task_data = task.model_dump(exclude={"preview_segments"})
+                # Recovery must also be self-contained: the preview broadcast
+                # immediately before failure can arrive after this event.
+                task_data["preview_segments"] = task.preview_segments
             else:
                 task_data = task.model_dump(exclude={"preview_segments"})
             if preview_delta is not None:

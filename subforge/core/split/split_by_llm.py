@@ -174,13 +174,24 @@ def _split_with_agent_loop(
         if is_valid:
             return split_result
 
+        if error_message.startswith("Unnatural split boundaries:"):
+            # At this point lexical ownership and the hard limits have already
+            # passed. Re-prompting the model for the same constrained copy task
+            # is expensive and often just moves the defect to another boundary.
+            # The timestamp-aware deterministic normalizer is the final boundary
+            # arbiter and can repair this content-safe result without losing words.
+            logger.warning(
+                "Split result kept after boundary-only validation warning; "
+                "delegating final repair to deterministic normalization: %s",
+                error_message,
+            )
+            return split_result
+
         # 添加反馈到对话
         logger.warning(
             f"Split validation failed. Feedback loop (第{step + 1}次尝试):\n {error_message}\n\n"
         )
-        if step == MAX_STEPS - 1 and error_message.startswith(
-            ("Unnatural split boundaries:", "Length violations:")
-        ):
+        if step == MAX_STEPS - 1 and error_message.startswith("Length violations:"):
             # The lexical sequence and hard limits have already passed. Keep
             # this safe LLM result and let the deterministic boundary
             # normalizer make the final adjustment instead of replacing an

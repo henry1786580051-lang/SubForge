@@ -439,6 +439,9 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
         partial_srt = tempfile.NamedTemporaryFile(suffix="_partial.srt", delete=False)
         partial_srt_path = partial_srt.name
         partial_srt.close()
+        preview_lock = threading.RLock()
+        last_preview_update = [0.0]
+        last_preview_snapshot = [0.0]
 
         # Progress callback: map ASR progress (0-100) to overall (30-95%)
         def _on_progress(asr_progress: int, message: str):
@@ -448,11 +451,20 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
         # Save partial results as segments are transcribed
         def _on_segment(partial_data):
             try:
-                partial_data.save(partial_srt_path)
-                context.publish_preview(
-                    subtitle_preview_segments(partial_data),
-                    subtitle_file=partial_srt_path,
-                )
+                with preview_lock:
+                    now = time.monotonic()
+                    if now - last_preview_update[0] < 0.25:
+                        return
+                    last_preview_update[0] = now
+                    snapshot_path = None
+                    if now - last_preview_snapshot[0] >= 5.0:
+                        partial_data.save(partial_srt_path)
+                        last_preview_snapshot[0] = now
+                        snapshot_path = partial_srt_path
+                    context.publish_preview(
+                        subtitle_preview_segments(partial_data),
+                        subtitle_file=snapshot_path,
+                    )
             except Exception as e:
                 logger.warning(f"Failed to save partial segment: {e}")
 

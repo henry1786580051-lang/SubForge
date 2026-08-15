@@ -10,6 +10,7 @@ import {
   API_BASE,
   type TaskInfo,
 } from "@/lib/api";
+import { mergeTaskPreview } from "@/lib/taskPreview";
 
 function getWebSocketBase(): string {
   if (API_BASE) return API_BASE.replace(/^http/, "ws");
@@ -64,25 +65,14 @@ export function useTaskMonitor() {
     // Prefer the WebSocket snapshot. Reading an SRT while a worker is replacing
     // it can return stale or partially written content in packaged builds.
     const previewRevision = task.preview_revision || 0;
-    const hasNewPreview = previewRevision > previewRevisionRef.current;
-    if (task.status === "running" && task.preview_segments && hasNewPreview) {
-      setSubtitles(task.preview_segments);
-      previewRevisionRef.current = previewRevision;
-    } else if (task.status === "running" && task.preview_delta && hasNewPreview) {
-      const delta = task.preview_delta;
-      const current = useAppStore.getState().subtitles;
-      if (delta.mode === "replace") {
-        setSubtitles(delta.segments);
-      } else if (delta.mode === "append") {
-        setSubtitles([...current, ...delta.segments]);
-      } else {
-        const changed = new Map(delta.segments.map((segment) => [segment.id, segment]));
-        setSubtitles(current.map((segment) => {
-          const patch = changed.get(segment.id);
-          return patch ? { ...segment, ...patch } : segment;
-        }));
-      }
-      previewRevisionRef.current = previewRevision;
+    const previewUpdate = mergeTaskPreview(
+      useAppStore.getState().subtitles,
+      task,
+      previewRevisionRef.current
+    );
+    if (previewUpdate) {
+      setSubtitles(previewUpdate.segments);
+      previewRevisionRef.current = previewUpdate.revision;
     }
 
     // Compatibility fallback for older backends that only expose a partial file.
@@ -155,6 +145,19 @@ export function useTaskMonitor() {
       setIsProcessing(false);
       setTaskAttention(null);
       setError(task.error || "Task failed");
+      const recoveryFile = task.result?.recovery_file;
+      if (typeof recoveryFile === "string" && recoveryFile) {
+        setSubtitleFile(recoveryFile);
+        if (!task.preview_segments) {
+          subtitlesApi
+            .load(recoveryFile)
+            .then((subFile) => {
+              if (task.id !== useAppStore.getState().currentTaskId) return;
+              setSubtitles(subFile.segments);
+            })
+            .catch(() => {});
+        }
+      }
     }
 
     if (task.status === "cancelled") {

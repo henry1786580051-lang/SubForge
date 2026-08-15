@@ -137,7 +137,11 @@ def test_subtitle_pipeline_uses_explicit_llm_client_without_env_mutation(
     _mock_llm_runtime(monkeypatch, settings)
 
     created = {}
-    client = object()
+    class Client:
+        def close(self):
+            created["closed"] = True
+
+    client = Client()
 
     def fake_create_client(base_url: str, api_key: str):
         created["base_url"] = base_url
@@ -179,6 +183,7 @@ def test_subtitle_pipeline_uses_explicit_llm_client_without_env_mutation(
         "splitter_client": client,
         "splitter_limits": (31, 16),
         "splitter_target_language": "",
+        "closed": True,
     }
     assert os.environ["OPENAI_API_KEY"] == "original-key"
     assert os.environ["OPENAI_BASE_URL"] == "https://original.test/v1"

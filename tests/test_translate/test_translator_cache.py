@@ -68,6 +68,13 @@ class PartiallyFailingTranslator(DummyTranslator):
             "Single item translation failed for one entry",
             completed=completed,
             failed_indices=[subtitle_chunk[-1].index],
+            provisional=[
+                SubtitleProcessData(
+                    index=subtitle_chunk[-1].index,
+                    original_text=subtitle_chunk[-1].original_text,
+                    translated_text="最后一次可恢复的候选译文",
+                )
+            ],
         )
 
 
@@ -153,7 +160,8 @@ def test_partial_chunk_failure_preserves_completed_items_and_counts_exact_failur
     ):
         translator._parallel_translate([chunk])
 
-    assert [item.index for item in progress] == list(range(1, 10))
+    assert [item.index for item in progress] == list(range(1, 11))
+    assert progress[-1].translated_text == "最后一次可恢复的候选译文"
 
 
 @pytest.mark.parametrize(

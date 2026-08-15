@@ -109,8 +109,8 @@ class ASRDataSeg:
         self.start_time = start_time
         self.end_time = end_time
         self.speaker_id = speaker_id
-        self.timestamp_granularity = timestamp_granularity
-        self.timing_source = timing_source
+        self.timestamp_granularity: TimestampGranularity = timestamp_granularity
+        self.timing_source: TimestampSource = timing_source
         self.words = list(words or [])
         if timestamp_granularity == "word" and not self.words:
             self.words = [
@@ -139,12 +139,12 @@ class ASRDataSeg:
         source = _common_timing_source(words)
         if source == "unknown":
             segment_sources = {
-                segment.timing_source
-                for segment in segments
-                if segment.timing_source != "unknown"
+                segment.timing_source for segment in segments if segment.timing_source != "unknown"
             }
-            source = cast(TimestampSource, next(iter(segment_sources))) if len(segment_sources) == 1 else (
-                "mixed" if segment_sources else "unknown"
+            source = (
+                cast(TimestampSource, next(iter(segment_sources)))
+                if len(segment_sources) == 1
+                else ("mixed" if segment_sources else "unknown")
             )
         return cls(
             text=text,
@@ -393,7 +393,12 @@ class ASRData:
                 if character in ",." and has_han:
                     previous = translated[index - 1] if index > 0 else ""
                     following = translated[index + 1] if index + 1 < len(translated) else ""
-                    if previous.isascii() and previous.isalnum() and following.isascii() and following.isalnum():
+                    if (
+                        previous.isascii()
+                        and previous.isalnum()
+                        and following.isascii()
+                        and following.isalnum()
+                    ):
                         cleaned.append(character)
                     else:
                         cleaned.append(" ")
@@ -2099,9 +2104,7 @@ class ASRData:
 
             normalized = unicodedata.normalize("NFC", stripped)
             counts = {
-                "han": len(
-                    re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", normalized)
-                ),
+                "han": len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", normalized)),
                 "kana": len(re.findall(r"[\u3040-\u30ff\u31f0-\u31ff]", normalized)),
                 "hangul": len(
                     re.findall(
@@ -2166,13 +2169,45 @@ class ASRData:
                 left_title = re.fullmatch(r"[《“\"'](.+?)[》”\"']?[。.]?", non_empty[0].strip())
                 right_title = re.fullmatch(r"[《“\"'](.+?)[》”\"']?[。.]?", non_empty[1].strip())
                 if left_family == right_family == "latin":
-                    if left_title and re.sub(r"\W+", "", left_title.group(1)).lower() == re.sub(
-                        r"\W+", "", non_empty[1]
-                    ).lower():
+                    canonical_locator = re.compile(
+                        r"^(?:https?://)?[A-Za-z0-9._%+-]+"
+                        r"(?:@[A-Za-z0-9.-]+|(?:\.[A-Za-z0-9-]+)+)"
+                        r"(?:/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]*)?[.!]?$",
+                        re.IGNORECASE,
+                    )
+                    spoken_locator = re.compile(
+                        r"\b(?:dot|slash|at)\b",
+                        re.IGNORECASE,
+                    )
+                    left_is_locator = bool(canonical_locator.fullmatch(non_empty[0].strip()))
+                    right_is_locator = bool(canonical_locator.fullmatch(non_empty[1].strip()))
+                    left_is_spoken = bool(spoken_locator.search(non_empty[0]))
+                    right_is_spoken = bool(spoken_locator.search(non_empty[1]))
+                    # A generated bilingual URL may remain Latin in both languages:
+                    # canonical target above, spoken ASR source below (or vice versa).
+                    # Preserve that pair instead of reopening it as one source-only cue.
+                    if left_is_locator and right_is_spoken:
                         return non_empty[1], non_empty[0]
-                    if right_title and re.sub(r"\W+", "", right_title.group(1)).lower() == re.sub(
-                        r"\W+", "", non_empty[0]
-                    ).lower():
+                    if right_is_locator and left_is_spoken:
+                        return non_empty[0], non_empty[1]
+                    if (
+                        left_is_locator
+                        and right_is_locator
+                        and non_empty[0].rstrip(".!").casefold()
+                        == non_empty[1].rstrip(".!").casefold()
+                    ):
+                        return non_empty[1], non_empty[0]
+                    if (
+                        left_title
+                        and re.sub(r"\W+", "", left_title.group(1)).lower()
+                        == re.sub(r"\W+", "", non_empty[1]).lower()
+                    ):
+                        return non_empty[1], non_empty[0]
+                    if (
+                        right_title
+                        and re.sub(r"\W+", "", right_title.group(1)).lower()
+                        == re.sub(r"\W+", "", non_empty[0]).lower()
+                    ):
                         return non_empty[0], non_empty[1]
                 if (
                     left_family == "han"

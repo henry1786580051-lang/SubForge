@@ -618,6 +618,34 @@ class TestMergeShortSegment:
         assert segments[0].text == "And, I understand the motivation."
         assert segments[0].speaker_id == "Speaker 2"
 
+    def test_merges_discourse_bridge_into_following_same_speaker_cue(self):
+        segments = [
+            ASRDataSeg("And so, you know,", 0, 500, speaker_id="Speaker 1"),
+            ASRDataSeg(
+                "but I do think there are lessons from that time.",
+                700,
+                2_200,
+                speaker_id="Speaker 1",
+            ),
+        ]
+        splitter = SubtitleSplitter(thread_num=1, model="gpt-4o-mini")
+
+        splitter.merge_short_segment(segments)
+
+        assert len(segments) == 1
+        assert segments[0].text.startswith("And so, you know, but I do think")
+
+    def test_does_not_merge_discourse_bridge_across_speakers(self):
+        segments = [
+            ASRDataSeg("And so, you know,", 0, 500, speaker_id="Speaker 1"),
+            ASRDataSeg("what happens next?", 700, 1_500, speaker_id="Speaker 2"),
+        ]
+        splitter = SubtitleSplitter(thread_num=1, model="gpt-4o-mini")
+
+        splitter.merge_short_segment(segments)
+
+        assert len(segments) == 2
+
     def test_merges_short_continuation_across_hesitation_pause(self):
         segments = [
             ASRDataSeg("I mean,", 0, 500, speaker_id="Speaker 1"),

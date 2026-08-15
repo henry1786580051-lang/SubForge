@@ -61,6 +61,31 @@ def test_validation_allows_complete_clause_boundary():
     assert message == ""
 
 
+def test_boundary_only_warning_is_delegated_without_llm_retry(monkeypatch):
+    original = (
+        "I hope that gives you a good enough idea of "
+        "what it is like to drive this car"
+    )
+    calls = []
+
+    def fake_call_llm(*_args, **_kwargs):
+        calls.append(True)
+        return _FakeResponse(
+            "I hope that gives you a good enough idea of<br>"
+            "what it is like to drive this car"
+        )
+
+    monkeypatch.setattr(split_module, "call_llm", fake_call_llm)
+
+    result = split_by_llm(original, max_word_count_english=18)
+
+    assert result == [
+        "I hope that gives you a good enough idea of",
+        "what it is like to drive this car",
+    ]
+    assert len(calls) == 1
+
+
 def test_validation_prefers_blue_zone_reason_boundary_over_degree_complement_split():
     original = (
         "And maybe part of the reason blue zones resonate so deeply in America "
@@ -431,7 +456,7 @@ class TestSplitByLLM:
             "I hope that gives you a good enough idea of",
             "what this car is like to drive",
         ]
-        assert len(calls) == 3
+        assert len(calls) == 1
 
     def test_keeps_content_safe_split_for_deterministic_length_normalization(
         self, monkeypatch

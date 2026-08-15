@@ -13,13 +13,6 @@ from urllib.parse import urlparse, urlunparse
 import anthropic
 import openai
 from openai import OpenAI
-from tenacity import (
-    RetryCallState,
-    retry,
-    retry_if_exception,
-    stop_after_attempt,
-    wait_random_exponential,
-)
 
 from subforge.core.utils.cache import get_llm_cache, memoize
 from subforge.core.utils.logger import setup_logger
@@ -38,6 +31,10 @@ LLM_TIMEOUT = 120.0
 PERSISTENT_RATE_LIMIT_MAX_WAIT = 60.0
 PERSISTENT_TRANSIENT_MAX_ATTEMPTS = 3
 ReasoningMode = Literal["default", "enabled", "disabled"]
+
+
+class LLMRequestCancelled(RuntimeError):
+    """Raised when a task cancels an in-flight or waiting LLM request."""
 
 
 def is_anthropic_base_url(base_url: str) -> bool:
@@ -69,7 +66,7 @@ def normalize_base_url(base_url: str) -> str:
     return normalized
 
 
-def create_client(base_url: str, api_key: str) -> Any:
+def create_client(base_url: str, api_key: str, *, timeout: float = LLM_TIMEOUT) -> Any:
     """Create a protocol-aware client with explicit credentials."""
     base_url = normalize_base_url(base_url)
     if not base_url or not api_key:
@@ -80,20 +77,61 @@ def create_client(base_url: str, api_key: str) -> Any:
         client = MiniMaxAnthropicClient(
             base_url=base_url,
             api_key=api_key,
-            timeout=LLM_TIMEOUT,
+            timeout=timeout,
             http_client=http_client,
         )
     else:
         client = OpenAI(
             base_url=base_url,
             api_key=api_key,
-            timeout=LLM_TIMEOUT,
+            timeout=timeout,
             max_retries=0,
             http_client=http_client,
         )
     setattr(client, "_subforge_log_context", log_context)
     setattr(client, "_subforge_base_url", base_url)
+    setattr(client, "_subforge_cancel_event", threading.Event())
     return client
+
+
+def cancel_client_requests(client: Any) -> None:
+    """Interrupt retry waits and close active transports for one task client."""
+    event = getattr(client, "_subforge_cancel_event", None)
+    if isinstance(event, threading.Event):
+        event.set()
+    close_client(client)
+
+
+def close_client(client: Any) -> None:
+    """Close a task-scoped LLM client without coupling callers to its SDK."""
+    if bool(getattr(client, "_subforge_closed", False)):
+        return
+    try:
+        setattr(client, "_subforge_closed", True)
+    except Exception:
+        pass
+    close = getattr(client, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            logger.debug("Failed to close LLM client", exc_info=True)
+
+
+def _raise_if_request_cancelled(client: Any) -> None:
+    event = getattr(client, "_subforge_cancel_event", None)
+    if isinstance(event, threading.Event) and event.is_set():
+        raise LLMRequestCancelled("LLM request cancelled")
+
+
+def _wait_for_retry(client: Any, seconds: float) -> None:
+    """Wait for provider recovery while remaining responsive to cancellation."""
+    event = getattr(client, "_subforge_cancel_event", None)
+    if isinstance(event, threading.Event):
+        if event.wait(timeout=max(0.0, seconds)):
+            raise LLMRequestCancelled("LLM request cancelled")
+        return
+    time.sleep(seconds)
 
 
 def set_client_log_context(client: Any, **context: str) -> None:
@@ -122,15 +160,6 @@ def get_llm_client() -> Any:
                 _global_client_identity = identity
 
     return _global_client
-
-
-def before_sleep_log(retry_state: RetryCallState) -> None:
-    error = retry_state.outcome.exception() if retry_state.outcome else None
-    logger.warning(
-        "Transient LLM API error (%s), sleeping before retry %d/10",
-        type(error).__name__ if error else "unknown",
-        retry_state.attempt_number + 1,
-    )
 
 
 def _is_retryable_standard_error(error: BaseException) -> bool:
@@ -231,6 +260,7 @@ def _call_llm_once(
     """Perform one LLM API request and log its result."""
     if client is None:
         client = get_llm_client()
+    _raise_if_request_cancelled(client)
 
     reasoning_mode = kwargs.pop("_subforge_reasoning_mode", "default")
     max_output_tokens = kwargs.pop("_subforge_max_output_tokens", None)
@@ -267,12 +297,6 @@ def _call_llm_once(
     return response
 
 
-@retry(
-    stop=stop_after_attempt(10),
-    wait=wait_random_exponential(multiplier=1, min=5, max=60),
-    retry=retry_if_exception(_is_retryable_standard_error),
-    before_sleep=before_sleep_log,
-)
 def _call_standard_llm_api(
     messages: List[dict],
     model: str,
@@ -281,7 +305,22 @@ def _call_standard_llm_api(
     **kwargs: Any,
 ) -> Any:
     """Call non-M3 models with the existing bounded retry policy."""
-    return _call_llm_once(messages, model, temperature, client=client, **kwargs)
+    for attempt in range(1, 11):
+        try:
+            return _call_llm_once(messages, model, temperature, client=client, **kwargs)
+        except Exception as error:
+            if not _is_retryable_standard_error(error) or attempt >= 10:
+                raise
+            upper = min(60.0, max(5.0, float(2**attempt)))
+            wait_seconds = random.uniform(5.0, upper)
+            logger.warning(
+                "Transient LLM API error (%s), waiting %.1fs before retry %d/10",
+                type(error).__name__,
+                wait_seconds,
+                attempt + 1,
+            )
+            _wait_for_retry(client, wait_seconds)
+    raise RuntimeError("LLM retry loop exited unexpectedly")
 
 
 def _call_until_provider_available(
@@ -308,7 +347,7 @@ def _call_until_provider_available(
                 wait_seconds,
                 attempt,
             )
-            time.sleep(wait_seconds)
+            _wait_for_retry(client, wait_seconds)
         except (
             openai.InternalServerError,
             openai.APITimeoutError,
@@ -326,7 +365,7 @@ def _call_until_provider_available(
                 transient_attempt + 1,
                 PERSISTENT_TRANSIENT_MAX_ATTEMPTS,
             )
-            time.sleep(wait_seconds)
+            _wait_for_retry(client, wait_seconds)
 
 
 def _call_llm_api(

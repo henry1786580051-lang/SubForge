@@ -24,6 +24,7 @@ def test_create_dmg_resigns_exact_staged_app(tmp_path, monkeypatch):
         staged_app = Path(kwargs["settings"]["files"][0])
         captured["staged_app"] = staged_app
         captured["exists_during_build"] = staged_app.exists()
+        captured["settings"] = kwargs["settings"]
         Path(kwargs["filename"]).write_bytes(b"dmg")
 
     monkeypatch.setattr(build_macos.subprocess, "run", fake_run)
@@ -42,7 +43,15 @@ def test_create_dmg_resigns_exact_staged_app(tmp_path, monkeypatch):
     build_macos.create_dmg(source_app)
 
     staged_app = captured["staged_app"]
+    settings = captured["settings"]
     assert captured["exists_during_build"] is True
+    assert settings["background"] == str(build_macos.DMG_BACKGROUND)
+    assert settings["window_rect"] == ((200, 120), (720, 440))
+    assert settings["icon_locations"] == {
+        "SubForge.app": (190, 250),
+        "Applications": (530, 250),
+    }
+    assert settings["icon_size"] == 104
     assert commands == [
         ["xattr", "-cr", str(staged_app)],
         ["codesign", "--force", "--deep", "--sign", "-", str(staged_app)],

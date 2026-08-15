@@ -259,6 +259,7 @@ export default defineConfig({
                 { text: 'Cookie 配置', link: '/guide/cookies-config' },
                 { text: '基础配置', link: '/guide/configuration' },
                 { text: '工作流程', link: '/guide/workflow' },
+                { text: 'ChatGPT SRT 精修', link: '/guide/chatgpt-srt-post-editing' },
                 { text: '常见问题', link: '/guide/faq' }
               ]
             },

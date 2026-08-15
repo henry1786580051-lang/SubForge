@@ -228,6 +228,49 @@ def test_azure_translator_connection_requires_key(monkeypatch):
     }
 
 
+def test_llm_connection_reuses_protocol_aware_client(monkeypatch):
+    calls = {}
+
+    class Completions:
+        def create(self, **kwargs):
+            calls["request"] = kwargs
+            return object()
+
+    class Client:
+        chat = type("Chat", (), {"completions": Completions()})()
+
+    client = Client()
+    monkeypatch.setattr(
+        config_module,
+        "get_llm_runtime_config",
+        lambda: config_module.LlmRuntimeConfig(
+            provider="minimax",
+            base_url="https://api.minimaxi.com/anthropic",
+            api_key="private-key",
+            model="MiniMax-M3",
+        ),
+    )
+    monkeypatch.setattr(
+        "subforge.core.llm.create_client",
+        lambda **kwargs: calls.setdefault("client_args", kwargs) and client,
+    )
+    monkeypatch.setattr(
+        "subforge.core.llm.close_client",
+        lambda value: calls.setdefault("closed", value),
+    )
+
+    result = asyncio.run(config_module.test_llm_connection())
+
+    assert result == {"ok": True, "model": "MiniMax-M3"}
+    assert calls["client_args"] == {
+        "base_url": "https://api.minimaxi.com/anthropic",
+        "api_key": "private-key",
+        "timeout": 15.0,
+    }
+    assert calls["request"]["model"] == "MiniMax-M3"
+    assert calls["closed"] is client
+
+
 def test_azure_translator_connection_uses_private_persisted_key(monkeypatch):
     monkeypatch.setattr(
         config_module,

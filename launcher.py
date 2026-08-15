@@ -451,7 +451,25 @@ if __name__ == "__main__":
         import traceback
 
         try:
+            import mlx.core as mx
             import mlx_whisper  # noqa: F401
+            import torch
+
+            mlx_probe = mx.array([1.0], dtype=mx.float32) + 1.0
+            mx.eval(mlx_probe)
+            if float(mlx_probe.item()) != 2.0:
+                raise RuntimeError("MLX Metal probe returned an invalid result")
+
+            mps_backend = getattr(getattr(torch, "backends", None), "mps", None)
+            if not (
+                mps_backend
+                and mps_backend.is_built()
+                and mps_backend.is_available()
+            ):
+                raise RuntimeError("PyTorch MPS is unavailable in this execution session")
+            mps_probe = torch.ones(1, device="mps") + 1
+            if float(mps_probe.cpu().item()) != 2.0:
+                raise RuntimeError("PyTorch MPS probe returned an invalid result")
 
             from subforge.core.asr.whisperx_asr import install_whisperx_runtime_stubs
 
@@ -468,18 +486,13 @@ if __name__ == "__main__":
 
             align_file = MODEL_PATH / "wav2vec2_fairseq_large_lv60k_asr_ls960.pth"
             print("MLX Whisper import: ok")
+            print("MLX Metal inference: ok")
+            print("PyTorch MPS inference: ok")
             print("WhisperX alignment import: ok")
             print(f"Default MLX model: {default_mlx_model()}")
             print(f"Default align model: {DEFAULT_EN_ALIGN_MODEL}")
             print(f"Align model file: {align_file} ({'found' if align_file.exists() else 'missing'})")
             raise SystemExit(0)
-        except RuntimeError as exc:
-            if "No Metal device available" in str(exc):
-                print("MLX Whisper package import reached Metal initialization.")
-                print("Metal device is not available in this execution environment.")
-                raise SystemExit(0)
-            traceback.print_exc()
-            raise SystemExit(1)
         except Exception:
             traceback.print_exc()
             raise SystemExit(1)

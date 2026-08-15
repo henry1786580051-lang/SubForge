@@ -8,6 +8,10 @@ import pytest
 
 from subforge.core.asr.whisperx_asr import (
     WhisperXASR,
+    _critical_aligned_speech_gaps,
+    _detect_speech_in_mlx_gaps,
+    _find_sparse_mlx_segments,
+    _find_speech_backed_mlx_gaps,
     _install_offline_sentence_tokenizer,
     _LanguageProbe,
     _LanguageRange,
@@ -16,6 +20,8 @@ from subforge.core.asr.whisperx_asr import (
     _parse_mlx_preview_lines,
     _prepare_mlx_model_path,
     _prepare_spoken_alignment,
+    _recover_mlx_sparse_segments,
+    _recover_mlx_speech_gaps,
     _refine_words_with_char_alignments,
     _restore_display_alignment,
     _segments_for_alignment,
@@ -25,6 +31,472 @@ from subforge.core.asr.whisperx_asr import (
     default_mlx_model,
     install_whisperx_runtime_stubs,
 )
+
+
+def test_mlx_sparse_audit_finds_segment_envelope_hiding_missing_speech():
+    segments = [
+        {"text": "No boundaries? Taking away agency from you.", "start": 10.0, "end": 40.0},
+        {
+            "text": "This normally paced segment has enough words for its duration.",
+            "start": 40.0,
+            "end": 48.0,
+        },
+    ]
+
+    candidates = _find_sparse_mlx_segments(segments)
+
+    assert len(candidates) == 1
+    assert candidates[0].index == 0
+    assert candidates[0].start == 10.0
+    assert candidates[0].end == 40.0
+
+
+def test_mlx_sparse_recovery_replaces_only_when_local_decode_adds_content():
+    result = {
+        "segments": [
+            {"text": "No boundaries? Taking away agency from you.", "start": 10.0, "end": 40.0},
+            {"text": "After", "start": 40.5, "end": 42.0},
+        ]
+    }
+    recovered = _recover_mlx_sparse_segments(
+        result,
+        list(range(500)),
+        10,
+        [(10_100, 39_900)],
+        lambda _clip: {
+            "segments": [
+                {
+                    "text": (
+                        "No boundaries? I do not think having no boundaries is ever good. "
+                        "People want a feeling of agency and control over their fate. "
+                        "Even useful limits can feel wrong if they take agency away from you."
+                    ),
+                    "start": 0.0,
+                    "end": 29.8,
+                    "avg_logprob": -0.15,
+                    "no_speech_prob": 0.02,
+                    "compression_ratio": 1.2,
+                }
+            ]
+        },
+    )
+
+    assert [item["text"] for item in recovered["segments"]] == [
+        (
+            "No boundaries? I do not think having no boundaries is ever good. "
+            "People want a feeling of agency and control over their fate. "
+            "Even useful limits can feel wrong if they take agency away from you."
+        ),
+        "After",
+    ]
+    assert recovered["sparse_segment_recovery"][0]["original_units"] == 7
+    assert recovered["sparse_segment_recovery"][0]["recovered_units"] > 30
+
+
+def test_mlx_sparse_recovery_reports_unresolved_dense_speech():
+    result = {
+        "segments": [
+            {"text": "No boundaries? Taking away agency from you.", "start": 10.0, "end": 40.0}
+        ]
+    }
+
+    recovered = _recover_mlx_sparse_segments(
+        result,
+        list(range(500)),
+        10,
+        [(10_100, 39_900)],
+        lambda _clip: {"segments": []},
+    )
+
+    assert recovered["segments"] == result["segments"]
+    assert recovered["unresolved_sparse_segments"][0]["speech_seconds"] == pytest.approx(29.8)
+
+
+def test_final_alignment_audit_uses_words_instead_of_segment_envelopes():
+    aligned = {
+        "segments": [
+            {
+                "text": "No boundaries? Taking away agency from you.",
+                "start": 10.0,
+                "end": 40.0,
+                "words": [
+                    {"word": "No boundaries?", "start": 10.0, "end": 12.0},
+                    {"word": "taking", "start": 38.0, "end": 38.5},
+                    {"word": "away", "start": 38.5, "end": 39.0},
+                    {"word": "agency", "start": 39.0, "end": 39.5},
+                    {"word": "from you", "start": 39.5, "end": 40.0},
+                ],
+            }
+        ]
+    }
+
+    gaps = _critical_aligned_speech_gaps(
+        aligned,
+        [(12_100, 37_900)],
+        50.0,
+    )
+
+    assert len(gaps) == 1
+    assert gaps[0].start == pytest.approx(12.0)
+    assert gaps[0].end == pytest.approx(38.0)
+
+
+def test_final_alignment_audit_catches_vad_activity_between_decoder_segments():
+    aligned = {
+        "segments": [
+            {
+                "text": "Before",
+                "start": 0.0,
+                "end": 3.0,
+                "words": [{"word": "Before", "start": 0.0, "end": 3.0}],
+            },
+            {
+                "text": "After",
+                "start": 20.0,
+                "end": 24.0,
+                "words": [{"word": "After", "start": 20.0, "end": 24.0}],
+            },
+        ]
+    }
+
+    gaps = _critical_aligned_speech_gaps(aligned, [(3200, 19_800)], 24.0)
+
+    assert len(gaps) == 1
+    assert gaps[0].start == pytest.approx(3.0)
+    assert gaps[0].end == pytest.approx(20.0)
+
+
+def test_mlx_sparse_recovery_uses_context_and_trims_words_to_candidate():
+    result = {
+        "segments": [
+            {"text": "No boundaries?", "start": 10.0, "end": 40.0},
+            {"text": "taking away agency", "start": 40.0, "end": 43.0},
+        ]
+    }
+    clips = []
+
+    def transcribe_clip(clip):
+        clips.append(clip)
+        return {
+            "segments": [
+                {
+                    "text": "outside No boundaries? I want agency outside",
+                    "start": 0.0,
+                    "end": 35.0,
+                    "avg_logprob": -0.1,
+                    "no_speech_prob": 0.01,
+                    "compression_ratio": 1.1,
+                    "words": [
+                        {"word": " outside", "start": 0.0, "end": 1.0},
+                        {"word": " No", "start": 3.9, "end": 4.3},
+                        {"word": " boundaries?", "start": 4.3, "end": 4.8},
+                        {"word": " I", "start": 8.0, "end": 8.2},
+                        {"word": " want", "start": 8.2, "end": 8.6},
+                        {"word": " meaningful", "start": 10.0, "end": 10.8},
+                        {"word": " choice", "start": 11.0, "end": 11.6},
+                        {"word": " and", "start": 13.0, "end": 13.3},
+                        {"word": " personal", "start": 14.0, "end": 14.8},
+                        {"word": " control", "start": 16.0, "end": 16.8},
+                        {"word": " over", "start": 18.0, "end": 18.4},
+                        {"word": " my", "start": 20.0, "end": 20.3},
+                        {"word": " fate", "start": 22.0, "end": 22.5},
+                        {"word": " and", "start": 24.0, "end": 24.3},
+                        {"word": " some", "start": 26.0, "end": 26.4},
+                        {"word": " useful", "start": 28.0, "end": 28.5},
+                        {"word": " limits", "start": 30.0, "end": 30.6},
+                        {"word": " outside", "start": 32.2, "end": 33.0},
+                    ],
+                }
+            ]
+        }
+
+    recovered = _recover_mlx_sparse_segments(
+        result,
+        list(range(500)),
+        10,
+        [(10_100, 39_900)],
+        transcribe_clip,
+    )
+
+    assert len(clips) == 1
+    assert len(clips[0]) == 340
+    assert recovered["segments"][0]["text"].startswith("No boundaries?")
+    assert "outside" not in recovered["segments"][0]["text"]
+    assert recovered["segments"][-1]["text"] == "taking away agency"
+
+
+def test_mlx_gap_audit_finds_only_vad_confirmed_speech_holes():
+    segments = [
+        {"text": "Question", "start": 0.0, "end": 3.0},
+        {"text": "Answer tail", "start": 20.0, "end": 24.0},
+    ]
+
+    gaps = _find_speech_backed_mlx_gaps(
+        segments,
+        [(3200, 19_800)],
+        24.0,
+    )
+
+    assert len(gaps) == 1
+    assert gaps[0].start == pytest.approx(3.0)
+    assert gaps[0].end == pytest.approx(20.0)
+    assert gaps[0].speech_seconds == pytest.approx(16.6)
+    assert gaps[0].speech_ratio == pytest.approx(16.6 / 17.0)
+    assert gaps[0].is_internal is True
+
+
+def test_mlx_gap_audit_ignores_long_real_silence():
+    segments = [
+        {"text": "Before", "start": 0.0, "end": 2.0},
+        {"text": "After", "start": 18.0, "end": 20.0},
+    ]
+
+    assert _find_speech_backed_mlx_gaps(segments, [(0, 2000), (18_000, 20_000)], 20.0) == []
+
+
+def test_mlx_gap_audit_does_not_treat_empty_decoder_segment_as_coverage():
+    segments = [
+        {"text": "Before", "start": 0.0, "end": 3.0},
+        {"text": "", "start": 3.0, "end": 20.0},
+        {"text": "After", "start": 20.0, "end": 24.0},
+    ]
+
+    gaps = _find_speech_backed_mlx_gaps(
+        segments,
+        [(3200, 19_800)],
+        24.0,
+    )
+
+    assert len(gaps) == 1
+    assert gaps[0].start == pytest.approx(3.0)
+    assert gaps[0].end == pytest.approx(20.0)
+
+
+def test_mlx_gap_recovery_preserves_originals_and_rejects_low_confidence():
+    audio = list(range(240))
+    result = {
+        "segments": [
+            {"text": "Question", "start": 0.0, "end": 3.0},
+            {"text": "less.", "start": 20.0, "end": 21.0},
+        ],
+        "language": "en",
+    }
+    clips = []
+
+    def transcribe_clip(clip):
+        clips.append(clip)
+        return {
+            "segments": [
+                {
+                    "text": "I was raised in a family of readers.",
+                    "start": 0.0,
+                    "end": 8.0,
+                    "avg_logprob": -0.15,
+                    "no_speech_prob": 0.03,
+                    "compression_ratio": 1.2,
+                },
+                {
+                    "text": "hallucinated repetition",
+                    "start": 8.0,
+                    "end": 12.0,
+                    "avg_logprob": -1.4,
+                    "no_speech_prob": 0.05,
+                    "compression_ratio": 1.1,
+                },
+            ]
+        }
+
+    recovered = _recover_mlx_speech_gaps(
+        result,
+        audio,
+        10,
+        [(3200, 19_800)],
+        transcribe_clip,
+    )
+
+    assert len(clips) == 1
+    assert [item["text"] for item in recovered["segments"]] == [
+        "Question",
+        "I was raised in a family of readers.",
+        "less.",
+    ]
+    assert recovered["segments"][0] == result["segments"][0]
+    assert recovered["segments"][-1] == result["segments"][-1]
+    assert recovered["segments"][1]["recovered_speech_gap"] is True
+    assert recovered["speech_gap_recovery"][0]["segments"] == 1
+
+
+def test_mlx_gap_vad_scans_only_uncovered_audio(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        "subforge.core.asr.ten_vad.is_available",
+        lambda: True,
+    )
+
+    def run_vad(samples, **kwargs):
+        calls.append((list(samples), kwargs))
+        return [(100, 900)]
+
+    monkeypatch.setattr(
+        "subforge.core.asr.ten_vad.run_vad_inference",
+        run_vad,
+    )
+
+    speech = _detect_speech_in_mlx_gaps(
+        list(range(300)),
+        10,
+        [(4.0, 10.0), (20.0, 25.0)],
+    )
+
+    assert [len(samples) for samples, _kwargs in calls] == [60, 50]
+    assert speech == [(4100, 4900), (20_100, 20_900)]
+
+
+def test_mlx_gap_vad_falls_back_to_silero(monkeypatch):
+    monkeypatch.setattr(
+        "subforge.core.asr.ten_vad.is_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "subforge.core.asr.ten_vad.run_vad_inference",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("native failure")),
+    )
+    monkeypatch.setattr(
+        "subforge.core.asr.silero_vad.run_vad_inference",
+        lambda *_args, **_kwargs: [(200, 800)],
+    )
+
+    speech = _detect_speech_in_mlx_gaps(
+        list(range(100)),
+        10,
+        [(2.0, 8.0)],
+    )
+
+    assert speech == [(2200, 2800)]
+
+
+def test_mlx_gap_recovery_reports_unresolved_confirmed_speech():
+    result = {
+        "segments": [
+            {"text": "Before", "start": 0.0, "end": 3.0},
+            {"text": "After", "start": 20.0, "end": 24.0},
+        ]
+    }
+
+    recovered = _recover_mlx_speech_gaps(
+        result,
+        list(range(240)),
+        10,
+        [(3200, 19_800)],
+        lambda _clip: {"segments": []},
+    )
+
+    assert recovered["segments"] == result["segments"]
+    assert recovered["unresolved_speech_gaps"] == [
+        {
+            "start": 3.0,
+            "end": 20.0,
+            "speech_seconds": pytest.approx(16.6),
+            "speech_ratio": pytest.approx(16.6 / 17.0),
+            "is_internal": True,
+        }
+    ]
+
+
+def test_mlx_gap_recovery_accepts_confident_speech_under_music():
+    result = {
+        "segments": [
+            {"text": "Before", "start": 0.0, "end": 3.0},
+            {"text": "After", "start": 20.0, "end": 24.0},
+        ]
+    }
+
+    recovered = _recover_mlx_speech_gaps(
+        result,
+        list(range(240)),
+        10,
+        [(3200, 19_800)],
+        lambda _clip: {
+            "segments": [
+                {
+                    "text": "Thanks for watching this week's episode.",
+                    "start": 0.0,
+                    "end": 8.0,
+                    "avg_logprob": -0.12,
+                    "no_speech_prob": 0.71,
+                    "compression_ratio": 1.44,
+                }
+            ]
+        },
+    )
+
+    assert recovered.get("unresolved_speech_gaps") is None
+    assert recovered["segments"][1]["text"] == "Thanks for watching this week's episode."
+
+
+def test_mlx_gap_recovery_stitches_decode_boundary_to_existing_text():
+    result = {
+        "segments": [
+            {"text": "Question", "start": 0.0, "end": 3.0},
+            {"text": "less. And it was", "start": 20.0, "end": 24.0},
+        ]
+    }
+
+    recovered = _recover_mlx_speech_gaps(
+        result,
+        list(range(240)),
+        10,
+        [(3200, 19_800)],
+        lambda _clip: {
+            "segments": [
+                {
+                    "text": "I was steadily reading less and less.",
+                    "start": 0.0,
+                    "end": 17.0,
+                    "avg_logprob": -0.12,
+                    "no_speech_prob": 0.05,
+                    "compression_ratio": 1.2,
+                }
+            ]
+        },
+    )
+
+    assert [segment["text"] for segment in recovered["segments"]] == [
+        "Question",
+        "I was steadily reading less and",
+        "less. And it was",
+    ]
+
+
+def test_mlx_gap_recovery_removes_false_period_before_lowercase_continuation():
+    result = {
+        "segments": [
+            {"text": "Before", "start": 0.0, "end": 3.0},
+            {"text": "of the episode.", "start": 20.0, "end": 24.0},
+        ]
+    }
+
+    recovered = _recover_mlx_speech_gaps(
+        result,
+        list(range(240)),
+        10,
+        [(3200, 19_800)],
+        lambda _clip: {
+            "segments": [
+                {
+                    "text": "We want to know what you thought.",
+                    "start": 0.0,
+                    "end": 17.0,
+                    "avg_logprob": -0.12,
+                    "no_speech_prob": 0.05,
+                    "compression_ratio": 1.2,
+                }
+            ]
+        },
+    )
+
+    assert recovered["segments"][1]["text"] == "We want to know what you thought"
 
 
 def test_mlx_verbose_lines_are_parsed_for_live_preview():

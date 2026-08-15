@@ -133,6 +133,9 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
 
     partial_srt_path = None
     asr_data = None
+    llm_client = None
+    llm_cancel_callback = None
+    pipeline_warnings: list[str] = []
     context = create_pipeline_context(task_id)
     try:
         from app.api.config import get_config_value, get_llm_runtime_config
@@ -159,9 +162,8 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
         # from using each other's credentials or base URLs.
         api_key = llm_runtime.api_key
         base_url = llm_runtime.base_url
-        llm_client = None
         if api_key and base_url:
-            from subforge.core.llm import create_client
+            from subforge.core.llm import cancel_client_requests, create_client
             from subforge.core.llm.client import set_client_log_context
             from subforge.core.llm.request_logger import set_llm_log_level
 
@@ -172,6 +174,11 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
                 task_id=task_id,
                 file_name=Path(req.subtitle_file).name,
             )
+            def _cancel_llm_requests() -> None:
+                cancel_client_requests(llm_client)
+
+            llm_cancel_callback = _cancel_llm_requests
+            task_manager.register_cancel_callback(task_id, llm_cancel_callback)
 
         from subforge.core.asr.asr_data import ASRData
         from subforge.core.optimize.optimize import SubtitleOptimizer
@@ -241,12 +248,14 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
         max_word_count_english = get_config_value("max_word_count_english", 18)
 
         async def _run_stage(instance, function, *args):
-            stop = getattr(instance, "stop", None)
-            with context.cancellation_scope(stop if callable(stop) else None):
+            cancel = getattr(instance, "cancel", None)
+            if not callable(cancel):
+                cancel = getattr(instance, "stop", None)
+            with context.cancellation_scope(cancel if callable(cancel) else None):
                 return await run_blocking(
                     function,
                     *args,
-                    on_cancel=stop if callable(stop) else None,
+                    on_cancel=cancel if callable(cancel) else None,
                 )
 
         def _on_split_progress(segments):
@@ -264,6 +273,11 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
         )
         asr_data = await _run_stage(splitter, splitter.split_subtitle, asr_data)
         context.checkpoint()
+        split_fallback_count = int(getattr(splitter, "fallback_count", 0) or 0)
+        if split_fallback_count:
+            pipeline_warnings.append(
+                f"Smart splitting used rule fallback for {split_fallback_count} batch(es)."
+            )
         _save_partial(
             asr_data,
             f"Split into {len(asr_data.segments)} segments",
@@ -309,6 +323,14 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
             )
             asr_data = await _run_stage(optimizer, optimizer.optimize_subtitle, asr_data)
             context.checkpoint()
+            optimize_failure_count = int(
+                getattr(optimizer, "failed_batch_count", 0) or 0
+            )
+            if optimize_failure_count:
+                pipeline_warnings.append(
+                    f"Subtitle optimization kept the source for "
+                    f"{optimize_failure_count} failed batch(es)."
+                )
             _save_partial(asr_data, "Optimization complete", force=True)
             context.report(60, "Optimization complete")
 
@@ -459,13 +481,15 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
             message="Subtitle file saved",
         )
         final_preview_revision = task_manager.get_preview_revision(task_id)
-        context.report(100, "Done")
+        completion_message = "Done with processing warnings" if pipeline_warnings else "Done"
+        context.report(100, completion_message)
         task_manager.complete_task(
             task_id,
             {
                 "subtitle_file": str(output_path),
                 "preview_revision": final_preview_revision,
                 "segments": final_preview,
+                "warnings": pipeline_warnings,
             },
         )
 
@@ -516,12 +540,19 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
             except Exception:
                 logger.exception("Failed to save subtitle recovery file for task %s", task_id)
                 recovery_path = None
-        task_manager.fail_task(
-            task_id,
-            str(e),
-            {"recovery_file": str(recovery_path)} if recovery_path else None,
-        )
+        failure_result = {}
+        if recovery_path:
+            failure_result["recovery_file"] = str(recovery_path)
+        if pipeline_warnings:
+            failure_result["warnings"] = pipeline_warnings
+        task_manager.fail_task(task_id, str(e), failure_result or None)
     finally:
+        if llm_cancel_callback is not None:
+            task_manager.unregister_cancel_callback(task_id, llm_cancel_callback)
+        if llm_client is not None:
+            from subforge.core.llm import close_client
+
+            close_client(llm_client)
         if partial_srt_path:
             try:
                 PathLib(partial_srt_path).unlink(missing_ok=True)

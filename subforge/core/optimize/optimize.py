@@ -5,12 +5,14 @@
 
 import difflib
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from ..asr.asr_data import ASRData, ASRDataSeg
 from ..entities import SubtitleProcessData
 from ..llm import call_llm, get_response_text, parse_json_object
+from ..llm.client import LLMRequestCancelled
 from ..prompts import get_prompt
 from ..split.alignment import SubtitleAligner
 from ..utils.logger import setup_logger
@@ -136,6 +138,10 @@ def _allowed_deleted_tokens(tokens: List[str], start: int, end: int) -> bool:
 
 
 def _allowed_replacement(original: List[str], optimized: List[str]) -> bool:
+    # Joining or separating the same letters is a formatting/spelling repair,
+    # not a lexical rewrite (for example ``Black berry`` -> ``Blackberry``).
+    if "".join(original) == "".join(optimized) and len("".join(original)) >= 5:
+        return True
     if len(original) != len(optimized):
         return False
     for source, target in zip(original, optimized):
@@ -239,6 +245,9 @@ class SubtitleOptimizer:
         self.llm_client = llm_client
 
         self.is_running = True
+        self.failed_batch_count = 0
+        self._failure_lock = threading.Lock()
+        self._executor_lock = threading.Lock()
         self.executor: Optional[ThreadPoolExecutor] = None
         self._init_thread_pool()
 
@@ -373,6 +382,10 @@ class SubtitleOptimizer:
             return result
 
         except Exception as e:
+            if isinstance(e, LLMRequestCancelled) or not self.is_running:
+                raise
+            with self._failure_lock:
+                self.failed_batch_count += 1
             logger.error(f"Optimization failed: {str(e)}")
             return subtitle_chunk
 
@@ -638,17 +651,34 @@ class SubtitleOptimizer:
             for i, seg in enumerate(original_segments, 1)
         ]
 
-    def stop(self) -> None:
-        """停止优化器并清理资源"""
-        if not self.is_running:
-            return
-
+    def cancel(self) -> None:
+        """Request prompt cancellation without blocking the caller thread."""
         self.is_running = False
-
-        if self.executor:
+        lock = getattr(self, "_executor_lock", None)
+        if lock is None:
+            executor = self.executor
+        else:
+            with lock:
+                executor = self.executor
+        if executor:
             try:
-                self.executor.shutdown(wait=False, cancel_futures=True)
+                executor.shutdown(wait=False, cancel_futures=True)
             except Exception:
                 pass
-            finally:
+
+    def stop(self) -> None:
+        """Stop the optimizer and wait until its worker threads have exited."""
+        self.is_running = False
+        lock = getattr(self, "_executor_lock", None)
+        if lock is None:
+            executor = self.executor
+            self.executor = None
+        else:
+            with lock:
+                executor = self.executor
                 self.executor = None
+        if executor:
+            try:
+                executor.shutdown(wait=True, cancel_futures=True)
+            except Exception:
+                pass

@@ -461,7 +461,8 @@ async def switch_llm_provider(update: LlmProviderSwitch):
 @router.get("/test-llm")
 async def test_llm_connection():
     """Test LLM connection with current config."""
-    from subforge.core.llm.client import is_anthropic_base_url, normalize_base_url
+    from subforge.core.llm import close_client, create_client
+    from subforge.core.llm.client import normalize_base_url
 
     try:
         runtime = get_llm_runtime_config()
@@ -473,29 +474,27 @@ async def test_llm_connection():
     api_key = runtime.api_key
     model = runtime.model
 
-    if not base_url or not api_key:
-        return {"ok": False, "error": "未配置 Base URL 或 API Key"}
+    if not base_url or not api_key or not model:
+        return {"ok": False, "error": "未配置 Base URL、API Key 或模型"}
 
+    client = None
     try:
-        import httpx
-
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-            anthropic_api = is_anthropic_base_url(base_url)
-            resp = await client.post(
-                f"{base_url}/v1/messages" if anthropic_api else f"{base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json={
-                    "model": model,
-                    "messages": [{"role": "user", "content": "Hi"}],
-                    "max_tokens": 16 if anthropic_api else 5,
-                },
-            )
-            resp.raise_for_status()
-            return {"ok": True, "model": model}
-    except httpx.HTTPStatusError as e:
-        return {"ok": False, "error": f"HTTP {e.response.status_code}: {e.response.text[:200]}"}
-    except Exception as e:
-        return {"ok": False, "error": str(e)[:200]}
+        client = create_client(base_url=base_url, api_key=api_key, timeout=15.0)
+        await asyncio.to_thread(
+            client.chat.completions.create,
+            model=model,
+            messages=[{"role": "user", "content": "Reply with OK."}],
+            temperature=0,
+            max_tokens=16,
+        )
+        return {"ok": True, "model": model}
+    except Exception as exc:
+        status_code = getattr(exc, "status_code", None)
+        prefix = f"HTTP {status_code}: " if status_code else ""
+        return {"ok": False, "error": f"{prefix}{str(exc)[:200]}"}
+    finally:
+        if client is not None:
+            close_client(client)
 
 
 @router.get("/test-whisper")

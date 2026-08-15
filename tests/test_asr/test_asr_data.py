@@ -1259,6 +1259,53 @@ D.
         assert asr_data.segments[0].text == "32."
         assert asr_data.segments[0].translated_text == "32"
 
+    @pytest.mark.parametrize(
+        ("first_line", "second_line", "source", "translated"),
+        [
+            (
+                "Talkiatry.com/grayarea",
+                "Talkiatry.com slash grayarea.",
+                "Talkiatry.com slash grayarea.",
+                "Talkiatry.com/grayarea",
+            ),
+            (
+                "patreon dot com slash vox",
+                "patreon.com/vox",
+                "patreon dot com slash vox",
+                "patreon.com/vox",
+            ),
+        ],
+    )
+    def test_parse_language_neutral_url_bilingual_pair(
+        self,
+        first_line: str,
+        second_line: str,
+        source: str,
+        translated: str,
+    ):
+        srt = f"""1
+00:00:00,000 --> 00:00:01,000
+{first_line}
+{second_line}
+"""
+
+        asr_data = ASRData.from_srt(srt)
+
+        assert asr_data.segments[0].text == source
+        assert asr_data.segments[0].translated_text == translated
+
+    def test_parse_two_different_canonical_urls_as_source_only(self):
+        srt = """1
+00:00:00,000 --> 00:00:01,000
+example.com/first
+example.com/second
+"""
+
+        asr_data = ASRData.from_srt(srt)
+
+        assert asr_data.segments[0].text == "example.com/first\nexample.com/second"
+        assert asr_data.segments[0].translated_text == ""
+
     def test_parse_source_above_bilingual(self):
         """测试英文在上、中文在下的常规双语布局"""
         srt = """1

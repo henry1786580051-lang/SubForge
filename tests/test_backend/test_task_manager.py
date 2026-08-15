@@ -72,6 +72,30 @@ def test_cleanup_removes_oldest_terminal_tasks_by_creation_order(monkeypatch):
     assert manager.get_task("1111-new") is not None
 
 
+def test_cleanup_keeps_cancelled_task_while_worker_is_draining():
+    async def run():
+        manager = TaskManager()
+        task = manager.create_task("subtitle", resource_key="subtitle:/input.srt")
+
+        async def worker():
+            await asyncio.sleep(60)
+
+        running = asyncio.create_task(worker())
+        manager.register_running_task(task.id, running)
+        assert manager.cancel_task(task.id) is True
+
+        manager.cleanup_old_tasks(keep=0)
+
+        assert manager.get_task(task.id) is not None
+        with pytest.raises(TaskResourceBusyError):
+            manager.create_task("subtitle", resource_key="subtitle:/input.srt")
+
+        await asyncio.sleep(0)
+        manager.unregister_running_task(task.id)
+
+    asyncio.run(run())
+
+
 def test_task_progress_carries_preview_segments():
     manager = TaskManager()
     task = manager.create_task("transcribe")
@@ -222,6 +246,25 @@ def test_completed_websocket_event_carries_final_preview_snapshot():
     assert manager.get_preview_revision(task.id) == revision
 
 
+def test_failed_websocket_event_carries_recovery_preview_snapshot():
+    manager = TaskManager()
+    task = manager.create_task("subtitle")
+    events = []
+    manager.add_listener(lambda _task_id, data: events.append(data))
+    segments = [{"id": 1, "text": "source", "translated": "部分译文"}]
+    manager.publish_preview(task.id, segments, subtitle_file="/tmp/recovery.srt")
+
+    manager.fail_task(
+        task.id,
+        "translation failed",
+        {"recovery_file": "/tmp/recovery.srt"},
+    )
+
+    assert events[-1]["status"] == TaskStatus.FAILED
+    assert events[-1]["result"] == {"recovery_file": "/tmp/recovery.srt"}
+    assert events[-1]["preview_segments"] == segments
+
+
 def test_progress_is_clamped_and_does_not_move_backwards():
     manager = TaskManager()
     task = manager.create_task("subtitle")
@@ -276,3 +319,28 @@ def test_resource_lock_blocks_duplicate_task_and_releases_at_terminal_state(term
 
     replacement = manager.create_task("transcribe", resource_key="transcribe:/video.mp4")
     assert replacement.id != first.id
+
+
+def test_cancelled_running_task_keeps_resource_until_worker_unregisters():
+    async def run():
+        manager = TaskManager()
+        first = manager.create_task("subtitle", resource_key="subtitle:/input.srt")
+
+        async def worker():
+            await asyncio.sleep(60)
+
+        running = asyncio.create_task(worker())
+        manager.register_running_task(first.id, running)
+        assert manager.cancel_task(first.id) is True
+
+        with pytest.raises(TaskResourceBusyError):
+            manager.create_task("subtitle", resource_key="subtitle:/input.srt")
+
+        await asyncio.sleep(0)
+        manager.unregister_running_task(first.id)
+        replacement = manager.create_task(
+            "subtitle", resource_key="subtitle:/input.srt"
+        )
+        assert replacement.id != first.id
+
+    asyncio.run(run())

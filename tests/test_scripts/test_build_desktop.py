@@ -21,7 +21,7 @@ def test_build_version_prefers_explicit_release_environment(monkeypatch):
     assert build_desktop._version() == "9.8.7"
 
 
-def test_build_version_prefers_repository_version_file(monkeypatch, tmp_path):
+def test_build_version_uses_repository_version_file_without_vcs(monkeypatch, tmp_path):
     package_dir = tmp_path / "subforge"
     package_dir.mkdir()
     (package_dir / "_version.py").write_text(
@@ -31,6 +31,25 @@ def test_build_version_prefers_repository_version_file(monkeypatch, tmp_path):
     monkeypatch.setattr(build_desktop, "ROOT", tmp_path)
 
     assert build_desktop._version() == "9.8.7"
+
+
+def test_build_version_prefers_git_tag_over_stale_version_file(monkeypatch, tmp_path):
+    package_dir = tmp_path / "subforge"
+    package_dir.mkdir()
+    (package_dir / "_version.py").write_text(
+        "__version__ = version = '1.1.7'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("SUBFORGE_BUILD_VERSION", raising=False)
+    monkeypatch.setattr(build_desktop, "ROOT", tmp_path)
+
+    class Result:
+        returncode = 0
+        stdout = "v1.1.13\n"
+
+    monkeypatch.setattr(build_desktop.subprocess, "run", lambda *_args, **_kwargs: Result())
+
+    assert build_desktop._version() == "1.1.13"
 
 
 def test_build_version_removes_vcs_development_metadata(monkeypatch, tmp_path):
@@ -46,18 +65,72 @@ def test_build_version_removes_vcs_development_metadata(monkeypatch, tmp_path):
     assert build_desktop._version() == "1.1.6"
 
 
-def test_pyinstaller_receives_release_version(monkeypatch):
+def test_pyinstaller_receives_release_version(monkeypatch, tmp_path):
     captured = {}
+    dist_dir = tmp_path / "dist"
+    stale_bundle = dist_dir / "SubForge"
+    stale_bundle.mkdir(parents=True)
 
     def fake_run(command, **kwargs):
         captured["command"] = command
         captured["env"] = kwargs["env"]
 
+    monkeypatch.setattr(build_desktop, "DIST_DIR", dist_dir)
     monkeypatch.setattr(build_desktop, "_run", fake_run)
 
     build_desktop.build_pyinstaller("9.8.7")
 
     assert captured["env"]["SUBFORGE_BUILD_VERSION"] == "9.8.7"
+    assert not stale_bundle.exists()
+
+
+def test_managed_dist_cleanup_removes_numbered_duplicates_only(monkeypatch, tmp_path):
+    dist_dir = tmp_path / "dist"
+    managed_paths = [
+        dist_dir / "SubForge",
+        dist_dir / "SubForge.app",
+        dist_dir / "SubForge 2",
+        dist_dir / "SubForge 3.app",
+    ]
+    for path in managed_paths:
+        path.mkdir(parents=True)
+    unrelated = dist_dir / "SubForge-1.1.13-macos-arm64.zip"
+    unrelated.write_bytes(b"archive")
+    notes = dist_dir / "notes"
+    notes.mkdir()
+    monkeypatch.setattr(build_desktop, "DIST_DIR", dist_dir)
+
+    removed = build_desktop.clean_managed_dist_outputs()
+
+    assert set(removed) == set(managed_paths)
+    assert all(not path.exists() for path in managed_paths)
+    assert unrelated.read_bytes() == b"archive"
+    assert notes.is_dir()
+
+
+def test_macos_build_discards_intermediate_bundle_after_verification(monkeypatch, tmp_path):
+    dist_dir = tmp_path / "dist"
+    standalone = dist_dir / "SubForge"
+    app = dist_dir / "SubForge.app"
+    standalone.mkdir(parents=True)
+    app.mkdir()
+    monkeypatch.setattr(build_desktop, "DIST_DIR", dist_dir)
+    monkeypatch.setattr(build_desktop.platform, "system", lambda: "Darwin")
+
+    assert build_desktop.discard_standalone_macos_bundle() is True
+    assert not standalone.exists()
+    assert app.is_dir()
+
+
+def test_windows_build_keeps_standalone_bundle(monkeypatch, tmp_path):
+    dist_dir = tmp_path / "dist"
+    standalone = dist_dir / "SubForge"
+    standalone.mkdir(parents=True)
+    monkeypatch.setattr(build_desktop, "DIST_DIR", dist_dir)
+    monkeypatch.setattr(build_desktop.platform, "system", lambda: "Windows")
+
+    assert build_desktop.discard_standalone_macos_bundle() is False
+    assert standalone.is_dir()
 
 
 def test_macos_resign_clears_bundle_metadata_before_codesign(tmp_path, monkeypatch):

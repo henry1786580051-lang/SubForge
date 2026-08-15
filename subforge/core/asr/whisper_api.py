@@ -199,21 +199,22 @@ class WhisperAPI(BaseASR):
             if self.prompt:
                 user_prompt += f"\n\nContext: {self.prompt}"
 
+            messages: Any = [
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "audio_url",
+                            "audio_url": {"url": f"data:audio/{fmt};base64,{audio_b64}"},
+                        },
+                        {"type": "text", "text": user_prompt},
+                    ],
+                },
+            ]
             response = self.client.chat.completions.create(
                 model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "audio_url",
-                                "audio_url": {"url": f"data:audio/{fmt};base64,{audio_b64}"},
-                            },
-                            {"type": "text", "text": user_prompt},
-                        ],
-                    },
-                ],
+                messages=messages,
                 temperature=0.1,
             )
 

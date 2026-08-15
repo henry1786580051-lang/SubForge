@@ -9,6 +9,7 @@ import pytest
 from subforge.core.entities import SubtitleProcessData
 from subforge.core.prompts import get_prompt
 from subforge.core.translate.context import TranslationContext
+from subforge.core.translate.guidance import repair_mode_guidance, target_language_style_rules
 from subforge.core.translate.llm_translator import LLMTranslator
 from subforge.core.translate.types import TargetLanguage
 
@@ -309,6 +310,16 @@ class TestValidateLLmResponse:
         ok, msg = t._validate_llm_response(resp, inp)
         assert ok is True
         assert msg == ""
+
+    def test_preserved_tokens_accepts_standard_chinese_qr_equivalent(self):
+        translator = _make_translator()
+
+        valid, error = translator._validate_llm_response(
+            {"108": "点击下方链接 或扫描屏幕上的二维码"},
+            {"108": "Click the link below or scan the QR code on screen."},
+        )
+
+        assert valid is True, error
 
     def test_not_a_dict(self):
         t = _make_translator()
@@ -759,7 +770,7 @@ class TestValidateLLmResponse:
         assert ok is False
         assert "Anticipated conditions" in msg
 
-    def test_rejects_i_mean_marker_moved_to_following_key(self):
+    def test_allows_i_mean_filler_to_move_for_natural_chinese(self):
         translator = _make_translator()
 
         ok, message = translator._validate_llm_response(
@@ -773,9 +784,8 @@ class TestValidateLLmResponse:
             },
         )
 
-        assert ok is False
-        assert "I mean" in message
-        assert "560" in message
+        assert ok is True
+        assert message == ""
 
     def test_rejects_if_condition_omitted_from_its_own_key(self):
         t = _make_translator()
@@ -927,6 +937,22 @@ class TestValidateLLmResponse:
         assert ok is False
         assert "246-247" in msg
 
+    def test_rejects_neighbor_paraphrase_that_drops_source_object(self):
+        t = _make_translator()
+        source = {
+            "1": "it was capable of shooting out protons",
+            "2": "at much higher energies than previously possible.",
+        }
+        response = {
+            "1": "能够以远高于以往的能量",
+            "2": "以远超以往可能的能量射出",
+        }
+
+        ok, msg = t._validate_llm_response(response, source)
+
+        assert ok is False
+        assert "Suspicious pairs" in msg
+
     def test_rejects_repeated_restart_qualification_across_keys(self):
         t = _make_translator()
         source = {
@@ -1039,9 +1065,7 @@ class TestValidateLLmResponse:
         assert "previous_source" in payload["reference_hint"]
         assert "separate observation" in payload["reference_hint"]
 
-    def test_deepseek_alignment_rewrite_uses_reasoning_and_records_acceptance(
-        self, monkeypatch
-    ):
+    def test_deepseek_alignment_rewrite_uses_reasoning_and_records_acceptance(self, monkeypatch):
         translator = _make_translator(is_reflect=True)
         translator.model = "deepseek-v4-flash"
         calls = []
@@ -1057,7 +1081,7 @@ class TestValidateLLmResponse:
 
         assert translator._translate_alignment_item("in so many ways") == "从很多方面来说"
         assert [call["reasoning_mode"] for call in calls] == ["enabled"]
-        assert [call["max_output_tokens"] for call in calls] == [8192]
+        assert [call["max_output_tokens"] for call in calls] == [6144]
         assert [call["reasoning_effort"] for call in calls] == ["low"]
         assert "priority is fidelity first" in calls[0]["messages"][0]["content"]
         metrics = translator.reasoning_metrics()
@@ -1066,9 +1090,7 @@ class TestValidateLLmResponse:
         assert metrics["accepted_repairs"] == 1
         assert metrics["fallback_requests"] == 0
 
-    def test_deepseek_alignment_rewrite_falls_back_after_reasoning_only_response(
-        self, monkeypatch
-    ):
+    def test_deepseek_alignment_rewrite_falls_back_after_reasoning_only_response(self, monkeypatch):
         translator = _make_translator(is_reflect=True)
         translator.model = "deepseek-v4-flash"
         responses = iter(
@@ -1223,6 +1245,37 @@ class TestValidateLLmResponse:
 
         assert ok is False
         assert "18000" in message
+
+    @pytest.mark.parametrize(
+        "translation",
+        [
+            "但它也是一辆价值5万美元的丰田Corolla",
+            "但它也是一辆价值五万美元的丰田Corolla",
+        ],
+    )
+    def test_accepts_equivalent_chinese_ten_thousand_currency(self, translation):
+        translator = _make_minimax_reflect_translator()
+
+        ok, message = translator._validate_llm_response(
+            {"451": translation},
+            {"451": "but it's also a $50,000 Toyota Corolla."},
+            require_reflect=False,
+        )
+
+        assert ok is True
+        assert message == ""
+
+    def test_rejects_wrong_chinese_ten_thousand_currency(self):
+        translator = _make_minimax_reflect_translator()
+
+        ok, message = translator._validate_llm_response(
+            {"451": "但它也是一辆价值五十万美元的丰田Corolla"},
+            {"451": "but it's also a $50,000 Toyota Corolla."},
+            require_reflect=False,
+        )
+
+        assert ok is False
+        assert "50000" in message
 
     @pytest.mark.parametrize(
         ("source", "translation"),
@@ -1454,6 +1507,14 @@ class TestValidateLLmResponse:
             },
             {"297": "看看倒车影像", "298": "它从2014年推出后就消失了"},
         ) == ["298"]
+
+    def test_semantic_asr_candidate_catches_redundant_numeric_magnitude(self):
+        translator = _make_minimax_reflect_translator()
+
+        assert translator._strong_asr_semantic_candidates(
+            {"108": "This weighs about 4,700 hundred pounds."},
+            {"108": "它的重量约为四十七万磅"},
+        ) == ["108"]
 
     def test_strict_semantic_candidate_does_not_depend_on_a_second_model_vote(self, monkeypatch):
         translator = _make_minimax_reflect_translator()
@@ -1717,19 +1778,14 @@ class TestValidateLLmResponse:
         }
 
         assert (
-            translator._context_asr_variant(
-                "And the Lexus LMXX Grimina or something has it too."
-            )
+            translator._context_asr_variant("And the Lexus LMXX Grimina or something has it too.")
             == {}
         )
 
     def test_context_asr_variant_accepts_model_correction_supported_by_document_subject(self):
         translator = _make_translator()
         translator.translation_context = TranslationContext(
-            terminology=(
-                "- Grimina GR Corolla -> GRMN GR Corolla "
-                "(probable ASR correction)"
-            )
+            terminology=("- Grimina GR Corolla -> GRMN GR Corolla (probable ASR correction)")
         )
         translator._all_source_by_index = {
             1: "Today we drive the GR Corolla.",
@@ -1737,11 +1793,101 @@ class TestValidateLLmResponse:
             3: "The new Grimina GR Corolla costs more.",
         }
 
-        hint = translator._context_asr_variant(
-            "The new Grimina GR Corolla costs more."
-        )
+        hint = translator._context_asr_variant("The new Grimina GR Corolla costs more.")
 
         assert hint["canonical"] == "GRMN GR Corolla"
+
+    def test_source_for_translation_uses_confirmed_context_without_mutating_source(self):
+        translator = _make_translator()
+        translator.translation_context = TranslationContext(
+            terminology=(
+                "- The known particles explain 2% or 5% -> "
+                "The known particles explain 5% "
+                "(probable ASR correction caused by a spoken self-correction)"
+            )
+        )
+        source = "The known particles explain 2% or 5% of the universe."
+        translator._all_source_by_index = {
+            1: source,
+            2: "The remaining 95% is still unknown.",
+        }
+
+        normalized = translator._source_for_translation(source)
+
+        assert normalized == "The known particles explain 5% of the universe."
+        assert source == "The known particles explain 2% or 5% of the universe."
+
+    def test_source_for_translation_rejects_unsupported_entity_guess(self):
+        translator = _make_translator()
+        translator.translation_context = TranslationContext(
+            terminology="- Rick -> RHIC (probable ASR correction)"
+        )
+        translator._all_source_by_index = {1: "Rick is nearby."}
+
+        assert translator._source_for_translation("Rick is nearby.") == "Rick is nearby."
+
+    def test_context_mapping_rejects_translated_display_target_as_source_correction(self):
+        translator = _make_translator()
+        translator.translation_context = TranslationContext(
+            terminology=(
+                "- EPIC detector -> EPIC探测器 "
+                "(probable ASR correction: context describes the detector)"
+            )
+        )
+
+        assert translator._source_for_translation("The EPIC detector is here.") == (
+            "The EPIC detector is here."
+        )
+
+    def test_preserved_tokens_rejects_dropped_spelled_number_fact(self):
+        translator = _make_translator()
+
+        valid, error = translator._validate_llm_response(
+            {"1": "事实上 AGS非常成功 而且至今仍在使用"},
+            {"1": "AGS was so successful that three Nobel Prizes were awarded."},
+        )
+
+        assert valid is False
+        assert "1:three" in error
+
+    def test_preserved_tokens_accepts_chinese_spelled_number_fact(self):
+        translator = _make_translator()
+
+        valid, error = translator._validate_llm_response(
+            {"1": "AGS的成果催生了三项诺贝尔奖"},
+            {"1": "AGS was so successful that three Nobel Prizes were awarded."},
+        )
+
+        assert valid is True, error
+
+    def test_spelled_number_fact_guard_ignores_fractional_phrase(self):
+        translator = _make_translator()
+
+        valid, error = translator._validate_llm_response(
+            {"1": "面积约相当于6.5个美式足球场"},
+            {"1": "It is approximately six and a half American football fields."},
+        )
+
+        assert valid is True, error
+
+    def test_context_asr_variant_parses_nested_note_from_cached_context(self):
+        translator = _make_translator()
+        translator.translation_context = TranslationContext(
+            terminology=(
+                "- Infinity -> 英菲尼迪 (Probable ASR correction: 'Infinity' "
+                "should be 'Infiniti' (brand name).)"
+            )
+        )
+        translator._all_source_by_index = {
+            1: "Today we drive the Infiniti QX65.",
+            2: "This is your Infinity QX65.",
+        }
+
+        hint = translator._context_asr_variant("This is your Infinity QX65.")
+
+        assert hint["canonical"] == "Infiniti"
+        assert hint["normalized_source"] == "This is your Infiniti QX65."
+        assert translator._validate_alignment_asr_hint("这是你的英菲尼迪QX65", hint) == ""
 
     def test_alignment_asr_hint_prefers_grmn_over_an_unrelated_document_model(self):
         translator = _make_translator()
@@ -1873,9 +2019,7 @@ class TestValidateLLmResponse:
             ),
         ],
     )
-    def test_validator_handles_contextual_driving_expressions(
-        self, source, translation, valid
-    ):
+    def test_validator_handles_contextual_driving_expressions(self, source, translation, valid):
         translator = _make_translator()
 
         ok, _message = translator._validate_llm_response(
@@ -1918,9 +2062,7 @@ class TestValidateLLmResponse:
             ("It has a Marizzo-style spoiler.", "Morizo"),
         ],
     )
-    def test_alignment_asr_hint_normalizes_confirmed_automotive_names(
-        self, source, canonical
-    ):
+    def test_alignment_asr_hint_normalizes_confirmed_automotive_names(self, source, canonical):
         translator = _make_translator()
 
         hint = translator._alignment_asr_hint(source, "", "")
@@ -1986,9 +2128,7 @@ class TestValidateLLmResponse:
             "We feel it here in this 26 GR Cruel.",
         ],
     )
-    def test_alignment_asr_hint_reconciles_close_model_variant_with_repeated_subject(
-        self, source
-    ):
+    def test_alignment_asr_hint_reconciles_close_model_variant_with_repeated_subject(self, source):
         translator = _make_translator()
         translator.custom_prompt = "2026 Toyota GR Corolla real-world review"
         translator._all_source_by_index = {
@@ -2000,10 +2140,7 @@ class TestValidateLLmResponse:
 
         assert hint["kind"] == "document_repeated_model_variant"
         assert "GR Corolla" in hint["normalized_source"]
-        assert (
-            translator._validate_alignment_asr_hint("这辆GR Corolla", hint)
-            == ""
-        )
+        assert translator._validate_alignment_asr_hint("这辆GR Corolla", hint) == ""
         assert "canonical" in translator._validate_alignment_asr_hint("这辆车", hint)
 
     def test_document_model_variant_reconciles_short_trim_suffix(self):
@@ -2064,9 +2201,7 @@ class TestValidateLLmResponse:
         translator = _make_translator()
         translator.custom_prompt = "2026 Toyota GR Corolla review"
         translator.translation_context = TranslationContext(
-            terminology=(
-                "- GR Cruel -> GR Corolla (probable ASR correction)"
-            )
+            terminology=("- GR Cruel -> GR Corolla (probable ASR correction)")
         )
         translator._all_source_by_index = {
             1: "Today we drive the GR Corolla.",
@@ -2652,6 +2787,8 @@ class TestValidateLLmResponse:
         assert t._agent_loop("prompt", {"1": "hello"}) == {"1": {"native_translation": "你好"}}
         assert [call["reasoning_mode"] for call in calls] == ["disabled"]
         assert [call["max_output_tokens"] for call in calls] == [4096]
+        assert "Perform the draft and audit internally" in calls[0]["messages"][0]["content"]
+        assert '"initial_translation"' not in calls[0]["messages"][0]["content"]
 
     def test_reflect_validation_accepts_plain_final_translation_values(self):
         translator = _make_translator(is_reflect=True)
@@ -2664,9 +2801,7 @@ class TestValidateLLmResponse:
         assert ok is True
         assert message == ""
 
-    def test_deepseek_v4_reflect_agent_keeps_native_reasoning_disabled(
-        self, monkeypatch
-    ):
+    def test_deepseek_v4_reflect_agent_keeps_native_reasoning_disabled(self, monkeypatch):
         translator = _make_translator(is_reflect=True)
         translator.model = "deepseek-v4-flash"
         calls = []
@@ -2690,10 +2825,7 @@ class TestValidateLLmResponse:
         translator = _make_translator(is_reflect=True)
         translator.model = "deepseek-v4-flash"
         source = {str(index): f"source {index}" for index in range(1, 21)}
-        response = {
-            str(index): {"native_translation": f"译文{index}"}
-            for index in range(1, 21)
-        }
+        response = {str(index): {"native_translation": f"译文{index}"} for index in range(1, 21)}
         calls = []
 
         def fake_call_llm(**kwargs):
@@ -2706,9 +2838,7 @@ class TestValidateLLmResponse:
         assert [call["reasoning_mode"] for call in calls] == ["disabled"]
         assert [call["max_output_tokens"] for call in calls] == [4096]
 
-    def test_deepseek_v4_agent_never_enables_reasoning_for_format_retry(
-        self, monkeypatch
-    ):
+    def test_deepseek_v4_agent_never_enables_reasoning_for_format_retry(self, monkeypatch):
         translator = _make_translator(is_reflect=True)
         translator.model = "deepseek-v4-flash"
         responses = iter(
@@ -2752,6 +2882,19 @@ class TestValidateLLmResponse:
         with pytest.raises(RuntimeError, match="Single item translation failed"):
             t._translate_chunk_single([SubtitleProcessData(index=1, original_text="hello")])
         assert len(calls) == t.SINGLE_FALLBACK_MAX_ATTEMPTS
+
+    def test_single_fallback_accepts_language_neutral_numeric_reply(self, monkeypatch):
+        t = _make_translator()
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm",
+            lambda **_kwargs: _text_response("100%"),
+        )
+
+        result = t._translate_chunk_single(
+            [SubtitleProcessData(index=637, original_text="100%.")]
+        )
+
+        assert result[0].translated_text == "100%"
 
     def test_single_fallback_retries_invalid_output_and_keeps_valid_result(self, monkeypatch):
         t = _make_translator()
@@ -3002,8 +3145,7 @@ class TestValidateLLmResponse:
             for index in range(1, 21)
         ]
         translated = {
-            item.index: replace(item, translated_text=f"译文{item.index}")
-            for item in source
+            item.index: replace(item, translated_text=f"译文{item.index}") for item in source
         }
 
         windows = t._pending_alignment_repair_windows(source, translated, [10])
@@ -3353,10 +3495,13 @@ class TestValidateLLmResponse:
         assert LLMTranslator._chinese_boundary_signal(left, right) == expected_signal
 
     def test_chinese_boundary_signal_trims_chinese_ellipsis(self):
-        assert LLMTranslator._chinese_boundary_signal(
-            "就像它会让这台车变得……",
-            "比现在还要出色得多",
-        ) == "unfinished Chinese grammatical structure"
+        assert (
+            LLMTranslator._chinese_boundary_signal(
+                "就像它会让这台车变得……",
+                "比现在还要出色得多",
+            )
+            == "unfinished Chinese grammatical structure"
+        )
 
     def test_deterministic_fallback_repairs_percentage_use_case_pair(self):
         source = [
@@ -3383,6 +3528,60 @@ class TestValidateLLmResponse:
         assert [item.translated_text for item in repaired] == [
             "我觉得在90%的使用场景里",
             "这套转向系统都更好用 因为响应更快了",
+        ]
+
+    def test_deterministic_fallback_repairs_copula_and_additive_connector(self):
+        source = [
+            SubtitleProcessData(
+                index=510,
+                original_text="or send you flying into the ditch or something. It is just",
+            ),
+            SubtitleProcessData(
+                index=511,
+                original_text="arrow straight when you get on it. And then",
+            ),
+            SubtitleProcessData(
+                index=512,
+                original_text="the gears aren't so long that you can't go through them all.",
+            ),
+        ]
+        current = [
+            replace(source[0], translated_text="或者把你甩进沟里之类的 它就是"),
+            replace(source[1], translated_text="一踩油门就笔直向前 而且"),
+            replace(source[2], translated_text="挡位也不是那么长 让你没法全过一遍"),
+        ]
+
+        repaired = LLMTranslator._deterministic_chinese_fluency_fallback(source, current)
+
+        assert repaired is not None
+        assert [item.translated_text for item in repaired] == [
+            "或者把你甩进沟里之类的",
+            "一踩油门就笔直向前",
+            "挡位也不是那么长 让你没法全过一遍",
+        ]
+
+    def test_deterministic_fallback_moves_adversative_before_discourse_filler(self):
+        source = [
+            SubtitleProcessData(
+                index=565,
+                original_text="is going to be the best idea but",
+            ),
+            SubtitleProcessData(
+                index=566,
+                original_text="well we'll give it a shot I guess",
+            ),
+        ]
+        current = [
+            replace(source[0], translated_text="是不是最好的主意 但是"),
+            replace(source[1], translated_text="好吧 我想我们就试试看吧"),
+        ]
+
+        repaired = LLMTranslator._deterministic_chinese_fluency_fallback(source, current)
+
+        assert repaired is not None
+        assert [item.translated_text for item in repaired] == [
+            "是不是最好的主意",
+            "不过 我想我们就试试看吧",
         ]
 
     def test_deterministic_fallback_repairs_cross_speaker_comparison(self):
@@ -3472,10 +3671,7 @@ class TestValidateLLmResponse:
             SubtitleProcessData(index=index, original_text=text)
             for index, text in enumerate(source_texts, 1)
         ]
-        current = [
-            replace(item, translated_text=text)
-            for item, text in zip(source, current_texts)
-        ]
+        current = [replace(item, translated_text=text) for item, text in zip(source, current_texts)]
 
         repaired = LLMTranslator._deterministic_chinese_fluency_fallback(
             source,
@@ -3583,7 +3779,11 @@ class TestValidateLLmResponse:
                     "But I think Ong's larger point that",
                 ],
                 ["显然 在20世纪30年代", "当这项研究进行时", "但Ong的观点是"],
-                ["当然 这项研究开展于20世纪30年代", "当时的实验标准与今天并不完全相同", "但Ong的观点是"],
+                [
+                    "当然 这项研究开展于20世纪30年代",
+                    "当时的实验标准与今天并不完全相同",
+                    "但Ong的观点是",
+                ],
             ),
             (
                 [
@@ -3591,8 +3791,16 @@ class TestValidateLLmResponse:
                     "Literate cultures value sustained linear argumentation with evidence",
                     "and counterpoints, does stand.",
                 ],
-                ["但我认为Ong更宏观的观点 即", "文字文化重视持续论证和证据", "和反驳观点 这一点成立"],
-                ["但我认为 Ong 更宏观的观点仍然成立", "文字文化重视持续的线性论证和证据", "也重视对不同观点的反驳"],
+                [
+                    "但我认为Ong更宏观的观点 即",
+                    "文字文化重视持续论证和证据",
+                    "和反驳观点 这一点成立",
+                ],
+                [
+                    "但我认为 Ong 更宏观的观点仍然成立",
+                    "文字文化重视持续的线性论证和证据",
+                    "也重视对不同观点的反驳",
+                ],
             ),
         ],
     )
@@ -3644,7 +3852,12 @@ class TestValidateLLmResponse:
                     "but I think that, you know,",
                     "it wasn't something that was specific to text that allowed for revolutions.",
                 ],
-                ["关于这个问题 我得先说明", "我在报道中没有直接追问这一点", "但我的判断是", "促成革命的并不是文字本身"],
+                [
+                    "关于这个问题 我得先说明",
+                    "我在报道中没有直接追问这一点",
+                    "但我的判断是",
+                    "促成革命的并不是文字本身",
+                ],
             ),
             (
                 [
@@ -3652,7 +3865,11 @@ class TestValidateLLmResponse:
                     "and that's always destabilizing and uncomfortable",
                     "to people who previously had a monopoly on the ability to share information",
                 ],
-                ["这会让更多新的声音进入公共讨论", "这种变化总会让既得利益者感到不安", "尤其是那些原本垄断信息传播的人"],
+                [
+                    "这会让更多新的声音进入公共讨论",
+                    "这种变化总会让既得利益者感到不安",
+                    "尤其是那些原本垄断信息传播的人",
+                ],
             ),
             (
                 [
@@ -3685,9 +3902,7 @@ class TestValidateLLmResponse:
             ),
             SubtitleProcessData(
                 index=361,
-                original_text=(
-                    "So much more excellent than it already is and don't get me wrong."
-                ),
+                original_text=("So much more excellent than it already is and don't get me wrong."),
             ),
         ]
         current = [
@@ -3753,8 +3968,7 @@ class TestValidateLLmResponse:
             replace(
                 source[0],
                 translated_text=(
-                    "这车搭载了丰田的IMT智能手动变速箱 "
-                    "其实就是他们花哨的说法 指的是降挡"
+                    "这车搭载了丰田的IMT智能手动变速箱 其实就是他们花哨的说法 指的是降挡"
                 ),
             ),
             replace(
@@ -3801,9 +4015,7 @@ class TestValidateLLmResponse:
         source = [
             SubtitleProcessData(
                 index=98,
-                original_text=(
-                    "and I don't think you could put one unless you just sort of set"
-                ),
+                original_text=("and I don't think you could put one unless you just sort of set"),
             ),
             SubtitleProcessData(
                 index=99,
@@ -4164,7 +4376,7 @@ class TestValidateLLmResponse:
         translator._rewrite_chinese_fluency_window(source, current)
 
         assert captured["reasoning_mode"] == "enabled"
-        assert captured["max_output_tokens"] == 8192
+        assert captured["max_output_tokens"] == 6144
         assert captured["reasoning_effort"] == "low"
         user_payload = json.loads(captured["messages"][1]["content"])
         assert user_payload["readonly_context"] == {
@@ -4172,9 +4384,7 @@ class TestValidateLLmResponse:
             "next_source": "Later context.",
         }
 
-    def test_deepseek_fluency_rewrite_skips_thinking_for_routine_coordination(
-        self, monkeypatch
-    ):
+    def test_deepseek_fluency_rewrite_skips_thinking_for_routine_coordination(self, monkeypatch):
         translator = _make_translator(is_reflect=True)
         translator.model = "deepseek-v4-flash"
         source = [
@@ -4189,9 +4399,7 @@ class TestValidateLLmResponse:
 
         def fake_call(**kwargs):
             captured.update(kwargs)
-            return _llm_response(
-                {"translations": {"1": "头部空间很充裕", "2": "腿部空间也很宽敞"}}
-            )
+            return _llm_response({"translations": {"1": "头部空间很充裕", "2": "腿部空间也很宽敞"}})
 
         monkeypatch.setattr("subforge.core.translate.llm_translator.call_llm", fake_call)
 
@@ -4222,6 +4430,7 @@ class TestValidateLLmResponse:
         assert translator._request_chinese_fluency_flags([1], source, translated) == [1]
         assert captured["reasoning_mode"] == "disabled"
         assert captured["max_output_tokens"] == 4096
+        assert "material noun-list subject" in captured["messages"][0]["content"]
 
     def test_chinese_window_fidelity_accepts_complete_local_reordering(self, monkeypatch):
         translator = _make_translator(is_reflect=True)
@@ -4245,6 +4454,7 @@ class TestValidateLLmResponse:
 
         assert captured["reasoning_mode"] == "disabled"
         assert captured["max_output_tokens"] == 2048
+        assert "material coordinated noun subject" in captured["messages"][0]["content"]
 
     def test_chinese_window_fidelity_rejects_missing_meaning(self, monkeypatch):
         translator = _make_translator(is_reflect=True)
@@ -4262,6 +4472,56 @@ class TestValidateLLmResponse:
         )
 
         with pytest.raises(ValueError, match="390磅英尺扭矩"):
+            translator._validate_chinese_window_fidelity(source, repaired)
+
+    def test_fluency_repair_uses_window_fidelity_for_minimal_reordering(self, monkeypatch):
+        translator = _make_translator(is_reflect=True)
+        source = [
+            SubtitleProcessData(index=1, original_text="This matters"),
+            SubtitleProcessData(index=2, original_text="when people choose repeatedly."),
+        ]
+        current = [
+            replace(source[0], translated_text="这件事很重要"),
+            replace(source[1], translated_text="当人们反复选择时"),
+        ]
+        repaired = [
+            replace(source[0], translated_text="当人们反复作出选择时"),
+            replace(source[1], translated_text="这件事就很重要"),
+        ]
+        calls = []
+
+        def validate_response(*_args, **kwargs):
+            calls.append(kwargs)
+            return True, ""
+
+        monkeypatch.setattr(translator, "_validate_llm_response", validate_response)
+        monkeypatch.setattr(translator, "_request_chinese_fluency_flags", lambda *_args: [])
+        monkeypatch.setattr(translator, "_validate_chinese_window_fidelity", lambda *_args: None)
+
+        translator._validate_chinese_fluency_repair(source, current, repaired)
+
+        assert calls == [
+            {
+                "require_reflect": False,
+                "check_adjacent_repetition": True,
+            }
+        ]
+
+    def test_window_fidelity_rejects_reversed_effort_contrast(self):
+        translator = _make_translator(is_reflect=True)
+        source = [
+            SubtitleProcessData(index=1, original_text="Reading and writing are not something"),
+            SubtitleProcessData(
+                index=2,
+                original_text="we can continue without effort in the same way as speaking is.",
+            ),
+        ]
+        repaired = [
+            replace(source[0], translated_text="阅读和写作不一样"),
+            replace(source[1], translated_text="像说话那样需要付出努力"),
+        ]
+
+        with pytest.raises(ValueError, match="reversed the effort contrast"):
             translator._validate_chinese_window_fidelity(source, repaired)
 
     def test_chinese_fluency_candidates_stop_at_speaker_changes(self):
@@ -4344,27 +4604,83 @@ class TestValidateLLmResponse:
         monkeypatch.setattr(t, "_request_chinese_fluency_flags", flags)
         monkeypatch.setattr(t, "_request_alignment_flags", lambda *_args: [])
         rewrite_calls = []
+        fresh_calls = []
+        broken = [
+            replace(source[0], translated_text="这辆座椅仍然非常"),
+            replace(source[1], translated_text="舒适平稳"),
+        ]
         monkeypatch.setattr(
             t,
             "_rewrite_chinese_fluency_window",
             lambda *_args, **kwargs: rewrite_calls.append(kwargs.get("feedback", ""))
-            or [
-                replace(source[0], translated_text="这辆座椅仍然非常"),
-                replace(source[1], translated_text="舒适平稳"),
-            ],
+            or broken,
+        )
+        monkeypatch.setattr(
+            t,
+            "_rewrite_chinese_fluency_window_fresh",
+            lambda *_args, **kwargs: fresh_calls.append(kwargs.get("feedback", ""))
+            or broken,
         )
 
         result = t._finalize_translated_list(source, translated)
 
         assert audit_calls == 1
-        assert len(rewrite_calls) == t.MAX_STEPS
-        assert "structural boundary signals" in rewrite_calls[-1]
+        assert len(rewrite_calls) == t.CHINESE_FLUENCY_ANCHORED_MAX_ATTEMPTS
+        assert len(fresh_calls) == t.CHINESE_FLUENCY_FRESH_MAX_ATTEMPTS
+        assert fresh_calls[-1] == ""
         assert [item.translated_text for item in result] == [
             "这是一个非常",
             "舒适的座椅",
         ]
 
-    def test_fluency_repair_reaudits_source_driven_boundary(self, monkeypatch):
+    def test_confirmed_semantic_retry_uses_reasoning_only_on_first_attempt(
+        self, monkeypatch
+    ):
+        translator = _make_translator(is_reflect=True)
+        translator.model = "deepseek-v4-flash"
+        source = [
+            SubtitleProcessData(index=1, original_text="Reading is not something we could"),
+            SubtitleProcessData(index=2, original_text="expect to continue without effort."),
+        ]
+        current = [
+            replace(source[0], translated_text="阅读并不是我们能够"),
+            replace(source[1], translated_text="不费力气继续的事情"),
+        ]
+        reasoning_overrides = []
+        fresh_reasoning = []
+
+        def rewrite(_source, _current, **kwargs):
+            reasoning_overrides.append(kwargs["reasoning_override"])
+            return current
+
+        monkeypatch.setattr(translator, "_rewrite_chinese_fluency_window", rewrite)
+        monkeypatch.setattr(
+            translator,
+            "_rewrite_chinese_fluency_window_fresh",
+            lambda *_args, **kwargs: fresh_reasoning.append(kwargs.get("reasoning", False))
+            or current,
+        )
+        monkeypatch.setattr(
+            translator,
+            "_validate_chinese_fluency_repair",
+            lambda *_args: (_ for _ in ()).throw(
+                ValueError("fluency repair left structural boundary signals")
+            ),
+        )
+
+        _window, repaired, error = translator._repair_chinese_fluency_window_with_retries(
+            source,
+            current,
+        )
+
+        assert repaired is None
+        assert error is not None
+        assert fresh_reasoning == [True, False]
+        assert reasoning_overrides == [False]
+
+    def test_fluency_repair_uses_fidelity_as_final_soft_boundary_arbiter(
+        self, monkeypatch
+    ):
         translator = _make_minimax_reflect_translator()
         source = [
             SubtitleProcessData(
@@ -4377,15 +4693,23 @@ class TestValidateLLmResponse:
             replace(source[0], translated_text="判断它是不是V8"),
             replace(source[1], translated_text="最简单的方法是看排气管口"),
         ]
+        audit_calls = []
+        fidelity_calls = []
         monkeypatch.setattr(
             translator,
             "_request_chinese_fluency_flags",
-            lambda indices, *_args: list(indices),
+            lambda *_args: audit_calls.append(True) or [1],
         )
-        monkeypatch.setattr(translator, "_validate_chinese_window_fidelity", lambda *_args: None)
+        monkeypatch.setattr(
+            translator,
+            "_validate_chinese_window_fidelity",
+            lambda *_args: fidelity_calls.append(True),
+        )
 
-        with pytest.raises(ValueError, match="confirmed soft boundary signals"):
-            translator._validate_chinese_fluency_repair(source, current, current)
+        translator._validate_chinese_fluency_repair(source, current, current)
+
+        assert audit_calls == []
+        assert fidelity_calls == [True]
 
     def test_single_fallback_strips_reasoning_and_sends_neighbor_context(self, monkeypatch):
         t = _make_translator()
@@ -4468,6 +4792,30 @@ class TestValidateLLmResponse:
         assert "2026" in msg
         assert "350" in msg
 
+    def test_allows_sentence_initial_uppercase_interjection_to_be_translated(self):
+        t = _make_translator()
+
+        ok, msg = t._validate_llm_response(
+            {"12": "好 我现在好奇了"},
+            {"12": "OK, I'm curious now."},
+            require_reflect=False,
+        )
+
+        assert ok is True
+        assert msg == ""
+
+    def test_still_rejects_dropped_technical_acronym(self):
+        t = _make_translator()
+
+        ok, msg = t._validate_llm_response(
+            {"12": "这台对撞机已经投入运行"},
+            {"12": "The LHC is now operational."},
+            require_reflect=False,
+        )
+
+        assert ok is False
+        assert "LHC" in msg
+
     def test_allows_exact_chinese_ten_thousand_number_equivalent(self):
         t = _make_translator()
 
@@ -4489,6 +4837,54 @@ class TestValidateLLmResponse:
 
         assert ok is True
         assert msg == ""
+
+    def test_allows_natural_chinese_age_decade_equivalent(self):
+        t = _make_translator()
+
+        ok, msg = t._validate_llm_response(
+            {"598": "她二十多岁的女儿因一种罕见疾病去世了"},
+            {"598": "her daughter in her 20s passed away from a rare disease."},
+            require_reflect=False,
+        )
+
+        assert ok is True
+        assert msg == ""
+
+    def test_age_decade_equivalent_does_not_relax_historical_decade(self):
+        t = _make_translator()
+
+        ok, msg = t._validate_llm_response(
+            {"598": "这件事发生在二十多岁时"},
+            {"598": "This happened in the 1920s."},
+            require_reflect=False,
+        )
+
+        assert ok is False
+        assert "1920s" in msg
+
+    def test_allows_standalone_100_percent_as_affirmative_reply(self):
+        t = _make_translator()
+
+        ok, msg = t._validate_llm_response(
+            {"637": "完全如此"},
+            {"637": "100%."},
+            require_reflect=False,
+        )
+
+        assert ok is True
+        assert msg == ""
+
+    def test_standalone_percentage_equivalent_does_not_relax_quantity_in_sentence(self):
+        t = _make_translator()
+
+        ok, msg = t._validate_llm_response(
+            {"637": "性能提升非常明显"},
+            {"637": "Performance improved by 100%."},
+            require_reflect=False,
+        )
+
+        assert ok is False
+        assert "100" in msg
 
     def test_rejects_wrong_chinese_spoken_magnitude(self):
         t = _make_translator()
@@ -4520,6 +4916,69 @@ class TestValidateLLmResponse:
         ok, msg = t._validate_llm_response(resp, inp)
 
         assert ok is True
+
+    @pytest.mark.parametrize(
+        ("source", "translation"),
+        [
+            (
+                "It works like GM's Super Cruise or Ford's Blue Cruise.",
+                "它的工作方式类似通用汽车的Super Cruise或福特的Blue Cruise",
+            ),
+            (
+                "Steering assist is limited while the HD map is under maintenance.",
+                "高清地图维护期间 转向辅助功能受限",
+            ),
+        ],
+    )
+    def test_allows_standard_chinese_equivalents_for_common_acronyms(
+        self, source, translation
+    ):
+        t = _make_translator()
+
+        ok, msg = t._validate_llm_response({"0": translation}, {"0": source})
+
+        assert ok is True
+        assert msg == ""
+
+    def test_rejects_literal_you_know_after_completed_sentence(self):
+        t = _make_translator()
+
+        ok, msg = t._validate_llm_response(
+            {"0": "这是一套很好的音响系统 你知道"},
+            {"0": "It's a very good sound system. You know,"},
+        )
+
+        assert ok is False
+        assert "speech filler" in msg
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "But you know I like to compare it with a BMW X6.",
+            "They still have very light and you know luxurious steering.",
+        ],
+    )
+    def test_rejects_literal_you_know_inside_discourse_frame(self, source):
+        t = _make_translator()
+
+        ok, msg = t._validate_llm_response(
+            {"0": "但你知道 这套转向很有豪华感"},
+            {"0": source},
+        )
+
+        assert ok is False
+        assert "speech filler" in msg
+
+    def test_allows_semantic_you_know_predicate(self):
+        t = _make_translator()
+
+        ok, msg = t._validate_llm_response(
+            {"0": "你知道答案吗"},
+            {"0": "Do you know the answer?"},
+        )
+
+        assert ok is True
+        assert msg == ""
 
     def test_allows_jfk_translated_as_kennedy(self):
         t = _make_translator()
@@ -4619,17 +5078,66 @@ class TestValidateLLmResponse:
         assert ok is True
         assert message == ""
 
-    def test_chinese_style_prompt_explicitly_avoids_resultative_degree_calque(self):
+    def test_chinese_style_prompt_selects_only_relevant_guidance(self):
         t = _make_translator()
 
-        assert "这就是安静模式下它有多安静" in t._target_language_style_rules()
-        assert "在90%的使用场景里" in t._target_language_style_rules()
-        assert "福特推出了720马力版本" in t._target_language_style_rules()
-        assert "1,000 to 2,000 RPM" in t._target_language_style_rules()
-        assert "车身结构胶" in t._target_language_style_rules()
+        generic = t._target_language_style_rules(["This is a general interview."])
+        automotive = t._target_language_style_rules(
+            ["That is how quiet this truck gets at 2,000 RPM."]
+        )
+        reading = t._target_language_style_rules(
+            ["What would it take to become literate again?"]
+        )
+
+        assert "English degree constructions" not in generic
+        assert "automotive Chinese" not in generic
+        assert "English degree constructions" in automotive
+        assert "automotive Chinese" in automotive
+        assert "literacy from general culture" in reading
+        assert "automotive Chinese" not in reading
+        assert "Map the complete source clause" in generic
+        assert "spoken self-corrections" in generic
+        assert "contrastive references" in generic
+        assert "same Chinese head noun twice" in generic
+
+        pragmatic = t._target_language_style_rules(
+            [
+                "Talk about a lesson in form.",
+                "I don't know if I think no boundaries are good.",
+                "The word is synonymous with frustration.",
+            ]
+        )
+        assert "actual stance and polarity" in pragmatic
+        assert "emphatic example marker" in pragmatic
+        assert "让人联想到" in pragmatic
 
         t.target_language = TargetLanguage.ENGLISH
-        assert t._target_language_style_rules() == ""
+        assert t._target_language_style_rules(["vehicle"]) == ""
+
+    def test_chinese_boundary_signal_detects_split_copular_result(self):
+        signal = LLMTranslator._chinese_boundary_signal(
+            "或者把你甩进沟里之类的 它就是",
+            "一踩油门就笔直往前冲",
+        )
+
+        assert signal == "copular frame is separated from its result"
+
+    def test_single_and_multispeaker_batch_prompts_are_isolated(self):
+        translator = _make_translator(is_reflect=True)
+
+        assert translator._batch_translation_prompt_name(reflect=False) == "translate/standard"
+        assert translator._batch_translation_prompt_name(reflect=True) == "translate/reflect"
+
+        translator._all_speaker_by_index = {1: "speaker-1", 2: "speaker-2"}
+
+        assert (
+            translator._batch_translation_prompt_name(reflect=False)
+            == "translate/standard_multi"
+        )
+        assert (
+            translator._batch_translation_prompt_name(reflect=True)
+            == "translate/reflect_multi"
+        )
 
     def test_rejects_lost_elliptical_percentage_in_vehicle_tuning(self):
         translator = _make_translator()
@@ -4826,7 +5334,7 @@ class TestValidateLLmResponse:
         assert ok is False
         assert "1.8万到2万美元" in message
 
-    def test_pending_alignment_chunk_is_not_stable_for_recovery(self):
+    def test_pending_alignment_chunk_is_not_stable_for_cache(self):
         t = _make_minimax_reflect_translator()
         t._pending_alignment_repair_keys.update({74, 75})
 
@@ -4860,23 +5368,35 @@ class TestValidateLLmResponse:
             is True
         )
 
-    def test_pending_alignment_chunk_is_not_published_to_progress(self, monkeypatch):
+    def test_pending_alignment_chunk_is_checkpointed_but_not_cached(self, monkeypatch):
         progress = []
         t = _make_minimax_reflect_translator()
         t.use_cache = False
         t.update_callback = progress.extend
-        t._pending_alignment_repair_keys.add(74)
+        t._pending_alignment_repair_keys.add(133)
         result = [
             SubtitleProcessData(
-                index=74,
-                original_text="European influence here with this first",
-                translated_text="第一代车型受到欧洲影响",
+                index=index,
+                original_text=f"Source subtitle {index}",
+                translated_text=f"第{index}条候选译文",
             )
+            for index in range(121, 141)
         ]
         monkeypatch.setattr(t, "_translate_chunk", lambda _chunk: result)
 
         assert t._safe_translate_chunk(result) == result
-        assert progress == []
+        assert progress == result
+
+    def test_accepts_established_chinese_name_for_zf_token(self):
+        translator = _make_translator()
+
+        ok, message = translator._validate_llm_response(
+            {"91": "这辆车用的是采埃孚9速自动变速箱 具体型号是9HP"},
+            {"91": "It's actually a ZF 9-speed, a 9HP in this car."},
+        )
+
+        assert ok is True
+        assert message == ""
 
     def test_still_requires_roman_numeral_for_product_model(self):
         t = _make_translator()
@@ -4977,6 +5497,51 @@ def test_multispeaker_candidates_ignore_routine_same_speaker_continuation():
     assert multi._chinese_fluency_candidates(source, translated) == []
 
 
+def test_multispeaker_candidate_repairs_auxiliary_participle_boundary_without_reasoning():
+    source, translated = _dialogue_items(
+        "and college graduates and women have historically",
+        "been the groups that read the most and declined as well.",
+        "和大学毕业生以及女性历来",
+        "是读书最多的群体 但他们也经历了大幅下降",
+    )
+    translator = _make_translator(is_reflect=True)
+    translator.model = "deepseek-v4-flash"
+    translator._all_speaker_by_index = {1: "S1", 2: "S1", 3: "S2"}
+
+    assert translator._chinese_fluency_candidates(source, translated) == [1]
+    assert not translator._should_reason_about_chinese_fluency_window(
+        source,
+        list(translated.values()),
+    )
+    assert "minimum collective reference" in repair_mode_guidance(True)
+    assert "Map the complete source clause" in repair_mode_guidance(True)
+    assert "spoken self-correction" in repair_mode_guidance(False)
+
+
+def test_multispeaker_candidates_audit_visible_soft_chinese_break():
+    source, translated = _dialogue_items(
+        "Reading and writing are not something that we could expect to always",
+        "continue without effort in the same way as speaking.",
+        "阅读和写作并不是我们可以指望它",
+        "像说话一样不费力气就能一直延续下去的",
+    )
+    translator = _make_translator(is_reflect=True)
+    translator._all_speaker_by_index = {1: "S1", 2: "S1", 3: "S2"}
+
+    assert translator._chinese_fluency_candidates(source, translated) == [1]
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "signal"),
+    [
+        ("我真正想表达的重点", "是我们反复做出的选择", "possible copular bridge"),
+        ("人们可以作出任何", "价值判断", "unfinished Chinese grammatical structure"),
+    ],
+)
+def test_chinese_boundary_signal_catches_general_incomplete_frames(left, right, signal):
+    assert LLMTranslator._chinese_boundary_signal(left, right) == signal
+
+
 def test_multispeaker_candidate_keeps_confirmed_chinese_structure_break():
     source, translated = _dialogue_items(
         "In many ways, it's actually,",
@@ -4993,6 +5558,56 @@ def test_multispeaker_candidate_keeps_confirmed_chinese_structure_break():
         source,
         list(translated.values()),
     )
+
+
+def test_multispeaker_candidate_keeps_coordinated_subject_predicate_boundary():
+    source, translated = _dialogue_items(
+        "I note in the piece that retirees and college graduates and women",
+        "have historically been the groups that read the most and declined as well.",
+        "历来是阅读最多的群体 而他们的阅读量也大幅下降",
+        "所以这并不局限于某一个群体",
+    )
+    translator = _make_translator(is_reflect=True)
+    translator.model = "deepseek-v4-flash"
+    translator._all_speaker_by_index = {1: "S1", 2: "S1", 3: "S2"}
+
+    assert translator._chinese_fluency_candidates(source, translated) == [1]
+    assert translator._should_reason_about_chinese_fluency_window(
+        source,
+        list(translated.values()),
+    )
+
+
+def test_correct_reported_topic_handoff_skips_audit_and_rewrite(
+    monkeypatch,
+):
+    source, translated = _dialogue_items(
+        "I note in the piece that retirees and college graduates and women",
+        "have historically been the groups that read the most and declined as well.",
+        "我在文章中提到 退休人士 大学毕业生和女性",
+        "历来是阅读最多的群体 他们的阅读量也同样大幅下降",
+    )
+    translator = _make_translator(is_reflect=True)
+    translator._all_source_by_index = {item.index: item.original_text for item in source}
+    translator._all_speaker_by_index = {1: "S1", 2: "S1", 3: "S2"}
+    audit_calls = []
+
+    def audit(indices, *_args):
+        audit_calls.append(indices)
+        pytest.fail("readable reported topic must not spend an audit request")
+
+    monkeypatch.setattr(translator, "_request_chinese_fluency_flags", audit)
+    monkeypatch.setattr(
+        translator,
+        "_repair_chinese_fluency_window_with_retries",
+        lambda *_args, **_kwargs: pytest.fail("unconfirmed boundary must not be rewritten"),
+    )
+
+    translator._repair_chinese_boundary_fluency(source, translated)
+
+    assert audit_calls == []
+    assert translated[1].translated_text == "我在文章中提到 退休人士 大学毕业生和女性"
+    assert translated[2].translated_text == "历来是阅读最多的群体 他们的阅读量也同样大幅下降"
 
 
 def test_multispeaker_edited_handoff_is_audited_without_relabeling_speakers():
@@ -5042,10 +5657,13 @@ def test_multispeaker_duplicate_boundary_uses_audit_without_native_reasoning():
     translator.model = "deepseek-v4-flash"
     translator._all_speaker_by_index = {1: "S1", 2: "S1", 3: "S2"}
 
-    assert translator._chinese_boundary_signal(
-        translated[1].translated_text,
-        translated[2].translated_text,
-    ) == "possible duplicated boundary phrase"
+    assert (
+        translator._chinese_boundary_signal(
+            translated[1].translated_text,
+            translated[2].translated_text,
+        )
+        == "possible duplicated boundary phrase"
+    )
     assert translator._chinese_fluency_candidates(source, translated) == [1]
     assert not translator._should_reason_about_chinese_fluency_window(
         source,
@@ -5064,10 +5682,13 @@ def test_multispeaker_short_repeated_predicate_uses_nonthinking_audit():
     translator.model = "deepseek-v4-flash"
     translator._all_speaker_by_index = {1: "S1", 2: "S1", 3: "S2"}
 
-    assert translator._chinese_boundary_signal(
-        translated[1].translated_text,
-        translated[2].translated_text,
-    ) == "possible duplicated boundary phrase"
+    assert (
+        translator._chinese_boundary_signal(
+            translated[1].translated_text,
+            translated[2].translated_text,
+        )
+        == "possible duplicated boundary phrase"
+    )
     assert translator._chinese_fluency_candidates(source, translated) == [1]
     assert not translator._should_reason_about_chinese_fluency_window(
         source,
@@ -5097,10 +5718,13 @@ def test_chinese_boundary_signal_accepts_complete_numbered_aspect_phrase():
         "嗯 我觉得这有两方面",
         "一方面是文化传承",
     )
-    assert LLMTranslator._chinese_boundary_signal(
-        "我们关注变化的很多方面",
-        "人们开始改变习惯",
-    ) == "unfinished Chinese locative subject"
+    assert (
+        LLMTranslator._chinese_boundary_signal(
+            "我们关注变化的很多方面",
+            "人们开始改变习惯",
+        )
+        == "unfinished Chinese locative subject"
+    )
     assert not LLMTranslator._chinese_boundary_signal(
         "作为人类 我们长久以来都处于口头传统之中",
         "现在大家都在谈论《奥德赛》",
@@ -5128,10 +5752,13 @@ def test_chinese_boundary_signal_accepts_complete_numbered_aspect_phrase():
     ],
 )
 def test_chinese_boundary_signal_catches_multicue_dialogue_fragments(left, right):
-    assert LLMTranslator._chinese_boundary_signal(
-        left,
-        right,
-    ) == "unfinished Chinese grammatical structure"
+    assert (
+        LLMTranslator._chinese_boundary_signal(
+            left,
+            right,
+        )
+        == "unfinished Chinese grammatical structure"
+    )
 
 
 @pytest.mark.parametrize(
@@ -5147,9 +5774,7 @@ def test_chinese_boundary_signal_catches_multicue_dialogue_fragments(left, right
         ("而在过去", "而在过去保存资料很困难", "possible duplicated boundary phrase"),
     ],
 )
-def test_chinese_boundary_signal_catches_dialogue_readability_failures(
-    left, right, signal
-):
+def test_chinese_boundary_signal_catches_dialogue_readability_failures(left, right, signal):
     assert LLMTranslator._chinese_boundary_signal(left, right) == signal
 
 
@@ -5187,7 +5812,9 @@ def test_multispeaker_repair_prompt_is_dialogue_specific_and_compact(monkeypatch
     )
 
     prompt = captured["messages"][0]["content"]
-    assert "tightly edited speaker handoff" in prompt
+    assert "tightly edited handoff" in prompt
+    assert "Speaker values are read-only metadata" in prompt
+    assert "continuous single-speaker passage" not in prompt
     assert "Mercedes was involved" not in prompt
     assert captured["reasoning_mode"] == "disabled"
     assert [item.translated_text for item in repaired] == [
@@ -5230,7 +5857,450 @@ def test_multispeaker_repair_prompt_handles_fillers_without_changing_single_prom
     single = _make_translator(is_reflect=True)
     single._rewrite_chinese_fluency_window(source, list(translated.values()))
 
-    assert "Ignore oral fillers" in prompts[0]
-    assert "In many ways, it's actually" in prompts[0]
-    assert "Ignore oral fillers" not in prompts[1]
-    assert "Mercedes was involved" in prompts[1]
+    assert "Speaker values are read-only metadata" in prompts[0]
+    assert "continuous single-speaker passage" not in prompts[0]
+    assert "continuous single-speaker passage" in prompts[1]
+    assert "Speaker values are read-only metadata" not in prompts[1]
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "signal"),
+    [
+        (
+            "我们已经看到学校两方面都在 你知道",
+            "应对这种趋势",
+            "unfinished Chinese grammatical structure",
+        ),
+        (
+            "如果你过去几个月",
+            "过去几个月一直穿着旧T恤",
+            "possible duplicated boundary phrase",
+        ),
+        (
+            "当时不到",
+            "不到一半的人读过书",
+            "possible duplicated boundary phrase",
+        ),
+        (
+            "所以 但我确实认为",
+            "我们能从中吸取教训",
+            "stacked discourse connectives",
+        ),
+    ],
+)
+def test_chinese_boundary_signal_catches_full_audit_failures(left, right, signal):
+    assert LLMTranslator._chinese_boundary_signal(left, right) == signal
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "signal"),
+    [
+        (
+            "政治人物会把自己塑造成可信的局外人 而美国选民",
+            "几乎只凭候选人给人的印象来选择领导人",
+            "material subject may be stranded",
+        ),
+        (
+            "社交媒体算法偏爱民粹主义的",
+            "简单化、情感共鸣强的信息",
+            "coordinated modifier may be stranded",
+        ),
+    ],
+)
+def test_chinese_boundary_signal_catches_subject_and_modifier_stranding(left, right, signal):
+    assert LLMTranslator._chinese_boundary_signal(left, right) == signal
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ("还是只是在说孩子？", "还是只是在说成年人？"),
+        ("但现在 他们更多是在教学生", "应该如何阅读"),
+    ],
+)
+def test_chinese_boundary_signal_ignores_material_noun_used_as_object(left, right):
+    assert LLMTranslator._chinese_boundary_signal(left, right) == ""
+
+
+def test_single_speaker_material_subject_signal_requires_llm_confirmation(monkeypatch):
+    source, translated = _dialogue_items(
+        "Political figures portray themselves as authentic outsiders and American voters,",
+        "almost choose leaders based only on how they appear.",
+        "政治人物会把自己塑造成可信的局外人 而美国选民",
+        "几乎只凭候选人给人的印象来选择领导人",
+    )
+    translator = _make_translator(is_reflect=True)
+    translator._all_source_by_index = {item.index: item.original_text for item in source}
+    audit_calls = []
+
+    def audit(indices, *_args):
+        audit_calls.append(indices)
+        return []
+
+    monkeypatch.setattr(translator, "_request_chinese_fluency_flags", audit)
+    monkeypatch.setattr(
+        translator,
+        "_repair_chinese_fluency_window_with_retries",
+        lambda *_args, **_kwargs: pytest.fail("unconfirmed boundary must not be rewritten"),
+    )
+
+    translator._repair_chinese_boundary_fluency(source, translated)
+
+    assert audit_calls == [[1]]
+    assert translated[1].translated_text.endswith("美国选民")
+
+
+@pytest.mark.parametrize(
+    ("source", "translation", "error_fragment"),
+    [
+        (
+            "And so, you know, this matters.",
+            "所以 你知道 这很重要",
+            "speech filler",
+        ),
+        (
+            "And so, but I do think it matters.",
+            "所以但我确实认为这很重要",
+            "stacked combinations",
+        ),
+        (
+            "Almost two dozen states have banned phones.",
+            "将近二十多个州已经禁止手机",
+            "close to 24",
+        ),
+        (
+            "What would it take for us to become literate again?",
+            "怎样才能让我们重新变得有文化",
+            "restoring literacy",
+        ),
+        (
+            "We should not slide into post literacy.",
+            "我们不应该滑向后读写时代",
+            "后文字时代",
+        ),
+        (
+            "Drop us a line at thegrayareaatvox.com.",
+            "请通过 thegrayareaatvox.com 给我们留言",
+            "email address",
+        ),
+    ],
+)
+def test_rejects_low_quality_chinese_patterns_from_full_audit(
+    source,
+    translation,
+    error_fragment,
+):
+    translator = _make_translator(is_reflect=False)
+
+    valid, error = translator._validate_llm_response(
+        {"1": translation},
+        {"1": source},
+        require_reflect=False,
+    )
+
+    assert not valid
+    assert error_fragment in error
+
+
+@pytest.mark.parametrize(
+    "left",
+    [
+        "所以有趣的是 阅读和写作并不是",
+        "这当然不是美好图景 他们传播的不只是",
+        "有意思的是",
+    ],
+)
+def test_chinese_boundary_signal_catches_new_unfinished_predicates(left):
+    assert (
+        LLMTranslator._chinese_boundary_signal(left, "下一条承接谓语或宾语")
+        == "unfinished Chinese grammatical structure"
+    )
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "signal"),
+    [
+        ("学校正在做出可能进一步", "让学生减少阅读的改变", "unfinished Chinese grammatical structure"),
+        ("人们可以对此有任何价值", "判断", "unfinished Chinese grammatical structure"),
+        ("这种新的", "传播媒介也会带来取舍", "unfinished Chinese grammatical structure"),
+        ("而且这很讽刺 我写", "一篇近九千字的文章", "unfinished Chinese grammatical structure"),
+        ("所以我觉得确实如此", "阅读深刻影响了我的成长", "unfinished Chinese grammatical structure"),
+        ("印刷术发挥了重要作用 开国元勋们", "使用报纸传播主张", "material subject may be stranded"),
+    ],
+)
+def test_chinese_boundary_signal_catches_latest_full_run_failures(left, right, signal):
+    assert LLMTranslator._chinese_boundary_signal(left, right) == signal
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "signal"),
+    [
+        ("我们确实看到了", "平板电脑正在进入课堂", "possible reporting frame"),
+        ("所以我想指出的更多是", "选择会逐渐累积", "semantic frame is incomplete"),
+        ("这项报道真正想说的", "是选择会逐渐累积", "semantic frame is incomplete"),
+        ("我们看到书籍", "和文字变得更容易获取", "coordinated subject may be stranded"),
+        ("信息会通过音频传播", "而成为一种新事物", "predicate fragment starts at next subtitle"),
+        ("人们不再重视或主动获取", "那些触手可及的知识", "transitive predicate is split from its object"),
+    ],
+)
+def test_chinese_boundary_signal_catches_remaining_full_run_failures(left, right, signal):
+    assert LLMTranslator._chinese_boundary_signal(left, right) == signal
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "signal"),
+    [
+        ("但我觉得吧", "阅读深刻影响了我的成长", "vague filler-only frame"),
+        ("而且我觉得真正想说的重点并非如此", "选择会逐渐累积", "semantic frame is incomplete"),
+        ("但他确实非常适合", "而且他懂得如何传播观点", "adjective complement is missing"),
+        ("而且这篇将近九千字", "但希望读者理解", "classifier phrase is stranded"),
+        ("而是在数字时代", "同时兼顾印刷时代", "unfinished Chinese locative frame"),
+        ("是的 我认为阅读", "阅读影响了我的成长", "possible duplicated boundary phrase"),
+    ],
+)
+def test_chinese_boundary_signal_catches_final_quality_audit_failures(left, right, signal):
+    assert LLMTranslator._chinese_boundary_signal(left, right) == signal
+
+
+def test_chinese_boundary_signal_catches_semantically_duplicated_neighbor():
+    assert (
+        LLMTranslator._chinese_boundary_signal(
+            "因为这让他感觉 他在个人生活中和工作中的是同一个人",
+            "他在个人生活和工作中是同一个人",
+        )
+        == "possible duplicated boundary meaning"
+    )
+
+
+def test_chinese_boundary_signal_catches_repeated_short_locative_topic():
+    assert (
+        LLMTranslator._chinese_boundary_signal(
+            "他在个人生活中和工作中是同一个人",
+            "在工作中也是如此",
+        )
+        == "possible duplicated boundary meaning"
+    )
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "signal"),
+    [
+        ("这是一本很有趣的书 我觉得", "它挑战了基本直觉", "unfinished Chinese grammatical structure"),
+        ("你觉得在约束和障碍之间", "是否存在区别", "unfinished Chinese locative frame"),
+        ("我要长途步行 带着一个", "小婴儿在身上", "classifier phrase is stranded"),
+    ],
+)
+def test_chinese_boundary_signal_catches_general_residual_dependency(
+    left,
+    right,
+    signal,
+):
+    assert LLMTranslator._chinese_boundary_signal(left, right) == signal
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ("这么说很恰当", "我们就聊到这里"),
+        ("强迫自己使用另一种东西", "他随后改变了方法"),
+    ],
+)
+def test_chinese_boundary_signal_avoids_embedded_character_false_positives(left, right):
+    assert LLMTranslator._chinese_boundary_signal(left, right) == ""
+
+
+def test_chinese_boundary_signal_does_not_flag_short_parallel_contrast():
+    assert (
+        LLMTranslator._chinese_boundary_signal(
+            "还是只是在说孩子",
+            "还是只是在说成年人",
+        )
+        == ""
+    )
+
+
+def test_multispeaker_same_turn_audits_strong_contrast_dependency():
+    source, translated = _dialogue_items(
+        "Do you draw a meaningful distinction between constraints on the one hand",
+        "and impediments on the other?",
+        "你是否在约束一方面做出了有意义的区分",
+        "和障碍之间有明显的区别吗",
+    )
+    translator = _make_translator(is_reflect=True)
+    translator._all_speaker_by_index = {1: "S1", 2: "S1", 3: "S2"}
+
+    assert translator._chinese_fluency_candidates(source, translated) == [1]
+
+
+def test_chinese_fluency_window_expands_across_pronoun_dependency_chain():
+    translator = _make_translator(is_reflect=True)
+    source = [
+        SubtitleProcessData(index=720, original_text="These ideas are useless"),
+        SubtitleProcessData(index=721, original_text="if you do not find ways to concretize"),
+        SubtitleProcessData(index=722, original_text="them"),
+        SubtitleProcessData(index=723, original_text="in your own life so they create change."),
+    ]
+    translator._all_speaker_by_index = {item.index: "S1" for item in source}
+
+    windows = translator._chinese_fluency_windows(source, [0])
+
+    assert [[item.index for item in window] for window in windows] == [
+        [720, 721, 722, 723]
+    ]
+
+
+def test_chinese_fluency_window_expands_to_full_source_dependency_chain():
+    translator = _make_translator(is_reflect=True)
+    source = [
+        SubtitleProcessData(index=4, original_text="but that he's really well suited"),
+        SubtitleProcessData(
+            index=5,
+            original_text="and he's figured out how to get his message out in this",
+        ),
+        SubtitleProcessData(index=6, original_text="current information environment."),
+    ]
+    translator._all_speaker_by_index = {4: "S1", 5: "S1", 6: "S1"}
+
+    windows = translator._chinese_fluency_windows(source, [1])
+
+    assert [[item.index for item in window] for window in windows] == [[4, 5, 6]]
+
+
+def test_rejects_double_negative_that_reverses_source_meaning():
+    translator = _make_translator(is_reflect=False)
+
+    valid, error = translator._validate_llm_response(
+        {"1": "而且 不是不重视或不愿去获取"},
+        {"1": "And not kind of valuing or choosing to access"},
+        require_reflect=False,
+    )
+
+    assert not valid
+    assert "double negative" in error
+
+
+def test_accepts_direct_negative_valuation_translation():
+    translator = _make_translator(is_reflect=False)
+
+    valid, error = translator._validate_llm_response(
+        {"1": "而是不再重视 也不愿主动获取"},
+        {"1": "And not kind of valuing or choosing to access"},
+        require_reflect=False,
+    )
+
+    assert valid
+    assert error == ""
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("所以但我觉得这件事很重要", "不过我觉得这件事很重要"),
+        ("而且不过这并非坏事", "不过这并非坏事"),
+        ("但是所以我们需要继续", "所以我们需要继续"),
+        ("不过是的 我同意", "是的 不过 我同意"),
+        ("正常的连接词不应改变", "正常的连接词不应改变"),
+    ],
+)
+def test_normalizes_only_sentence_initial_stacked_connectives(raw, expected):
+    assert LLMTranslator._normalize_stacked_chinese_connectives(raw) == expected
+
+
+def test_normalizes_nested_reflective_translation_in_place():
+    translator = _make_translator(is_reflect=True)
+    response = {"1": {"native_translation": "所以但我仍然会阅读"}}
+
+    translator._normalize_chinese_response_connectives(response)
+
+    assert response["1"]["native_translation"] == "不过我仍然会阅读"
+
+
+def test_chinese_boundary_signal_allows_complete_degree_phrase_ending_in_some():
+    assert LLMTranslator._chinese_boundary_signal(
+        "这样学生在阅读理解上会更容易一些",
+        "所以趋势可能开始变化",
+    ) == ""
+
+
+def test_chinese_boundary_signal_catches_open_linking_predicate():
+    assert (
+        LLMTranslator._chinese_boundary_signal(
+            "所以虽然CERN可能已经成为",
+            "尽管欧洲核子研究中心因LHC而成为世界上最知名的科学组织之一",
+        )
+        == "unfinished Chinese grammatical structure"
+    )
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ("所以如果人们想要做出不同的选择", "他们应该知道这一点"),
+        ("尤利乌斯·凯撒烧毁了它 黑暗时代由此开始", "而现在学界有了新的共识"),
+        ("它们体现在我们的思维方式、国家和文化之中", "但也有人愿意放弃阅读"),
+    ],
+)
+def test_chinese_boundary_signal_avoids_complete_clauses_from_full_quality_audit(
+    left,
+    right,
+):
+    assert LLMTranslator._chinese_boundary_signal(left, right) == ""
+
+
+def test_chinese_boundary_signal_catches_stranded_growth_multiplier():
+    assert (
+        LLMTranslator._chinese_boundary_signal(
+            "我猜 至少会增长到",
+            "我们开始运行对撞机时的1.5到2倍",
+        )
+        == "numeric complement is stranded"
+    )
+
+
+def test_chinese_boundary_signal_allows_complete_growth_multiplier():
+    assert not LLMTranslator._chinese_boundary_signal(
+        "团队规模至少会增长到现在的1.5倍",
+        "之后还会继续扩大",
+    )
+
+
+def test_chinese_boundary_signal_catches_missing_consequence_predicate():
+    assert (
+        LLMTranslator._chinese_boundary_signal(
+            "事实上 这项研究非常成功 以至于三项诺贝尔奖",
+            "它至今仍在使用",
+        )
+        == "consequence predicate is missing"
+    )
+
+
+def test_chinese_boundary_signal_accepts_completed_award_predicate():
+    assert not LLMTranslator._chinese_boundary_signal(
+        "事实上 这项研究非常成功 以至于后来颁发了三项诺贝尔奖",
+        "这都得益于它 而且至今仍在使用",
+    )
+
+
+def test_chinese_boundary_signal_accepts_passive_use_before_new_subject():
+    assert not LLMTranslator._chinese_boundary_signal(
+        "这都得益于它 而且至今仍在使用",
+        "那些被送入机器的离子来自同步加速器",
+    )
+
+
+def test_style_guidance_preserves_official_name_wordplay():
+    guidance = target_language_style_rules(
+        "简体中文",
+        [
+            "No, that is not just me calling it an epic detector.",
+            "It is really what the lab named it.",
+        ],
+    )
+
+    assert "Terminology must not erase the wordplay" in guidance
+
+
+def test_normalizes_repeated_chinese_false_start_before_reporting_clause():
+    assert LLMTranslator._normalize_stacked_chinese_connectives(
+        "所以我不 我在文章里写道 我不认为这是问题"
+    ) == "我在文章里写道 我不认为这是问题"
