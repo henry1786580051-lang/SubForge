@@ -274,11 +274,13 @@ class ChunkMerger:
                         confidence=word.confidence,
                         alignment_score=word.alignment_score,
                         timing_source=word.timing_source,
+                        language_code=word.language_code,
                     )
                     for word in seg.words
                 ],
                 timestamp_granularity=seg.timestamp_granularity,
                 timing_source=seg.timing_source,
+                language_code=seg.language_code,
             )
             for seg in segments
         ]

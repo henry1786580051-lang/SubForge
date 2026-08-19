@@ -1,5 +1,60 @@
 # Changelog
 
+## v1.1.15 - 2026-08-19
+
+### Improved
+
+- Adds an opt-in hybrid-language mode for fixed-language WhisperX tasks. The selected language remains primary, while sustained foreign-language speech can be locally re-decoded and aligned with its own model.
+- Persists per-segment language metadata across SRT task boundaries so mixed English, Japanese, Korean, and other source material reaches alignment and translation validation intact.
+- Refines long-video processing into 30-minute overlapping chunks and retries only coverage-failed sections at progressively smaller sizes instead of discarding an otherwise valid transcription.
+- Adds document-level alias and lexical evidence for recurring names and technical terms, while requiring repeated support before correcting phonetic ASR variants.
+- Preserves imagery, contrast, irony, and rhetorical force with concise idiomatic Chinese; native reasoning remains limited to confirmed semantic ownership, difficult word order, and proper-name repairs.
+
+### Fixed
+
+- Fixed hour-long WhisperX jobs failing at a chunk boundary or appearing to finish the remaining video after an early single-worker failure.
+- Fixed short Japanese speech being mislabeled as Korean from isolated weak probes; language confirmation now uses sustained voiced evidence, script evidence, and local continuity.
+- Fixed forced-alignment echoes such as repeated suffix words and numeric `two/too` fragments surviving into final word-level subtitles.
+- Fixed forced alignment erasing otherwise valid native MLX word timestamps when only part of a segment lacked alignment coverage.
+- Fixed complete provisional translations being reported as failed even after document-level finalization could repair and validate every subtitle key.
+- Fixed Japanese source text being accepted as a Chinese translation merely because both scripts contain CJK characters.
+- Fixed recurring cross-cue errors involving modifiers, comparative complements, proper names, acronyms, localized units, open clauses, and adjacent semantic duplication.
+
+### Validation
+
+- Python: `1573 passed, 11 skipped`.
+- Frontend: `3 passed`; ESLint and Next.js 16.3 production build passed.
+- Ruff, Pyright (`0 errors`), whitespace validation, and VitePress production build passed.
+- Full DeepSeek V4 Flash regression: 247 bilingual cues, zero empty translations, placeholders, untranslated cues, timeline overlaps, or unstable English boundaries.
+- The full-sample source stream retained 99.87% normalized token similarity; differences were verified as duplicate ASR echoes or explicit filler removal.
+- The mounted DMG passed packaged FastAPI, FFmpeg, MLX Metal, PyTorch MPS, WhisperX, pyannote, and speaker-assignment smoke checks.
+
+### Packaging
+
+- macOS Apple Silicon: `SubForge-1.1.15-macos-arm64.dmg`.
+- Windows x64: `SubForge-1.1.15-windows-x64-setup.exe`, built and smoke-tested by GitHub Actions.
+- Whisper, forced-alignment, Community-1, ECAPA, and DeepFilterNet models remain separate on-demand downloads.
+
+## v1.1.14 - 2026-08-15
+
+### Improved
+
+- Added conservative speech-gap recovery around MLX transcription and forced alignment without globally rewriting correct timestamps.
+- Kept single-speaker and dialogue translation strategies separate while expanding general subject, modifier, complement, connector, and adjacent-duplication audits.
+- Improved complete live previews, periodic recovery snapshots, task cancellation, and automatic recovery-file loading after a failed translation.
+- Added a redesigned DMG drag-install window, duplicate build-output cleanup, and packaged MLX Metal, MPS, WhisperX, FFmpeg, and backend smoke checks.
+- Added the ChatGPT SRT final-review protocol for preserving cue keys, timelines, source text, and semantic ownership during manual review.
+
+### Validation
+
+- Python: `1405 passed`; 35 integration tests excluded by release configuration.
+- Frontend tests, Ruff, Pyright, Next.js, VitePress, and packaged macOS smoke checks passed.
+
+### Packaging
+
+- macOS Apple Silicon: `SubForge-1.1.14-macos-arm64.dmg`.
+- Windows x64: `SubForge-1.1.14-windows-x64-setup.exe`.
+
 ## v1.1.13 - 2026-08-12
 
 ### Improved

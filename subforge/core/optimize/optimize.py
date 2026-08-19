@@ -40,7 +40,8 @@ _NUMBER_WORDS = {
 def _ownership_tokens(text: str) -> List[str]:
     """Tokenize text for conservative adjacent-key ownership checks."""
     return re.findall(
-        r"[A-Za-z0-9]+(?:['’][A-Za-z0-9]+)?|[\u3400-\u9fff]",
+        r"[A-Za-z0-9]+(?:['’][A-Za-z0-9]+)?|"
+        r"[\u3040-\u30ff\u31f0-\u31ff\u3400-\u9fff\uac00-\ud7af]",
         str(text or "").lower(),
     )
 
@@ -647,6 +648,7 @@ class SubtitleOptimizer:
                 words=list(seg.words),
                 timestamp_granularity=seg.timestamp_granularity,
                 timing_source=seg.timing_source,
+                language_code=seg.language_code,
             )
             for i, seg in enumerate(original_segments, 1)
         ]

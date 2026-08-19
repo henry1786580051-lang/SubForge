@@ -51,6 +51,7 @@ def test_create_segments_preserves_translation_and_speaker_metadata():
             ],
             timestamp_granularity="sentence",
             timing_source="forced_alignment",
+            language_code="ja",
         )
     ]
 
@@ -58,12 +59,16 @@ def test_create_segments_preserves_translation_and_speaker_metadata():
         original_segments,
         {"1": "Hello."},
     )
-
+    assert result[0].language_code == "ja"
     assert result[0].text == "Hello."
     assert result[0].translated_text == "你好"
     assert result[0].speaker_id == "Speaker 1"
     assert result[0].timing_source == "forced_alignment"
     assert result[0].words[0].speaker_id == "Speaker 1"
+
+
+def test_optimizer_protects_japanese_characters_from_silent_deletion():
+    assert _lexical_edit_violations("これは伝統的な工法です", "これは工法です")
 
 
 def test_validation_rejects_copying_next_subtitle_into_current_key():

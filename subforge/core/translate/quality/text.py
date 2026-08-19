@@ -37,7 +37,12 @@ def is_placeholder_translation(text: str) -> bool:
     return bool(meta_note.search(text))
 
 
-def is_untranslated_output(output: str, source: str, target_language: TargetLanguage) -> bool:
+def is_untranslated_output(
+    output: str,
+    source: str,
+    target_language: TargetLanguage,
+    source_language: str = "",
+) -> bool:
     """Return whether output lacks the script required by an Asian target."""
     target_patterns = {
         TargetLanguage.SIMPLIFIED_CHINESE: r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]",
@@ -49,6 +54,24 @@ def is_untranslated_output(output: str, source: str, target_language: TargetLang
     target_pattern = target_patterns.get(target_language)
     if target_pattern is None:
         return False
+    normalized_source = re.sub(r"\s+", "", source).casefold()
+    normalized_output = re.sub(r"\s+", "", output).casefold()
+    if source_language and source_language != "zh" and normalized_output == normalized_source:
+        return True
+    if (
+        target_language
+        in {
+            TargetLanguage.SIMPLIFIED_CHINESE,
+            TargetLanguage.TRADITIONAL_CHINESE,
+            TargetLanguage.CANTONESE,
+        }
+        and source_language in {"ja", "mixed"}
+        and re.search(r"[\u3040-\u30ff\u31f0-\u31ff]", output)
+    ):
+        source_kana = re.findall(r"[\u3040-\u30ff\u31f0-\u31ff]", source)
+        output_kana = re.findall(r"[\u3040-\u30ff\u31f0-\u31ff]", output)
+        if source_kana and len(output_kana) >= max(2, len(source_kana) // 2):
+            return True
     if re.search(target_pattern, output):
         return False
     if re.search(
@@ -150,6 +173,11 @@ def inspect_translation_batch(
             continue
         if is_placeholder_translation(output):
             report.placeholders.append(str(source.index))
-        if is_untranslated_output(output, source.original_text, target_language):
+        if is_untranslated_output(
+            output,
+            source.original_text,
+            target_language,
+            source.source_language,
+        ):
             report.untranslated.append(str(source.index))
     return report

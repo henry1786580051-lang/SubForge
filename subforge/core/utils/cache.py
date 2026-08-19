@@ -55,6 +55,7 @@ _asr_cache = _open_cache("asr_results", tag_index=True)
 _translate_cache = _open_cache("translate_results")
 _version_state_cache = _open_cache("version_state")
 _diarization_cache = _open_cache("speaker_diarization")
+_subtitle_language_cache = _open_cache("subtitle_languages")
 
 
 def get_llm_cache() -> Cache:
@@ -80,6 +81,11 @@ def get_version_state_cache() -> Cache:
 def get_diarization_cache() -> Cache:
     """Get the content-addressed speaker diarization cache."""
     return _diarization_cache
+
+
+def get_subtitle_language_cache() -> Cache:
+    """Get content-addressed language metadata for generated subtitle files."""
+    return _subtitle_language_cache
 
 
 def memoize(cache_instance: Cache, **kwargs):

@@ -14,6 +14,7 @@ class SubtitleProcessData:
     original_text: str
     translated_text: str = ""
     optimized_text: str = ""
+    source_language: str = ""
 
 
 class SupportedAudioFormats(Enum):
@@ -470,6 +471,7 @@ class TranscribeConfig:
     whisperx_model: Optional[str] = None
     whisperx_align_model: str = "WAV2VEC2_ASR_LARGE_LV60K_960H"
     whisperx_batch_size: int = 4
+    detect_additional_languages: bool = False
     enable_audio_enhancement: bool = True
     speaker_diarization: str = "off"
     speaker_count: int = 2
@@ -491,6 +493,7 @@ class TranscribeConfig:
         lines.append(f"Model: {self.transcribe_model.value if self.transcribe_model else 'None'}")
         lines.append(f"Language: {self.transcribe_language or 'Auto'}")
         lines.append(f"Word Timestamp: {self.need_word_time_stamp}")
+        lines.append(f"Detect Additional Languages: {self.detect_additional_languages}")
         lines.append(f"Audio Enhancement: {self.enable_audio_enhancement}")
         lines.append(f"Speaker Diarization: {self.speaker_diarization}")
         if self.speaker_diarization == "fixed":

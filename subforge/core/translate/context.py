@@ -5,6 +5,7 @@ from __future__ import annotations
 import difflib
 import json
 import re
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -29,6 +30,8 @@ MAX_ENTITY_MENTIONS = 160
 MAX_ENTITY_CONTEXTS = 64
 MAX_ENTITY_CONTEXT_CHARS = 6_000
 MAX_ENTITY_VARIANT_CANDIDATES = 32
+MAX_ENTITY_ALIAS_GROUPS = 12
+MAX_LEXICAL_VARIANT_CANDIDATES = 24
 MAX_NUMERIC_CONTEXTS = 32
 FOOTBALL_FIELD_AREA_SQUARE_METRES = 5351.0
 
@@ -101,6 +104,17 @@ def _compact_transcript(segments: Iterable[str], limit: int = MAX_CONTEXT_CHARS)
     return separator.join(windows)[:limit].strip()
 
 
+def _canonical_name_from_asr_note(note: str) -> str:
+    """Extract a Latin canonical name from common context-model note wording."""
+    match = re.search(
+        r"(?:(?i:canonical\s+(?:form|name|spelling))(?:\s+(?i:is)|\s*:)|"
+        r"(?i:variant\s+of|phonetic\s+candidate\s+for))\s+"
+        r"['\"]?([A-Z][A-Za-z'’.-]*(?:\s+[A-Z][A-Za-z'’.-]*){0,5})",
+        str(note or ""),
+    )
+    return match.group(1).strip(" ,.;:!?-'’\"") if match else ""
+
+
 def _asr_note_correction(
     source: str,
     target: str,
@@ -121,10 +135,10 @@ def _asr_note_correction(
         note,
         flags=re.IGNORECASE,
     )
-    if not match:
+    canonical = match.group(1).strip() if match else _canonical_name_from_asr_note(note)
+    if not canonical:
         return target
-    canonical = match.group(1).strip()
-    if not canonical or canonical.casefold() == source.casefold():
+    if canonical.casefold() == source.casefold():
         return target
 
     source_tokens = list(re.finditer(r"[A-Za-z0-9][A-Za-z0-9-]*", source))
@@ -437,6 +451,511 @@ def _document_entity_variant_candidates(segments: Iterable[str]) -> list[dict[st
     return candidates
 
 
+def _document_entity_alias_groups(segments: Iterable[str]) -> list[dict[str, Any]]:
+    """Group recurring phonetic proper-name variants without choosing a spelling.
+
+    The result is evidence for the context model, not an automatic correction.
+    Requiring repeated mentions and at least one multi-word form prevents common
+    sentence-initial words from becoming speculative terminology.
+    """
+    normalized_segments = [
+        re.sub(r"\s+", " ", str(segment or "")).strip()
+        for segment in segments
+        if str(segment or "").strip()
+    ]
+    ignored = {
+        "actually",
+        "also",
+        "and",
+        "because",
+        "but",
+        "completed",
+        "however",
+        "maybe",
+        "now",
+        "okay",
+        "otherwise",
+        "really",
+        "so",
+        "the",
+        "this",
+        "today",
+        "well",
+        "where",
+    }
+    records: dict[str, dict[str, Any]] = {}
+    pattern = re.compile(
+        r"\b[A-Z][A-Za-z'’.-]{2,}(?:\s+[A-Z][A-Za-z'’.-]{2,}){0,2}\b"
+    )
+    for index, segment in enumerate(normalized_segments):
+        for match in pattern.finditer(segment):
+            value = re.sub(r"\s+", " ", match.group()).strip(" ,.;:!?-'’")
+            value = re.sub(r"['’]s$", "", value, flags=re.IGNORECASE)
+            words = value.split()
+            if not value or value.casefold() in ignored or all(
+                word.casefold() in ignored for word in words
+            ):
+                continue
+            compact = re.sub(r"[^a-z]", "", value.casefold())
+            if len(compact) < 5:
+                continue
+            key = value.casefold()
+            record = records.setdefault(
+                key,
+                {"text": value, "count": 0, "contexts": [], "word_count": len(words)},
+            )
+            record["count"] += 1
+            snippet = " | ".join(
+                normalized_segments[max(0, index - 1) : min(len(normalized_segments), index + 2)]
+            )
+            if snippet not in record["contexts"] and len(record["contexts"]) < 2:
+                record["contexts"].append(snippet)
+
+    values = list(records.values())
+    if len(values) < 2:
+        return []
+
+    def _compact(value: str) -> str:
+        return re.sub(r"[^a-z]", "", value.casefold())
+
+    def _consonants(value: str) -> str:
+        compact = re.sub(r"[aeiouy]", "", _compact(value))
+        return re.sub(r"(.)\1+", r"\1", compact)
+
+    def _same_alias_family(left: dict[str, Any], right: dict[str, Any]) -> bool:
+        left_compact = _compact(left["text"])
+        right_compact = _compact(right["text"])
+        for shorter, longer in (
+            (left_compact, right_compact),
+            (right_compact, left_compact),
+        ):
+            if longer.startswith(shorter) and longer[len(shorter) :] in {
+                "er",
+                "ers",
+                "ian",
+                "ians",
+                "ite",
+                "ites",
+            }:
+                return False
+        left_consonants = _consonants(left["text"])
+        right_consonants = _consonants(right["text"])
+        if min(len(left_consonants), len(right_consonants)) < 4:
+            return False
+        if left["word_count"] != right["word_count"]:
+            return left_consonants == right_consonants
+        spelling_similarity = difflib.SequenceMatcher(
+            None, left_compact, right_compact
+        ).ratio()
+        consonant_similarity = difflib.SequenceMatcher(
+            None, left_consonants, right_consonants
+        ).ratio()
+        return spelling_similarity >= 0.77 and consonant_similarity >= 0.8
+
+    neighbors: list[set[int]] = [set() for _ in values]
+    for left_index, left in enumerate(values):
+        for right_index in range(left_index + 1, len(values)):
+            if _same_alias_family(left, values[right_index]):
+                neighbors[left_index].add(right_index)
+                neighbors[right_index].add(left_index)
+
+    groups: list[dict[str, Any]] = []
+    visited: set[int] = set()
+    for start in range(len(values)):
+        if start in visited or not neighbors[start]:
+            continue
+        component: list[int] = []
+        stack = [start]
+        while stack:
+            current = stack.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            component.append(current)
+            stack.extend(neighbors[current] - visited)
+        members = [values[index] for index in component]
+        if (
+            len(members) < 2
+            or sum(int(member["count"]) for member in members) < 3
+            or not any(int(member["word_count"]) > 1 for member in members)
+        ):
+            continue
+        contexts: list[str] = []
+        for member in members:
+            for snippet in member["contexts"]:
+                if snippet not in contexts:
+                    contexts.append(snippet)
+                if len(contexts) >= 4:
+                    break
+            if len(contexts) >= 4:
+                break
+
+        # A recurring proper name can occasionally be decoded as ordinary
+        # lowercase words (for example, two words that merely sound like the
+        # name). Surface only close phonetic n-grams to the resolver; they are
+        # evidence candidates and never become corrections on their own.
+        word_counts = {int(member["word_count"]) for member in members}
+        known_variants = {str(member["text"]).casefold() for member in members}
+        known_variant_token_lists = [
+            re.findall(r"[a-z]+", value) for value in known_variants
+        ]
+        phonetic_candidates: list[dict[str, Any]] = []
+        seen_candidates: set[str] = set()
+        for segment_index, segment in enumerate(normalized_segments):
+            words = re.findall(r"[A-Za-z][A-Za-z'’.-]*", segment)
+            for word_count in word_counts:
+                for word_index in range(0, len(words) - word_count + 1):
+                    candidate = " ".join(words[word_index : word_index + word_count]).strip(
+                        " .,-'’"
+                    )
+                    candidate_key = candidate.casefold()
+                    if candidate != candidate.lower():
+                        continue
+                    if candidate_key in known_variants or candidate_key in seen_candidates:
+                        continue
+                    candidate_tokens = candidate_key.split()
+                    if any(
+                        candidate_tokens == known_tokens[start : start + len(candidate_tokens)]
+                        for known_tokens in known_variant_token_lists
+                        for start in range(
+                            0, len(known_tokens) - len(candidate_tokens) + 1
+                        )
+                    ) or any(
+                        token in known_variants for token in candidate_tokens
+                    ):
+                        continue
+                    candidate_compact = _compact(candidate)
+                    candidate_consonants = _consonants(candidate)
+                    if len(candidate_consonants) < 4:
+                        continue
+                    similarities = [
+                        (
+                            difflib.SequenceMatcher(
+                                None, candidate_compact, _compact(member["text"])
+                            ).ratio(),
+                            difflib.SequenceMatcher(
+                                None, candidate_consonants, _consonants(member["text"])
+                            ).ratio(),
+                        )
+                        for member in members
+                    ]
+                    viable = [
+                        (spelling, consonants)
+                        for spelling, consonants in similarities
+                        if spelling >= 0.3 and consonants >= 0.78
+                    ]
+                    if not viable:
+                        continue
+                    similarity = max(
+                        (spelling + consonants) / 2
+                        for spelling, consonants in viable
+                    )
+                    seen_candidates.add(candidate_key)
+                    phonetic_candidates.append(
+                        {
+                            "text": candidate,
+                            "similarity": round(similarity, 3),
+                            "context": " | ".join(
+                                normalized_segments[
+                                    max(0, segment_index - 1) : min(
+                                        len(normalized_segments), segment_index + 2
+                                    )
+                                ]
+                            ),
+                        }
+                    )
+        phonetic_candidates.sort(
+            key=lambda item: (-float(item["similarity"]), str(item["text"]).casefold())
+        )
+        groups.append(
+            {
+                "variants": [
+                    {"text": member["text"], "count": member["count"]}
+                    for member in sorted(
+                        members,
+                        key=lambda item: (-int(item["count"]), str(item["text"]).casefold()),
+                    )
+                ],
+                "contexts": contexts,
+                "phonetic_candidates": phonetic_candidates[:8],
+            }
+        )
+        if len(groups) >= MAX_ENTITY_ALIAS_GROUPS:
+            break
+    return groups
+
+
+def _document_lexical_variant_candidates(segments: Iterable[str]) -> list[dict[str, Any]]:
+    """Surface rare long tokens that resemble recurring document terminology.
+
+    These are context-model candidates, never deterministic corrections. The
+    dual spelling/consonant threshold avoids broad fuzzy matching while still
+    catching ASR renderings whose vowels or final syllable drifted.
+    """
+    normalized_segments = [
+        re.sub(r"\s+", " ", str(segment or "")).strip()
+        for segment in segments
+        if str(segment or "").strip()
+    ]
+    occurrences: dict[str, list[int]] = {}
+    display: dict[str, str] = {}
+    for index, segment in enumerate(normalized_segments):
+        for token in re.findall(r"[A-Za-z][A-Za-z'’-]{5,}", segment):
+            key = token.casefold()
+            occurrences.setdefault(key, []).append(index)
+            display.setdefault(key, token)
+    counts = Counter({key: len(indices) for key, indices in occurrences.items()})
+
+    def compact(value: str) -> str:
+        return re.sub(r"[^a-z]", "", value.casefold())
+
+    def consonants(value: str) -> str:
+        return re.sub(r"(.)\1+", r"\1", re.sub(r"[aeiouy]", "", compact(value)))
+
+    def obvious_same_word(left: str, right: str) -> bool:
+        left_compact = compact(left)
+        right_compact = compact(right)
+        if left_compact == right_compact:
+            return True
+        derivational_roots: dict[str, set[str]] = {}
+        for value in (left_compact, right_compact):
+            roots = {value}
+            for suffix in (
+                "ingly",
+                "edly",
+                "ally",
+                "ness",
+                "ment",
+                "tion",
+                "ure",
+                "ing",
+                "ed",
+                "en",
+                "ly",
+                "es",
+                "s",
+            ):
+                if value.endswith(suffix) and len(value) - len(suffix) >= 5:
+                    roots.add(value[: -len(suffix)])
+            if value.endswith("ble") and len(value) > 6:
+                roots.add(value[:-3])
+            if value.endswith("bly") and len(value) > 6:
+                roots.add(value[:-3])
+            if value.endswith("e") and len(value) > 6:
+                roots.add(value[:-1])
+            for prefix in ("dis", "non", "un", "im", "in", "ir"):
+                if value.startswith(prefix) and len(value) - len(prefix) >= 6:
+                    roots.add(value[len(prefix) :])
+            derivational_roots[value] = roots
+        if derivational_roots[left_compact] & derivational_roots[right_compact]:
+            return True
+        suffixes = (
+            "'s",
+            "ally",
+            "edly",
+            "ingly",
+            "ly",
+            "ness",
+            "ions",
+            "ion",
+            "ies",
+            "ers",
+            "ing",
+            "ed",
+            "es",
+            "s",
+        )
+        left_roots = {left_compact}
+        right_roots = {right_compact}
+        for value, roots in ((left_compact, left_roots), (right_compact, right_roots)):
+            for suffix in suffixes:
+                clean_suffix = compact(suffix)
+                if value.endswith(clean_suffix) and len(value) - len(clean_suffix) >= 5:
+                    roots.add(value[: -len(clean_suffix)])
+        if left_roots & right_roots:
+            return True
+        return min(len(left_compact), len(right_compact)) >= 6 and (
+            left_compact.endswith(right_compact)
+            or right_compact.endswith(left_compact)
+            or left_compact.startswith(right_compact)
+            or right_compact.startswith(left_compact)
+        )
+
+    recurring = [key for key, count in counts.items() if count >= 2 and len(compact(key)) >= 7]
+    candidates: list[dict[str, Any]] = []
+    for heard, count in counts.items():
+        if count != 1 or len(compact(heard)) < 7:
+            continue
+        ranked: list[tuple[float, str]] = []
+        for canonical in recurring:
+            if canonical == heard or obvious_same_word(heard, canonical):
+                continue
+            spelling = difflib.SequenceMatcher(None, compact(heard), compact(canonical)).ratio()
+            consonant = difflib.SequenceMatcher(
+                None, consonants(heard), consonants(canonical)
+            ).ratio()
+            if spelling >= 0.72 and consonant >= 0.8:
+                ranked.append(((spelling + consonant) / 2, canonical))
+        if not ranked:
+            continue
+        score, canonical = max(ranked)
+        index = occurrences[heard][0]
+        candidates.append(
+            {
+                "heard": display[heard],
+                "possible_canonical": display[canonical],
+                "canonical_count": counts[canonical],
+                "similarity": round(score, 3),
+                "context": " | ".join(
+                    normalized_segments[
+                        max(0, index - 1) : min(len(normalized_segments), index + 2)
+                    ]
+                ),
+            }
+        )
+    candidates.sort(
+        key=lambda item: (-float(item["similarity"]), str(item["heard"]).casefold())
+    )
+    return candidates[:MAX_LEXICAL_VARIANT_CANDIDATES]
+
+
+def _document_lexical_context_hints(
+    candidates: Iterable[dict[str, Any]],
+) -> list[dict[str, str]]:
+    """Keep only unusually close non-morphological candidates as translation hints.
+
+    A hint is deliberately not labelled as a confirmed ASR correction, so it
+    cannot rewrite locked source text. The translator still has to resolve it
+    from the local sentence and neighboring cues.
+    """
+
+    def compact(value: str) -> str:
+        return re.sub(r"[^a-z]", "", value.casefold())
+
+    def same_derivation(left: str, right: str) -> bool:
+        for adjective, adverb in ((left, right), (right, left)):
+            if (
+                adjective.endswith("ble")
+                and adverb.endswith("bly")
+                and adjective[:-3] == adverb[:-3]
+            ):
+                return True
+            if (
+                adjective.endswith("y")
+                and adverb.endswith("ily")
+                and adjective[:-1] == adverb[:-3]
+            ):
+                return True
+        return False
+
+    hints: list[dict[str, str]] = []
+    for item in candidates:
+        heard = str(item.get("heard") or "").strip()
+        canonical = str(item.get("possible_canonical") or "").strip()
+        heard_key = compact(heard)
+        canonical_key = compact(canonical)
+        if (
+            not heard_key
+            or not canonical_key
+            or int(item.get("canonical_count") or 0) < 2
+            or float(item.get("similarity") or 0) < 0.82
+            or abs(len(heard_key) - len(canonical_key)) > 1
+            or heard_key[:6] != canonical_key[:6]
+            or same_derivation(heard_key, canonical_key)
+        ):
+            continue
+        inflected = canonical
+        if heard_key.endswith("s") and not canonical_key.endswith("s"):
+            inflected += "s"
+        hints.append(
+            {
+                "source": heard,
+                "target": inflected,
+                "note": (
+                    "unconfirmed lexical similarity hint; use only when the local sentence "
+                    "and recurring document subject prove this reading"
+                ),
+            }
+        )
+    return hints
+
+
+def _extend_confirmed_alias_corrections(
+    alias_groups: list[dict[str, Any]],
+    terminology: list[Any],
+) -> list[dict[str, str]]:
+    """Extend an already confirmed alias family to lowercase phonetic mishears.
+
+    The context model must independently map at least two listed proper-name
+    variants to the same Latin canonical form. A phonetic candidate alone is
+    never enough to create terminology.
+    """
+    parsed_mappings: list[tuple[str, str]] = []
+    for item in terminology:
+        if not isinstance(item, dict):
+            continue
+        source = str(item.get("source") or item.get("term") or "").strip()
+        target = str(item.get("target") or item.get("translation") or "").strip()
+        note = str(item.get("note") or item.get("context") or "").strip()
+        target = _asr_note_correction(source, target, note)
+        if (
+            source
+            and target
+            and re.search(
+                r"(?:asr|phonetic|mishear|recognition|转录|听写|同音)",
+                note,
+                re.IGNORECASE,
+            )
+            and re.fullmatch(
+                r"[A-Za-z][A-Za-z'’.-]*(?:\s+[A-Za-z][A-Za-z'’.-]*){0,5}",
+                target,
+            )
+        ):
+            parsed_mappings.append((source, target))
+
+    corrections: list[dict[str, str]] = []
+    seen_sources: set[str] = set()
+    for group in alias_groups:
+        variants = {
+            str(item.get("text") or "").strip().casefold()
+            for item in group.get("variants", [])
+            if isinstance(item, dict) and str(item.get("text") or "").strip()
+        }
+        canonical_sources: dict[str, set[str]] = {}
+        canonical_spelling: dict[str, str] = {}
+        for source, canonical in parsed_mappings:
+            if source.casefold() not in variants:
+                continue
+            canonical_key = canonical.casefold()
+            canonical_sources.setdefault(canonical_key, set()).add(source.casefold())
+            canonical_spelling.setdefault(canonical_key, canonical)
+        confirmed = [
+            key for key, sources in canonical_sources.items() if len(sources) >= 2
+        ]
+        if len(confirmed) != 1:
+            continue
+        canonical = canonical_spelling[confirmed[0]]
+        for candidate in group.get("phonetic_candidates", []):
+            if not isinstance(candidate, dict):
+                continue
+            source = str(candidate.get("text") or "").strip()
+            similarity = float(candidate.get("similarity") or 0)
+            if not source or similarity < 0.68 or source.casefold() in seen_sources:
+                continue
+            seen_sources.add(source.casefold())
+            corrections.append(
+                {
+                    "source": source,
+                    "target": canonical,
+                    "note": (
+                        "probable ASR correction extended from two independently confirmed "
+                        "proper-name variants in the same document"
+                    ),
+                }
+            )
+    return corrections
+
+
 def _parse_small_spoken_number(value: str) -> float | None:
     normalized = re.sub(r"\s+", " ", str(value or "").strip().casefold())
     try:
@@ -669,6 +1188,9 @@ def build_translation_context(
     entity_mentions = _document_entity_mentions(transcript_segments)
     entity_contexts = _document_entity_contexts(transcript_segments)
     entity_variant_candidates = _document_entity_variant_candidates(transcript_segments)
+    entity_alias_groups = _document_entity_alias_groups(transcript_segments)
+    lexical_variant_candidates = _document_lexical_variant_candidates(transcript_segments)
+    lexical_context_hints = _document_lexical_context_hints(lexical_variant_candidates)
     numeric_contexts = _document_numeric_contexts(transcript_segments)
     deterministic_corrections = [
         *_document_entity_corrections(entity_variant_candidates),
@@ -719,6 +1241,26 @@ def build_translation_context(
         "same real name beyond reasonable doubt; then emit a probable ASR correction terminology "
         "item for the complete heard form. Reject ordinary people's names and coincidental "
         "spellings when that evidence is absent. "
+        "document_entity_alias_groups contain recurring phonetic proper-name variants but do "
+        "not choose a canonical spelling. Confirm a group only when its contexts identify one "
+        "real entity. If a unique established canonical spelling is known with high confidence, "
+        "emit a probable ASR correction for every listed malformed variant to that same complete "
+        "canonical form. Never select the most frequent transcript spelling merely because it "
+        "is frequent, and reject a group when the identity remains uncertain. The optional "
+        "phonetic_candidates inside a group are lowercase phrases that only sound like the "
+        "recurring name. Confirm one only when its own local context clearly uses it as that same "
+        "entity; then emit the same probable ASR correction used for the confirmed capitalized "
+        "variants. Never promote a candidate from sound similarity alone. "
+        "document_lexical_variant_candidates are conservative similarity shortlists for a rare "
+        "heard token and a recurring document term; they are never corrections by themselves. "
+        "Evaluate every listed candidate rather than silently ignoring the list. Confirm one only "
+        "when the recurring term has the same grammatical role and domain sense, "
+        "the literal heard token makes the local sentence incoherent, and no other interpretation "
+        "is reasonably plausible. Do not omit a candidate that satisfies all of those conditions. "
+        "A literal everyday word can still be incoherent when its determiner, pronoun references, "
+        "and the document's recurring subject all identify the listed domain term instead. "
+        "Emit the complete heard token as a probable ASR correction. "
+        "Reject ordinary inflection, derivation, related vocabulary, and coincidental spelling. "
         "Inspect document_numeric_contexts for a spoken self-correction or a unit contradicted by "
         "an explicit nearby comparison. When the speaker says alternatives such as '2% or 5%' "
         "and the following arithmetic uniquely confirms the latter value, record the complete "
@@ -742,7 +1284,9 @@ def build_translation_context(
         "promote the malformed ASR spelling to canonical terminology. "
         "The summary must state the subject domain so later batches can disambiguate short "
         "fragments. The style must describe the speakers' actual register and concise native "
-        "subtitle phrasing, not generic translation advice. "
+        "subtitle phrasing, not generic translation advice. For Chinese, preserve the source's "
+        "existing imagery, contrast, irony, and rhetorical force with concise idiomatic wording, "
+        "but never add decorative language or facts that are absent from the source. "
         "Tokens such as <S1> and <S2> are anonymous dialogue-turn metadata. Use them to "
         "understand roles and tone, but never include them as terminology or translated text."
     )
@@ -753,6 +1297,8 @@ def build_translation_context(
         "document_entity_mentions": entity_mentions,
         "document_entity_contexts": entity_contexts,
         "document_entity_variant_candidates": entity_variant_candidates,
+        "document_entity_alias_groups": entity_alias_groups,
+        "document_lexical_variant_candidates": lexical_variant_candidates,
         "document_numeric_contexts": numeric_contexts,
     }
 
@@ -799,9 +1345,20 @@ def build_translation_context(
             parsed_terms,
             transcript_segments,
         )
+        alias_candidate_corrections = _extend_confirmed_alias_corrections(
+            entity_alias_groups,
+            parsed_terms,
+        )
         return TranslationContext(
             summary=str(parsed.get("summary") or "").strip(),
-            terminology=_format_terms([*deterministic_corrections, *parsed_terms]),
+            terminology=_format_terms(
+                [
+                    *deterministic_corrections,
+                    *alias_candidate_corrections,
+                    *lexical_context_hints,
+                    *parsed_terms,
+                ]
+            ),
             style=str(parsed.get("style") or "").strip(),
             custom_prompt=custom_prompt,
         )

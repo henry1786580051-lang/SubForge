@@ -67,6 +67,7 @@ interface AppState {
     whisperxAlignModel: string;
     whisperxBatchSize: number;
     whisperxSupported: boolean;
+    detectAdditionalLanguages: boolean;
     enableAudioEnhancement: boolean;
     speakerDiarization: "off" | "two" | "auto" | "fixed";
     speakerCount: number;
@@ -164,6 +165,7 @@ export const useAppStore = create<AppState>((set) => ({
     whisperxAlignModel: "WAV2VEC2_ASR_LARGE_LV60K_960H",
     whisperxBatchSize: 8,
     whisperxSupported: false,
+    detectAdditionalLanguages: false,
     enableAudioEnhancement: true,
     speakerDiarization: "off",
     speakerCount: 2,

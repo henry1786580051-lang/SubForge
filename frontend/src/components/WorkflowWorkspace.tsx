@@ -384,6 +384,8 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
     addToast,
   } = useAppStore();
   const [hardware, setHardware] = useState<{
+    platform: string;
+    arch: string;
     chip: string;
     device: string;
     n_threads: number;
@@ -418,6 +420,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
         whisperx_alignment_strategy: "whisperxAlignmentStrategy",
         whisperx_align_model: "whisperxAlignModel",
         whisperx_batch_size: "whisperxBatchSize",
+        detect_additional_languages: "detectAdditionalLanguages",
         enable_audio_enhancement: "enableAudioEnhancement",
         speaker_diarization: "speakerDiarization",
         speaker_count: "speakerCount",
@@ -555,7 +558,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
       !currentTaskId ||
       resolvingAlignment ||
       taskAttention?.type !== "missing_alignment_models" ||
-      taskAttention.source_mode !== "auto"
+      !["auto", "hybrid"].includes(taskAttention.source_mode || "")
     ) return;
     setResolvingAlignment(true);
     try {
@@ -575,9 +578,11 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
   }, [addToast, currentTaskId, downloadModel, resolvingAlignment, setError, taskAttention]);
 
   const missingAlignmentModels =
-    taskAttention?.type === "missing_alignment_models" && taskAttention.source_mode === "auto"
+    taskAttention?.type === "missing_alignment_models" &&
+    ["auto", "hybrid"].includes(taskAttention.source_mode || "")
       ? taskAttention.models
       : [];
+  const hybridLanguageAttention = taskAttention?.source_mode === "hybrid";
   const canIgnoreMissingLanguages =
     missingAlignmentModels.length > 0 &&
     missingAlignmentModels.every((model) => model.ranges.length > 0);
@@ -842,6 +847,32 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                 </div>
 
                 <ToggleLine
+                  label="自动补录其他语言"
+                  description={
+                    config.sourceLanguage === "auto"
+                      ? "自动语言模式已经包含多语言检测与按需对齐"
+                      : hardware === null
+                        ? "正在确认设备是否支持 MLX 多语言补录"
+                      : hardware.platform !== "Darwin" || hardware.arch !== "arm64"
+                        ? "当前仅支持 Apple Silicon 的 MLX Whisper"
+                        : "保留所选主语言，并对稳定检测到的其他语言局部重识别"
+                  }
+                  checked={
+                    config.sourceLanguage !== "auto" &&
+                    hardware?.platform === "Darwin" &&
+                    hardware.arch === "arm64" &&
+                    config.detectAdditionalLanguages
+                  }
+                  disabled={
+                    config.sourceLanguage === "auto" ||
+                    hardware === null ||
+                    hardware.platform !== "Darwin" ||
+                    hardware.arch !== "arm64"
+                  }
+                  onChange={(value) => void saveConfig("detect_additional_languages", value)}
+                />
+
+                <ToggleLine
                   label="DeepFilterNet 音频增强"
                   description={
                     config.speakerDiarization === "off"
@@ -879,10 +910,12 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                 </span>
                 <div className="min-w-0 flex-1">
                   <h3 className="text-[13px] font-semibold text-amber-950">
-                    自动检测到新的语种
+                    {hybridLanguageAttention ? "主语言之外检测到新的语种" : "自动检测到新的语种"}
                   </h3>
                   <p className="mt-1 text-[10px] leading-4 text-amber-800">
-                    转录内容已经保留。下载对应的对齐模型可生成更准确的词级时间轴；直接继续则对这些语种使用句段时间轴。
+                    {hybridLanguageAttention
+                      ? "主语言转录已经保留。下载对应模型后，将只补录这些外语区间并生成词级时间轴。"
+                      : "转录内容已经保留。下载对应的对齐模型可生成更准确的词级时间轴；直接继续则对这些语种使用句段时间轴。"}
                   </p>
                 </div>
               </div>

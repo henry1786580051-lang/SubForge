@@ -23,6 +23,21 @@ def test_target_script_detection_preserves_model_only_caption():
         "BMW M3",
         TargetLanguage.SIMPLIFIED_CHINESE,
     )
+
+
+def test_chinese_target_rejects_unchanged_japanese_source():
+    assert is_untranslated_output(
+        "これは伝統的な工法です",
+        "これは伝統的な工法です",
+        TargetLanguage.SIMPLIFIED_CHINESE,
+        "ja",
+    )
+    assert not is_untranslated_output(
+        "这是一种传统工法",
+        "これは伝統的な工法です",
+        TargetLanguage.SIMPLIFIED_CHINESE,
+        "ja",
+    )
     assert is_untranslated_output(
         "This is still English",
         "This is still English",

@@ -8,11 +8,18 @@ import pytest
 
 from subforge.core.asr.whisperx_asr import (
     WhisperXASR,
+    _candidate_confirmed_language_bridges,
+    _candidate_foreign_language_ranges,
+    _classify_foreign_unresolved_ranges,
+    _confirm_foreign_language_range,
     _critical_aligned_speech_gaps,
     _detect_speech_in_mlx_gaps,
+    _expand_language_ranges_over_repetition,
     _find_sparse_mlx_segments,
     _find_speech_backed_mlx_gaps,
     _install_offline_sentence_tokenizer,
+    _is_severe_repetition_hallucination,
+    _language_ranges_from_foreign_audit,
     _LanguageProbe,
     _LanguageRange,
     _mlx_model_repo,
@@ -20,17 +27,129 @@ from subforge.core.asr.whisperx_asr import (
     _parse_mlx_preview_lines,
     _prepare_mlx_model_path,
     _prepare_spoken_alignment,
+    _recover_aligned_gaps_from_native_words,
     _recover_mlx_sparse_segments,
     _recover_mlx_speech_gaps,
     _refine_words_with_char_alignments,
     _restore_display_alignment,
+    _script_language_evidence,
     _segments_for_alignment,
     _select_foreign_language_ranges,
+    _SpeechBackedGap,
     _spoken_token,
+    _stabilize_confirmed_language_ranges,
     _subtract_language_ranges,
+    _time_range_is_covered_by_ranges,
+    _usable_mlx_recovery_segment,
     default_mlx_model,
     install_whisperx_runtime_stubs,
 )
+
+
+def test_mlx_fixed_language_audit_separates_foreign_speech_from_real_omissions():
+    ranges = [
+        {"start": 10.0, "end": 20.0, "speech_seconds": 9.5},
+        {"start": 30.0, "end": 40.0, "speech_seconds": 9.5},
+    ]
+    probes = iter(
+        [
+            {"language": "ja", "text": "日本語の発話です"},
+            {"language": "en", "text": "This English speech is still missing"},
+        ]
+    )
+
+    unresolved, foreign = _classify_foreign_unresolved_ranges(
+        ranges,
+        list(range(1000)),
+        10,
+        "en",
+        lambda _clip: next(probes),
+    )
+
+    assert unresolved == [ranges[1]]
+    assert foreign[0]["start"] == 10.0
+    assert foreign[0]["detected_language"] == "ja"
+    assert _time_range_is_covered_by_ranges(11.0, 19.0, foreign)
+    assert not _time_range_is_covered_by_ranges(18.5, 30.0, foreign)
+
+
+def test_mlx_foreign_audit_prefers_explicit_japanese_script_over_korean_label():
+    ranges = [{"start": 10.0, "end": 14.0, "speech_seconds": 3.5}]
+
+    unresolved, foreign = _classify_foreign_unresolved_ranges(
+        ranges,
+        list(range(200)),
+        10,
+        "en",
+        lambda _clip: {"language": "ko", "text": "これは日本語です"},
+    )
+    converted = _language_ranges_from_foreign_audit(foreign, "en")
+
+    assert unresolved == []
+    assert foreign[0]["detected_language"] == "ja"
+    assert foreign[0]["model_language"] == "ko"
+    assert converted == [
+        _LanguageRange(
+            start=10.0,
+            end=14.0,
+            language="ja",
+            confidence=1.0,
+            support_seconds=3.5,
+            probe_count=1,
+            dominance=1.0,
+            decoded_language="ko",
+            script_language="ja",
+            confirmation_agreement=True,
+        )
+    ]
+
+
+def test_mlx_native_word_timestamps_fill_only_forced_alignment_holes():
+    aligned = {
+        "segments": [
+            {
+                "text": "Before",
+                "start": 0.0,
+                "end": 2.0,
+                "words": [{"word": "Before", "start": 0.0, "end": 2.0}],
+            },
+            {
+                "text": "After",
+                "start": 10.0,
+                "end": 12.0,
+                "words": [{"word": "After", "start": 10.0, "end": 12.0}],
+            },
+        ]
+    }
+    native = {
+        "segments": [
+            {
+                "text": "Before recovered words After",
+                "start": 0.0,
+                "end": 12.0,
+                "words": [
+                    {"word": " Before", "start": 0.0, "end": 2.0},
+                    {"word": " recovered", "start": 4.0, "end": 5.0},
+                    {"word": " words", "start": 5.1, "end": 6.0},
+                    {"word": " After", "start": 10.0, "end": 12.0},
+                ],
+            }
+        ]
+    }
+    gaps = _find_speech_backed_mlx_gaps(
+        aligned["segments"],
+        [(2_100, 9_900)],
+        12.0,
+    )
+
+    recovered = _recover_aligned_gaps_from_native_words(aligned, native, gaps)
+
+    assert recovered["native_word_gap_recovery"] == 1
+    fallback = next(
+        segment for segment in recovered["segments"] if segment.get("native_word_fallback")
+    )
+    assert fallback["text"] == "recovered words"
+    assert [word["timing_source"] for word in fallback["words"]] == ["native", "native"]
 
 
 def test_mlx_sparse_audit_finds_segment_envelope_hiding_missing_speech():
@@ -225,6 +344,51 @@ def test_mlx_sparse_recovery_uses_context_and_trims_words_to_candidate():
     assert recovered["segments"][-1]["text"] == "taking away agency"
 
 
+def test_mlx_sparse_recovery_expands_context_until_decode_adds_enough_content():
+    result = {
+        "segments": [
+            {"text": "Short fragment", "start": 10.0, "end": 40.0},
+            {"text": "After", "start": 40.5, "end": 42.0},
+        ]
+    }
+    clip_lengths = []
+
+    def transcribe_clip(clip):
+        clip_lengths.append(len(clip))
+        if len(clip_lengths) < 3:
+            return {"segments": []}
+        words = [
+            {"word": f" word{index}", "start": 11.0 + index, "end": 11.5 + index}
+            for index in range(15)
+        ]
+        return {
+            "segments": [
+                {
+                    "text": "".join(word["word"] for word in words).strip(),
+                    "start": 11.0,
+                    "end": 25.5,
+                    "avg_logprob": -0.1,
+                    "no_speech_prob": 0.01,
+                    "compression_ratio": 1.1,
+                    "words": words,
+                }
+            ]
+        }
+
+    recovered = _recover_mlx_sparse_segments(
+        result,
+        list(range(1000)),
+        10,
+        [(10_100, 39_900)],
+        transcribe_clip,
+    )
+
+    assert clip_lengths == [340, 550, 850]
+    assert recovered.get("unresolved_sparse_segments") is None
+    assert recovered["segments"][0]["text"].startswith("word0 word1")
+    assert recovered["sparse_segment_recovery"][0]["recovered_units"] == 15
+
+
 def test_mlx_gap_audit_finds_only_vad_confirmed_speech_holes():
     segments = [
         {"text": "Question", "start": 0.0, "end": 3.0},
@@ -324,6 +488,101 @@ def test_mlx_gap_recovery_preserves_originals_and_rejects_low_confidence():
     assert recovered["segments"][-1] == result["segments"][-1]
     assert recovered["segments"][1]["recovered_speech_gap"] is True
     assert recovered["speech_gap_recovery"][0]["segments"] == 1
+
+
+def test_mlx_gap_recovery_uses_context_and_keeps_only_words_inside_gap():
+    result = {
+        "segments": [
+            {"text": "Before context", "start": 0.0, "end": 3.0},
+            {"text": "After context", "start": 20.0, "end": 24.0},
+        ]
+    }
+    clips = []
+
+    def transcribe_clip(clip):
+        clips.append(clip)
+        return {
+            "segments": [
+                {
+                    "text": "before recovered speech after",
+                    "start": 0.5,
+                    "end": 20.0,
+                    "avg_logprob": -0.1,
+                    "no_speech_prob": 0.02,
+                    "compression_ratio": 1.1,
+                    "words": [
+                        {"word": " before", "start": 0.5, "end": 1.0},
+                        {"word": " recovered", "start": 2.5, "end": 3.5},
+                        {"word": " speech", "start": 8.0, "end": 9.0},
+                        {"word": " after", "start": 19.5, "end": 20.0},
+                    ],
+                }
+            ]
+        }
+
+    recovered = _recover_mlx_speech_gaps(
+        result,
+        list(range(300)),
+        10,
+        [(3_200, 19_800)],
+        transcribe_clip,
+    )
+
+    assert len(clips) == 1
+    assert len(clips[0]) == 210
+    inserted = recovered["segments"][1]
+    assert inserted["text"] == "recovered speech"
+    assert inserted["start"] == pytest.approx(3.5)
+    assert inserted["end"] == pytest.approx(10.0)
+    assert [word["word"].strip() for word in inserted["words"]] == [
+        "recovered",
+        "speech",
+    ]
+
+
+def test_mlx_gap_recovery_expands_context_after_isolated_decode_is_empty():
+    result = {
+        "segments": [
+            {"text": "Before", "start": 0.0, "end": 3.0},
+            {"text": "After", "start": 20.0, "end": 24.0},
+        ]
+    }
+    clip_lengths = []
+
+    def transcribe_clip(clip):
+        clip_lengths.append(len(clip))
+        if len(clip_lengths) == 1:
+            return {"segments": []}
+        return {
+            "segments": [
+                {
+                    "text": "context recovered speech context",
+                    "start": 1.0,
+                    "end": 22.0,
+                    "avg_logprob": -0.1,
+                    "no_speech_prob": 0.02,
+                    "compression_ratio": 1.1,
+                    "words": [
+                        {"word": " context", "start": 1.0, "end": 2.0},
+                        {"word": " recovered", "start": 5.5, "end": 6.0},
+                        {"word": " speech", "start": 8.0, "end": 9.0},
+                        {"word": " context", "start": 21.0, "end": 22.0},
+                    ],
+                }
+            ]
+        }
+
+    recovered = _recover_mlx_speech_gaps(
+        result,
+        list(range(300)),
+        10,
+        [(3_200, 19_800)],
+        transcribe_clip,
+    )
+
+    assert clip_lengths == [210, 300]
+    assert recovered.get("unresolved_speech_gaps") is None
+    assert recovered["segments"][1]["text"] == "recovered speech"
 
 
 def test_mlx_gap_vad_scans_only_uncovered_audio(monkeypatch):
@@ -435,6 +694,20 @@ def test_mlx_gap_recovery_accepts_confident_speech_under_music():
     assert recovered["segments"][1]["text"] == "Thanks for watching this week's episode."
 
 
+def test_mlx_recovery_quality_gate_counts_cjk_without_spaces():
+    assert _usable_mlx_recovery_segment(
+        {
+            "text": "建物はこういう風に揺れます",
+            "start": 0.0,
+            "end": 4.5,
+            "avg_logprob": -0.10,
+            "no_speech_prob": 0.57,
+            "compression_ratio": 1.2,
+        },
+        speech_ratio=0.90,
+    )
+
+
 def test_mlx_gap_recovery_stitches_decode_boundary_to_existing_text():
     result = {
         "segments": [
@@ -532,7 +805,7 @@ def test_whisperx_selects_only_confident_supported_language_switches():
     assert [(item.start, item.end, item.language) for item in ranges] == [(10.0, 17.0, "es")]
 
 
-def test_whisperx_language_support_can_come_from_overlapping_probe_cores():
+def test_whisperx_language_support_requires_sustained_probe_cores():
     probes = [
         _LanguageProbe(10.0, 12.5, "es", 0.91, 0.04),
         _LanguageProbe(12.5, 15.0, "es", 0.92, 0.03),
@@ -540,7 +813,160 @@ def test_whisperx_language_support_can_come_from_overlapping_probe_cores():
 
     ranges = _select_foreign_language_ranges(probes, "en")
 
-    assert [(item.start, item.end, item.language) for item in ranges] == [(10.0, 15.0, "es")]
+    assert ranges == []
+
+
+def test_whisperx_language_support_counts_voiced_time_not_window_width():
+    probes = [
+        _LanguageProbe(10.0, 14.0, "es", 0.96, 0.02, speech_seconds=1.0),
+        _LanguageProbe(14.0, 18.0, "es", 0.95, 0.03, speech_seconds=1.2),
+    ]
+
+    candidates = _candidate_foreign_language_ranges(probes, "en")
+
+    assert len(candidates) == 1
+    assert candidates[0].support_seconds == pytest.approx(2.2)
+    assert candidates[0].needs_confirmation
+
+
+def test_whisperx_language_support_does_not_accumulate_across_distant_events():
+    probes = [
+        _LanguageProbe(10.0, 14.0, "ko", 0.99, 0.01),
+        _LanguageProbe(110.0, 114.0, "ko", 0.99, 0.01),
+    ]
+
+    assert _select_foreign_language_ranges(probes, "en") == []
+    assert len(_candidate_foreign_language_ranges(probes, "en")) == 2
+
+
+def test_whisperx_cjk_confirmation_uses_event_text_not_window_winner():
+    candidate = _LanguageRange(
+        10.0,
+        20.0,
+        "ko",
+        0.99,
+        support_seconds=8.0,
+        probe_count=2,
+        dominance=0.67,
+        needs_confirmation=True,
+    )
+
+    confirmed = _confirm_foreign_language_range(
+        candidate,
+        "en",
+        "ko",
+        "掘り進めた後には土が出てきますので",
+    )
+
+    assert confirmed is not None
+    assert confirmed.language == "ja"
+    assert confirmed.script_language == "ja"
+    assert not confirmed.confirmation_agreement
+
+
+def test_whisperx_expands_foreign_range_over_neighboring_decoder_loop():
+    ranges = [
+        _LanguageRange(
+            34.0,
+            38.0,
+            "ja",
+            0.98,
+            support_seconds=3.4,
+            script_language="ja",
+        )
+    ]
+    repeated = "when you come back " + " ".join(["young"] * 80)
+
+    expanded, source_ranges = _expand_language_ranges_over_repetition(
+        ranges,
+        [{"start": 32.0, "end": 56.0, "text": repeated}],
+    )
+
+    assert _is_severe_repetition_hallucination(repeated)
+    assert source_ranges == [(32.0, 56.0)]
+    assert [(item.start, item.end, item.language) for item in expanded] == [(32.0, 56.0, "ja")]
+
+
+def test_whisperx_short_cjk_event_rejects_ambiguous_han_only_text():
+    candidate = _LanguageRange(
+        10.0,
+        14.0,
+        "ko",
+        0.82,
+        support_seconds=3.0,
+        probe_count=1,
+        needs_confirmation=True,
+    )
+
+    assert _confirm_foreign_language_range(candidate, "en", "ko", "地下空間") is None
+    assert _script_language_evidence("日本語の発話です") == "ja"
+    assert _script_language_evidence("한국어 발화입니다") == "ko"
+    assert _script_language_evidence("地下空間") == ""
+
+
+def test_whisperx_short_kana_event_survives_conflicting_cjk_label():
+    candidate = _LanguageRange(
+        10.0,
+        14.0,
+        "ko",
+        0.82,
+        support_seconds=3.0,
+        probe_count=1,
+        needs_confirmation=True,
+    )
+
+    confirmed = _confirm_foreign_language_range(candidate, "en", "ko", "これは")
+
+    assert confirmed is not None
+    assert confirmed.language == "ja"
+
+
+def test_whisperx_suppresses_weak_minority_cjk_labels():
+    ranges = [
+        _LanguageRange(
+            10.0,
+            20.0,
+            "ja",
+            0.98,
+            support_seconds=9.0,
+            probe_count=3,
+            confirmation_agreement=True,
+        ),
+        _LanguageRange(
+            30.0,
+            34.0,
+            "ko",
+            0.99,
+            support_seconds=3.0,
+            probe_count=1,
+            confirmation_agreement=True,
+        ),
+    ]
+
+    retained, rejected = _stabilize_confirmed_language_ranges(ranges)
+
+    assert [item.language for item in retained] == ["ja"]
+    assert [item.language for item in rejected] == ["ko"]
+
+
+def test_whisperx_bridges_only_short_vad_backed_same_cjk_language_gaps():
+    ranges = [
+        _LanguageRange(10.0, 14.0, "ja", 0.96),
+        _LanguageRange(20.0, 24.0, "ja", 0.95),
+        _LanguageRange(50.0, 54.0, "ja", 0.97),
+        _LanguageRange(58.0, 62.0, "ko", 0.98),
+    ]
+
+    bridges = _candidate_confirmed_language_bridges(
+        ranges,
+        [(14_100, 19_900), (24_100, 49_900), (54_100, 57_900)],
+    )
+
+    assert len(bridges) == 1
+    left, right, speech_seconds, speech_ratio = bridges[0]
+    assert (left.end, right.start, left.language) == (14.0, 20.0, "ja")
+    assert speech_seconds == pytest.approx(5.8)
+    assert speech_ratio == pytest.approx(5.8 / 6.0)
 
 
 def test_whisperx_subtracts_only_foreign_parts_from_broad_primary_segment():
@@ -637,6 +1063,27 @@ def test_explicit_source_language_does_not_request_missing_alignment_models(tmp_
 
     assert retained == ranges
     assert skipped == set()
+
+
+def test_fixed_language_supplement_requests_only_foreign_alignment_models(monkeypatch, tmp_path):
+    asr = WhisperXASR.__new__(WhisperXASR)
+    asr.language = "en"
+    asr.detect_additional_languages = True
+    asr.model_dir = str(tmp_path)
+    requests = []
+    asr.missing_alignment_model_callback = lambda models: requests.append(models) or "continue"
+    monkeypatch.setattr(
+        "subforge.core.asr.whisperx_asr.is_alignment_model_ready",
+        lambda *_args: False,
+    )
+    ranges = [_LanguageRange(10.0, 15.0, "ja", 0.97)]
+
+    retained, skipped = asr._resolve_missing_alignment_models("en", ranges)
+
+    assert retained == ranges
+    assert skipped == {"ja"}
+    assert [item["language"] for item in requests[0]] == ["ja"]
+    assert requests[0][0]["model_id"] == "whisperx-align-ja"
 
 
 def test_skipped_single_language_alignment_preserves_sentence_timestamps(monkeypatch):
@@ -871,9 +1318,7 @@ def test_whisperx_runs_mlx_decode_through_worker_protocol(monkeypatch, tmp_path)
 
     def fake_popen(command, *, env, stdout, **_kwargs):
         observed["command"] = command
-        request = json.loads(
-            open(env["SUBFORGE_MLX_WHISPER_REQUEST"], encoding="utf-8").read()
-        )
+        request = json.loads(open(env["SUBFORGE_MLX_WHISPER_REQUEST"], encoding="utf-8").read())
         observed["request"] = request
         with open(env["SUBFORGE_MLX_WHISPER_OUTPUT"], "w", encoding="utf-8") as output:
             json.dump(
@@ -909,9 +1354,84 @@ def test_whisperx_runs_mlx_decode_through_worker_protocol(monkeypatch, tmp_path)
         "audio": str(audio_path),
         "model": str(model_path),
         "language": "en",
+        "word_timestamps": True,
     }
     assert "subforge.core.asr.mlx_worker" in observed["command"]
     assert [[segment.text for segment in data.segments] for data in previews] == [["hello"]]
+
+
+def test_whisperx_classifies_final_audit_ranges_through_worker(monkeypatch, tmp_path):
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"audio")
+    model_path = tmp_path / "model"
+    model_path.mkdir()
+    observed = {}
+
+    class CompletedProcess:
+        returncode = 0
+        poll_count = 0
+
+        def poll(self):
+            self.poll_count += 1
+            if self.poll_count == 1:
+                return None
+            return 0
+
+        @staticmethod
+        def terminate():
+            raise AssertionError("completed worker must not be terminated")
+
+    def fake_popen(_command, *, env, **_kwargs):
+        request = json.loads(open(env["SUBFORGE_MLX_WHISPER_REQUEST"], encoding="utf-8").read())
+        observed["request"] = request
+        with open(env["SUBFORGE_MLX_WHISPER_OUTPUT"], "w", encoding="utf-8") as output:
+            json.dump(
+                {
+                    "ok": True,
+                    "data": {
+                        "foreign_language_speech_ranges": [
+                            {
+                                **request["ranges"][0],
+                                "detected_language": "ja",
+                                "detected_units": 8,
+                            }
+                        ]
+                    },
+                },
+                output,
+            )
+        return CompletedProcess()
+
+    monkeypatch.setattr("subforge.core.asr.whisperx_asr.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("subforge.core.asr.whisperx_asr.time.sleep", lambda _seconds: None)
+    asr = WhisperXASR.__new__(WhisperXASR)
+    asr.language = "en"
+    asr.cancel_event = None
+    gap = _SpeechBackedGap(10.0, 20.0, 9.5, 0.95, True)
+
+    result = asr._classify_mlx_ranges_in_worker(
+        str(audio_path),
+        str(model_path),
+        [gap],
+        lambda *_args: None,
+    )
+
+    assert result[0]["detected_language"] == "ja"
+    assert observed["request"] == {
+        "operation": "classify_ranges",
+        "audio": str(audio_path),
+        "model": str(model_path),
+        "primary_language": "en",
+        "ranges": [
+            {
+                "start": 10.0,
+                "end": 20.0,
+                "speech_seconds": 9.5,
+                "speech_ratio": 0.95,
+                "is_internal": True,
+            }
+        ],
+    }
 
 
 def test_whisperx_alignment_uses_cpu_for_mps_device():
@@ -1109,6 +1629,29 @@ def test_whisperx_word_segments_keep_forced_alignment_metadata():
     assert segments[0].timestamp_granularity == "word"
     assert segments[0].timing_source == "forced_alignment"
     assert segments[0].words[0].alignment_score == pytest.approx(0.93)
+
+
+def test_whisperx_word_segments_keep_detected_source_language():
+    asr = WhisperXASR.__new__(WhisperXASR)
+    asr.need_word_time_stamp = True
+
+    segments = asr._make_segments(
+        {
+            "language": "en",
+            "segments": [
+                {
+                    "language": "ja",
+                    "text": "こんにちは",
+                    "start": 1.0,
+                    "end": 1.8,
+                    "words": [{"word": "こんにちは", "start": 1.02, "end": 1.78, "score": 0.96}],
+                }
+            ],
+        }
+    )
+
+    assert segments[0].language_code == "ja"
+    assert segments[0].words[0].language_code == "ja"
 
 
 def test_whisperx_replaces_default_english_alignment_model_for_korean():

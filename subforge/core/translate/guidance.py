@@ -32,6 +32,9 @@ def target_language_style_rules(
     source = _source_text(source_texts)
     rules = [
         "Reconstruct idiomatic Chinese syntax instead of mirroring English word order.",
+        "Preserve imagery, contrast, irony, and rhetorical force already present in the source "
+        "with concise idiomatic Chinese; prefer precise verbs and clean rhythm, but never add "
+        "decorative language, emphasis, or facts absent from the source.",
         "Keep every material subject, predicate, object, modifier, negation, comparison, "
         "number, name, and conclusion exactly once under its owning key.",
         "Make adjacent cues read naturally in sequence without completing one cue with "
@@ -45,8 +48,20 @@ def target_language_style_rules(
         "than B, which ...'; do not attach the following belief or comment to the wrong option.",
         "Avoid repeating the same Chinese head noun twice inside one cue when one coherent noun "
         "phrase can express the source exactly.",
+        "Choose technical meanings from the object, operation, and local domain rather than the "
+        "most literal dictionary sense; reject a rendering that is grammatically possible but "
+        "physically or professionally implausible in context.",
+        "Render figurative actions and idioms by their function in the sentence rather than by "
+        "an impossible literal action. Preserve a one-off unfamiliar proper noun as written unless "
+        "document evidence gives one unambiguous canonical form.",
         "Omit semantically empty oral fillers, but preserve discourse markers that carry "
         "contrast, correction, uncertainty, or turn-taking intent.",
+        "After fidelity and cue ownership are secure, preserve the speaker's voice, emphasis, "
+        "imagery, and rhythm. Prefer compact, vivid, idiomatic Chinese over flat explanatory "
+        "paraphrase, but never embellish, intensify, or invent an image absent from the source.",
+        "Avoid translationese and bureaucratic nominalization. Use an implicit Chinese subject "
+        "when its reference is unmistakable, but retain or minimally recover any subject needed "
+        "to prevent ambiguity across subtitle boundaries.",
     ]
 
     conditional_rules = (
@@ -65,6 +80,36 @@ def target_language_style_rules(
             r"reverse|cargo|wheel|tire|tyre|engine|vehicle|truck|sedan|suv)\b",
             "Use established automotive Chinese, preserve trims and model identifiers, and "
             "recover an elliptical unit only when the local vehicle context makes it unique.",
+        ),
+        (
+            r"\b(?:airport|terminal|concourse|pier|aircraft|runway|foundation|column|"
+            r"structural|load|excavation|elevation|varying heights?)\b",
+            "Use established civil-aviation and construction Chinese. Distinguish a terminal "
+            "concourse, passenger gate, and aircraft stand; express visible structural members "
+            "as exposed when that is the physical meaning; follow the actual structural load "
+            "path; and use elevation or level terminology instead of a generic height when the "
+            "source describes designed vertical levels. Express forces transferred 'down the "
+            "height' as travelling downward along the building, and render forces redistributed "
+            "back into a structure without the calque '重新分布回'.",
+        ),
+        (
+            r"\ban\s+exercise\s+in\b",
+            "In an abstract or engineering phrase such as 'an exercise in controlling X', "
+            "'exercise' means a concentrated undertaking, demonstration, or governing task, "
+            "not physical practice; choose the concise Chinese form supported by its object.",
+        ),
+        (
+            r"\b(?:create|creating|created)\s+(?:even\s+)?more\s+land\b.{0,100}\bsea\b|"
+            r"\b(?:drill|drilling|dredge|dredging)\b.{0,80}\b(?:land|sea)\b",
+            "When a coastal city creates land from the sea, use the established land-reclamation "
+            "meaning supported by context; do not preserve a literally impossible drilling verb.",
+        ),
+        (
+            r"\b(?:nuclear|reactor|power plant|turbine|tokamak|fusion|fission|smr)\b",
+            "Use established nuclear-engineering Chinese. Distinguish a power-plant site, "
+            "physical reactor, generating unit, turbine, and tokamak from context; keep recurring "
+            "reactor names and acronyms consistent and do not expand an acronym early when the "
+            "following source cue explicitly supplies its full name.",
         ),
         (
             r"\b(?:reading|writing|literate|literacy|post[- ]?literacy)\b",
@@ -91,6 +136,18 @@ def target_language_style_rules(
             r"\bi\s+don['’]t\s+know\s+if\s+i\s+(?:think|believe)\b",
             "Render nested uncertainty by its actual stance and polarity in idiomatic Chinese; "
             "avoid literal frames such as '我不确定我认为'.",
+        ),
+        (
+            r"\bthanks\s+(?:in\s+no\s+small\s+part\s+)?to\b",
+            "Interpret 'thanks to' from the consequence rather than its positive surface form. "
+            "For a harmful or unwanted result, use a neutral or adverse cause such as '由于' or "
+            "'归咎于', not the complimentary '归功于'.",
+        ),
+        (
+            r"\b\d+(?:st|nd|rd|th)\s+(?:avenue|boulevard|drive|road|street)\b",
+            "An ASR token may collapse a building number and an ordinal street name. Restore a "
+            "canonical address only when repeated document evidence unambiguously supplies both "
+            "parts; otherwise preserve the uncertain source rather than inventing an address.",
         ),
         (
             r"\btalk\s+about\s+(?:a|an|the)\s+(?:case|example|illustration|lesson)\b",
@@ -137,7 +194,11 @@ def repair_mode_guidance(multispeaker: bool) -> str:
         "any fact. Map the complete source clause before repairing individual fragments. A "
         "conjunction, subject, linking predicate, complement, number, and unit must each appear "
         "under exactly one key; never restart the same clause with a second Chinese subject or "
-        "connective. Resolve an explicit spoken self-correction to its final value only when the "
+        "connective. Minimal grammatical scaffolding is allowed when a cue would otherwise be "
+        "unreadable: a pronoun, demonstrative, classifier, or already established head noun may "
+        "be restated only when it adds no new fact. A name, number, distinct action, opinion, or "
+        "conclusion is material meaning rather than scaffolding and must still appear exactly "
+        "once. Resolve an explicit spoken self-correction to its final value only when the "
         "nearby source proves that value, and resolve contrastive references from the complete "
         "local construction rather than the nearest noun. Avoid repeating the same Chinese head "
         "noun twice inside one cue when one coherent noun phrase conveys the source exactly."
@@ -146,8 +207,9 @@ def repair_mode_guidance(multispeaker: bool) -> str:
         return (
             shared
             + " This is a continuous single-speaker passage: preserve the speaker's argument "
-            "and register across cues, but do not repeat the same subject or conclusion merely "
-            "to make an isolated fragment grammatical."
+            "and register across cues. Use only the minimum non-material grammatical scaffolding "
+            "needed for an individual cue to read naturally; never repeat a material subject, "
+            "action, or conclusion merely to make an isolated fragment grammatical."
         )
     return (
         shared

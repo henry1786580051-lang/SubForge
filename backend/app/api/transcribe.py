@@ -237,6 +237,17 @@ class AlignmentDecisionRequest(BaseModel):
     action: Literal["retry", "continue", "ignore"]
 
 
+def _mixed_language_source_mode(
+    language: str,
+    detect_additional_languages: bool,
+) -> str | None:
+    if normalize_alignment_language(language) in {"", "auto"}:
+        return "auto"
+    if detect_additional_languages:
+        return "hybrid"
+    return None
+
+
 def _build_transcribe_config(
     model_id: str,
     language: str = "auto",
@@ -295,6 +306,9 @@ def _build_transcribe_config(
         else ""
     )
     config.whisperx_batch_size = int(get_config_value("whisperx_batch_size", 8) or 8)
+    config.detect_additional_languages = bool(
+        get_config_value("detect_additional_languages", False)
+    )
     config.speaker_diarization = get_config_value("speaker_diarization", "off")
     config.speaker_count = int(get_config_value("speaker_count", 2) or 2)
     config.diarization_model = get_config_value(
@@ -393,13 +407,36 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
         cancel_event = threading.Event()
         config.cancel_event = cancel_event
 
-        if req.model == "whisperx" and normalize_alignment_language(req.language) in {"", "auto"}:
+        mixed_language_source_mode = _mixed_language_source_mode(
+            req.language,
+            config.detect_additional_languages,
+        )
+        if req.model == "whisperx" and mixed_language_source_mode:
+            alignment_decisions: dict[str, str] = {}
+            alignment_decision_lock = threading.Lock()
 
             def _wait_for_alignment_models(models: list[dict]) -> str:
+                languages = {
+                    str(model.get("language") or "")
+                    for model in models
+                    if str(model.get("language") or "")
+                }
+                with alignment_decision_lock:
+                    cached = {
+                        alignment_decisions[language]
+                        for language in languages
+                        if language in alignment_decisions
+                    }
+                    if (
+                        languages
+                        and len(cached) == 1
+                        and all(language in alignment_decisions for language in languages)
+                    ):
+                        return next(iter(cached))
                 attention = {
                     "type": "missing_alignment_models",
-                    "source_mode": "auto",
-                    "message": "检测到尚未安装对齐模型的语言，等待选择处理方式",
+                    "source_mode": mixed_language_source_mode,
+                    "message": "已确认其他语言，但缺少对应的对齐模型",
                     "models": models,
                 }
                 if not context.request_attention(attention):
@@ -409,6 +446,10 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
                 while not cancel_event.is_set() and not context.is_cancelled():
                     resolution = context.wait_for_attention(timeout=0.5)
                     if resolution is not None:
+                        if resolution in {"continue", "ignore"}:
+                            with alignment_decision_lock:
+                                for language in languages:
+                                    alignment_decisions[language] = resolution
                         return resolution
                 raise RuntimeError("Transcription cancelled while waiting for alignment models")
 
@@ -504,6 +545,7 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
             subtitle_path = work_dir / f"{video_stem}.srt"
             context.checkpoint()
             result.save(str(subtitle_path))
+            result.save_language_metadata(str(subtitle_path))
             task_manager.complete_task(
                 task_id,
                 {
@@ -1137,6 +1179,13 @@ async def _download_huggingface_alignment_model(task_id: str, model_id: str):
                 return snapshot_download(
                     repo_id=spec.model_name,
                     cache_dir=str(models_dir),
+                    allow_patterns=[
+                        "*.json",
+                        "*.txt",
+                        "*.model",
+                        "*.bin",
+                        "*.safetensors",
+                    ],
                 )
 
             await run_blocking(_snapshot_download)

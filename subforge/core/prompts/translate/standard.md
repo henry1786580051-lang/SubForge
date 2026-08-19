@@ -47,7 +47,7 @@ Return one JSON object containing exactly the current_subtitles keys:
 <input_note>
 The user message may contain previous_context, current_subtitles, and next_context.
 Translate and output ONLY current_subtitles. Context entries are read-only and must never appear as output keys.
-Each current_subtitles value may be source text or an object with anonymous speaker and source fields.
+Each current_subtitles value may be source text or an object with anonymous speaker, source_language, and source fields. Treat source_language as read-only ASR evidence.
 Before answering, mentally concatenate adjacent translations and confirm that every source clause appears exactly once under its own key.
 Return JSON only. Do not output markdown, analysis, reasoning, labels, or <think> content.
 </input_note>

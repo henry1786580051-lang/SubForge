@@ -17,6 +17,8 @@ def test_platform_defaults_are_explicit_and_isolated():
     assert apple.whisper_model_size == "large-v3"
     assert other.transcribe_model == "whisper_cpp"
     assert other.whisper_model_size == "base"
+    assert apple.detect_additional_languages is False
+    assert other.detect_additional_languages is False
 
 
 def test_flat_settings_reject_corrupted_scalar_types():

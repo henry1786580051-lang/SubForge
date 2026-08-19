@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.14/SubForge-1.1.14-macos-arm64.dmg"><strong>下载 macOS Apple Silicon 版</strong></a>
+  <a href="https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.15/SubForge-1.1.15-macos-arm64.dmg"><strong>下载 macOS Apple Silicon 版</strong></a>
   · <a href="https://github.com/henry1786580051-lang/SubForge/releases">全部版本</a>
   · <a href="https://henry1786580051-lang.github.io/SubForge/">使用文档</a>
   · <a href="https://github.com/henry1786580051-lang/SubForge/issues">问题反馈</a>
@@ -34,14 +34,14 @@ SubForge 面向需要长期处理视频字幕的创作者和本地化工作流�
 | --- | --- | --- |
 | Apple Silicon 使用 MLX，Windows 使用 CTranslate2；WhisperX forced alignment 与 TEN-VAD 保守校准词级边界 | 按上下文和说话人轮次翻译，校验漏译、错位、重复、占位语和思考内容泄漏 | 实时进度、中间结果增量保存、失败条目局部重试、恢复字幕和聚合 LLM 日志 |
 
-### v1.1.14 更新
+### v1.1.15 更新
 
-- **语音缺口保守恢复**：MLX 初稿和 forced alignment 后分别检查有语音证据但没有文字覆盖的区间，只局部复听确认缺口，不全局改写已正确的时间轴。
-- **翻译质量规则收敛**：继续沿用现有批量翻译流程，单人与多人提示词保持独立；新增通用的主谓归属、修饰关系、程度补语、连接词和相邻语义重复审计。
-- **选择性思考与恢复**：普通翻译和格式校验不启用原生思考，只对确认的复杂中文语序窗口使用低强度思考；失败任务会保留并自动载入可用恢复字幕。
-- **实时预览更完整**：转录和翻译增量结果按修订号合并，不再只显示末尾少量字幕；磁盘快照降低为定时写入，减少长任务 I/O。
-- **桌面发布更可靠**：构建会清除 `SubForge 2` 等重复目录，DMG 使用新的拖拽安装界面，并在 macOS 图形会话中验证 MLX Metal、PyTorch MPS 和 WhisperX。
-- **人工终审指南**：新增 [ChatGPT 网页端 SRT 人工精修指南](docs/guide/chatgpt-srt-post-editing.md)，可在保留时间轴和原文的前提下复核 DeepSeek 成品。
+- **长视频分段自愈**：WhisperX 使用带重叠的 30 分钟分块；只有覆盖检查失败的区间才递归缩短重试，不再因一小时边界丢失整段结果。
+- **固定语言也可补录外语**：Apple Silicon 可在选定主语言的同时开启“自动补录其他语言”，稳定确认外语后按语言提示下载对齐模型并局部补录。
+- **混合语言判断更可靠**：结合连续有声时长、文字脚本和相邻区间证据，抑制数秒弱片段被反复误报为韩语；语言信息会一直传递到翻译质量检查。
+- **时间轴与词元清理**：保留 MLX 已有的可靠词时间戳，只填 forced alignment 的真实缺口，并清除对齐产生的短词回声和数字同音重复。
+- **翻译恢复与信达雅**：完整的临时译文可经过全文收尾后恢复为成功结果；专名、术语、跨条语义归属和中文表达使用通用证据审计，文采调整保持克制且不得增译。
+- **思考预算继续收敛**：常规翻译和格式检查不启用原生思考，仅对已确认的复杂语序、内容归属和专名问题定向使用。
 
 ## 工作流
 
@@ -112,7 +112,7 @@ flowchart LR
 
 ### 桌面版
 
-- **macOS**：当前 v1.1.14 提供 [Apple Silicon DMG](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.14/SubForge-1.1.14-macos-arm64.dmg)。Whisper、forced alignment 和 Community-1 模型按需下载，不会重复打包进应用。
+- **macOS**：当前 v1.1.15 提供 [Apple Silicon DMG](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.15/SubForge-1.1.15-macos-arm64.dmg)。Whisper、forced alignment 和 Community-1 模型按需下载，不会重复打包进应用。
 - **Windows**：项目支持 WhisperX CTranslate2/CUDA 或 CPU、forced alignment 与 Community-1。请在 [Releases](https://github.com/henry1786580051-lang/SubForge/releases) 查看带 Windows 安装包的版本，或按下方源码方式运行。
 - **Linux**：当前以 Web/CLI 源码运行和开发验证为主，尚未提供正式桌面安装包。
 

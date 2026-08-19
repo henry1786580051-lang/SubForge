@@ -189,13 +189,25 @@ def test_huggingface_alignment_cache_is_reported_ready(tmp_path):
     assert transcribe_api._alignment_model_ready(model_id, models_dir) is True
 
 
+def test_japanese_alignment_model_uses_configured_model_root(tmp_path):
+    models_dir = tmp_path / "model"
+
+    path = transcribe_api._alignment_model_path("whisperx-align-ja", models_dir)
+
+    assert path.parent == models_dir
+    assert path.name == "models--jonatasgrosman--wav2vec2-large-xlsr-53-japanese"
+
+
 def test_huggingface_alignment_download_uses_whisperx_cache_layout(tmp_path, monkeypatch):
     models_dir = tmp_path / "models"
     model_id = "whisperx-align-ko"
     completed = {}
 
-    def fake_snapshot_download(repo_id, cache_dir):
+    def fake_snapshot_download(repo_id, cache_dir, allow_patterns):
         assert repo_id == "kresnik/wav2vec2-large-xlsr-korean"
+        assert "*.bin" in allow_patterns
+        assert "*.safetensors" in allow_patterns
+        assert "*.msgpack" not in allow_patterns
         cache_path = Path(cache_dir) / "models--kresnik--wav2vec2-large-xlsr-korean"
         snapshot = cache_path / "snapshots" / "revision"
         snapshot.mkdir(parents=True)
@@ -303,6 +315,27 @@ def test_build_transcribe_config_defaults_to_managed_model_root(tmp_path, monkey
     config = transcribe_api._build_transcribe_config("whisperx", "en")
 
     assert config.faster_whisper_model_dir == str(managed_root)
+
+
+def test_build_transcribe_config_enables_fixed_language_supplement(tmp_path, monkeypatch):
+    values = _config_values(tmp_path)
+    values["detect_additional_languages"] = True
+    monkeypatch.setattr(
+        config_module,
+        "get_config_value",
+        lambda key, default=None: values.get(key, default),
+    )
+
+    config = transcribe_api._build_transcribe_config("whisperx", "en")
+
+    assert config.detect_additional_languages is True
+    assert config.faster_whisper_model_dir == str(tmp_path / "models")
+
+
+def test_mixed_language_source_mode_keeps_fixed_mode_opt_in():
+    assert transcribe_api._mixed_language_source_mode("auto", False) == "auto"
+    assert transcribe_api._mixed_language_source_mode("en", True) == "hybrid"
+    assert transcribe_api._mixed_language_source_mode("en", False) is None
 
 
 def test_model_self_test_returns_real_transcript_metadata(tmp_path, monkeypatch):

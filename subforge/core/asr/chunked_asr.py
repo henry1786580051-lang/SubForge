@@ -5,9 +5,10 @@
 """
 
 import io
+import math
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple, Union
 
 from pydub import AudioSegment
 
@@ -23,6 +24,13 @@ MS_PER_SECOND = 1000
 DEFAULT_CHUNK_LENGTH_SEC = 60 * 10  # 10 minutes
 DEFAULT_CHUNK_OVERLAP_SEC = 10  # 10秒重叠
 DEFAULT_CHUNK_CONCURRENCY = 3  # 3个并发
+DEFAULT_RETRY_MIN_CHUNK_LENGTH_SEC = 5 * 60
+DEFAULT_RETRY_MAX_DEPTH = 2
+
+_RETRYABLE_COVERAGE_ERRORS = (
+    "left confirmed speech untranslated",
+    "left vad-confirmed speech without aligned words",
+)
 
 
 class ChunkedASR:
@@ -58,11 +66,15 @@ class ChunkedASR:
     def __init__(
         self,
         asr_class: type[BaseASR],
-        audio_path: str,
+        audio_path: Union[str, bytes],
         asr_kwargs: Optional[dict] = None,
         chunk_length: int = DEFAULT_CHUNK_LENGTH_SEC,
         chunk_overlap: int = DEFAULT_CHUNK_OVERLAP_SEC,
         chunk_concurrency: int = DEFAULT_CHUNK_CONCURRENCY,
+        retry_failed_chunks: bool = False,
+        retry_min_chunk_length: int = DEFAULT_RETRY_MIN_CHUNK_LENGTH_SEC,
+        retry_max_depth: int = DEFAULT_RETRY_MAX_DEPTH,
+        _retry_depth: int = 0,
     ):
         if chunk_length <= 0:
             raise ValueError("chunk_length must be positive")
@@ -72,6 +84,10 @@ class ChunkedASR:
             raise ValueError("chunk_overlap must be smaller than chunk_length")
         if chunk_concurrency <= 0:
             raise ValueError("chunk_concurrency must be positive")
+        if retry_min_chunk_length <= 0:
+            raise ValueError("retry_min_chunk_length must be positive")
+        if retry_max_depth < 0:
+            raise ValueError("retry_max_depth must be non-negative")
 
         self.asr_class = asr_class
         self.audio_path = audio_path
@@ -79,6 +95,10 @@ class ChunkedASR:
         self.chunk_length_ms = chunk_length * MS_PER_SECOND
         self.chunk_overlap_ms = chunk_overlap * MS_PER_SECOND
         self.chunk_concurrency = chunk_concurrency
+        self.retry_failed_chunks = retry_failed_chunks
+        self.retry_min_chunk_length_ms = retry_min_chunk_length * MS_PER_SECOND
+        self.retry_max_depth = retry_max_depth
+        self._retry_depth = _retry_depth
 
     def run(self, callback: Optional[Callable[[int, str], None]] = None) -> ASRData:
         """执行分块转录
@@ -96,7 +116,12 @@ class ChunkedASR:
         if len(chunks) == 1:
             logger.debug("Audio shorter than chunk length, direct transcription")
             single_asr = self.asr_class(self.audio_path, **self.asr_kwargs)
-            return single_asr.run(callback)
+            try:
+                return single_asr.run(callback)
+            except Exception as exc:
+                if self._can_retry_chunk(exc, chunks[0][0]):
+                    return self._retry_failed_chunk(chunks[0][0], callback, exc)
+                raise
 
         logger.debug(f"Audio split into {len(chunks)}  chunks, starting parallel transcription")
 
@@ -117,11 +142,17 @@ class ChunkedASR:
             每个元素包含音频块的字节数据和时间偏移（毫秒）
         """
         try:
-            audio = AudioSegment.from_file(self.audio_path)
+            if isinstance(self.audio_path, bytes):
+                audio = AudioSegment.from_file(io.BytesIO(self.audio_path))
+            else:
+                audio = AudioSegment.from_file(self.audio_path)
         except Exception:
             logger.warning("Failed to load audio by path, falling back to in-memory bytes")
-            with open(self.audio_path, "rb") as audio_file:
-                audio = AudioSegment.from_file(io.BytesIO(audio_file.read()))
+            if isinstance(self.audio_path, bytes):
+                audio = AudioSegment.from_file(io.BytesIO(self.audio_path))
+            else:
+                with open(self.audio_path, "rb") as audio_file:
+                    audio = AudioSegment.from_file(io.BytesIO(audio_file.read()))
         total_duration_ms = len(audio)
 
         logger.debug(
@@ -135,6 +166,10 @@ class ChunkedASR:
 
         while start_ms < total_duration_ms:
             end_ms = min(start_ms + self.chunk_length_ms, total_duration_ms)
+            # Do not create a tiny tail chunk when the current chunk already
+            # reaches into the configured overlap window at the media end.
+            if total_duration_ms - end_ms <= self.chunk_overlap_ms:
+                end_ms = total_duration_ms
             chunk = audio[start_ms:end_ms]
 
             buffer = io.BytesIO()
@@ -203,12 +238,27 @@ class ChunkedASR:
             chunk_asr = self.asr_class(chunk_bytes, **self.asr_kwargs)
 
             # 调用 ASR 的 run() 方法转录
-            asr_data = chunk_asr.run(chunk_callback)
+            try:
+                asr_data = chunk_asr.run(chunk_callback)
+            except Exception as exc:
+                if not self._can_retry_chunk(exc, chunk_bytes):
+                    raise
+                asr_data = self._retry_failed_chunk(chunk_bytes, chunk_callback, exc)
 
             logger.debug(
                 f"Chunk {idx + 1}/{total_chunks} 转录完成，获得 {len(asr_data.segments)}  segments"
             )
             return idx, asr_data
+
+        # A single-worker executor still queues every later chunk. If the first
+        # chunk fails, executor shutdown waits for those queued jobs and makes a
+        # long-video failure appear only after the remaining audio is processed.
+        if self.chunk_concurrency == 1:
+            for i, (chunk_bytes, offset) in enumerate(chunks):
+                idx, asr_data = transcribe_single_chunk(i, chunk_bytes, offset)
+                results[idx] = asr_data
+            logger.debug(f"All {total_chunks} chunks transcription complete")
+            return [r for r in results if r is not None]
 
         # 使用 ThreadPoolExecutor 并发转录
         with ThreadPoolExecutor(max_workers=self.chunk_concurrency) as executor:
@@ -223,6 +273,62 @@ class ChunkedASR:
 
         logger.debug(f"All {total_chunks}  chunks transcription complete")
         return [r for r in results if r is not None]  # 过滤 None
+
+    def _can_retry_chunk(self, exc: Exception, chunk_bytes: bytes) -> bool:
+        if not self.retry_failed_chunks or self._retry_depth >= self.retry_max_depth:
+            return False
+        message = str(exc).lower()
+        if not any(marker in message for marker in _RETRYABLE_COVERAGE_ERRORS):
+            return False
+        try:
+            duration_ms = len(AudioSegment.from_file(io.BytesIO(chunk_bytes)))
+        except Exception:
+            return False
+        return duration_ms > self.retry_min_chunk_length_ms + self.chunk_overlap_ms
+
+    def _retry_failed_chunk(
+        self,
+        chunk_bytes: bytes,
+        callback: Optional[Callable[[int, str], None]],
+        exc: Exception,
+    ) -> ASRData:
+        audio = AudioSegment.from_file(io.BytesIO(chunk_bytes))
+        duration_ms = len(audio)
+        retry_length_ms = max(
+            self.retry_min_chunk_length_ms,
+            math.ceil((duration_ms + self.chunk_overlap_ms) / 2),
+        )
+        if retry_length_ms >= duration_ms:
+            raise exc
+
+        logger.warning(
+            "ASR coverage audit failed for a %.1fs chunk; retrying it as smaller %.1fs chunks "
+            "(depth %d/%d): %s",
+            duration_ms / MS_PER_SECOND,
+            retry_length_ms / MS_PER_SECOND,
+            self._retry_depth + 1,
+            self.retry_max_depth,
+            exc,
+        )
+        if callback:
+            callback(0, "Retrying an incomplete audio section in smaller chunks...")
+
+        retry = ChunkedASR(
+            asr_class=self.asr_class,
+            audio_path=chunk_bytes,
+            asr_kwargs=self.asr_kwargs,
+            chunk_length=max(1, math.ceil(retry_length_ms / MS_PER_SECOND)),
+            chunk_overlap=max(0, self.chunk_overlap_ms // MS_PER_SECOND),
+            chunk_concurrency=1,
+            retry_failed_chunks=True,
+            retry_min_chunk_length=max(
+                1,
+                self.retry_min_chunk_length_ms // MS_PER_SECOND,
+            ),
+            retry_max_depth=self.retry_max_depth,
+            _retry_depth=self._retry_depth + 1,
+        )
+        return retry.run(callback)
 
     def _merge_results(
         self, chunk_results: List[ASRData], chunks: List[Tuple[bytes, int]]

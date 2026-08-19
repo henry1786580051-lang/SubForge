@@ -104,20 +104,21 @@ def transcribe(
 
     # Enhance single-language, single-speaker audio when the optional denoise
     # stack is installed. Preserve the original signal for speaker diarization
-    # and WhisperX language auto-detection: production A/B tests showed that
+    # and WhisperX language-switch detection: production A/B tests showed that
     # denoising can suppress quieter speakers and short foreign-language turns.
     enhanced_path = None
     audio_for_asr = audio_path
     preserve_multiple_speakers = diarization_mode != "off"
-    preserve_language_switches = config.transcribe_model == TranscribeModelEnum.WHISPERX and str(
-        config.transcribe_language or ""
-    ).strip().lower() in {"", "auto"}
+    preserve_language_switches = config.transcribe_model == TranscribeModelEnum.WHISPERX and (
+        str(config.transcribe_language or "").strip().lower() in {"", "auto"}
+        or bool(getattr(config, "detect_additional_languages", False))
+    )
     preserve_original_signal = preserve_multiple_speakers or preserve_language_switches
     if preserve_multiple_speakers:
         logger.info("Multi-speaker mode retains original audio and skips enhancement")
         callback(22, "Using original audio to preserve all speakers...")
     elif preserve_language_switches:
-        logger.info("WhisperX auto-language mode retains original audio and skips enhancement")
+        logger.info("WhisperX language-switch detection retains original audio and skips enhancement")
         callback(8, "Using original audio to preserve language switches...")
     elif config.enable_audio_enhancement:
         try:
@@ -231,6 +232,7 @@ def transcribe(
 
         # Remove duplicate text emitted around VAD/chunk boundaries before the
         # final timing pass, so exports do not keep short repeated fragments.
+        asr_data.deduplicate_alignment_echoes()
         asr_data.deduplicate_adjacent_text()
 
         # whisper.cpp sometimes cuts a spoken sentence into adjacent subtitle
@@ -456,6 +458,9 @@ def _build_whisperx_kwargs(
         "missing_alignment_model_callback": getattr(
             config, "missing_alignment_model_callback", None
         ),
+        "detect_additional_languages": getattr(
+            config, "detect_additional_languages", False
+        ),
         "cancel_event": getattr(config, "cancel_event", None),
     }
 
@@ -510,7 +515,11 @@ def _create_asr_instance(audio_path: str, config: TranscribeConfig, on_segment=N
                 segment_callback=on_segment,
             ),
             chunk_concurrency=1,
-            chunk_length=60 * 60,
+            chunk_length=30 * 60,
+            chunk_overlap=15,
+            retry_failed_chunks=True,
+            retry_min_chunk_length=2 * 60,
+            retry_max_depth=4,
         )
 
     elif model_type == TranscribeModelEnum.WHISPER_API:

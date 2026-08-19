@@ -81,7 +81,11 @@ class BaseTranslator(ABC):
 
             # 将ASRData转换为SubtitleProcessData列表
             translate_data_list = [
-                SubtitleProcessData(index=i, original_text=seg.text)
+                SubtitleProcessData(
+                    index=i,
+                    original_text=seg.text,
+                    source_language=seg.language_code,
+                )
                 for i, seg in enumerate(asr_data.segments, 1)
             ]
 
@@ -89,11 +93,27 @@ class BaseTranslator(ABC):
             chunks = self._split_chunks(translate_data_list)
 
             # 多线程翻译
-            translated_list = self._parallel_translate(chunks)
-            translated_list = self._finalize_translated_list(
-                translate_data_list,
-                translated_list,
-            )
+            recovery_finalized = False
+            try:
+                translated_list = self._parallel_translate(chunks)
+            except PartialTranslationError as error:
+                recovered = self._finalize_complete_recovery(translate_data_list, error)
+                if recovered is None:
+                    self._publish_finalized_recovery(translate_data_list, error)
+                    raise RuntimeError(str(error)) from error
+                logger.warning(
+                    "Recovered a complete provisional translation after document-level "
+                    "finalization and validation"
+                )
+                translated_list = recovered
+                recovery_finalized = True
+                if self.update_callback:
+                    self.update_callback(translated_list)
+            if not recovery_finalized:
+                translated_list = self._finalize_translated_list(
+                    translate_data_list,
+                    translated_list,
+                )
             self._validate_translated_list(translate_data_list, translated_list)
 
             # 设置Subtitle segment的翻译文本
@@ -126,6 +146,64 @@ class BaseTranslator(ABC):
         """Allow translators to run whole-document consistency checks."""
         return translated_list
 
+    def _publish_finalized_recovery(
+        self,
+        source_list: List[SubtitleProcessData],
+        error: PartialTranslationError,
+    ) -> None:
+        """Publish the best complete recovery after document-level finalization.
+
+        A provisional item is still a genuine target-language answer, but it may
+        have failed a strict local validator. When every source key has either a
+        completed or provisional answer, let the normal whole-document finalizer
+        repair cross-key repetition and fluency before the API writes recovery.
+        The task remains failed; this only improves the checkpoint the user keeps.
+        """
+        recovery_by_index = {item.index: item for item in error.completed}
+        recovery_by_index.update({item.index: item for item in error.provisional})
+        if not recovery_by_index:
+            return
+
+        source_indices = {item.index for item in source_list}
+        recovery = [
+            recovery_by_index[item.index]
+            for item in source_list
+            if item.index in recovery_by_index
+        ]
+        if set(recovery_by_index) == source_indices:
+            try:
+                recovery = self._finalize_translated_list(source_list, recovery)
+            except Exception:
+                logger.exception(
+                    "Whole-document recovery finalization failed; publishing the "
+                    "best provisional translations"
+                )
+        if self.update_callback and recovery:
+            self.update_callback(recovery)
+
+    def _finalize_complete_recovery(
+        self,
+        source_list: List[SubtitleProcessData],
+        error: PartialTranslationError,
+    ) -> Optional[List[SubtitleProcessData]]:
+        """Return a fully repaired recovery only when it passes normal validation."""
+        recovery_by_index = {item.index: item for item in error.completed}
+        recovery_by_index.update({item.index: item for item in error.provisional})
+        source_indices = {item.index for item in source_list}
+        if set(recovery_by_index) != source_indices:
+            return None
+
+        recovery = [recovery_by_index[item.index] for item in source_list]
+        try:
+            recovery = self._finalize_translated_list(source_list, recovery)
+            self._validate_translated_list(source_list, recovery)
+        except Exception:
+            logger.exception(
+                "Complete provisional translation did not pass document-level recovery"
+            )
+            return None
+        return recovery
+
     def _is_chunk_result_stable(self, translated_list: List[SubtitleProcessData]) -> bool:
         """Return whether a provisional chunk is safe to reuse from cache."""
         return True
@@ -136,6 +214,9 @@ class BaseTranslator(ABC):
         """并行翻译All块"""
         future_to_chunk = {}
         translated_list = []
+        provisional_list: list[SubtitleProcessData] = []
+        failed_indices: list[int] = []
+        partial_failures_only = True
         failed_count = 0
         failed_errors: list[str] = []
         total_segments = sum(len(c) for c in chunks)
@@ -157,6 +238,8 @@ class BaseTranslator(ABC):
                 failed_errors.append(str(e))
                 if isinstance(e, PartialTranslationError):
                     translated_list.extend(e.completed)
+                    provisional_list.extend(e.provisional)
+                    failed_indices.extend(e.failed_indices)
                     failed_count += len(e.failed_indices)
                     # Recovery is a best-known checkpoint, not a completion verdict.
                     # Publish every usable item even when a later alignment pass is
@@ -166,6 +249,7 @@ class BaseTranslator(ABC):
                     if self.update_callback and progress_items:
                         self.update_callback(progress_items)
                 else:
+                    partial_failures_only = False
                     failed_count += len(future_to_chunk[future])
 
         # Never return a mixed-language result as complete. Recovery output is
@@ -193,10 +277,18 @@ class BaseTranslator(ABC):
                 if quality_failure
                 else "Check your API key, model limits, and network connection."
             )
-            raise RuntimeError(
+            message = (
                 f"Translation failed: {failed_count}/{total_segments} segments failed "
                 f"({fail_rate:.0%}). {guidance}" + detail
             )
+            if partial_failures_only and failed_indices:
+                raise PartialTranslationError(
+                    message,
+                    completed=translated_list,
+                    failed_indices=list(dict.fromkeys(failed_indices)),
+                    provisional=provisional_list,
+                )
+            raise RuntimeError(message)
 
         return translated_list
 

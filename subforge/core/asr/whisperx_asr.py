@@ -37,20 +37,36 @@ _MLX_PREVIEW_LINE = re.compile(
 
 MIXED_LANGUAGE_MIN_CONFIDENCE = 0.80
 MIXED_LANGUAGE_MAX_PRIMARY_CONFIDENCE = 0.20
-MIXED_LANGUAGE_MAX_GAP_SECONDS = 1.25
-MIXED_LANGUAGE_CONTEXT_SECONDS = 0.40
-MIXED_LANGUAGE_WINDOW_SECONDS = 4.0
-MIXED_LANGUAGE_WINDOW_STRIDE_SECONDS = 2.0
-MIXED_LANGUAGE_MIN_LANGUAGE_SUPPORT_SECONDS = 3.0
+MIXED_LANGUAGE_MIN_MARGIN = 0.15
+MIXED_LANGUAGE_MAX_GAP_SECONDS = 2.50
+MIXED_LANGUAGE_CONTEXT_SECONDS = 0.75
+MIXED_LANGUAGE_WINDOW_SECONDS = 8.0
+MIXED_LANGUAGE_WINDOW_STRIDE_SECONDS = 4.0
+MIXED_LANGUAGE_MIN_LANGUAGE_SUPPORT_SECONDS = 6.0
+MIXED_LANGUAGE_MIN_PROBE_COUNT = 2
+MIXED_LANGUAGE_MIN_DOMINANCE = 0.60
+MIXED_LANGUAGE_MIN_VOICED_SECONDS = 2.5
+MIXED_LANGUAGE_MIN_VOICED_RATIO = 0.30
+MIXED_LANGUAGE_MIN_DECODED_UNITS = 2
+MIXED_LANGUAGE_MINORITY_CJK_SUPPORT_SECONDS = 8.0
+MIXED_LANGUAGE_MINORITY_CJK_AGREED_EVENTS = 2
+MIXED_LANGUAGE_MINORITY_CJK_SUPPORT_RATIO = 0.50
+MIXED_LANGUAGE_MAX_CONFIRMED_BRIDGE_SECONDS = 20.0
+MIXED_LANGUAGE_MIN_BRIDGE_SPEECH_SECONDS = 2.0
+MIXED_LANGUAGE_MIN_BRIDGE_SPEECH_RATIO = 0.30
+MIXED_LANGUAGE_REPETITION_NEARBY_SECONDS = 5.0
+MIXED_LANGUAGE_REPETITION_MAX_RANGE_SECONDS = 90.0
 MLX_GAP_RECOVERY_MIN_GAP_SECONDS = 6.0
 MLX_GAP_RECOVERY_MIN_SPEECH_SECONDS = 2.5
 MLX_GAP_RECOVERY_MIN_SPEECH_RATIO = 0.45
-MLX_GAP_RECOVERY_CONTEXT_SECONDS = 0.20
+MLX_GAP_RECOVERY_CONTEXT_SECONDS = 2.0
+MLX_GAP_RECOVERY_FALLBACK_CONTEXT_SECONDS = 15.0
 MLX_SPARSE_RECOVERY_MIN_DURATION_SECONDS = 10.0
 MLX_SPARSE_RECOVERY_MIN_SPEECH_SECONDS = 5.0
 MLX_SPARSE_RECOVERY_MIN_SPEECH_RATIO = 0.60
 MLX_SPARSE_RECOVERY_MAX_UNITS_PER_SPEECH_SECOND = 0.75
 MLX_SPARSE_RECOVERY_CONTEXT_SECONDS = 2.0
+MLX_SPARSE_RECOVERY_FALLBACK_CONTEXT_SECONDS = (15.0, 45.0)
 MLX_FINAL_AUDIT_MIN_SPEECH_SECONDS = 5.0
 MLX_FINAL_AUDIT_MIN_SPEECH_RATIO = 0.70
 MLX_AUDIO_SAMPLE_RATE = 16_000
@@ -450,8 +466,7 @@ def _detect_speech_in_mlx_gaps(
             )
             gap_start_ms = round(gap_start * 1000)
             speech_segments.extend(
-                (gap_start_ms + int(start), gap_start_ms + int(end))
-                for start, end in local_speech
+                (gap_start_ms + int(start), gap_start_ms + int(end)) for start, end in local_speech
             )
         return speech_segments
 
@@ -490,7 +505,7 @@ def _usable_mlx_recovery_segment(
             return False
         if not isinstance(average_log_probability, (int, float)):
             return False
-        if float(average_log_probability) < -0.60 or len(text.split()) < 3:
+        if float(average_log_probability) < -0.60 or _lexical_unit_count(text) < 3:
             return False
     return True
 
@@ -504,9 +519,7 @@ def _recover_mlx_sparse_segments(
 ) -> dict[str, Any]:
     """Re-decode long MLX spans that contain far more speech than transcript text."""
     original_segments = [
-        dict(segment)
-        for segment in result.get("segments") or []
-        if isinstance(segment, dict)
+        dict(segment) for segment in result.get("segments") or [] if isinstance(segment, dict)
     ]
     candidates = _find_sparse_mlx_segments(original_segments)
     if not candidates:
@@ -530,79 +543,91 @@ def _recover_mlx_sparse_segments(
         ):
             continue
 
-        decode_start = max(
-            0.0,
-            candidate.start - MLX_SPARSE_RECOVERY_CONTEXT_SECONDS,
-        )
-        decode_end = min(
-            audio_duration,
-            candidate.end + MLX_SPARSE_RECOVERY_CONTEXT_SECONDS,
-        )
-        start_sample = max(0, round(decode_start * sample_rate))
-        end_sample = min(len(audio), round(decode_end * sample_rate))
-        local_result = transcribe_clip(audio[start_sample:end_sample])
-        accepted: list[dict[str, Any]] = []
-        for segment in local_result.get("segments") or []:
-            if not isinstance(segment, dict) or not _usable_mlx_recovery_segment(
-                segment,
-                speech_ratio=speech_ratio,
-            ):
-                continue
-            shifted = dict(segment)
-            words = segment.get("words")
-            if isinstance(words, list) and words:
-                selected_words: list[dict[str, Any]] = []
-                for word in words:
-                    if not isinstance(word, dict):
-                        continue
-                    word_start = word.get("start")
-                    word_end = word.get("end")
-                    if not isinstance(word_start, (int, float)) or not isinstance(
-                        word_end,
-                        (int, float),
-                    ):
-                        continue
-                    absolute_start = float(word_start) + decode_start
-                    absolute_end = float(word_end) + decode_start
-                    if (
-                        absolute_start < candidate.start
-                        or absolute_end > candidate.end
-                        or absolute_end <= absolute_start
-                    ):
-                        continue
-                    selected = dict(word)
-                    selected["start"] = absolute_start
-                    selected["end"] = absolute_end
-                    selected_words.append(selected)
-                if not selected_words:
-                    continue
-                shifted["text"] = "".join(
-                    str(word.get("word") or "") for word in selected_words
-                ).strip()
-                shifted["start"] = float(selected_words[0]["start"])
-                shifted["end"] = float(selected_words[-1]["end"])
-                shifted["words"] = selected_words
-            else:
-                shifted["start"] = max(
-                    candidate.start,
-                    float(segment.get("start", 0.0)) + decode_start,
-                )
-                shifted["end"] = min(
-                    candidate.end,
-                    float(segment.get("end", 0.0)) + decode_start,
-                    audio_duration,
-                )
-            if shifted["end"] <= shifted["start"]:
-                continue
-            if not str(shifted.get("text") or "").strip():
-                continue
-            shifted["recovered_sparse_segment"] = True
-            accepted.append(shifted)
-
-        recovered_units = sum(
-            _lexical_unit_count(str(segment.get("text") or "")) for segment in accepted
-        )
         minimum_gain = max(6, int(speech_seconds * 0.4))
+        accepted: list[dict[str, Any]] = []
+        recovered_units = 0
+        for context_seconds in (
+            MLX_SPARSE_RECOVERY_CONTEXT_SECONDS,
+            *MLX_SPARSE_RECOVERY_FALLBACK_CONTEXT_SECONDS,
+        ):
+            decode_start = max(0.0, candidate.start - context_seconds)
+            decode_end = min(audio_duration, candidate.end + context_seconds)
+            start_sample = max(0, round(decode_start * sample_rate))
+            end_sample = min(len(audio), round(decode_end * sample_rate))
+            local_result = transcribe_clip(audio[start_sample:end_sample])
+            attempt: list[dict[str, Any]] = []
+            for segment in local_result.get("segments") or []:
+                if not isinstance(segment, dict) or not _usable_mlx_recovery_segment(
+                    segment,
+                    speech_ratio=speech_ratio,
+                ):
+                    continue
+                shifted = dict(segment)
+                words = segment.get("words")
+                if isinstance(words, list) and words:
+                    selected_words: list[dict[str, Any]] = []
+                    for word in words:
+                        if not isinstance(word, dict):
+                            continue
+                        word_start = word.get("start")
+                        word_end = word.get("end")
+                        if not isinstance(word_start, (int, float)) or not isinstance(
+                            word_end,
+                            (int, float),
+                        ):
+                            continue
+                        absolute_start = float(word_start) + decode_start
+                        absolute_end = float(word_end) + decode_start
+                        if (
+                            absolute_start < candidate.start
+                            or absolute_end > candidate.end
+                            or absolute_end <= absolute_start
+                        ):
+                            continue
+                        selected = dict(word)
+                        selected["start"] = absolute_start
+                        selected["end"] = absolute_end
+                        selected_words.append(selected)
+                    if not selected_words:
+                        continue
+                    shifted["text"] = "".join(
+                        str(word.get("word") or "") for word in selected_words
+                    ).strip()
+                    shifted["start"] = float(selected_words[0]["start"])
+                    shifted["end"] = float(selected_words[-1]["end"])
+                    shifted["words"] = selected_words
+                else:
+                    shifted["start"] = max(
+                        candidate.start,
+                        float(segment.get("start", 0.0)) + decode_start,
+                    )
+                    shifted["end"] = min(
+                        candidate.end,
+                        float(segment.get("end", 0.0)) + decode_start,
+                        audio_duration,
+                    )
+                if shifted["end"] <= shifted["start"]:
+                    continue
+                if not str(shifted.get("text") or "").strip():
+                    continue
+                shifted["recovered_sparse_segment"] = True
+                attempt.append(shifted)
+
+            attempt_units = sum(
+                _lexical_unit_count(str(segment.get("text") or "")) for segment in attempt
+            )
+            if attempt_units > recovered_units:
+                accepted = attempt
+                recovered_units = attempt_units
+            if (
+                attempt
+                and attempt_units >= candidate.lexical_units + minimum_gain
+                and attempt_units >= round(candidate.lexical_units * 1.5)
+            ):
+                accepted = attempt
+                recovered_units = attempt_units
+                break
+
         if (
             not accepted
             or recovered_units < candidate.lexical_units + minimum_gain
@@ -616,8 +641,7 @@ def _recover_mlx_sparse_segments(
                     "speech_ratio": speech_ratio,
                     "original_units": candidate.lexical_units,
                     "recovered_units": recovered_units,
-                    "is_internal": candidate.start > 0.05
-                    and candidate.end < audio_duration - 0.05,
+                    "is_internal": candidate.start > 0.05 and candidate.end < audio_duration - 0.05,
                 }
             )
             continue
@@ -756,9 +780,7 @@ def _recover_mlx_speech_gaps(
 ) -> dict[str, Any]:
     """Decode only VAD-confirmed holes while preserving every original segment."""
     original_segments = [
-        dict(segment)
-        for segment in result.get("segments") or []
-        if isinstance(segment, dict)
+        dict(segment) for segment in result.get("segments") or [] if isinstance(segment, dict)
     ]
     audio_duration = len(audio) / sample_rate if sample_rate > 0 else 0.0
     gaps = _find_speech_backed_mlx_gaps(
@@ -772,11 +794,20 @@ def _recover_mlx_speech_gaps(
     recovered: list[dict[str, Any]] = []
     recovered_gaps: list[dict[str, Any]] = []
     unresolved_gaps: list[dict[str, Any]] = []
-    for gap in gaps:
-        start_sample = max(0, round(gap.start * sample_rate))
-        end_sample = min(len(audio), round(gap.end * sample_rate))
+
+    def decode_gap(
+        gap: _SpeechBackedGap,
+        context_seconds: float,
+    ) -> list[dict[str, Any]]:
+        decode_start = max(0.0, gap.start - context_seconds)
+        decode_end = min(
+            audio_duration,
+            gap.end + context_seconds,
+        )
+        start_sample = max(0, round(decode_start * sample_rate))
+        end_sample = min(len(audio), round(decode_end * sample_rate))
         if end_sample <= start_sample:
-            continue
+            return []
         local_result = transcribe_clip(audio[start_sample:end_sample])
         accepted: list[dict[str, Any]] = []
         for segment in local_result.get("segments") or []:
@@ -786,12 +817,63 @@ def _recover_mlx_speech_gaps(
             ):
                 continue
             shifted = dict(segment)
-            shifted["start"] = max(gap.start, float(segment["start"]) + gap.start)
-            shifted["end"] = min(gap.end, float(segment["end"]) + gap.start)
+            words = segment.get("words")
+            if isinstance(words, list) and words:
+                selected_words: list[dict[str, Any]] = []
+                for word in words:
+                    if not isinstance(word, dict):
+                        continue
+                    word_start = word.get("start")
+                    word_end = word.get("end")
+                    if not isinstance(word_start, (int, float)) or not isinstance(
+                        word_end,
+                        (int, float),
+                    ):
+                        continue
+                    absolute_start = float(word_start) + decode_start
+                    absolute_end = float(word_end) + decode_start
+                    midpoint = (absolute_start + absolute_end) / 2
+                    if midpoint < gap.start - 0.05 or midpoint > gap.end + 0.05:
+                        continue
+                    if absolute_end <= absolute_start:
+                        continue
+                    selected = dict(word)
+                    selected["start"] = max(gap.start, absolute_start)
+                    selected["end"] = min(gap.end, absolute_end)
+                    if selected["end"] > selected["start"]:
+                        selected_words.append(selected)
+                if not selected_words:
+                    continue
+                shifted["text"] = "".join(
+                    str(word.get("word") or "") for word in selected_words
+                ).strip()
+                shifted["start"] = float(selected_words[0]["start"])
+                shifted["end"] = float(selected_words[-1]["end"])
+                shifted["words"] = selected_words
+            else:
+                shifted["start"] = max(
+                    gap.start,
+                    float(segment["start"]) + decode_start,
+                )
+                shifted["end"] = min(
+                    gap.end,
+                    float(segment["end"]) + decode_start,
+                )
             if shifted["end"] <= shifted["start"]:
+                continue
+            if not str(shifted.get("text") or "").strip():
                 continue
             shifted["recovered_speech_gap"] = True
             accepted.append(shifted)
+        return accepted
+
+    for gap in gaps:
+        accepted = decode_gap(gap, MLX_GAP_RECOVERY_CONTEXT_SECONDS)
+        if not accepted:
+            accepted = decode_gap(
+                gap,
+                MLX_GAP_RECOVERY_FALLBACK_CONTEXT_SECONDS,
+            )
         accepted = _stitch_mlx_recovery_boundary(accepted, original_segments, gap)
         if not accepted:
             unresolved_gaps.append(
@@ -892,6 +974,159 @@ def _critical_aligned_speech_gaps(
     ]
 
 
+def _classify_foreign_unresolved_ranges(
+    ranges: list[dict[str, Any]],
+    audio: Any,
+    sample_rate: int,
+    primary_language: str,
+    transcribe_clip_auto: Callable[[Any], dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Separate confirmed foreign speech from unresolved primary-language speech."""
+    primary = _normalize_language(primary_language)
+    unresolved: list[dict[str, Any]] = []
+    foreign: list[dict[str, Any]] = []
+    audio_duration = len(audio) / sample_rate if sample_rate > 0 else 0.0
+    for item in ranges:
+        # Unlike recovery decoding, language identification must not pull in
+        # adjacent primary-language speech at a language-switch boundary.
+        start = max(0.0, float(item.get("start", 0.0)))
+        end = min(audio_duration, float(item.get("end", 0.0)))
+        start_sample = max(0, round(start * sample_rate))
+        end_sample = min(len(audio), round(end * sample_rate))
+        if end_sample <= start_sample:
+            unresolved.append(item)
+            continue
+        try:
+            probe = transcribe_clip_auto(audio[start_sample:end_sample])
+        except Exception:
+            unresolved.append(item)
+            continue
+        detected = _normalize_language(str(probe.get("language") or ""))
+        detected_text = str(probe.get("text") or "").strip()
+        script_language = _script_language_evidence(detected_text)
+        resolved_language = script_language or detected
+        recovered_units = _lexical_unit_count(detected_text)
+        if resolved_language and resolved_language != primary and recovered_units >= 2:
+            foreign.append(
+                {
+                    **item,
+                    "detected_language": resolved_language,
+                    "model_language": detected,
+                    "script_language": script_language,
+                    "detected_text": detected_text,
+                    "detected_units": recovered_units,
+                }
+            )
+        else:
+            unresolved.append(item)
+    return unresolved, foreign
+
+
+def _gap_is_covered_by_foreign_range(
+    gap: _SpeechBackedGap,
+    foreign_ranges: list[dict[str, Any]],
+) -> bool:
+    return _time_range_is_covered_by_ranges(gap.start, gap.end, foreign_ranges)
+
+
+def _time_range_is_covered_by_ranges(
+    start: float,
+    end: float,
+    ranges: list[dict[str, Any]],
+) -> bool:
+    duration = max(0.001, end - start)
+    overlap = sum(
+        max(
+            0.0,
+            min(end, float(item.get("end", 0.0))) - max(start, float(item.get("start", 0.0))),
+        )
+        for item in ranges
+    )
+    return overlap / duration >= 0.60
+
+
+def _recover_aligned_gaps_from_native_words(
+    aligned: dict[str, Any],
+    native_result: dict[str, Any],
+    gaps: list[_SpeechBackedGap],
+) -> dict[str, Any]:
+    """Fill forced-alignment holes with MLX's native word timestamps only."""
+    if not gaps:
+        return aligned
+
+    recovered_segments: list[dict[str, Any]] = []
+    recovered_words: list[dict[str, Any]] = []
+    for segment in native_result.get("segments") or []:
+        if not isinstance(segment, dict):
+            continue
+        words = segment.get("words")
+        if not isinstance(words, list):
+            continue
+        selected: list[dict[str, Any]] = []
+        for word in words:
+            if not isinstance(word, dict):
+                continue
+            start = _float_seconds(word.get("start"))
+            end = _float_seconds(word.get("end"))
+            if start is None or end is None or end <= start:
+                continue
+            midpoint = (start + end) / 2
+            if not any(gap.start <= midpoint <= gap.end for gap in gaps):
+                continue
+            selected_word = dict(word)
+            selected_word["timing_source"] = "native"
+            selected.append(selected_word)
+        if not selected:
+            continue
+        text = "".join(str(word.get("word") or "") for word in selected).strip()
+        if not text:
+            continue
+        recovered_segments.append(
+            {
+                "text": text,
+                "start": float(selected[0]["start"]),
+                "end": float(selected[-1]["end"]),
+                "words": selected,
+                "native_word_fallback": True,
+            }
+        )
+        recovered_words.extend(selected)
+
+    if not recovered_segments:
+        return aligned
+    updated = dict(aligned)
+    updated["segments"] = sorted(
+        [
+            *[
+                dict(segment)
+                for segment in aligned.get("segments") or []
+                if isinstance(segment, dict)
+            ],
+            *recovered_segments,
+        ],
+        key=lambda item: (float(item.get("start", 0.0)), float(item.get("end", 0.0))),
+    )
+    updated["word_segments"] = sorted(
+        [
+            *[dict(word) for word in aligned.get("word_segments") or [] if isinstance(word, dict)],
+            *recovered_words,
+        ],
+        key=lambda item: (float(item.get("start", 0.0)), float(item.get("end", 0.0))),
+    )
+    updated["native_word_gap_recovery"] = len(recovered_segments)
+    return updated
+
+
+def _exit_mlx_worker(exit_code: int) -> None:
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream:
+                stream.flush()
+        except Exception:
+            pass
+    os._exit(exit_code)
+
+
 def run_packaged_mlx_whisper_worker() -> None:
     """Run MLX decoding outside the desktop process so the UI remains responsive."""
     request_path = Path(os.environ[_MLX_WORKER_REQUEST])
@@ -905,9 +1140,50 @@ def run_packaged_mlx_whisper_worker() -> None:
                 reconfigure(line_buffering=True, write_through=True)
 
         request = json.loads(request_path.read_text(encoding="utf-8"))
+        if request.get("operation") == "classify_ranges":
+            from mlx_whisper.audio import SAMPLE_RATE
+            from mlx_whisper.audio import load_audio as load_mlx_audio
+
+            audio = load_mlx_audio(str(request["audio"]))
+
+            def transcribe_clip_auto(clip: Any) -> dict[str, Any]:
+                local_kwargs: dict[str, Any] = {
+                    "path_or_hf_repo": str(request["model"]),
+                    "word_timestamps": False,
+                    "condition_on_previous_text": False,
+                    "verbose": None,
+                }
+                try:
+                    return dict(mlx_whisper.transcribe(clip, **local_kwargs))
+                except TypeError:
+                    local_kwargs.pop("condition_on_previous_text", None)
+                    return dict(mlx_whisper.transcribe(clip, **local_kwargs))
+
+            review_ranges = [
+                dict(item) for item in request.get("ranges") or [] if isinstance(item, dict)
+            ]
+            unresolved, foreign_ranges = _classify_foreign_unresolved_ranges(
+                review_ranges,
+                audio,
+                SAMPLE_RATE,
+                str(request.get("primary_language") or ""),
+                transcribe_clip_auto,
+            )
+            _atomic_json_write(
+                output_path,
+                {
+                    "ok": True,
+                    "data": {
+                        "unresolved_ranges": unresolved,
+                        "foreign_language_speech_ranges": foreign_ranges,
+                    },
+                },
+            )
+            _exit_mlx_worker(0)
+
         kwargs: dict[str, Any] = {
             "path_or_hf_repo": str(request["model"]),
-            "word_timestamps": False,
+            "word_timestamps": bool(request.get("word_timestamps")),
             "condition_on_previous_text": False,
             # MLX emits each completed segment in a stable timestamped format.
             # The parent process tails these lines for UI previews; the final
@@ -952,6 +1228,19 @@ def run_packaged_mlx_whisper_worker() -> None:
                     local_kwargs.pop("condition_on_previous_text", None)
                     return dict(mlx_whisper.transcribe(clip, **local_kwargs))
 
+            def transcribe_clip_auto(clip: Any) -> dict[str, Any]:
+                local_kwargs: dict[str, Any] = {
+                    "path_or_hf_repo": str(request["model"]),
+                    "word_timestamps": False,
+                    "condition_on_previous_text": False,
+                    "verbose": None,
+                }
+                try:
+                    return dict(mlx_whisper.transcribe(clip, **local_kwargs))
+                except TypeError:
+                    local_kwargs.pop("condition_on_previous_text", None)
+                    return dict(mlx_whisper.transcribe(clip, **local_kwargs))
+
             sparse_candidates = _find_sparse_mlx_segments(source_segments)
             sparse_ranges = [(item.start, item.end) for item in sparse_candidates]
             sparse_speech = _detect_speech_in_mlx_gaps(
@@ -986,7 +1275,7 @@ def run_packaged_mlx_whisper_worker() -> None:
                 audio,
                 SAMPLE_RATE,
                 speech_segments,
-                transcribe_clip,
+                lambda clip: transcribe_clip(clip, word_timestamps=True),
             )
         except Exception as exc:
             raise RuntimeError("MLX speech-coverage recovery failed") from exc
@@ -1002,15 +1291,42 @@ def run_packaged_mlx_whisper_worker() -> None:
             gap
             for gap in result.get("unresolved_sparse_segments") or []
             if gap.get("is_internal")
-            and float(gap.get("speech_seconds", 0.0))
-            >= MLX_SPARSE_RECOVERY_MIN_SPEECH_SECONDS
-            and float(gap.get("speech_ratio", 0.0))
-            >= MLX_SPARSE_RECOVERY_MIN_SPEECH_RATIO
+            and float(gap.get("speech_seconds", 0.0)) >= MLX_SPARSE_RECOVERY_MIN_SPEECH_SECONDS
+            and float(gap.get("speech_ratio", 0.0)) >= MLX_SPARSE_RECOVERY_MIN_SPEECH_RATIO
         )
+        if language:
+            recovered_ranges = [
+                dict(item)
+                for key in ("speech_gap_recovery", "sparse_segment_recovery")
+                for item in result.get(key) or []
+                if isinstance(item, dict)
+            ]
+            review_ranges = [*critical_unresolved, *recovered_ranges]
+            _, foreign_ranges = _classify_foreign_unresolved_ranges(
+                review_ranges,
+                audio,
+                SAMPLE_RATE,
+                language,
+                transcribe_clip_auto,
+            )
+            if foreign_ranges:
+                result["foreign_language_speech_ranges"] = foreign_ranges
+                critical_unresolved = [
+                    item
+                    for item in critical_unresolved
+                    if not _time_range_is_covered_by_ranges(
+                        float(item.get("start", 0.0)),
+                        float(item.get("end", 0.0)),
+                        foreign_ranges,
+                    )
+                ]
+        elif critical_unresolved:
+            # Auto-language jobs resolve these ranges in the parent process,
+            # where per-language alignment models and user prompts are available.
+            result["deferred_unresolved_coverage"] = critical_unresolved
         if critical_unresolved:
             windows = ", ".join(
-                f"{float(gap['start']):.1f}-{float(gap['end']):.1f}s"
-                for gap in critical_unresolved
+                f"{float(gap['start']):.1f}-{float(gap['end']):.1f}s" for gap in critical_unresolved
             )
             raise RuntimeError(
                 "MLX Whisper left confirmed speech untranslated after retry: " + windows
@@ -1023,13 +1339,7 @@ def run_packaged_mlx_whisper_worker() -> None:
         except OSError:
             pass
         exit_code = 1
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            if stream:
-                stream.flush()
-        except Exception:
-            pass
-    os._exit(exit_code)
+    _exit_mlx_worker(exit_code)
 
 
 def _segments_for_alignment(result: dict) -> list[dict]:
@@ -1104,6 +1414,11 @@ class _LanguageProbe:
     language: str
     confidence: float
     primary_confidence: float
+    runner_up_language: str = ""
+    runner_up_confidence: float = 0.0
+    speech_seconds: float = 0.0
+    speech_ratio: float = 0.0
+    source: str = "window"
 
 
 @dataclass(frozen=True)
@@ -1112,65 +1427,434 @@ class _LanguageRange:
     end: float
     language: str
     confidence: float
+    support_seconds: float = 0.0
+    probe_count: int = 0
+    dominance: float = 1.0
+    needs_confirmation: bool = False
+    decoded_language: str = ""
+    script_language: str = ""
+    confirmation_agreement: bool = False
+
+
+_JAPANESE_KANA_RE = re.compile(r"[\u3040-\u30ff]")
+_KOREAN_HANGUL_RE = re.compile(r"[\uac00-\ud7af\u1100-\u11ff\u3130-\u318f]")
+_CJK_CONFUSION_LANGUAGES = {"ja", "ko", "zh", "yue"}
+
+
+def _union_duration(ranges: list[tuple[float, float]]) -> float:
+    merged: list[tuple[float, float]] = []
+    for start, end in sorted(ranges):
+        if end <= start:
+            continue
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return sum(end - start for start, end in merged)
+
+
+def _script_language_evidence(text: str) -> str:
+    """Return strong script evidence without guessing from shared Han characters."""
+    kana = len(_JAPANESE_KANA_RE.findall(text))
+    hangul = len(_KOREAN_HANGUL_RE.findall(text))
+    if kana >= 2 and kana >= hangul * 2:
+        return "ja"
+    if hangul >= 2 and hangul >= kana * 2:
+        return "ko"
+    return ""
+
+
+def _language_ranges_from_foreign_audit(
+    ranges: list[dict[str, Any]],
+    primary_language: str,
+) -> list[_LanguageRange]:
+    primary = str(_normalize_language(primary_language) or primary_language).lower()
+    converted: list[_LanguageRange] = []
+    for item in ranges:
+        start = item.get("start")
+        end = item.get("end")
+        if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+            continue
+        start = float(start)
+        end = float(end)
+        if end <= start:
+            continue
+        text = str(item.get("detected_text") or "")
+        script_language = str(item.get("script_language") or "").lower()
+        detected_language = str(item.get("detected_language") or "").lower()
+        language = script_language or _script_language_evidence(text) or detected_language
+        if not language or language == primary:
+            continue
+        converted.append(
+            _LanguageRange(
+                start=start,
+                end=end,
+                language=language,
+                confidence=1.0,
+                support_seconds=float(item.get("speech_seconds") or end - start),
+                probe_count=1,
+                dominance=1.0,
+                decoded_language=str(item.get("model_language") or detected_language).lower(),
+                script_language=script_language or _script_language_evidence(text),
+                confirmation_agreement=detected_language == language,
+            )
+        )
+    return _merge_confirmed_language_ranges(converted)
+
+
+def _candidate_foreign_language_ranges(
+    probes: list[_LanguageProbe],
+    primary_language: str,
+) -> list[_LanguageRange]:
+    """Build local foreign-language events without counting overlap globally."""
+    candidates = []
+    for probe in probes:
+        competing_confidence = max(
+            probe.primary_confidence,
+            probe.runner_up_confidence,
+        )
+        if (
+            probe.language != primary_language
+            and probe.confidence >= MIXED_LANGUAGE_MIN_CONFIDENCE
+            and probe.primary_confidence <= MIXED_LANGUAGE_MAX_PRIMARY_CONFIDENCE
+            and probe.confidence - competing_confidence >= MIXED_LANGUAGE_MIN_MARGIN
+        ):
+            candidates.append(probe)
+    if not candidates:
+        return []
+
+    episodes: list[list[_LanguageProbe]] = []
+    for probe in sorted(candidates, key=lambda item: (item.start, item.end)):
+        if episodes and probe.start - max(item.end for item in episodes[-1]) <= (
+            MIXED_LANGUAGE_MAX_GAP_SECONDS
+        ):
+            episodes[-1].append(probe)
+        else:
+            episodes.append([probe])
+
+    ranges: list[_LanguageRange] = []
+    for episode in episodes:
+        # Window cores are non-overlapping evidence. Segment probes refine the
+        # boundaries but must not double-count the same speech.
+        support_probes = [item for item in episode if item.source == "window"] or episode
+        by_language: dict[str, list[_LanguageProbe]] = {}
+        for probe in support_probes:
+            by_language.setdefault(probe.language, []).append(probe)
+
+        support_by_language = {
+            language: sum(
+                min(max(0.0, item.end - item.start), max(0.0, item.speech_seconds))
+                if item.speech_seconds > 0
+                else max(0.0, item.end - item.start)
+                for item in items
+            )
+            for language, items in by_language.items()
+        }
+        winner = max(
+            support_by_language,
+            key=lambda language: (
+                support_by_language[language],
+                max(item.confidence for item in by_language[language]),
+            ),
+        )
+        winner_probes = by_language[winner]
+        total_support = sum(
+            min(max(0.0, item.end - item.start), max(0.0, item.speech_seconds))
+            if item.speech_seconds > 0
+            else max(0.0, item.end - item.start)
+            for item in support_probes
+        )
+        winner_support = support_by_language[winner]
+        dominance = winner_support / max(0.001, total_support)
+        stable = (
+            winner_support >= MIXED_LANGUAGE_MIN_LANGUAGE_SUPPORT_SECONDS
+            and len(winner_probes) >= MIXED_LANGUAGE_MIN_PROBE_COUNT
+            and dominance >= MIXED_LANGUAGE_MIN_DOMINANCE
+        )
+        ranges.append(
+            _LanguageRange(
+                start=min(item.start for item in episode),
+                end=max(item.end for item in episode),
+                language=winner,
+                confidence=max(item.confidence for item in winner_probes),
+                support_seconds=winner_support,
+                probe_count=len(winner_probes),
+                dominance=dominance,
+                needs_confirmation=not stable
+                or len({item.language for item in episode} & _CJK_CONFUSION_LANGUAGES) > 1,
+            )
+        )
+    return ranges
 
 
 def _select_foreign_language_ranges(
     probes: list[_LanguageProbe],
     primary_language: str,
 ) -> list[_LanguageRange]:
-    """Keep only high-confidence foreign speech and merge adjacent runs."""
-    candidates = [
-        probe
-        for probe in probes
-        if probe.language != primary_language
-        and probe.confidence >= MIXED_LANGUAGE_MIN_CONFIDENCE
-        and probe.primary_confidence <= MIXED_LANGUAGE_MAX_PRIMARY_CONFIDENCE
-        and alignment_model_for_language(probe.language) is not None
+    """Return stable events; tentative short events require transcript confirmation."""
+    return [
+        item
+        for item in _candidate_foreign_language_ranges(probes, primary_language)
+        if not item.needs_confirmation
     ]
-    if not candidates:
-        return []
 
-    support_by_language: dict[str, float] = {}
-    peak_by_language: dict[str, float] = {}
-    for probe in candidates:
-        support_by_language[probe.language] = support_by_language.get(probe.language, 0.0) + max(
-            0.0, probe.end - probe.start
-        )
-        peak_by_language[probe.language] = max(
-            peak_by_language.get(probe.language, 0.0), probe.confidence
-        )
-    supported_languages = {
-        language
-        for language, duration in support_by_language.items()
-        if duration >= MIXED_LANGUAGE_MIN_LANGUAGE_SUPPORT_SECONDS
-        or peak_by_language[language] >= 0.95
-    }
-    candidates = [probe for probe in candidates if probe.language in supported_languages]
 
-    ranges: list[_LanguageRange] = []
-    for probe in sorted(candidates, key=lambda item: (item.start, item.end)):
-        if (
-            ranges
-            and ranges[-1].language == probe.language
-            and probe.start - ranges[-1].end <= MIXED_LANGUAGE_MAX_GAP_SECONDS
+def _confirm_foreign_language_range(
+    candidate: _LanguageRange,
+    primary_language: str,
+    decoded_language: str,
+    decoded_text: str,
+) -> _LanguageRange | None:
+    """Confirm an event with an independent full-event decode and script evidence."""
+    primary = str(_normalize_language(primary_language) or primary_language).lower()
+    detected = str(_normalize_language(decoded_language) or "").lower()
+    units = _lexical_unit_count(decoded_text)
+    if units < MIXED_LANGUAGE_MIN_DECODED_UNITS:
+        return None
+
+    script_language = _script_language_evidence(decoded_text)
+    if script_language:
+        if script_language == primary:
+            return None
+        agreement = candidate.language == script_language and detected == script_language
+        if candidate.needs_confirmation and (
+            units < MIXED_LANGUAGE_MIN_DECODED_UNITS
+            or (
+                detected
+                and detected != script_language
+                and not {
+                    detected,
+                    candidate.language,
+                    script_language,
+                }.issubset(_CJK_CONFUSION_LANGUAGES)
+            )
         ):
-            previous = ranges[-1]
-            ranges[-1] = _LanguageRange(
-                start=previous.start,
-                end=max(previous.end, probe.end),
-                language=previous.language,
-                confidence=max(previous.confidence, probe.confidence),
-            )
+            return None
+        return _LanguageRange(
+            start=candidate.start,
+            end=candidate.end,
+            language=script_language,
+            confidence=candidate.confidence,
+            support_seconds=candidate.support_seconds,
+            probe_count=candidate.probe_count,
+            dominance=candidate.dominance,
+            needs_confirmation=False,
+            decoded_language=detected,
+            script_language=script_language,
+            confirmation_agreement=agreement,
+        )
+
+    candidate_is_cjk = candidate.language in _CJK_CONFUSION_LANGUAGES
+    detected_is_cjk = detected in _CJK_CONFUSION_LANGUAGES
+    if candidate_is_cjk or detected_is_cjk:
+        # Han-only text cannot distinguish Chinese from Japanese, and a short
+        # Japanese/Korean decode without kana or Hangul is not strong evidence.
+        if (
+            candidate.needs_confirmation
+            or detected != candidate.language
+            or candidate.dominance < 0.75
+        ):
+            return None
+    elif candidate.needs_confirmation:
+        if detected != candidate.language or units < 3 or candidate.confidence < 0.90:
+            return None
+    elif detected and detected != candidate.language:
+        return None
+
+    if detected == primary:
+        return None
+    if not detected and candidate.dominance < 0.80:
+        return None
+    return _LanguageRange(
+        start=candidate.start,
+        end=candidate.end,
+        language=candidate.language,
+        confidence=candidate.confidence,
+        support_seconds=candidate.support_seconds,
+        probe_count=candidate.probe_count,
+        dominance=candidate.dominance,
+        needs_confirmation=False,
+        decoded_language=detected,
+        confirmation_agreement=detected == candidate.language,
+    )
+
+
+def _stabilize_confirmed_language_ranges(
+    ranges: list[_LanguageRange],
+) -> tuple[list[_LanguageRange], list[_LanguageRange]]:
+    """Suppress weak minority CJK labels within one recording or chunk."""
+    cjk_ranges = [item for item in ranges if item.language in _CJK_CONFUSION_LANGUAGES]
+    cjk_languages = {item.language for item in cjk_ranges}
+    if len(cjk_languages) <= 1:
+        return ranges, []
+
+    support_by_language = {
+        language: sum(item.support_seconds for item in cjk_ranges if item.language == language)
+        for language in cjk_languages
+    }
+    dominant_language = max(
+        support_by_language,
+        key=lambda language: support_by_language[language],
+    )
+    dominant_support = support_by_language[dominant_language]
+    retained_languages = {dominant_language}
+    for language in cjk_languages - {dominant_language}:
+        language_ranges = [item for item in cjk_ranges if item.language == language]
+        agreed_events = sum(item.confirmation_agreement for item in language_ranges)
+        support = support_by_language[language]
+        if (
+            support >= MIXED_LANGUAGE_MINORITY_CJK_SUPPORT_SECONDS
+            and agreed_events >= MIXED_LANGUAGE_MINORITY_CJK_AGREED_EVENTS
+            and support >= dominant_support * MIXED_LANGUAGE_MINORITY_CJK_SUPPORT_RATIO
+        ):
+            retained_languages.add(language)
+
+    retained = [
+        item
+        for item in ranges
+        if item.language not in _CJK_CONFUSION_LANGUAGES or item.language in retained_languages
+    ]
+    rejected = [item for item in ranges if item not in retained]
+    return retained, rejected
+
+
+def _candidate_confirmed_language_bridges(
+    ranges: list[_LanguageRange],
+    speech_segments_ms: list[tuple[int, int]],
+) -> list[tuple[_LanguageRange, _LanguageRange, float, float]]:
+    """Find short voiced gaps that may continue the same confirmed CJK language."""
+    candidates: list[tuple[_LanguageRange, _LanguageRange, float, float]] = []
+    ordered = sorted(ranges, key=lambda item: (item.start, item.end))
+    for left, right in zip(ordered, ordered[1:]):
+        gap = right.start - left.end
+        if (
+            left.language != right.language
+            or left.language not in _CJK_CONFUSION_LANGUAGES
+            or gap <= 0
+            or gap > MIXED_LANGUAGE_MAX_CONFIRMED_BRIDGE_SECONDS
+        ):
             continue
-        ranges.append(
+        speech_seconds, speech_ratio = _speech_overlap_metrics(
+            left.end,
+            right.start,
+            speech_segments_ms,
+        )
+        if (
+            speech_seconds >= MIXED_LANGUAGE_MIN_BRIDGE_SPEECH_SECONDS
+            and speech_ratio >= MIXED_LANGUAGE_MIN_BRIDGE_SPEECH_RATIO
+        ):
+            candidates.append((left, right, speech_seconds, speech_ratio))
+    return candidates
+
+
+def _merge_confirmed_language_ranges(
+    ranges: list[_LanguageRange],
+) -> list[_LanguageRange]:
+    merged: list[_LanguageRange] = []
+    for item in sorted(ranges, key=lambda value: (value.start, value.end)):
+        if (
+            merged
+            and merged[-1].language == item.language
+            and item.start - merged[-1].end <= MIXED_LANGUAGE_MAX_GAP_SECONDS
+        ):
+            previous = merged[-1]
+            total_support = previous.support_seconds + item.support_seconds
+            dominance = (
+                previous.dominance * previous.support_seconds
+                + item.dominance * item.support_seconds
+            ) / max(0.001, total_support)
+            merged[-1] = _LanguageRange(
+                start=previous.start,
+                end=max(previous.end, item.end),
+                language=previous.language,
+                confidence=max(previous.confidence, item.confidence),
+                support_seconds=total_support,
+                probe_count=previous.probe_count + item.probe_count,
+                dominance=dominance,
+                needs_confirmation=False,
+            )
+        else:
+            merged.append(item)
+    return merged
+
+
+def _is_severe_repetition_hallucination(text: str) -> bool:
+    tokens = re.findall(r"[\w']+", text.lower())
+    if len(tokens) < 12:
+        return False
+    counts: dict[str, int] = {}
+    longest_run = 1
+    current_run = 1
+    for index, token in enumerate(tokens):
+        counts[token] = counts.get(token, 0) + 1
+        if index > 0 and token == tokens[index - 1]:
+            current_run += 1
+            longest_run = max(longest_run, current_run)
+        else:
+            current_run = 1
+    peak = max(counts.values(), default=0)
+    return longest_run >= 8 or (peak >= 12 and peak / len(tokens) >= 0.60)
+
+
+def _expand_language_ranges_over_repetition(
+    ranges: list[_LanguageRange],
+    source_segments: list[dict[str, Any]],
+) -> tuple[list[_LanguageRange], list[tuple[float, float]]]:
+    """Replace decoder loops next to confirmed foreign speech with that language."""
+    if not ranges:
+        return ranges, []
+
+    additions: list[_LanguageRange] = []
+    expanded_segments: list[tuple[float, float]] = []
+    for segment in source_segments:
+        text = str(segment.get("text") or "").strip()
+        start = segment.get("start")
+        end = segment.get("end")
+        if (
+            not _is_severe_repetition_hallucination(text)
+            or not isinstance(start, (int, float))
+            or not isinstance(end, (int, float))
+        ):
+            continue
+        start_seconds = float(start)
+        end_seconds = float(end)
+        if (
+            end_seconds <= start_seconds
+            or end_seconds - start_seconds > MIXED_LANGUAGE_REPETITION_MAX_RANGE_SECONDS
+        ):
+            continue
+        nearby = [
+            item
+            for item in ranges
+            if max(item.start - end_seconds, start_seconds - item.end, 0.0)
+            <= MIXED_LANGUAGE_REPETITION_NEARBY_SECONDS
+        ]
+        if not nearby:
+            continue
+        closest = min(
+            nearby,
+            key=lambda item: (
+                max(item.start - end_seconds, start_seconds - item.end, 0.0),
+                -item.confidence,
+            ),
+        )
+        additions.append(
             _LanguageRange(
-                start=probe.start,
-                end=probe.end,
-                language=probe.language,
-                confidence=probe.confidence,
+                start=start_seconds,
+                end=end_seconds,
+                language=closest.language,
+                confidence=closest.confidence,
+                support_seconds=closest.support_seconds,
+                probe_count=closest.probe_count,
+                dominance=closest.dominance,
+                decoded_language=closest.decoded_language,
+                script_language=closest.script_language,
+                confirmation_agreement=closest.confirmation_agreement,
             )
         )
-    return ranges
+        expanded_segments.append((start_seconds, end_seconds))
+
+    return _merge_confirmed_language_ranges(ranges + additions), expanded_segments
 
 
 def _subtract_language_ranges(
@@ -1564,6 +2248,7 @@ def _append_word_run(
     words: list[dict],
     left_bound: float | None,
     right_bound: float | None,
+    language_code: str = "",
 ) -> None:
     """Add unaligned WhisperX words by distributing the adjacent aligned gap.
 
@@ -1589,7 +2274,7 @@ def _append_word_run(
     weights = [_word_duration_weight(text) for _, text in valid]
     total_weight = max(1, sum(weights))
     current = left_bound
-    for index, ((_, text), weight) in enumerate(zip(valid, weights)):
+    for index, ((word, text), weight) in enumerate(zip(valid, weights)):
         if index == len(valid) - 1:
             end = right_bound
         else:
@@ -1602,6 +2287,7 @@ def _append_word_run(
                 start_ms,
                 end_ms,
                 timing_source="estimated",
+                language_code=str(word.get("language") or language_code),
             )
         )
         current = end
@@ -1614,6 +2300,7 @@ def _make_word_segment(
     *,
     timing_source: TimestampSource,
     confidence: float | None = None,
+    language_code: str = "",
 ) -> ASRDataSeg:
     word = ASRWord(
         text=text,
@@ -1622,6 +2309,7 @@ def _make_word_segment(
         confidence=confidence,
         alignment_score=confidence if timing_source == "forced_alignment" else None,
         timing_source=timing_source,
+        language_code=language_code,
     )
     return ASRDataSeg(
         text,
@@ -1630,6 +2318,7 @@ def _make_word_segment(
         words=[word],
         timestamp_granularity="word",
         timing_source=timing_source,
+        language_code=language_code,
     )
 
 
@@ -1637,6 +2326,7 @@ def _words_to_segments(
     words: list[dict],
     segment_start: float | None = None,
     segment_end: float | None = None,
+    language_code: str = "",
 ) -> list[ASRDataSeg]:
     output: list[ASRDataSeg] = []
     pending: list[dict] = []
@@ -1654,7 +2344,13 @@ def _words_to_segments(
                 continue
             if pending:
                 if last_known_end is not None or segment_start is not None:
-                    _append_word_run(output, pending, last_known_end, start)
+                    _append_word_run(
+                        output,
+                        pending,
+                        last_known_end,
+                        start,
+                        language_code,
+                    )
                 pending = []
             start_ms = max(0, int(round(start * 1000)))
             end_ms = max(start_ms, int(round(end * 1000)))
@@ -1667,6 +2363,7 @@ def _words_to_segments(
                     end_ms,
                     timing_source="forced_alignment",
                     confidence=confidence,
+                    language_code=str(word.get("language") or language_code),
                 )
             )
             last_known_end = end
@@ -1675,7 +2372,13 @@ def _words_to_segments(
 
     if pending:
         if segment_end is not None:
-            _append_word_run(output, pending, last_known_end, segment_end)
+            _append_word_run(
+                output,
+                pending,
+                last_known_end,
+                segment_end,
+                language_code,
+            )
 
     return output
 
@@ -1699,6 +2402,7 @@ class WhisperXASR(BaseASR):
         batch_size: int = 4,
         segment_callback: Optional[Callable[[ASRData], None]] = None,
         missing_alignment_model_callback: Optional[Callable[[list[dict[str, Any]]], str]] = None,
+        detect_additional_languages: bool = False,
         cancel_event: Any = None,
         use_cache: bool = False,
         need_word_time_stamp: bool = True,
@@ -1726,6 +2430,7 @@ class WhisperXASR(BaseASR):
         self.batch_size = max(1, int(batch_size or 4))
         self.segment_callback = segment_callback
         self.missing_alignment_model_callback = missing_alignment_model_callback
+        self.detect_additional_languages = bool(detect_additional_languages)
         self.cancel_event = cancel_event
         self.need_word_time_stamp = need_word_time_stamp
 
@@ -1753,6 +2458,7 @@ class WhisperXASR(BaseASR):
                     "audio": audio_path,
                     "model": mlx_model_path,
                     "language": self.language or "",
+                    "word_timestamps": getattr(self, "need_word_time_stamp", True),
                 },
             )
             env = os.environ.copy()
@@ -1865,6 +2571,94 @@ class WhisperXASR(BaseASR):
                     f"Recovered {len(sparse_recoveries)} under-transcribed section(s)...",
                 )
             return result
+
+    def _classify_mlx_ranges_in_worker(
+        self,
+        audio_path: str,
+        mlx_model_path: str,
+        ranges: list[_SpeechBackedGap],
+        callback: Callable[[int, str], None],
+    ) -> list[dict[str, Any]]:
+        """Classify final audit gaps without loading MLX into the desktop process."""
+        if not ranges or not self.language:
+            return []
+
+        with tempfile.TemporaryDirectory(prefix="subforge-mlx-language-audit-") as temp_path:
+            temp_dir = Path(temp_path)
+            request_path = temp_dir / "request.json"
+            output_path = temp_dir / "output.json"
+            log_path = temp_dir / "worker.log"
+            _atomic_json_write(
+                request_path,
+                {
+                    "operation": "classify_ranges",
+                    "audio": audio_path,
+                    "model": mlx_model_path,
+                    "primary_language": self.language,
+                    "ranges": [
+                        {
+                            "start": gap.start,
+                            "end": gap.end,
+                            "speech_seconds": gap.speech_seconds,
+                            "speech_ratio": gap.speech_ratio,
+                            "is_internal": gap.is_internal,
+                        }
+                        for gap in ranges
+                    ],
+                },
+            )
+            env = os.environ.copy()
+            env.update(
+                {
+                    _MLX_WORKER_FLAG: "1",
+                    _MLX_WORKER_REQUEST: str(request_path),
+                    _MLX_WORKER_OUTPUT: str(output_path),
+                }
+            )
+            command = (
+                [sys.executable]
+                if getattr(sys, "frozen", False)
+                else [sys.executable, "-m", "subforge.core.asr.mlx_worker"]
+            )
+            callback(93, "Checking the language of uncovered speech...")
+            with log_path.open("w", encoding="utf-8") as log_file:
+                process = subprocess.Popen(
+                    command,
+                    env=env,
+                    stdin=subprocess.DEVNULL,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                )
+                try:
+                    while process.poll() is None:
+                        if self.cancel_event is not None and self.cancel_event.is_set():
+                            raise RuntimeError("MLX language audit was cancelled")
+                        time.sleep(0.2)
+                finally:
+                    _stop_worker_process(process)
+
+            payload: dict[str, Any] | None = None
+            if output_path.is_file():
+                try:
+                    payload = json.loads(output_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    pass
+            if process.returncode != 0 or not payload or not payload.get("ok"):
+                detail = str((payload or {}).get("error") or "").strip()
+                if not detail:
+                    detail = _worker_log_tail(log_path)
+                suffix = f": {detail}" if detail else ""
+                raise RuntimeError(
+                    f"MLX language audit worker exited with code {process.returncode}{suffix}"
+                )
+            data = payload.get("data")
+            if not isinstance(data, dict):
+                raise RuntimeError("MLX language audit worker returned invalid data")
+            return [
+                dict(item)
+                for item in data.get("foreign_language_speech_ranges") or []
+                if isinstance(item, dict)
+            ]
 
     def _write_audio_to_temp(self, tmp_dir: Path) -> str:
         if isinstance(self.audio_input, str):
@@ -2012,9 +2806,7 @@ class WhisperXASR(BaseASR):
         callback(65, "Loading forced alignment model...")
         align_model_name = self._resolve_align_model_name(language_code)
         align_spec = alignment_model_for_language(language_code)
-        if align_spec is not None and not is_alignment_model_ready(
-            align_spec, self.model_dir
-        ):
+        if align_spec is not None and not is_alignment_model_ready(align_spec, self.model_dir):
             raise RuntimeError(
                 f"The {align_spec.language_name} forced alignment model is not "
                 "available locally. Download it again in WhisperX settings; cloud "
@@ -2099,6 +2891,7 @@ class WhisperXASR(BaseASR):
         """Detect confident language switches without decoding correct primary speech again."""
         try:
             import mlx.core as mx
+            import mlx_whisper
             from mlx_whisper.audio import (
                 N_FRAMES,
                 SAMPLE_RATE,
@@ -2123,6 +2916,17 @@ class WhisperXASR(BaseASR):
         full_mel = log_mel_spectrogram(cast(Any, audio), n_mels=model.dims.n_mels)
         frames_per_second = 100
         probes: list[_LanguageProbe] = []
+        try:
+            speech_segments_ms = _detect_speech_in_mlx_gaps(
+                audio,
+                SAMPLE_RATE,
+                [(0.0, audio_duration)],
+            )
+        except Exception as exc:
+            logger.warning("Mixed-language VAD failed; skipping language switches: %s", exc)
+            return []
+        if not speech_segments_ms:
+            return []
 
         def _probe(
             start: float,
@@ -2130,8 +2934,20 @@ class WhisperXASR(BaseASR):
             *,
             range_start: Optional[float] = None,
             range_end: Optional[float] = None,
+            source: str = "window",
         ) -> None:
             if end - start < 0.75:
+                return
+            speech_seconds, speech_ratio = _speech_overlap_metrics(
+                start,
+                end,
+                speech_segments_ms,
+            )
+            minimum_speech = min(
+                MIXED_LANGUAGE_MIN_VOICED_SECONDS,
+                max(0.60, (end - start) * MIXED_LANGUAGE_MIN_VOICED_RATIO),
+            )
+            if speech_seconds < minimum_speech or speech_ratio < MIXED_LANGUAGE_MIN_VOICED_RATIO:
                 return
             frame_start = max(0, int(start * frames_per_second))
             frame_end = min(int(full_mel.shape[-2]), int(end * frames_per_second))
@@ -2142,14 +2958,28 @@ class WhisperXASR(BaseASR):
             probabilities = cast(dict[str, float], raw_probabilities)
             if not probabilities:
                 return
-            language, confidence = max(probabilities.items(), key=lambda item: item[1])
+            ranked = sorted(probabilities.items(), key=lambda item: item[1], reverse=True)
+            language, confidence = ranked[0]
+            runner_up_language, runner_up_confidence = ranked[1] if len(ranked) > 1 else ("", 0.0)
+            evidence_start = start if range_start is None else range_start
+            evidence_end = end if range_end is None else range_end
+            evidence_speech_seconds, evidence_speech_ratio = _speech_overlap_metrics(
+                evidence_start,
+                evidence_end,
+                speech_segments_ms,
+            )
             probes.append(
                 _LanguageProbe(
-                    start=start if range_start is None else range_start,
-                    end=end if range_end is None else range_end,
+                    start=evidence_start,
+                    end=evidence_end,
                     language=str(language).lower(),
                     confidence=float(confidence),
                     primary_confidence=float(probabilities.get(primary_language, 0.0)),
+                    runner_up_language=str(runner_up_language).lower(),
+                    runner_up_confidence=float(runner_up_confidence),
+                    speech_seconds=evidence_speech_seconds,
+                    speech_ratio=evidence_speech_ratio,
+                    source=source,
                 )
             )
 
@@ -2176,7 +3006,7 @@ class WhisperXASR(BaseASR):
         # foreign speech. Refine only near those candidates with the ASR's more
         # precise speech boundaries; probing every primary segment roughly
         # doubles this stage on long recordings without improving recall.
-        preliminary_ranges = _select_foreign_language_ranges(probes, primary_language)
+        preliminary_ranges = _candidate_foreign_language_ranges(probes, primary_language)
         for segment in source_segments:
             start = max(0.0, segment["start"])
             end = min(audio_duration, segment["end"])
@@ -2185,9 +3015,159 @@ class WhisperXASR(BaseASR):
                 and start <= item.end + MIXED_LANGUAGE_WINDOW_STRIDE_SECONDS
                 for item in preliminary_ranges
             ):
-                _probe(start, end)
+                _probe(start, end, source="segment")
 
-        ranges = _select_foreign_language_ranges(probes, primary_language)
+        candidate_ranges = _candidate_foreign_language_ranges(probes, primary_language)
+        confirmed_ranges: list[_LanguageRange] = []
+        rejected_ranges: list[dict[str, Any]] = []
+        for candidate in candidate_ranges:
+            context_start = max(0.0, candidate.start - MIXED_LANGUAGE_CONTEXT_SECONDS)
+            context_end = min(
+                audio_duration,
+                candidate.end + MIXED_LANGUAGE_CONTEXT_SECONDS,
+            )
+            _event_speech_seconds, event_speech_ratio = _speech_overlap_metrics(
+                candidate.start,
+                candidate.end,
+                speech_segments_ms,
+            )
+            clip = audio[int(context_start * SAMPLE_RATE) : int(context_end * SAMPLE_RATE)]
+            try:
+                decoded = mlx_whisper.transcribe(
+                    clip,
+                    path_or_hf_repo=mlx_model_path,
+                    task="transcribe",
+                    word_timestamps=False,
+                    condition_on_previous_text=False,
+                    verbose=None,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Mixed-language confirmation failed for %.2f-%.2f: %s",
+                    candidate.start,
+                    candidate.end,
+                    exc,
+                )
+                continue
+            decoded_segments = [
+                segment
+                for segment in decoded.get("segments") or []
+                if isinstance(segment, dict)
+                and _usable_mlx_recovery_segment(
+                    segment,
+                    # The event has already passed independent VAD gating. Do not
+                    # reject a valid language decode a second time merely because
+                    # natural pauses lower the event-wide speech ratio.
+                    speech_ratio=max(0.75, event_speech_ratio),
+                )
+            ]
+            decoded_text = " ".join(
+                str(segment.get("text") or "").strip()
+                for segment in decoded_segments
+                if str(segment.get("text") or "").strip()
+            ).strip()
+            confirmed = _confirm_foreign_language_range(
+                candidate,
+                primary_language,
+                str(decoded.get("language") or ""),
+                decoded_text,
+            )
+            if confirmed is None:
+                rejected_ranges.append(
+                    {
+                        "start": round(candidate.start, 2),
+                        "end": round(candidate.end, 2),
+                        "candidate": candidate.language,
+                        "decoded": str(decoded.get("language") or ""),
+                        "script": _script_language_evidence(decoded_text),
+                    }
+                )
+                continue
+            confirmed_ranges.append(confirmed)
+
+        confirmed_ranges, rejected_cjk_ranges = _stabilize_confirmed_language_ranges(
+            confirmed_ranges
+        )
+        rejected_ranges.extend(
+            {
+                "start": round(item.start, 2),
+                "end": round(item.end, 2),
+                "candidate": item.language,
+                "decoded": item.decoded_language,
+                "script": item.script_language,
+                "reason": "weak minority CJK evidence",
+            }
+            for item in rejected_cjk_ranges
+        )
+        bridge_ranges: list[_LanguageRange] = []
+        for left, right, speech_seconds, speech_ratio in _candidate_confirmed_language_bridges(
+            confirmed_ranges,
+            speech_segments_ms,
+        ):
+            clip = audio[int(left.end * SAMPLE_RATE) : int(right.start * SAMPLE_RATE)]
+            try:
+                decoded = mlx_whisper.transcribe(
+                    clip,
+                    path_or_hf_repo=mlx_model_path,
+                    task="transcribe",
+                    word_timestamps=False,
+                    condition_on_previous_text=False,
+                    verbose=None,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Mixed-language bridge confirmation failed for %.2f-%.2f: %s",
+                    left.end,
+                    right.start,
+                    exc,
+                )
+                continue
+            decoded_text = " ".join(
+                str(segment.get("text") or "").strip()
+                for segment in decoded.get("segments") or []
+                if isinstance(segment, dict)
+                and _usable_mlx_recovery_segment(
+                    segment,
+                    speech_ratio=max(0.75, speech_ratio),
+                )
+                and str(segment.get("text") or "").strip()
+            ).strip()
+            if _script_language_evidence(decoded_text) != left.language:
+                continue
+            bridge_ranges.append(
+                _LanguageRange(
+                    start=left.end,
+                    end=right.start,
+                    language=left.language,
+                    confidence=min(left.confidence, right.confidence),
+                    support_seconds=speech_seconds,
+                    probe_count=1,
+                    dominance=1.0,
+                    decoded_language=str(decoded.get("language") or "").lower(),
+                    script_language=left.language,
+                    confirmation_agreement=True,
+                )
+            )
+        if bridge_ranges:
+            logger.info(
+                "Confirmed %d same-language bridge(s): %s",
+                len(bridge_ranges),
+                [f"{item.start:.1f}-{item.end:.1f}s {item.language}" for item in bridge_ranges],
+            )
+            confirmed_ranges.extend(bridge_ranges)
+        ranges = _merge_confirmed_language_ranges(confirmed_ranges)
+        ranges, expanded_repetitions = _expand_language_ranges_over_repetition(
+            ranges,
+            source_segments,
+        )
+        if expanded_repetitions:
+            logger.warning(
+                "Expanded confirmed foreign-language ranges over %d repeated decoder loop(s): %s",
+                len(expanded_repetitions),
+                [f"{start:.1f}-{end:.1f}s" for start, end in expanded_repetitions],
+            )
+        if rejected_ranges:
+            logger.info("Rejected ambiguous mixed-language ranges: %s", rejected_ranges)
         if ranges:
             logger.info(
                 "Detected mixed-language ranges: %s",
@@ -2197,6 +3177,9 @@ class WhisperXASR(BaseASR):
                         "end": round(item.end, 2),
                         "language": item.language,
                         "confidence": round(item.confidence, 3),
+                        "support": round(item.support_seconds, 2),
+                        "probes": item.probe_count,
+                        "dominance": round(item.dominance, 3),
                     }
                     for item in ranges
                 ],
@@ -2349,13 +3332,25 @@ class WhisperXASR(BaseASR):
         ranges: list[_LanguageRange],
     ) -> tuple[list[_LanguageRange], set[str]]:
         """Pause auto-language jobs for missing models and apply the user's decision."""
-        if self.language is not None or self.missing_alignment_model_callback is None:
-            return ranges, set()
+        hybrid_mode = self.language is not None and bool(
+            getattr(self, "detect_additional_languages", False)
+        )
+        detected_languages = {item.language for item in ranges}
+        if not hybrid_mode:
+            detected_languages.add(primary_language)
+        unsupported_languages = {
+            language
+            for language in detected_languages
+            if alignment_model_for_language(language) is None
+        }
+        if (
+            self.language is not None and not hybrid_mode
+        ) or self.missing_alignment_model_callback is None:
+            return ranges, unsupported_languages
 
         range_by_language: dict[str, list[_LanguageRange]] = {}
         for item in ranges:
             range_by_language.setdefault(item.language, []).append(item)
-        detected_languages = {primary_language, *range_by_language}
 
         while True:
             missing: list[dict[str, Any]] = []
@@ -2382,7 +3377,7 @@ class WhisperXASR(BaseASR):
                     }
                 )
             if not missing:
-                return ranges, set()
+                return ranges, unsupported_languages
 
             decision = self.missing_alignment_model_callback(missing)
             if decision == "retry":
@@ -2391,10 +3386,10 @@ class WhisperXASR(BaseASR):
             if decision == "ignore":
                 return (
                     [item for item in ranges if item.language not in missing_languages],
-                    {primary_language} & missing_languages,
+                    unsupported_languages | ({primary_language} & missing_languages),
                 )
             if decision == "continue":
-                return ranges, missing_languages
+                return ranges, unsupported_languages | missing_languages
             raise RuntimeError(f"Unsupported alignment model decision: {decision}")
 
     def _align_multilingual_result(
@@ -2522,6 +3517,11 @@ class WhisperXASR(BaseASR):
                 mlx_model_path,
                 callback,
             )
+            foreign_language_speech_ranges = list(
+                result.get("foreign_language_speech_ranges") or []
+            )
+            native_result = dict(result)
+            language_ranges: list[_LanguageRange] = []
 
             if self.segment_callback:
                 raw_segments = self._make_segments(result)
@@ -2532,13 +3532,23 @@ class WhisperXASR(BaseASR):
             audio = load_audio(audio_path)
 
             language_code = str(result.get("language") or self.language or "en").lower()
-            if self.language is None:
+            hybrid_language_mode = self.language is not None and bool(
+                getattr(self, "detect_additional_languages", False)
+            )
+            if self.language is None or hybrid_language_mode:
                 callback(48, "Checking for language switches...")
-                language_ranges = self._detect_mlx_language_ranges(
+                detected_language_ranges = self._detect_mlx_language_ranges(
                     audio_path,
                     mlx_model_path,
                     result,
                     language_code,
+                )
+                audited_language_ranges = _language_ranges_from_foreign_audit(
+                    foreign_language_speech_ranges,
+                    language_code,
+                )
+                language_ranges = _merge_confirmed_language_ranges(
+                    [*detected_language_ranges, *audited_language_ranges]
                 )
                 language_ranges, skip_alignment_languages = self._resolve_missing_alignment_models(
                     language_code,
@@ -2578,10 +3588,143 @@ class WhisperXASR(BaseASR):
                 )
             except Exception as exc:
                 raise RuntimeError("Final MLX speech-coverage audit failed") from exc
-            if critical_gaps:
-                windows = ", ".join(
-                    f"{gap.start:.1f}-{gap.end:.1f}s" for gap in critical_gaps
+            if (
+                self.language is not None
+                and not hybrid_language_mode
+                and foreign_language_speech_ranges
+            ):
+                ignored_foreign_gaps = [
+                    gap
+                    for gap in critical_gaps
+                    if _gap_is_covered_by_foreign_range(
+                        gap,
+                        foreign_language_speech_ranges,
+                    )
+                ]
+                if ignored_foreign_gaps:
+                    logger.info(
+                        "Ignored %d speech coverage gap(s) confirmed as outside the fixed "
+                        "source language %s",
+                        len(ignored_foreign_gaps),
+                        self.language,
+                    )
+                critical_gaps = [gap for gap in critical_gaps if gap not in ignored_foreign_gaps]
+            if self.language is not None and critical_gaps:
+                newly_confirmed_foreign = self._classify_mlx_ranges_in_worker(
+                    audio_path,
+                    mlx_model_path,
+                    critical_gaps,
+                    callback,
                 )
+                if newly_confirmed_foreign:
+                    foreign_language_speech_ranges.extend(newly_confirmed_foreign)
+                    if hybrid_language_mode:
+                        audit_language_ranges = _language_ranges_from_foreign_audit(
+                            newly_confirmed_foreign,
+                            language_code,
+                        )
+                        if audit_language_ranges:
+                            logger.warning(
+                                "Final audit recovered %d foreign-language range(s); "
+                                "rebuilding multilingual alignment",
+                                len(audit_language_ranges),
+                            )
+                            language_ranges = _merge_confirmed_language_ranges(
+                                [*language_ranges, *audit_language_ranges]
+                            )
+                            (
+                                language_ranges,
+                                skip_alignment_languages,
+                            ) = self._resolve_missing_alignment_models(
+                                language_code,
+                                language_ranges,
+                            )
+                            result = self._retranscribe_mlx_language_ranges(
+                                audio_path,
+                                mlx_model_path,
+                                native_result,
+                                language_ranges,
+                                language_code,
+                            )
+                            aligned = self._align_multilingual_result(
+                                result,
+                                audio,
+                                language_code,
+                                callback,
+                                whisperx_alignment,
+                                skip_alignment_languages,
+                            )
+                            word_coverage = _alignment_word_coverage(aligned)
+                            uncovered = _find_uncovered_mlx_gaps(
+                                word_coverage,
+                                audio_duration,
+                            )
+                            uncovered_speech = _detect_speech_in_mlx_gaps(
+                                audio,
+                                MLX_AUDIO_SAMPLE_RATE,
+                                uncovered,
+                            )
+                            critical_gaps = _critical_aligned_speech_gaps(
+                                aligned,
+                                uncovered_speech,
+                                audio_duration,
+                            )
+                    else:
+                        ignored_foreign_gaps = [
+                            gap
+                            for gap in critical_gaps
+                            if _gap_is_covered_by_foreign_range(
+                                gap,
+                                newly_confirmed_foreign,
+                            )
+                        ]
+                        logger.info(
+                            "Final audit confirmed %d uncovered speech gap(s) as outside "
+                            "the fixed source language %s",
+                            len(ignored_foreign_gaps),
+                            self.language,
+                        )
+                        critical_gaps = [
+                            gap for gap in critical_gaps if gap not in ignored_foreign_gaps
+                        ]
+            if critical_gaps and self.need_word_time_stamp:
+                aligned = _recover_aligned_gaps_from_native_words(
+                    aligned,
+                    native_result,
+                    critical_gaps,
+                )
+                if aligned.get("native_word_gap_recovery"):
+                    word_coverage = _alignment_word_coverage(aligned)
+                    uncovered = _find_uncovered_mlx_gaps(word_coverage, audio_duration)
+                    uncovered_speech = _detect_speech_in_mlx_gaps(
+                        audio,
+                        MLX_AUDIO_SAMPLE_RATE,
+                        uncovered,
+                    )
+                    critical_gaps = _critical_aligned_speech_gaps(
+                        aligned,
+                        uncovered_speech,
+                        audio_duration,
+                    )
+                    if (
+                        self.language is not None
+                        and not hybrid_language_mode
+                        and foreign_language_speech_ranges
+                    ):
+                        critical_gaps = [
+                            gap
+                            for gap in critical_gaps
+                            if not _gap_is_covered_by_foreign_range(
+                                gap,
+                                foreign_language_speech_ranges,
+                            )
+                        ]
+                    logger.warning(
+                        "Recovered %d forced-alignment hole(s) with native MLX word timestamps",
+                        int(aligned["native_word_gap_recovery"]),
+                    )
+            if critical_gaps:
+                windows = ", ".join(f"{gap.start:.1f}-{gap.end:.1f}s" for gap in critical_gaps)
                 raise RuntimeError(
                     "MLX Whisper left VAD-confirmed speech without aligned words: "
                     f"{windows}. The incomplete transcript was not exported."
@@ -2626,6 +3769,9 @@ class WhisperXASR(BaseASR):
                                     max(0, int(round(end * 1000))),
                                     timestamp_granularity="sentence",
                                     timing_source="native",
+                                    language_code=str(
+                                        item.get("language") or resp_data.get("language") or ""
+                                    ),
                                 )
                             )
                     continue
@@ -2637,7 +3783,14 @@ class WhisperXASR(BaseASR):
                 )
                 segment_start = _float_seconds(item.get("start"))
                 segment_end = _float_seconds(item.get("end"))
-                segments.extend(_words_to_segments(word_dicts, segment_start, segment_end))
+                segments.extend(
+                    _words_to_segments(
+                        word_dicts,
+                        segment_start,
+                        segment_end,
+                        str(item.get("language") or resp_data.get("language") or ""),
+                    )
+                )
 
             if segments:
                 segments.sort(key=lambda item: (item.start_time, item.end_time))
@@ -2646,7 +3799,12 @@ class WhisperXASR(BaseASR):
             words = resp_data.get("word_segments") or []
             if isinstance(words, list):
                 word_dicts = [word for word in words if isinstance(word, dict)]
-                segments.extend(_words_to_segments(word_dicts))
+                segments.extend(
+                    _words_to_segments(
+                        word_dicts,
+                        language_code=str(resp_data.get("language") or ""),
+                    )
+                )
 
             if segments:
                 return segments
@@ -2668,6 +3826,7 @@ class WhisperXASR(BaseASR):
                     end_ms,
                     timestamp_granularity="sentence",
                     timing_source="native",
+                    language_code=str(item.get("language") or resp_data.get("language") or ""),
                 )
             )
 

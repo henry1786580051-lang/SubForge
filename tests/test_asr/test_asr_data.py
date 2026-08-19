@@ -7,6 +7,36 @@ from pathlib import Path
 import pytest
 
 from subforge.core.asr.asr_data import ASRData, ASRDataSeg, ASRWord, handle_long_path
+from subforge.core.utils.cache import get_subtitle_language_cache
+
+
+def test_language_metadata_survives_srt_task_boundary(tmp_path):
+    subtitle_path = tmp_path / "mixed.srt"
+    data = ASRData(
+        [
+            ASRDataSeg("Welcome", 0, 500, language_code="en"),
+            ASRDataSeg("こんにちは", 600, 1200, language_code="ja"),
+        ]
+    )
+    data.save(str(subtitle_path))
+    data.save_language_metadata(str(subtitle_path))
+
+    restored = ASRData.from_subtitle_file(str(subtitle_path))
+
+    assert [segment.language_code for segment in restored.segments] == ["en", "ja"]
+    get_subtitle_language_cache().delete(data._language_metadata_key(str(subtitle_path)))
+
+
+def test_merged_segment_records_mixed_source_languages():
+    merged = ASRDataSeg.from_segments(
+        [
+            ASRDataSeg("This is", 0, 500, language_code="en"),
+            ASRDataSeg("木組み", 500, 1000, language_code="ja"),
+        ],
+        text="This is 木組み",
+    )
+
+    assert merged.language_code == "mixed"
 
 
 class TestASRDataSegEdgeCases:
@@ -560,6 +590,96 @@ class TestDeduplicateAdjacentText:
         asr_data.deduplicate_adjacent_text()
 
         assert len(asr_data.segments) == 2
+
+
+class TestDeduplicateAlignmentEchoes:
+    @staticmethod
+    def _word(text: str, start: int, end: int, speaker: str = "Speaker 1") -> ASRDataSeg:
+        return ASRDataSeg(
+            text,
+            start,
+            end,
+            speaker_id=speaker,
+            timestamp_granularity="word",
+            timing_source="forced_alignment",
+        )
+
+    def test_removes_suffix_and_exact_word_echoes(self):
+        asr_data = ASRData(
+            [
+                self._word("become.", 0, 200),
+                self._word("come.", 220, 500),
+                self._word("building.", 1000, 1250),
+                self._word("building.", 1250, 1500),
+                self._word("off-plan.", 2000, 2250),
+                self._word("plan,", 2250, 2500),
+            ],
+            granularity="word",
+        )
+
+        asr_data.deduplicate_alignment_echoes()
+
+        assert [segment.text for segment in asr_data.segments] == [
+            "become.",
+            "building.",
+            "off-plan.",
+        ]
+
+    def test_keeps_normal_suffix_across_a_sentence_boundary(self):
+        asr_data = ASRData(
+            [
+                self._word("thin.", 0, 200),
+                self._word("In", 260, 400),
+                self._word("profile,", 420, 700),
+            ],
+            granularity="word",
+        )
+
+        asr_data.deduplicate_alignment_echoes()
+
+        assert [segment.text for segment in asr_data.segments] == ["thin.", "In", "profile,"]
+
+    def test_keeps_echo_like_words_across_speakers_or_a_real_gap(self):
+        asr_data = ASRData(
+            [
+                self._word("basis.", 0, 200, "Speaker 1"),
+                self._word("basis.", 200, 500, "Speaker 2"),
+                self._word("become.", 1000, 1200, "Speaker 1"),
+                self._word("come.", 1500, 1800, "Speaker 1"),
+            ],
+            granularity="word",
+        )
+
+        asr_data.deduplicate_alignment_echoes()
+
+        assert len(asr_data.segments) == 4
+
+    def test_removes_lowercase_two_homophone_echo_after_number(self):
+        asr_data = ASRData(
+            [
+                self._word("432.", 0, 300),
+                self._word("too.", 380, 700),
+                self._word("These", 1200, 1450),
+            ],
+            granularity="word",
+        )
+
+        asr_data.deduplicate_alignment_echoes()
+
+        assert [segment.text for segment in asr_data.segments] == ["432.", "These"]
+
+    def test_keeps_capitalized_two_as_a_new_counted_item(self):
+        asr_data = ASRData(
+            [
+                self._word("432.", 0, 300),
+                self._word("Two.", 380, 700),
+            ],
+            granularity="word",
+        )
+
+        asr_data.deduplicate_alignment_echoes()
+
+        assert [segment.text for segment in asr_data.segments] == ["432.", "Two."]
 
 
 class TestMergeSentenceFragments:

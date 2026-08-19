@@ -55,6 +55,7 @@ class TestPreprocessEdgeCases:
         result = preprocess_segments(segments)
         assert len(result) == 3
 
+
     def test_reversed_timestamps(self):
         """测试倒序时间戳"""
         segments = [
@@ -109,6 +110,43 @@ class TestPreprocessEdgeCases:
         ]
         result = preprocess_segments(segments)
         assert len(result) == 1
+
+
+def test_material_language_switch_is_kept_as_a_subtitle_boundary():
+    splitter = SubtitleSplitter(thread_num=1, model="test")
+    segments = [
+        ASRDataSeg("This", 0, 250, language_code="en"),
+        ASRDataSeg("continues", 250, 600, language_code="en"),
+        ASRDataSeg("today.", 600, 900, language_code="en"),
+        ASRDataSeg("こ", 900, 1150, language_code="ja"),
+        ASRDataSeg("ん", 1150, 1400, language_code="ja"),
+        ASRDataSeg("に", 1400, 1650, language_code="ja"),
+        ASRDataSeg("ち", 1650, 1900, language_code="ja"),
+        ASRDataSeg("は", 1900, 2150, language_code="ja"),
+    ]
+
+    groups = splitter._group_by_time_gaps(segments)
+    splitter.stop()
+
+    assert [[item.language_code for item in group] for group in groups] == [
+        ["en", "en", "en"],
+        ["ja", "ja", "ja", "ja", "ja"],
+    ]
+
+
+def test_single_embedded_japanese_word_does_not_force_a_boundary():
+    splitter = SubtitleSplitter(thread_num=1, model="test")
+    segments = [
+        ASRDataSeg("This", 0, 250, language_code="en"),
+        ASRDataSeg("is", 250, 400, language_code="en"),
+        ASRDataSeg("木組み", 400, 650, language_code="ja"),
+        ASRDataSeg("construction.", 650, 1100, language_code="en"),
+    ]
+
+    groups = splitter._group_by_time_gaps(segments)
+    splitter.stop()
+
+    assert len(groups) == 1
 
 
 class TestSubtitleSplitterEdgeCases:

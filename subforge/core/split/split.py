@@ -6,7 +6,7 @@ from typing import Any, Callable, List, Optional, Union
 
 from subforge.core.asr.asr_data import ASRData, ASRDataSeg
 from subforge.core.llm.client import LLMRequestCancelled
-from subforge.core.split.boundary import normalize_boundaries
+from subforge.core.split.boundary import finalize_japanese_boundaries, normalize_boundaries
 from subforge.core.split.length_policy import (
     DEFAULT_CJK_HARD_LIMIT,
     DEFAULT_ENGLISH_SOFT_LIMIT,
@@ -138,6 +138,38 @@ def _dominant_speaker(segments: List[ASRDataSeg]) -> str:
     return max(scores, key=lambda speaker: scores[speaker])
 
 
+def _material_language_run(
+    segments: List[ASRDataSeg],
+    start: int,
+    step: int,
+) -> bool:
+    language = segments[start].language_code
+    if not language or language == "mixed":
+        return False
+    count = 0
+    earliest = segments[start].start_time
+    latest = segments[start].end_time
+    index = start
+    while 0 <= index < len(segments) and segments[index].language_code == language:
+        count += 1
+        earliest = min(earliest, segments[index].start_time)
+        latest = max(latest, segments[index].end_time)
+        index += step
+    return count >= 3 or latest - earliest >= 800
+
+
+def _is_material_language_switch(segments: List[ASRDataSeg], index: int) -> bool:
+    if index <= 0 or index >= len(segments):
+        return False
+    left = segments[index - 1].language_code
+    right = segments[index].language_code
+    if not left or not right or left == right or "mixed" in {left, right}:
+        return False
+    return _material_language_run(segments, index - 1, -1) and _material_language_run(
+        segments, index, 1
+    )
+
+
 def _is_dangling_tail(text: str) -> bool:
     stripped = text.strip()
     if len(stripped) == 1 and stripped.isupper():
@@ -252,6 +284,11 @@ class SubtitleSplitter:
 
                 smooth_speaker_assignments(asr_data)
 
+            # Imported word timelines can contain suffix echoes introduced by
+            # forced alignment.  Remove only timing-supported atomic echoes
+            # before the splitter turns them into sentence cues.
+            asr_data.deduplicate_alignment_echoes()
+
             if not asr_data.is_word_timestamp():
                 asr_data = asr_data.split_to_word_segments()
 
@@ -277,6 +314,7 @@ class SubtitleSplitter:
                 final_segments,
                 soft_max_words=self.max_word_count_english,
                 hard_max_words=self.hard_max_word_count_english,
+                hard_max_cjk_chars=self.max_word_count_cjk,
             )
             self.merge_short_segment(final_segments)
             # Short-cue merging changes neighboring pairs and can expose a
@@ -285,12 +323,27 @@ class SubtitleSplitter:
                 final_segments,
                 soft_max_words=self.max_word_count_english,
                 hard_max_words=self.hard_max_word_count_english,
+                hard_max_cjk_chars=self.max_word_count_cjk,
             )
             # Boundary normalization may move a connector such as ``And,``
             # back into a standalone cue. Run the conservative short-cue merge
             # once more after the final boundary pass so translation never sees
             # a one-word connective that belongs to the following utterance.
             self.merge_short_segment(final_segments)
+            # The last merge can expose a new boundary between the merged cue
+            # and its next neighbor. Finish with an idempotent repair pass, but
+            # do not merge again, so Japanese lexical units and English
+            # dependencies are stable without creating a repair loop.
+            final_segments = normalize_boundaries(
+                final_segments,
+                soft_max_words=self.max_word_count_english,
+                hard_max_words=self.hard_max_word_count_english,
+                hard_max_cjk_chars=self.max_word_count_cjk,
+            )
+            final_segments = finalize_japanese_boundaries(
+                final_segments,
+                hard_max_chars=self.max_word_count_cjk,
+            )
 
             return ASRData(final_segments)
 
@@ -511,6 +564,13 @@ class SubtitleSplitter:
 
         for i in range(1, len(segments)):
             time_gap = segments[i].start_time - segments[i - 1].end_time
+
+            if _is_material_language_switch(segments, i):
+                result.append(current_group)
+                current_group = [segments[i]]
+                recent_gaps = []
+                last_known_speaker = segments[i].speaker_id or last_known_speaker
+                continue
 
             current_speaker = segments[i].speaker_id
             if last_known_speaker and current_speaker and last_known_speaker != current_speaker:
@@ -803,6 +863,12 @@ class SubtitleSplitter:
                 else self.max_word_count_english
             )
             same_speaker = current_seg.speaker_id == next_seg.speaker_id
+            same_language_context = (
+                not current_seg.language_code
+                or not next_seg.language_code
+                or current_seg.language_code == next_seg.language_code
+                or "mixed" in {current_seg.language_code, next_seg.language_code}
+            )
             current_text = current_seg.text.strip()
             next_text = next_seg.text.strip()
             current_first_word = next(
@@ -844,21 +910,26 @@ class SubtitleSplitter:
             )
 
             # 判断是否合并
-            should_merge = connector_handoff or discourse_bridge or same_speaker and (
-                (
-                    time_gap < MERGE_SHORT_GAP
-                    and (current_words < MERGE_MIN_WORDS or next_words < MERGE_MIN_WORDS)
-                    and total_words <= max_word_count
-                )
-                or (
-                    time_gap < MERGE_VERY_SHORT_GAP
-                    and (
-                        current_words < MERGE_VERY_SHORT_WORDS
-                        or next_words < MERGE_VERY_SHORT_WORDS
+            should_merge = same_language_context and (
+                connector_handoff
+                or discourse_bridge
+                or same_speaker
+                and (
+                    (
+                        time_gap < MERGE_SHORT_GAP
+                        and (current_words < MERGE_MIN_WORDS or next_words < MERGE_MIN_WORDS)
+                        and total_words <= max_word_count
                     )
-                    and total_words <= max_word_count
+                    or (
+                        time_gap < MERGE_VERY_SHORT_GAP
+                        and (
+                            current_words < MERGE_VERY_SHORT_WORDS
+                            or next_words < MERGE_VERY_SHORT_WORDS
+                        )
+                        and total_words <= max_word_count
+                    )
+                    or current_is_short_continuation
                 )
-                or current_is_short_continuation
             )
 
             if should_merge:

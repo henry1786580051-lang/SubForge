@@ -13,6 +13,9 @@ logger = setup_logger("subtitle_boundary")
 
 SOFT_MAX_WORDS = 18
 HARD_MAX_WORDS = 22
+HARD_MAX_CJK_CHARS = 25
+MAX_JAPANESE_ATOMIC_OVERFLOW_CHARS = 4
+MAX_JAPANESE_ATOMIC_DURATION_MS = 8000
 MAX_BOUNDARY_SHIFT_WORDS = 8
 MAX_RELOCATABLE_GAP_MS = 1800
 MAX_DIARIZATION_GLITCH_GAP_MS = 250
@@ -23,6 +26,54 @@ MIN_REPAIR_IMPROVEMENT = 8.0
 _TOKEN_RE = re.compile(r"[A-Za-z0-9]+(?:['’][A-Za-z0-9]+)?")
 _TERMINAL_RE = re.compile(r"[.!?][\"')\]]*$")
 _CLAUSE_RE = re.compile(r"[,;:][\"')\]]*$")
+_JAPANESE_RE = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff]")
+_KATAKANA_RE = re.compile(r"^[\u30a0-\u30ff\u31f0-\u31ffー]+$")
+_JAPANESE_PARTICLE_HEAD_RE = re.compile(
+    r"^(?:が|を|は|に|へ|と|で|の|も|や|から|まで|より|ので|のに)"
+)
+_JAPANESE_FILLER_TAIL_RE = re.compile(
+    r"(?:こちら|そちら|あちら)(?:の|の?ですね)$|(?:この|その|あの)$|のですね$"
+)
+_JAPANESE_SHORT_TOPIC_TAIL_RE = re.compile(
+    r"^(?:これ|それ|あれ|こちら|そちら|あちら)(?:が|は)$"
+)
+_JAPANESE_PREFERRED_TAIL_RE = re.compile(
+    r"(?:が|を|は|に|へ|と|で|も|や|から|まで|より|ので|のに|[。！？、])$"
+)
+_JAPANESE_DANGLING_TAIL_RE = re.compile(
+    r"(?:の|や|及び|または|そして|しかし|けど|けれど|ので|のに|"
+    r"った|いた|した|ている|ていく|ない|れる|られる|といった|しい|"
+    r"非常に|とても|かなり|最も|より)$"
+)
+_JAPANESE_INFLECTION_HEAD_RE = re.compile(
+    r"^(?:った|って|いた|いて|れる|られる|ない|ます|する|した|して|せる|させる|たい)"
+)
+_JAPANESE_BOUND_FORMS = (
+    "これが",
+    "それが",
+    "あれが",
+    "こちらが",
+    "そちらが",
+    "あちらが",
+    "った",
+    "って",
+    "いた",
+    "いて",
+    "しい",
+    "です",
+    "ですね",
+    "でした",
+    "ます",
+    "ました",
+    "ません",
+    "ますので",
+    "という",
+    "といった",
+    "ている",
+    "ていく",
+    "てきます",
+    "となります",
+)
 
 _HARD_DANGLING_TAILS = {
     "a",
@@ -165,6 +216,7 @@ _MODIFIER_TAILS = {
     "little",
     "literate",
     "low",
+    "luxury",
     "main",
     "many",
     "medium",
@@ -192,10 +244,40 @@ _MODIFIER_TAILS = {
     "small",
     "some",
     "specialized",
+    "still",
     "traditional",
     "their",
+    "thick",
     "very",
     "your",
+}
+
+_COMPARATIVE_MODIFIER_TAILS = {
+    "better",
+    "bigger",
+    "broader",
+    "cheaper",
+    "closer",
+    "closest",
+    "faster",
+    "fewer",
+    "greater",
+    "higher",
+    "larger",
+    "lesser",
+    "longer",
+    "lower",
+    "narrower",
+    "newer",
+    "older",
+    "shorter",
+    "slower",
+    "smaller",
+    "taller",
+    "thicker",
+    "thinner",
+    "wider",
+    "worse",
 }
 
 _ATTRIBUTIVE_TAILS = {
@@ -228,6 +310,7 @@ _PHRASAL_PARTICLES = {"away", "back", "down", "in", "off", "on", "out", "over", 
 
 _DANGLING_PHRASES = {
     ("a", "lot", "of"),
+    ("all", "the", "way"),
     ("as", "much", "as"),
     ("because", "of"),
     ("going", "to"),
@@ -457,6 +540,18 @@ def _ends_with_phrase(tokens: Sequence[str]) -> bool:
     )
 
 
+def _has_terminal_punctuation(text: str) -> bool:
+    """Return whether *text* closes a sentence rather than trailing off.
+
+    ASR commonly renders a hesitation as three periods. Treating the final dot
+    as a sentence terminator hides dependencies such as ``I think it's... /``.
+    """
+    stripped = re.sub(r"[\"')\]]+$", "", str(text or "").strip())
+    if stripped.endswith(("...", "…")):
+        return False
+    return bool(_TERMINAL_RE.search(str(text or "").strip()))
+
+
 @dataclass(frozen=True)
 class BoundaryAssessment:
     risk: int
@@ -471,7 +566,7 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     """Assess whether an English cue boundary splits a dependent phrase."""
     left = str(left or "").strip()
     right = str(right or "").strip()
-    if not left or not right or _TERMINAL_RE.search(left):
+    if not left or not right or _has_terminal_punctuation(left):
         return BoundaryAssessment(0, ())
 
     left_tokens = _tokens(left)
@@ -545,6 +640,26 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
             flags=re.IGNORECASE,
         )
     )
+    complete_own_idiom = bool(
+        tail == "own"
+        and re.search(
+            r"\bof\s+(?:his|her|its|my|our|their|your)\s+own[,;:]?$",
+            semantic_left,
+            re.IGNORECASE,
+        )
+    )
+    complete_predicative_adjective = bool(
+        head in {"and", "but", "or"}
+        and bool(_CLAUSE_RE.search(left))
+        and re.search(
+            r"\b(?:am|is|are|was|were|be|been|being|become(?:s|d)?|"
+            r"feel(?:s|t)?|look(?:s|ed)?|remain(?:s|ed)?|seem(?:s|ed)?)\s+"
+            r"(?:quite\s+|rather\s+|really\s+|so\s+|too\s+|very\s+)?"
+            rf"{re.escape(tail)}[,;:]?$",
+            semantic_left,
+            re.IGNORECASE,
+        )
+    )
 
     if _ends_with_phrase(left_tokens):
         risk += 36
@@ -575,6 +690,9 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     if tail in _INCOMPLETE_PREDICATE_TAILS and not complete_does_clause:
         risk += 32
         reasons.append(f"incomplete predicate '{tail}'")
+    if tail in {"haven't", "hasn't", "hadn't"}:
+        risk += 32
+        reasons.append(f"incomplete predicate '{tail}'")
     if (
         tail in {"become", "became", "becomes", "remain", "remained", "remains"}
         and not re.match(r"^(?:what|whatever|whoever)\b", semantic_left, re.IGNORECASE)
@@ -598,12 +716,98 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     ):
         risk += 38
         reasons.append("auxiliary phrase separated from its participle")
-    if tail in _MODIFIER_TAILS and not (complete_degree_adverb or complete_superlative):
+    if tail in _MODIFIER_TAILS and not (
+        complete_degree_adverb or complete_superlative or complete_predicative_adjective
+    ):
         risk += 30 if tail in {"also", "definitely", "main", "really"} else 24
         reasons.append(f"dangling modifier '{tail}'")
-    if tail in _ATTRIBUTIVE_TAILS and right[:1].islower():
+    if tail in _ATTRIBUTIVE_TAILS and right[:1].islower() and not complete_own_idiom:
         risk += 24
         reasons.append(f"dangling attributive '{tail}'")
+    if (
+        tail in _ATTRIBUTIVE_TAILS
+        and len(left_tokens) >= 2
+        and left_tokens[-2] in {"a", "an", "the", "his", "her", "its", "my", "our", "their", "your"}
+        and not complete_own_idiom
+    ):
+        risk += 30
+        reasons.append(f"determiner separated from its '{tail}' head noun")
+    if tail == "now" and re.match(
+        r"^(?:am|are|can|could|did|do|does|had|has|have|is|looks?|may|might|must|"
+        r"seems?|shall|should|was|were|will|would)\b",
+        semantic_right,
+        re.IGNORECASE,
+    ):
+        risk += 34
+        reasons.append("sentence adverb separated from its finite predicate")
+    if tail == "than":
+        risk += 36
+        reasons.append("comparative clause separated after 'than'")
+    if re.search(r"\b(?:less|more)\b", semantic_left, re.IGNORECASE) and re.match(
+        r"^[a-z][a-z'’-]*\s+than\b",
+        semantic_right,
+        re.IGNORECASE,
+    ):
+        risk += 38
+        reasons.append("comparative noun phrase separated before 'than'")
+    if (
+        right[:1].islower()
+        and tail not in {"other"}
+        and re.fullmatch(r"[a-z][a-z'’-]*(?:al|ble|ful|ic|ive|less|ous)", tail)
+        and not complete_predicative_adjective
+    ):
+        risk += 22
+        reasons.append("attributive or comparative modifier separated from its head")
+    if (
+        right[:1].islower()
+        and tail in _COMPARATIVE_MODIFIER_TAILS
+        and not complete_predicative_adjective
+    ):
+        risk += 22
+        reasons.append("attributive or comparative modifier separated from its head")
+    if (
+        right[:1].islower()
+        and re.fullmatch(r"[a-z][a-z'’-]*(?:ing|ed)", tail)
+        and head
+        in {
+            "a",
+            "an",
+            "another",
+            "any",
+            "by",
+            "each",
+            "every",
+            "for",
+            "from",
+            "his",
+            "her",
+            "its",
+            "my",
+            "of",
+            "other",
+            "our",
+            "some",
+            "the",
+            "their",
+            "this",
+            "those",
+            "to",
+            "with",
+            "your",
+        }
+    ):
+        risk += 28
+        reasons.append("participle separated from its complement")
+    if re.fullmatch(r"\d[\d,.]*", tail) and right[:1].islower():
+        risk += 30
+        reasons.append("numeric value separated from its unit or noun")
+    if (
+        head in {"and", "or"}
+        and len(right_tokens) > 1
+        and re.search(r"\b(?:of|with|between)\s+[a-z][a-z'’-]*$", semantic_left, re.IGNORECASE)
+    ):
+        risk += 24
+        reasons.append("coordinated noun phrase split at conjunction")
     if re.search(
         r"\b(?:on|upon)\s+(?:the\s+)?(?:one|other)\s+hand$",
         semantic_left,
@@ -611,6 +815,28 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     ) and re.match(r"^(?:and|or|but)\b", semantic_right, re.IGNORECASE):
         risk += 34
         reasons.append("paired contrast frame split before its counterpart")
+    if re.search(
+        r"\b(?:after|before|by|despite|during|through|while|without)\s+"
+        r"[a-z][a-z'’-]*ing$",
+        semantic_left,
+        re.IGNORECASE,
+    ) and right[:1].islower():
+        risk += 36
+        reasons.append("prepositional gerund separated from its complement")
+    if (
+        tail in {"after", "before", "by", "despite", "during", "through", "while", "without"}
+        and head.endswith("ing")
+    ):
+        risk += 36
+        reasons.append("preposition separated from its gerund phrase")
+    if (
+        tail in {"east", "north", "south", "west"}
+        and head in {"and", "or"}
+        and len(right_tokens) > 1
+        and right_tokens[1] in {"east", "north", "south", "west"}
+    ):
+        risk += 40
+        reasons.append("paired directional names split at conjunction")
     if (
         head in {"if", "unless", "without"}
         and re.search(
@@ -701,6 +927,15 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     if tail == "more" and tuple(right_tokens[:2]) == ("and", "more"):
         risk += 38
         reasons.append("repeated degree phrase split inside 'more and more'")
+    if tail == "up" and tuple(right_tokens[:2]) == ("and", "running"):
+        risk += 38
+        reasons.append("fixed state phrase split inside 'up and running'")
+    if tail == "finally" and head == "up" and tuple(right_tokens[1:3]) == ("and", "running"):
+        risk += 38
+        reasons.append("aspect marker split from 'up and running'")
+    if re.match(r"^(?:finally\s+)?up\s+and\s+running\b", semantic_right, re.IGNORECASE):
+        risk += 38
+        reasons.append("state predicate 'up and running' separated from its subject")
     if re.search(r"\b\d[\d,.]*$", semantic_left) and head in {
         "percent",
         "percentage",
@@ -1241,6 +1476,7 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
         "had",
         "has",
         "have",
+        "is",
         "made",
         "makes",
         "played",
@@ -1384,7 +1620,12 @@ def _join_words(words: Iterable[ASRWord]) -> str:
             continue
         if not result:
             result = text
-        elif text[0] in no_space_before or result[-1] in no_space_after:
+        elif (
+            text[0] in no_space_before
+            or result[-1] in no_space_after
+            or re.match(r"[\u3040-\u30ff\u31f0-\u31ff\u3400-\u9fff\uac00-\ud7af]", text[0])
+            or re.match(r"[\u3040-\u30ff\u31f0-\u31ff\u3400-\u9fff\uac00-\ud7af]", result[-1])
+        ):
             result += text
         else:
             result += f" {text}"
@@ -1411,6 +1652,10 @@ def _make_cue(words: Sequence[ASRWord], fallback_speaker: str) -> ASRDataSeg:
         TimestampSource,
         next(iter(sources)) if len(sources) == 1 else ("mixed" if sources else "unknown"),
     )
+    languages = {word.language_code for word in words if word.language_code}
+    language_code = next(iter(languages)) if len(languages) == 1 else (
+        "mixed" if languages else ""
+    )
     return ASRDataSeg(
         text=_join_words(words),
         start_time=words[0].start_time,
@@ -1419,7 +1664,247 @@ def _make_cue(words: Sequence[ASRWord], fallback_speaker: str) -> ASRDataSeg:
         words=list(words),
         timestamp_granularity="sentence",
         timing_source=timing_source,
+        language_code=language_code,
     )
+
+
+def _is_japanese_cue(segment: ASRDataSeg) -> bool:
+    return segment.language_code == "ja" or bool(_JAPANESE_RE.search(segment.text))
+
+
+def _has_unstable_japanese_boundary(left: str, right: str) -> bool:
+    left = str(left or "").strip()
+    right = str(right or "").strip()
+    if not left or not right:
+        return False
+    if _KATAKANA_RE.fullmatch(left[-1]) and _KATAKANA_RE.fullmatch(right[0]):
+        return True
+    if re.fullmatch(r"[\u3400-\u9fff]", left[-1]) and re.match(
+        r"[\u3400-\u9fff]", right[0]
+    ):
+        return True
+    if re.fullmatch(r"[\u3400-\u9fff]", left[-1]) and right.startswith("しい"):
+        return True
+    if any(
+        left.endswith(form[:position]) and right.startswith(form[position:])
+        for form in _JAPANESE_BOUND_FORMS
+        for position in range(1, len(form))
+    ):
+        return True
+    if _JAPANESE_INFLECTION_HEAD_RE.match(right):
+        return True
+    if _JAPANESE_PARTICLE_HEAD_RE.match(right):
+        return True
+    return bool(
+        _JAPANESE_FILLER_TAIL_RE.search(left)
+        or _JAPANESE_SHORT_TOPIC_TAIL_RE.search(left)
+        or _JAPANESE_DANGLING_TAIL_RE.search(left)
+    )
+
+
+def _can_merge_japanese_atomic_pair(
+    left: ASRDataSeg,
+    right: ASRDataSeg,
+    words: Sequence[ASRWord],
+    *,
+    hard_max_chars: int,
+) -> bool:
+    """Allow a small overflow only when Japanese grammar leaves no valid split."""
+    return bool(
+        left.words
+        and right.words
+        and _is_japanese_cue(left)
+        and _is_japanese_cue(right)
+        and not _is_hard_boundary(left, right)
+        and _has_unstable_japanese_boundary(left.text, right.text)
+        and _word_count(words)
+        <= hard_max_chars + MAX_JAPANESE_ATOMIC_OVERFLOW_CHARS
+        and words[-1].end_time - words[0].start_time
+        <= MAX_JAPANESE_ATOMIC_DURATION_MS
+    )
+
+
+def _repair_japanese_boundaries(
+    segments: Sequence[ASRDataSeg],
+    *,
+    hard_max_chars: int,
+) -> list[ASRDataSeg]:
+    """Repair lexical Japanese breaks without changing words or timestamps."""
+    result = list(segments)
+    index = 0
+    while index < len(result) - 1:
+        left = result[index]
+        right = result[index + 1]
+        if (
+            not left.words
+            or not right.words
+            or not _is_japanese_cue(left)
+            or not _is_japanese_cue(right)
+            or _is_hard_boundary(left, right)
+            or not _has_unstable_japanese_boundary(left.text, right.text)
+        ):
+            index += 1
+            continue
+
+        words = [*left.words, *right.words]
+        if (
+            (
+                _JAPANESE_FILLER_TAIL_RE.search(left.text.strip())
+                or _JAPANESE_DANGLING_TAIL_RE.search(left.text.strip())
+            )
+            and _word_count(words) <= hard_max_chars
+            and words[-1].end_time - words[0].start_time <= 8000
+        ):
+            result[index : index + 2] = [
+                _make_cue(words, left.speaker_id or right.speaker_id)
+            ]
+            logger.info(
+                "Merged incomplete Japanese filler cue at subtitles %s-%s",
+                index + 1,
+                index + 2,
+            )
+            if index:
+                index -= 1
+            continue
+
+        original = len(left.words)
+        candidates: list[tuple[float, int]] = []
+        for position in range(max(1, original - 8), min(len(words), original + 9)):
+            left_words = words[:position]
+            right_words = words[position:]
+            if not left_words or not right_words:
+                continue
+            if max(_word_count(left_words), _word_count(right_words)) > hard_max_chars:
+                continue
+            left_text = _join_words(left_words)
+            right_text = _join_words(right_words)
+            if _has_unstable_japanese_boundary(left_text, right_text):
+                continue
+            cost = abs(position - original) * 0.8
+            cost += abs(_word_count(left_words) - _word_count(right_words)) * 0.08
+            if min(_word_count(left_words), _word_count(right_words)) < 3:
+                cost += 12.0
+            if _JAPANESE_PREFERRED_TAIL_RE.search(left_text):
+                cost -= 4.0
+            candidates.append((cost, position))
+
+        if not candidates:
+            if (
+                _word_count(words) <= hard_max_chars
+                and words[-1].end_time - words[0].start_time <= 8000
+            ):
+                result[index : index + 2] = [
+                    _make_cue(words, left.speaker_id or right.speaker_id)
+                ]
+                logger.info(
+                    "Merged indivisible Japanese lexical boundary at subtitles %s-%s",
+                    index + 1,
+                    index + 2,
+                )
+                if index:
+                    index -= 1
+                continue
+            index += 1
+            continue
+        _, position = min(candidates)
+        if position == original:
+            index += 1
+            continue
+        result[index : index + 2] = [
+            _make_cue(words[:position], left.speaker_id),
+            _make_cue(words[position:], right.speaker_id),
+        ]
+        logger.info(
+            "Repaired Japanese subtitle boundary %s-%s: %s -> %s",
+            index + 1,
+            index + 2,
+            original,
+            position,
+        )
+        if index:
+            index -= 1
+        else:
+            index += 1
+    return result
+
+
+def _repair_japanese_boundaries_until_stable(
+    segments: Sequence[ASRDataSeg],
+    *,
+    hard_max_chars: int,
+) -> list[ASRDataSeg]:
+    result = list(segments)
+    for _ in range(8):
+        signature = [
+            (segment.start_time, segment.end_time, segment.text) for segment in result
+        ]
+        repaired = _repair_japanese_boundaries(
+            result,
+            hard_max_chars=hard_max_chars,
+        )
+        repaired_signature = [
+            (segment.start_time, segment.end_time, segment.text) for segment in repaired
+        ]
+        result = repaired
+        if repaired_signature == signature:
+            break
+    return _merge_japanese_atomic_pairs(result, hard_max_chars=hard_max_chars)
+
+
+def _merge_japanese_atomic_pairs(
+    segments: Sequence[ASRDataSeg],
+    *,
+    hard_max_chars: int,
+) -> list[ASRDataSeg]:
+    result = list(segments)
+    index = 0
+    while index < len(result) - 1:
+        left = result[index]
+        right = result[index + 1]
+        words = [*left.words, *right.words]
+        if _can_merge_japanese_atomic_pair(
+            left,
+            right,
+            words,
+            hard_max_chars=hard_max_chars,
+        ):
+            result[index : index + 2] = [
+                _make_cue(words, left.speaker_id or right.speaker_id)
+            ]
+            logger.info(
+                "Finalized indivisible Japanese boundary at subtitles %s-%s",
+                index + 1,
+                index + 2,
+            )
+            if index:
+                index -= 1
+            continue
+        index += 1
+    return result
+
+
+def finalize_japanese_boundaries(
+    segments: Sequence[ASRDataSeg],
+    *,
+    hard_max_chars: int = HARD_MAX_CJK_CHARS,
+) -> list[ASRDataSeg]:
+    """Apply the language-specific final pass after all generic boundary work."""
+    result = list(segments)
+    for _ in range(8):
+        signature = [
+            (segment.start_time, segment.end_time, segment.text) for segment in result
+        ]
+        repaired = _repair_japanese_boundaries(
+            result,
+            hard_max_chars=hard_max_chars,
+        )
+        repaired_signature = [
+            (segment.start_time, segment.end_time, segment.text) for segment in repaired
+        ]
+        result = repaired
+        if repaired_signature == signature:
+            break
+    return _merge_japanese_atomic_pairs(result, hard_max_chars=hard_max_chars)
 
 
 def _is_singular_correction(left: ASRWord, right: ASRWord) -> bool:
@@ -1721,10 +2206,15 @@ def normalize_boundaries(
     *,
     soft_max_words: int = SOFT_MAX_WORDS,
     hard_max_words: int = HARD_MAX_WORDS,
+    hard_max_cjk_chars: int = HARD_MAX_CJK_CHARS,
 ) -> list[ASRDataSeg]:
     """Move only high-risk boundaries while retaining every atomic word timing."""
     result = _remove_singular_corrections(segments)
     result = _split_internal_terminal_clauses(result)
+    result = _repair_japanese_boundaries_until_stable(
+        result,
+        hard_max_chars=hard_max_cjk_chars,
+    )
     result = _merge_compact_unstable_pairs(
         result,
         hard_max_words=hard_max_words,
@@ -1807,7 +2297,11 @@ def normalize_boundaries(
         if not changed:
             break
 
-    return _merge_compact_unstable_pairs(
+    result = _merge_compact_unstable_pairs(
         result,
         hard_max_words=hard_max_words,
+    )
+    return _repair_japanese_boundaries_until_stable(
+        result,
+        hard_max_chars=hard_max_cjk_chars,
     )

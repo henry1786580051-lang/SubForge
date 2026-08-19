@@ -445,8 +445,15 @@ def test_transcribe_multispeaker_always_skips_enhancement(monkeypatch):
     assert "Using original audio to preserve all speakers..." in progress_messages
 
 
-@pytest.mark.parametrize("source_language", ["", "auto"])
-def test_transcribe_whisperx_auto_language_skips_enhancement(monkeypatch, source_language):
+@pytest.mark.parametrize(
+    ("source_language", "detect_additional_languages"),
+    [("", False), ("auto", False), ("en", True)],
+)
+def test_transcribe_whisperx_language_switch_detection_skips_enhancement(
+    monkeypatch,
+    source_language,
+    detect_additional_languages,
+):
     enhancer = importlib.import_module("subforge.core.asr.audio_enhancer")
     speech_vad = importlib.import_module("subforge.core.asr.speech_vad")
     asr_paths = []
@@ -461,7 +468,7 @@ def test_transcribe_whisperx_auto_language_skips_enhancement(monkeypatch, source
     )
 
     def _unexpected_enhancement(*_args, **_kwargs):
-        raise AssertionError("WhisperX auto-language mode must retain the original audio")
+        raise AssertionError("WhisperX language-switch detection must retain the original audio")
 
     monkeypatch.setattr(enhancer, "enhance_audio", _unexpected_enhancement)
     monkeypatch.setattr(speech_vad, "is_available", lambda: False)
@@ -470,6 +477,7 @@ def test_transcribe_whisperx_auto_language_skips_enhancement(monkeypatch, source
         transcribe_language=source_language,
         need_word_time_stamp=True,
         enable_audio_enhancement=True,
+        detect_additional_languages=detect_additional_languages,
     )
 
     transcribe_module.transcribe(
@@ -566,6 +574,7 @@ def test_create_asr_instance_whisperx_uses_forced_alignment_backend(monkeypatch)
         faster_whisper_compute_type="default",
         whisperx_align_model="WAV2VEC2_ASR_LARGE_LV60K_960H",
         whisperx_batch_size=2,
+        detect_additional_languages=True,
     )
     config.cancel_event = object()
 
@@ -578,7 +587,12 @@ def test_create_asr_instance_whisperx_uses_forced_alignment_backend(monkeypatch)
     assert asr.kwargs["asr_kwargs"]["batch_size"] == 2
     assert asr.kwargs["asr_kwargs"]["cancel_event"] is config.cancel_event
     assert asr.kwargs["asr_kwargs"]["use_cache"] is False
-    assert asr.kwargs["chunk_length"] == 60 * 60
+    assert asr.kwargs["asr_kwargs"]["detect_additional_languages"] is True
+    assert asr.kwargs["chunk_length"] == 30 * 60
+    assert asr.kwargs["chunk_overlap"] == 15
+    assert asr.kwargs["retry_failed_chunks"] is True
+    assert asr.kwargs["retry_min_chunk_length"] == 2 * 60
+    assert asr.kwargs["retry_max_depth"] == 4
 
 
 def test_create_single_asr_whisperx_does_not_require_whisper_cpp(monkeypatch):

@@ -19,7 +19,7 @@ You will receive a JSON object with numbered subtitle entries.
 7. **Capitalization**: Only fix sentence-initial lowercase (e.g. "the car" → "The car")
 8. **Do NOT change**: word choice, sentence structure, phrasing, or style — preserve the speaker's voice
 9. **Do NOT merge or split** subtitle entries
-10. **Keep original language** — English stays English, Chinese stays Chinese
+10. **Keep original language** — English stays English, Japanese stays Japanese, and mixed-language entries preserve every language switch exactly
 11. **Output only** the corrected JSON, no explanations
 12. **Reference consistency**: Reference content may confirm an obvious one-character ASR near-miss in a repeated chassis/model code (for example, a title and several captions agree on G70 while one caption says G77). Correct only high-confidence near-misses; preserve genuinely different generations such as G11, G12, E38, and E65
 </instructions>

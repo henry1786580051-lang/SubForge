@@ -19,7 +19,15 @@ import {
 export function SettingsPanel() {
   const { setActiveView } = useAppStore();
   const [settings, setSettings] = useState<Record<string, unknown>>({});
-  const [hwInfo, setHwInfo] = useState<{ chip: string; device: string; n_threads: number; compute_type: string; gpu: string } | null>(null);
+  const [hwInfo, setHwInfo] = useState<{
+    platform: string;
+    arch: string;
+    chip: string;
+    device: string;
+    n_threads: number;
+    compute_type: string;
+    gpu: string;
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState("deepseek");
@@ -82,6 +90,9 @@ export function SettingsPanel() {
       if (data.whisperx_align_model !== undefined) storeUpdates.whisperxAlignModel = data.whisperx_align_model as string;
       if (data.whisperx_batch_size !== undefined) storeUpdates.whisperxBatchSize = Number(data.whisperx_batch_size || 4);
       if (data.whisperx_supported !== undefined) storeUpdates.whisperxSupported = !!data.whisperx_supported;
+      if (data.detect_additional_languages !== undefined) {
+        storeUpdates.detectAdditionalLanguages = !!data.detect_additional_languages;
+      }
       if (data.enable_audio_enhancement !== undefined) storeUpdates.enableAudioEnhancement = !!data.enable_audio_enhancement;
       if (data.speaker_diarization !== undefined) storeUpdates.speakerDiarization = data.speaker_diarization as "off" | "two" | "auto" | "fixed";
       if (data.speaker_count !== undefined) storeUpdates.speakerCount = Number(data.speaker_count || 2);
@@ -136,6 +147,7 @@ export function SettingsPanel() {
         whisperx_alignment_strategy: "whisperxAlignmentStrategy",
         whisperx_align_model: "whisperxAlignModel",
         whisperx_batch_size: "whisperxBatchSize",
+        detect_additional_languages: "detectAdditionalLanguages",
         enable_audio_enhancement: "enableAudioEnhancement",
         speaker_diarization: "speakerDiarization",
         speaker_count: "speakerCount",
@@ -1058,6 +1070,56 @@ export function SettingsPanel() {
               <option value="bn">孟加拉语</option><option value="tl">菲律宾语</option><option value="ta">泰米尔语</option><option value="ur">乌尔都语</option>
             </select>
           </SettingsField>
+          {(settings.transcribe_model as string) === "whisperx" &&
+            String(settings.source_language || "auto") !== "auto" && (
+              <SettingsField
+                label="自动补录其他语言"
+                description={
+                  hwInfo === null
+                    ? "正在确认设备是否支持 MLX 多语言补录"
+                    : hwInfo.platform === "Darwin" && hwInfo.arch === "arm64"
+                      ? "以所选语言为主，稳定检测到其他语言时按需下载对齐模型并局部补录"
+                      : "当前仅支持 Apple Silicon 的 MLX Whisper 路径"
+                }
+              >
+                <button
+                  type="button"
+                  disabled={
+                    hwInfo === null ||
+                    hwInfo.platform !== "Darwin" ||
+                    hwInfo.arch !== "arm64"
+                  }
+                  onClick={() =>
+                    handleSave(
+                      "detect_additional_languages",
+                      !settings.detect_additional_languages
+                    )
+                  }
+                  className={`relative h-[22px] w-10 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                    settings.detect_additional_languages &&
+                    hwInfo?.platform === "Darwin" &&
+                    hwInfo.arch === "arm64"
+                      ? "bg-accent"
+                      : "bg-black/10"
+                  }`}
+                  aria-pressed={Boolean(
+                    settings.detect_additional_languages &&
+                    hwInfo?.platform === "Darwin" &&
+                    hwInfo.arch === "arm64"
+                  )}
+                >
+                  <span
+                    className={`absolute top-[3px] h-4 w-4 rounded-full bg-white shadow-sm transition-[left] ${
+                      settings.detect_additional_languages &&
+                      hwInfo?.platform === "Darwin" &&
+                      hwInfo.arch === "arm64"
+                        ? "left-[21px]"
+                        : "left-[3px]"
+                    }`}
+                  />
+                </button>
+              </SettingsField>
+            )}
         </SettingsSection>
           </>
         )}

@@ -107,6 +107,103 @@ def test_assessment_keeps_separated_take_away_construction_together():
     assert "split phrasal construction 'take ... away'" in assessment.reasons
 
 
+@pytest.mark.parametrize(
+    ("left", "right", "reason"),
+    [
+        (
+            "the terminal finally opened after experiencing",
+            "some turbulence of its own",
+            "prepositional gerund separated from its complement",
+        ),
+        (
+            "the terminal finally opened after",
+            "experiencing some turbulence of its own",
+            "preposition separated from its gerund phrase",
+        ),
+        (
+            "the country was divided into East",
+            "and West after the war",
+            "paired directional names split at conjunction",
+        ),
+        (
+            "the terminal is finally up",
+            "and running after years of work",
+            "fixed state phrase split inside 'up and running'",
+        ),
+        (
+            "the question",
+            "is whether the project succeeded",
+            "trailing noun subject separated from its finite predicate",
+        ),
+        (
+            "the terminal finally",
+            "up and running after years of work",
+            "aspect marker split from 'up and running'",
+        ),
+        (
+            "the terminal",
+            "finally up and running after years of work",
+            "state predicate 'up and running' separated from its subject",
+        ),
+    ],
+)
+def test_assessment_keeps_generic_dependency_pairs_together(left, right, reason):
+    assessment = assess_english_boundary(left, right)
+
+    assert assessment.unstable
+    assert reason in assessment.reasons
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "reason"),
+    [
+        (
+            "Dubai itself now",
+            "looks a little more uncertain.",
+            "sentence adverb separated from its finite predicate",
+        ),
+        (
+            "a very thick,",
+            "continuous reinforced concrete core",
+            "dangling modifier 'thick'",
+        ),
+        (
+            "your very own luxury",
+            "apartment in a super slender tower",
+            "dangling modifier 'luxury'",
+        ),
+        (
+            "while it wasn't the first",
+            "Super Slender Skyscraper ever built",
+            "determiner separated from its 'first' head noun",
+        ),
+    ],
+)
+def test_assessment_catches_general_architecture_dependency_boundaries(left, right, reason):
+    assessment = assess_english_boundary(left, right)
+
+    assert assessment.unstable
+    assert reason in assessment.reasons
+
+
+def test_assessment_keeps_complete_now_clause_before_a_new_sentence():
+    assessment = assess_english_boundary(
+        "We need to leave now",
+        "Tomorrow will be too late.",
+    )
+
+    assert not assessment.unstable
+
+
+def test_assessment_accepts_complete_of_its_own_phrase():
+    assessment = assess_english_boundary(
+        "the terminal experienced some turbulence of its own,",
+        "the question is whether it succeeded",
+    )
+
+    assert not assessment.unstable
+
+
 def test_assessment_keeps_revised_component_with_its_noun():
     assessment = assess_english_boundary(
         "Why don't we show you this newly revised",
@@ -1458,3 +1555,238 @@ def test_assessment_accepts_this_as_a_complete_demonstrative_object():
     )
 
     assert assessment.unstable is False
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ("The concrete core is quite small,", "but it carries the full load."),
+        ("It is a typical fatter skyscraper", "and this tower uses less concrete."),
+        ("This is a super slender tower,", "you can see the core from here."),
+    ],
+)
+def test_assessment_does_not_treat_complete_adjectives_or_er_nouns_as_dangling(
+    left,
+    right,
+):
+    assert assess_english_boundary(left, right).unstable is False
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "reason"),
+    [
+        ("I think it's...", "actually more practical.", "subject and auxiliary stranded at 'it's'"),
+        ("They haven't", "changed the design.", "incomplete predicate 'haven't'"),
+        ("It is less expensive than", "it first appears.", "comparative clause separated after 'than'"),
+        ("The system was defined", "by the earlier standard.", "participle separated from its complement"),
+        ("We are telling", "other teams what changed.", "participle separated from its complement"),
+        ("The package has 6", "speakers in total.", "numeric value separated from its unit or noun"),
+        ("It provides a slightly lower", "center of gravity.", "attributive or comparative modifier separated from its head"),
+        ("The facade is a sea of glass", "and metal.", "coordinated noun phrase split at conjunction"),
+        ("The price goes all the way", "up to $50,000.", "incomplete multi-word phrase"),
+        ("It is still", "possible to include a spare.", "dangling modifier 'still'"),
+        (
+            "It is less of a ridiculous train",
+            "wreck than it appears.",
+            "comparative noun phrase separated before 'than'",
+        ),
+    ],
+)
+def test_assessment_catches_general_lexical_dependencies(left, right, reason):
+    assessment = assess_english_boundary(left, right)
+
+    assert assessment.unstable
+    assert reason in assessment.reasons
+
+
+def _japanese_cues(texts: list[str]) -> list[ASRDataSeg]:
+    cursor = 0
+    result = []
+    for text in texts:
+        words = []
+        for character in text:
+            words.append(
+                ASRWord(
+                    character,
+                    cursor,
+                    cursor + 80,
+                    timing_source="forced_alignment",
+                    language_code="ja",
+                )
+            )
+            cursor += 100
+        result.append(
+            ASRDataSeg(
+                text,
+                words[0].start_time,
+                words[-1].end_time,
+                words=words,
+                timestamp_granularity="sentence",
+                timing_source="forced_alignment",
+                language_code="ja",
+            )
+        )
+    return result
+
+
+def test_normalizer_repairs_japanese_katakana_and_particle_boundaries():
+    source = [
+        "これを持ってトンネルの力をトンネ",
+        "ルのですね",
+        "土の圧力や水の圧力を",
+        "これで受けていくと",
+    ]
+
+    repaired = normalize_boundaries(_japanese_cues(source), hard_max_cjk_chars=25)
+
+    assert "".join(segment.text for segment in repaired) == "".join(source)
+    assert all("トンネ" not in segment.text[-3:] for segment in repaired[:-1])
+    assert all(not segment.text.startswith(("が", "を", "は", "に", "へ", "で", "の")) for segment in repaired[1:])
+    assert all(not segment.text.endswith("のですね") for segment in repaired[:-1])
+
+
+def test_normalizer_merges_short_japanese_filler_with_following_phrase():
+    repaired = normalize_boundaries(
+        _japanese_cues(["こちらのですね", "掘ったトンネルにどんどん"]),
+        hard_max_cjk_chars=25,
+    )
+
+    assert [segment.text for segment in repaired] == [
+        "こちらのですね掘ったトンネルにどんどん"
+    ]
+
+
+def test_normalizer_does_not_split_japanese_auxiliary_ending():
+    repaired = normalize_boundaries(
+        _japanese_cues(["こちらの", "ですね掘ったトンネルに"]),
+        hard_max_cjk_chars=25,
+    )
+
+    assert [segment.text for segment in repaired] == [
+        "こちらのですね掘ったトンネルに"
+    ]
+
+
+def test_normalizer_keeps_japanese_verb_stem_with_inflection():
+    repaired = normalize_boundaries(
+        _japanese_cues(["こちらのですね掘", "ったトンネルにどんどん"]),
+        hard_max_cjk_chars=25,
+    )
+
+    assert "".join(segment.text for segment in repaired) == (
+        "こちらのですね掘ったトンネルにどんどん"
+    )
+    assert all(
+        not (left.text.endswith("掘") and right.text.startswith("った"))
+        for left, right in zip(repaired, repaired[1:])
+    )
+
+
+def test_normalizer_merges_japanese_dangling_coordination():
+    repaired = normalize_boundaries(
+        _japanese_cues(["トンネルの土の圧力や", "水の圧力を"]),
+        hard_max_cjk_chars=25,
+    )
+
+    assert [segment.text for segment in repaired] == [
+        "トンネルの土の圧力や水の圧力を"
+    ]
+
+
+def test_normalizer_keeps_small_tsu_with_japanese_inflection():
+    repaired = normalize_boundaries(
+        _japanese_cues(["こちらのですね掘っ", "たトンネルにどんどん"]),
+        hard_max_cjk_chars=25,
+    )
+
+    assert all(
+        not (left.text.endswith("っ") and right.text.startswith("た"))
+        for left, right in zip(repaired, repaired[1:])
+    )
+
+
+def test_normalizer_merges_dangling_japanese_genitive_modifier():
+    repaired = normalize_boundaries(
+        _japanese_cues(["トンネルのですね土の", "圧力や水の圧力を"]),
+        hard_max_cjk_chars=25,
+    )
+
+    assert [segment.text for segment in repaired] == [
+        "トンネルのですね土の圧力や水の圧力を"
+    ]
+
+
+def test_normalizer_allows_small_overflow_for_indivisible_japanese_phrase():
+    repaired = normalize_boundaries(
+        _japanese_cues(["トンネルのですね土の", "圧力や水の圧力を"]),
+        hard_max_cjk_chars=16,
+    )
+
+    assert [segment.text for segment in repaired] == [
+        "トンネルのですね土の圧力や水の圧力を"
+    ]
+    assert len(repaired[0].text) == 18
+
+
+def test_normalizer_keeps_japanese_kanji_compound_intact():
+    repaired = normalize_boundaries(
+        _japanese_cues(["トンネルの土の圧", "力や水の圧力を"]),
+        hard_max_cjk_chars=25,
+    )
+
+    assert all(
+        not (left.text.endswith("圧") and right.text.startswith("力"))
+        for left, right in zip(repaired, repaired[1:])
+    )
+
+
+def test_normalizer_keeps_japanese_attributive_phrase_with_noun():
+    repaired = normalize_boundaries(
+        _japanese_cues(["こちらのですね掘った", "トンネルにどんどん"]),
+        hard_max_cjk_chars=25,
+    )
+
+    assert [segment.text for segment in repaired] == [
+        "こちらのですね掘ったトンネルにどんどん"
+    ]
+
+
+def test_normalizer_keeps_japanese_degree_adverb_with_adjective():
+    repaired = normalize_boundaries(
+        _japanese_cues(["それが非常に", "難しい工事の中身でした"]),
+        hard_max_cjk_chars=25,
+    )
+
+    assert "".join(segment.text for segment in repaired) == (
+        "それが非常に難しい工事の中身でした"
+    )
+    assert all(
+        not (left.text.endswith("難し") and right.text.startswith("い"))
+        for left, right in zip(repaired, repaired[1:])
+    )
+
+
+def test_normalizer_merges_short_japanese_topic_with_its_predicate():
+    repaired = normalize_boundaries(
+        _japanese_cues(["それが", "非常に難しい工事の中身でした"]),
+        hard_max_cjk_chars=16,
+    )
+
+    assert [segment.text for segment in repaired] == [
+        "それが非常に難しい工事の中身でした"
+    ]
+
+
+def test_normalizer_does_not_split_japanese_i_adjective_ending():
+    repaired = normalize_boundaries(
+        _japanese_cues(["それが非常に難し", "い工事の中身でした"]),
+        hard_max_cjk_chars=25,
+    )
+
+    assert "".join(segment.text for segment in repaired) == (
+        "それが非常に難しい工事の中身でした"
+    )
+    assert all(
+        not (left.text.endswith("難し") and right.text.startswith("い"))
+        for left, right in zip(repaired, repaired[1:])
+    )

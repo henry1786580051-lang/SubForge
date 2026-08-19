@@ -78,6 +78,20 @@ class PartiallyFailingTranslator(DummyTranslator):
         )
 
 
+class FinalizingPartiallyFailingTranslator(PartiallyFailingTranslator):
+    def __init__(self, fake_cache: FakeCache, use_cache: bool):
+        super().__init__(fake_cache, use_cache)
+        self.finalize_calls = 0
+
+    def _finalize_translated_list(self, source_list, translated_list):
+        self.finalize_calls += 1
+        assert [item.index for item in source_list] == list(range(1, 11))
+        for item in translated_list:
+            if item.index == 10:
+                item.translated_text = "收尾审计后的恢复译文"
+        return translated_list
+
+
 def test_translator_does_not_read_or_write_cache_when_disabled(monkeypatch):
     fake_cache = FakeCache()
     fake_cache.values["DummyTranslator:any:简体中文"] = [
@@ -162,6 +176,27 @@ def test_partial_chunk_failure_preserves_completed_items_and_counts_exact_failur
 
     assert [item.index for item in progress] == list(range(1, 11))
     assert progress[-1].translated_text == "最后一次可恢复的候选译文"
+
+
+def test_complete_recovery_becomes_success_after_finalization_and_validation(
+    monkeypatch,
+):
+    fake_cache = FakeCache()
+    monkeypatch.setattr(translate_base, "get_translate_cache", lambda: fake_cache)
+    monkeypatch.setattr(translate_base, "is_cache_enabled", lambda: False)
+    progress = []
+    translator = FinalizingPartiallyFailingTranslator(fake_cache, use_cache=False)
+    translator.update_callback = lambda items: progress.append(list(items))
+    asr_data = ASRData(
+        [ASRDataSeg(f"source {index}", index * 1000, (index + 1) * 1000) for index in range(10)]
+    )
+
+    result = translator.translate_subtitle(asr_data)
+
+    assert translator.finalize_calls == 1
+    assert [item.index for item in progress[-1]] == list(range(1, 11))
+    assert progress[-1][-1].translated_text == "收尾审计后的恢复译文"
+    assert result.segments[-1].translated_text == "收尾审计后的恢复译文"
 
 
 @pytest.mark.parametrize(

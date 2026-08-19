@@ -94,6 +94,22 @@ class MockASR(BaseASR):
         ]
 
 
+class CoverageRetryMockASR(MockASR):
+    """Fail long chunks with the coverage error emitted by MLX Whisper."""
+
+    run_durations: list[int] = []
+
+    def _run(self, callback=None, **kwargs) -> dict:
+        assert self.file_binary is not None
+        duration_ms = len(AudioSegment.from_file(io.BytesIO(self.file_binary)))
+        self.run_durations.append(duration_ms)
+        if duration_ms > 12_000:
+            raise RuntimeError(
+                "MLX Whisper left confirmed speech untranslated after retry: 3.0-9.0s"
+            )
+        return super()._run(callback, **kwargs)
+
+
 def create_test_audio_file(duration_sec: int = 60) -> str:
     """创建测试用音频文件（静音）
 
@@ -276,6 +292,24 @@ class TestAudioSplitting:
         finally:
             Path(audio_input).unlink()
 
+    def test_split_extends_last_full_chunk_instead_of_creating_tiny_tail(self):
+        audio_input = create_test_audio_file(19)
+        try:
+            chunked = ChunkedASR(
+                asr_class=MockASR,
+                audio_path=audio_input,
+                chunk_length=10,
+                chunk_overlap=2,
+            )
+
+            chunks = chunked._split_audio()
+
+            assert [offset for _data, offset in chunks] == [0, 8_000]
+            last_audio = AudioSegment.from_file(io.BytesIO(chunks[-1][0]))
+            assert abs(len(last_audio) - 11_000) < 100
+        finally:
+            Path(audio_input).unlink()
+
 
 # ============================================================================
 # 测试并发转录
@@ -422,15 +456,46 @@ class TestErrorHandling:
         """测试 ASR 失败时错误正确传播"""
         audio_input = create_test_audio_file(1000)
         try:
+            MockASR.global_run_count = 0
             chunked = ChunkedASR(
                 asr_class=MockASR,
                 audio_path=audio_input,
                 asr_kwargs={"fail_on_run": True},
                 chunk_length=480,
+                chunk_concurrency=1,
             )
 
             with pytest.raises(RuntimeError, match="Mock ASR failed"):
                 chunked.run()
+            assert MockASR.global_run_count == 1
+        finally:
+            Path(audio_input).unlink()
+
+    def test_coverage_failure_retries_only_the_failed_chunk_at_smaller_sizes(self):
+        audio_input = create_test_audio_file(25)
+        try:
+            CoverageRetryMockASR.run_durations = []
+            chunked = ChunkedASR(
+                asr_class=CoverageRetryMockASR,
+                audio_path=audio_input,
+                chunk_length=20,
+                chunk_overlap=2,
+                chunk_concurrency=1,
+                retry_failed_chunks=True,
+                retry_min_chunk_length=5,
+                retry_max_depth=2,
+            )
+
+            result = chunked.run()
+
+            assert any(duration > 12_000 for duration in CoverageRetryMockASR.run_durations)
+            assert all(
+                duration <= 12_100
+                for duration in CoverageRetryMockASR.run_durations
+                if duration < 20_000
+            )
+            assert result.segments
+            assert result.segments[-1].end_time >= 24_000
         finally:
             Path(audio_input).unlink()
 

@@ -3,7 +3,7 @@ Produce complete, accurate, concise, and idiomatic spoken subtitles. Fidelity co
 
 <core_rules>
 1. Every current_subtitles key is a locked semantic boundary. Translate only meaning owned by that key. Never anticipate, move, repeat, merge, or omit a neighboring clause.
-2. previous_context, next_context, global context, and speaker fields are read-only. Use them to resolve references, terminology, ellipsis, tone, and turn-taking; never copy their text or labels into the output.
+2. previous_context, next_context, global context, speaker fields, and source_language fields are read-only. Use them to resolve references, terminology, ellipsis, tone, turn-taking, and genuine language switches; never copy their text or labels into the output.
 3. Preserve every material subject, predicate, object, fact, qualification, negation, comparison, number, name, organization, title, URL, model identifier, and technical term.
 4. Reconstruct natural ${target_language} syntax instead of copying source-language word order. An incomplete source fragment may remain a natural fragment, but adjacent translations must read coherently without borrowing meaning.
 5. Do not summarize, embellish, explain, intensify, soften, or invent context. Never add editorial stage directions such as "[sarcastically]" unless they are literally present in the source.

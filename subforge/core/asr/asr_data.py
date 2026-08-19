@@ -1,3 +1,4 @@
+import hashlib
 import json
 import math
 import os
@@ -55,6 +56,36 @@ class ASRWord:
     confidence: Optional[float] = None
     alignment_score: Optional[float] = None
     timing_source: TimestampSource = "unknown"
+    language_code: str = ""
+
+
+def normalize_language_code(language_code: str | None) -> str:
+    value = str(language_code or "").strip().lower().replace("_", "-")
+    aliases = {"eng": "en", "jpn": "ja", "kor": "ko", "zho": "zh", "chi": "zh"}
+    return aliases.get(value, value.split("-", 1)[0])
+
+
+def infer_text_language(text: str) -> str:
+    """Conservatively infer distinctive scripts when persisted ASR metadata is absent."""
+    normalized = unicodedata.normalize("NFC", str(text or ""))
+    has_latin = bool(re.search(r"[A-Za-z]", normalized))
+    has_kana = bool(re.search(r"[\u3040-\u30ff\u31f0-\u31ff]", normalized))
+    has_hangul = bool(
+        re.search(r"[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]", normalized)
+    )
+    if has_kana:
+        return "mixed" if has_latin else "ja"
+    if has_hangul:
+        return "mixed" if has_latin else "ko"
+    return ""
+
+
+def _common_language_code(values: List[str]) -> str:
+    languages = {normalize_language_code(value) for value in values if value}
+    languages.discard("")
+    if not languages:
+        return ""
+    return next(iter(languages)) if len(languages) == 1 else "mixed"
 
 
 def _common_timing_source(words: List[ASRWord]) -> TimestampSource:
@@ -103,6 +134,7 @@ class ASRDataSeg:
         words: Optional[List[ASRWord]] = None,
         timestamp_granularity: TimestampGranularity = "unknown",
         timing_source: TimestampSource = "unknown",
+        language_code: str = "",
     ):
         self.text = text
         self.translated_text = translated_text
@@ -111,6 +143,7 @@ class ASRDataSeg:
         self.speaker_id = speaker_id
         self.timestamp_granularity: TimestampGranularity = timestamp_granularity
         self.timing_source: TimestampSource = timing_source
+        self.language_code = normalize_language_code(language_code) or infer_text_language(text)
         self.words = list(words or [])
         if timestamp_granularity == "word" and not self.words:
             self.words = [
@@ -120,6 +153,7 @@ class ASRDataSeg:
                     end_time=end_time,
                     speaker_id=speaker_id,
                     timing_source=timing_source,
+                    language_code=self.language_code,
                 )
             ]
 
@@ -155,6 +189,10 @@ class ASRDataSeg:
             words=words,
             timestamp_granularity="sentence",
             timing_source=source,
+            language_code=_common_language_code(
+                [segment.language_code for segment in segments]
+                + [word.language_code for word in words]
+            ),
         )
 
     def to_srt_ts(self) -> str:
@@ -260,6 +298,7 @@ class ASRData:
                             end_time=segment.end_time,
                             speaker_id=segment.speaker_id,
                             timing_source="imported",
+                            language_code=segment.language_code,
                         )
                     ]
         else:
@@ -355,6 +394,7 @@ class ASRData:
                         speaker_id=seg.speaker_id,
                         timestamp_granularity="word",
                         timing_source="estimated",
+                        language_code=seg.language_code,
                     )
                 )
                 current_time = word_end_time
@@ -445,6 +485,62 @@ class ASRData:
         else:
             raise ValueError(f"Unsupported file extension: {save_path}")
 
+    @staticmethod
+    def _language_metadata_key(subtitle_path: str) -> str:
+        path = Path(handle_long_path(subtitle_path))
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        return f"subtitle-language:v1:{digest}"
+
+    def save_language_metadata(self, subtitle_path: str) -> None:
+        """Persist internal language labels without changing the user-visible SRT."""
+        if not any(segment.language_code for segment in self.segments):
+            return
+        from ..utils.cache import get_subtitle_language_cache
+
+        payload = [
+            {
+                "start_time": segment.start_time,
+                "end_time": segment.end_time,
+                "text": segment.text,
+                "language_code": segment.language_code,
+            }
+            for segment in self.segments
+        ]
+        get_subtitle_language_cache().set(
+            self._language_metadata_key(subtitle_path),
+            payload,
+            expire=90 * 24 * 60 * 60,
+        )
+
+    def restore_language_metadata(self, subtitle_path: str) -> "ASRData":
+        """Restore labels only when the cached content exactly matches this subtitle."""
+        from ..utils.cache import get_subtitle_language_cache
+
+        try:
+            payload = get_subtitle_language_cache().get(
+                self._language_metadata_key(subtitle_path),
+                default=None,
+            )
+        except (OSError, ValueError):
+            payload = None
+        if not isinstance(payload, list) or len(payload) != len(self.segments):
+            return self
+        for segment, metadata in zip(self.segments, payload):
+            if not isinstance(metadata, dict):
+                return self
+            if (
+                int(metadata.get("start_time", -1)) != segment.start_time
+                or int(metadata.get("end_time", -1)) != segment.end_time
+                or str(metadata.get("text") or "") != segment.text
+            ):
+                return self
+        for segment, metadata in zip(self.segments, payload):
+            language_code = normalize_language_code(metadata.get("language_code"))
+            segment.language_code = language_code
+            for word in segment.words:
+                word.language_code = language_code
+        return self
+
     def to_txt(
         self,
         save_path=None,
@@ -531,6 +627,7 @@ class ASRData:
                 "end_time": segment.end_time,
                 "original_subtitle": segment.text,
                 "translated_subtitle": segment.translated_text,
+                "source_language": segment.language_code,
             }
         return result_json
 
@@ -902,6 +999,93 @@ class ASRData:
                 trimmed,
             )
 
+        return self
+
+    def deduplicate_alignment_echoes(self, max_gap_ms: int = 120) -> "ASRData":
+        """Remove punctuation-delimited word echoes supported by alignment timing.
+
+        Forced alignment occasionally emits the end of one spoken word twice,
+        for example ``become. / come.`` or ``off-plan. / plan,``.  Ordinary
+        lexical cleanup cannot safely infer that from text alone.  This pass is
+        deliberately narrower: both items must be atomic word cues from the same
+        speaker, nearly contiguous, punctuation-delimited, and the later
+        lowercase token must be either an exact duplicate or a suffix fragment.
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+        if len(self.segments) < 2 or not self.is_word_timestamp():
+            return self
+
+        def _atomic_token(segment: ASRDataSeg) -> tuple[str, str] | None:
+            if len(segment.words) != 1:
+                return None
+            raw = segment.text.strip()
+            matches = re.findall(
+                r"[A-Za-z\u00c0-\u017f]+(?:[-'’][A-Za-z\u00c0-\u017f]+)*",
+                raw,
+            )
+            if len(matches) == 1:
+                return raw, matches[0].casefold()
+            numeric = re.fullmatch(r"\s*(\d[\d,]*)[.!?]\s*", raw)
+            if numeric:
+                return raw, numeric.group(1).replace(",", "")
+            return None
+
+        self.segments.sort(key=lambda segment: (segment.start_time, segment.end_time))
+        removed = 0
+        index = 0
+        while index < len(self.segments) - 1:
+            left = self.segments[index]
+            right = self.segments[index + 1]
+            gap_ms = right.start_time - left.end_time
+            if gap_ms < 0 or gap_ms > max_gap_ms:
+                index += 1
+                continue
+            if left.speaker_id and right.speaker_id and left.speaker_id != right.speaker_id:
+                index += 1
+                continue
+
+            left_token = _atomic_token(left)
+            right_token = _atomic_token(right)
+            if left_token is None or right_token is None:
+                index += 1
+                continue
+            left_raw, left_word = left_token
+            right_raw, right_word = right_token
+            if not right_raw[:1].islower() or not re.search(r"[.!?,;:]\s*$", right_raw):
+                index += 1
+                continue
+            if not re.search(r"[.!?]\s*$", left_raw):
+                index += 1
+                continue
+
+            exact_echo = left_word == right_word and len(left_word) >= 5
+            suffix_echo = (
+                len(right_word) >= 2
+                and len(left_word) > len(right_word)
+                and left_word.endswith(right_word)
+            )
+            numeric_two_echo = (
+                right_word == "too"
+                and left_word.isdigit()
+                and left_word.endswith("2")
+            )
+            if not (exact_echo or suffix_echo or numeric_two_echo):
+                index += 1
+                continue
+
+            logger.debug(
+                "Removed alignment-supported ASR echo at %.3fs: %r after %r",
+                right.start_time / 1000,
+                right.text,
+                left.text,
+            )
+            del self.segments[index + 1]
+            removed += 1
+
+        if removed:
+            logger.info("Removed alignment-supported ASR word echoes: %s", removed)
         return self
 
     def merge_sentence_fragments(
@@ -2042,7 +2226,7 @@ class ASRData:
         suffix = file_path_obj.suffix.lower()
 
         if suffix == ".srt":
-            return ASRData.from_srt(content)
+            return ASRData.from_srt(content).restore_language_metadata(str(file_path_obj))
         elif suffix == ".vtt":
             if "<c>" in content:
                 return ASRData.from_youtube_vtt(content)
@@ -2065,6 +2249,7 @@ class ASRData:
                 translated_text=segment_data["translated_subtitle"],
                 start_time=segment_data["start_time"],
                 end_time=segment_data["end_time"],
+                language_code=str(segment_data.get("source_language") or ""),
             )
             segments.append(segment)
         return ASRData.from_imported_segments(segments)

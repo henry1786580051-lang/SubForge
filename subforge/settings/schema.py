@@ -89,6 +89,7 @@ class AppSettings(BaseModel):
     whisperx_alignment_strategy: Literal["auto", "manual"] = "auto"
     whisperx_align_model: str = "WAV2VEC2_ASR_LARGE_LV60K_960H"
     whisperx_batch_size: int = Field(default=8, ge=1, le=64)
+    detect_additional_languages: bool = False
     ff_mdx_kim2: bool = False
     enable_audio_enhancement: bool = True
     speaker_diarization: Literal["off", "two", "auto", "fixed"] = "off"

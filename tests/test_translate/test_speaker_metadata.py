@@ -44,6 +44,30 @@ def test_speaker_metadata_is_not_sent_as_translation_text():
     ]
 
 
+def test_llm_payload_receives_read_only_source_language_metadata():
+    translator = LLMTranslator(
+        thread_num=1,
+        batch_num=10,
+        target_language=TargetLanguage.SIMPLIFIED_CHINESE,
+        model="test",
+        custom_prompt="",
+        is_reflect=False,
+        update_callback=None,
+        use_cache=False,
+    )
+    translator._all_language_by_index = {1: "en", 2: "ja"}
+
+    payload = translator._current_subtitles_payload(
+        {"1": "Welcome.", "2": "こんにちは。"}
+    )
+    rules = translator._dialogue_prompt_rules({"1": "Welcome.", "2": "こんにちは。"})
+    translator.stop()
+
+    assert payload["1"]["source_language"] == "en"
+    assert payload["2"]["source_language"] == "ja"
+    assert "source_language is authoritative ASR metadata" in rules
+
+
 def test_llm_translation_receives_anonymous_dialogue_metadata(monkeypatch):
     captured = {}
 
