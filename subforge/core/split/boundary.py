@@ -20,6 +20,7 @@ MAX_BOUNDARY_SHIFT_WORDS = 8
 MAX_RELOCATABLE_GAP_MS = 1800
 MAX_DIARIZATION_GLITCH_GAP_MS = 250
 MAX_STRONG_DEPENDENCY_DIARIZATION_GLITCH_GAP_MS = 350
+MAX_EXACT_DEPENDENCY_DIARIZATION_GLITCH_GAP_MS = 450
 MAX_DUPLICATE_CORRECTION_GAP_MS = 600
 MIN_REPAIR_IMPROVEMENT = 8.0
 
@@ -34,9 +35,7 @@ _JAPANESE_PARTICLE_HEAD_RE = re.compile(
 _JAPANESE_FILLER_TAIL_RE = re.compile(
     r"(?:こちら|そちら|あちら)(?:の|の?ですね)$|(?:この|その|あの)$|のですね$"
 )
-_JAPANESE_SHORT_TOPIC_TAIL_RE = re.compile(
-    r"^(?:これ|それ|あれ|こちら|そちら|あちら)(?:が|は)$"
-)
+_JAPANESE_SHORT_TOPIC_TAIL_RE = re.compile(r"^(?:これ|それ|あれ|こちら|そちら|あちら)(?:が|は)$")
 _JAPANESE_PREFERRED_TAIL_RE = re.compile(
     r"(?:が|を|は|に|へ|と|で|も|や|から|まで|より|ので|のに|[。！？、])$"
 )
@@ -172,6 +171,7 @@ _INCOMPLETE_PREDICATE_TAILS = {
 }
 
 _SUBJECT_AUX_TAILS = {
+    "i'd",
     "i'm",
     "you're",
     "he's",
@@ -184,11 +184,17 @@ _SUBJECT_AUX_TAILS = {
     "we've",
     "they've",
     "i'll",
+    "you'd",
     "you'll",
+    "he'd",
     "he'll",
+    "she'd",
     "she'll",
+    "it'd",
     "it'll",
+    "we'd",
     "we'll",
+    "they'd",
     "they'll",
 }
 
@@ -281,6 +287,7 @@ _COMPARATIVE_MODIFIER_TAILS = {
 }
 
 _ATTRIBUTIVE_TAILS = {
+    "different",
     "distance",
     "first",
     "old",
@@ -289,6 +296,19 @@ _ATTRIBUTIVE_TAILS = {
     "same",
     "second",
     "similar",
+}
+
+_SENTENCE_ADVERB_TAILS = {
+    "basically",
+    "effectively",
+    "essentially",
+    "frankly",
+    "generally",
+    "honestly",
+    "now",
+    "overall",
+    "technically",
+    "ultimately",
 }
 
 _OPEN_COMPLEMENT_TAILS = {
@@ -302,6 +322,9 @@ _OPEN_COMPLEMENT_TAILS = {
     "got",
     "grabbing",
     "just",
+    "put",
+    "puts",
+    "putting",
     "spend",
     "spending",
     "spent",
@@ -320,6 +343,7 @@ _DANGLING_PHRASES = {
     ("higher", "end"),
     ("in", "order"),
     ("kind", "of"),
+    ("leading", "up", "to"),
     ("need", "to"),
     ("not", "only"),
     ("one", "of"),
@@ -334,6 +358,8 @@ _DANGLING_PHRASES = {
 _DEPENDENCY_PAIRS = {
     ("ago", "or"),
     ("american", "sedans"),
+    ("bass", "sound"),
+    ("bass", "systems"),
     ("better", "sound"),
     ("big", "picture"),
     ("body", "american"),
@@ -355,7 +381,9 @@ _DEPENDENCY_PAIRS = {
     ("good", "jobs"),
     ("high", "end"),
     ("higher", "echelon"),
+    ("home", "about"),
     ("grabbing", "attention"),
+    ("leading", "up"),
     ("nuclear", "plants"),
     ("nuclear", "power"),
     ("only", "way"),
@@ -365,6 +393,7 @@ _DEPENDENCY_PAIRS = {
     ("other", "socks"),
     ("past", "experiences"),
     ("power", "plants"),
+    ("power", "steering"),
     ("point", "out"),
     ("performance", "pack"),
     ("pretty", "standard"),
@@ -375,13 +404,16 @@ _DEPENDENCY_PAIRS = {
     ("same", "sort"),
     ("serrated", "edge"),
     ("so", "much"),
+    ("sound", "system"),
     ("specialized", "employees"),
     ("traditional", "hybrid"),
+    ("up", "to"),
     ("thank", "you"),
     ("turn", "signals"),
     ("value", "judgment"),
     ("whole", "lot"),
     ("which", "i"),
+    ("write", "home"),
     ("that's", "what"),
 }
 
@@ -575,6 +607,7 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
         return BoundaryAssessment(0, ())
 
     tail = left_tokens[-1]
+    previous = left_tokens[-2] if len(left_tokens) > 1 else ""
     head = right_tokens[0]
     risk = 0
     reasons: list[str] = []
@@ -648,6 +681,15 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
             re.IGNORECASE,
         )
     )
+    complete_visibility_preposition = bool(
+        tail == "of"
+        and head in {"and", "but", "because", "so", "while"}
+        and re.search(
+            r"\b(?:easy|hard|difficult)\s+to\s+(?:see|look)\s+out\s+of$",
+            semantic_left,
+            flags=re.IGNORECASE,
+        )
+    )
     complete_predicative_adjective = bool(
         head in {"and", "but", "or"}
         and bool(_CLAUSE_RE.search(left))
@@ -664,14 +706,12 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     if _ends_with_phrase(left_tokens):
         risk += 36
         reasons.append("incomplete multi-word phrase")
-    if tail in _HARD_DANGLING_TAILS:
+    if tail in _HARD_DANGLING_TAILS and not complete_visibility_preposition:
         risk += 32
         reasons.append(f"dangling function word '{tail}'")
     if semantic_tail != tail and semantic_tail in _HARD_DANGLING_TAILS:
         risk += 34
-        reasons.append(
-            f"dangling function word '{semantic_tail}' before trailing discourse filler"
-        )
+        reasons.append(f"dangling function word '{semantic_tail}' before trailing discourse filler")
     if (
         tail in _SUBJECT_TAILS
         and right[:1].islower()
@@ -693,6 +733,15 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     if tail in {"haven't", "hasn't", "hadn't"}:
         risk += 32
         reasons.append(f"incomplete predicate '{tail}'")
+    if re.search(
+        r"\b(?:can|could|did|do|does|had|has|have|will|would|"
+        r"can['’]t|couldn['’]t|didn['’]t|doesn['’]t|don['’]t|"
+        r"won['’]t|wouldn['’]t)\s+(?:actually\s+|really\s+)?(?:never|no)$",
+        semantic_left,
+        flags=re.IGNORECASE,
+    ):
+        risk += 36
+        reasons.append("negative auxiliary is separated from its complement")
     if (
         tail in {"become", "became", "becomes", "remain", "remained", "remains"}
         and not re.match(r"^(?:what|whatever|whoever)\b", semantic_left, re.IGNORECASE)
@@ -732,14 +781,33 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     ):
         risk += 30
         reasons.append(f"determiner separated from its '{tail}' head noun")
-    if tail == "now" and re.match(
-        r"^(?:am|are|can|could|did|do|does|had|has|have|is|looks?|may|might|must|"
+    if tail in _SENTENCE_ADVERB_TAILS and re.match(
+        r"^(?:(?:i|you|he|she|it|we|they)(?:['’](?:d|ll|m|re|s|ve))?|"
+        r"am|are|can|could|did|do|does|had|has|have|is|looks?|may|might|must|"
         r"seems?|shall|should|was|were|will|would)\b",
         semantic_right,
         re.IGNORECASE,
     ):
         risk += 34
         reasons.append("sentence adverb separated from its finite predicate")
+    if (
+        tail in _SENTENCE_ADVERB_TAILS
+        and (
+            previous in _SUBJECT_AUX_TAILS
+            or re.fullmatch(
+                r"(?:am|are|is|was|were|be|been|can|could|may|might|must|"
+                r"shall|should|will|would)",
+                previous,
+                re.IGNORECASE,
+            )
+        )
+        and re.match(r"^[a-z][a-z'’-]*ing\b", semantic_right, re.IGNORECASE)
+    ):
+        risk += 38
+        reasons.append("auxiliary and sentence adverb separated from their predicate")
+    if tail == "year" and re.match(r"^leading\s+up\s+to\b", semantic_right, re.IGNORECASE):
+        risk += 38
+        reasons.append("time frame separated from its defining participial phrase")
     if tail == "than":
         risk += 36
         reasons.append("comparative clause separated after 'than'")
@@ -750,6 +818,78 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     ):
         risk += 38
         reasons.append("comparative noun phrase separated before 'than'")
+    if re.search(
+        r"\b(?:\d[\d,.]*|one|two|three|four|five|six|seven|eight|nine|ten)\s+"
+        r"(?:centimetres?|centimeters?|feet|foot|inches?|kilometres?|kilometers?|"
+        r"metres?|meters?|miles?|percent|%)$",
+        semantic_left,
+        re.IGNORECASE,
+    ) and re.match(
+        r"^(?:closer|farther|further|higher|lower|greater|less|more|nearer|"
+        r"shorter|taller|wider)\b",
+        semantic_right,
+        re.IGNORECASE,
+    ):
+        risk += 38
+        reasons.append("measurement separated from its comparative relation")
+    if re.search(
+        r"\b(?:needs?|needed)\s+to\s+[a-z][a-z'’-]*ly$",
+        semantic_left,
+        re.IGNORECASE,
+    ) and re.match(r"^[a-z][a-z'’-]*(?:\s+|$)", semantic_right, re.IGNORECASE):
+        risk += 38
+        reasons.append("infinitive adverb separated from its predicate")
+    if re.search(
+        r"\b(?:welcoming|serving|handling|accommodating)$",
+        semantic_left,
+        re.IGNORECASE,
+    ) and re.match(
+        r"^(?:about|around|between|more\s+than|over|up\s+to|\d)",
+        semantic_right,
+        re.IGNORECASE,
+    ):
+        risk += 38
+        reasons.append("transitive participle separated from its quantified object")
+    if re.fullmatch(
+        r"(?:each|every|per)\s+(?:day|week|month|year|annum)[.!?]?",
+        semantic_right,
+        re.IGNORECASE,
+    ):
+        risk += 36
+        reasons.append("frequency phrase separated from its quantified statement")
+    if tail in {"about", "around", "approximately", "roughly"} and re.match(
+        r"^\d[\d,.]*\b",
+        semantic_right,
+    ):
+        risk += 38
+        reasons.append("approximate magnitude separated from its numeric value")
+    if re.search(
+        r"\b(?:can|could|may|might|must|shall|should|will|would)\s+"
+        r"[a-z][a-z'’-]*ly$",
+        semantic_left,
+        re.IGNORECASE,
+    ) and re.match(r"^[a-z][a-z'’-]*(?:\s+|$)", semantic_right, re.IGNORECASE):
+        risk += 38
+        reasons.append("modal adverb separated from its predicate")
+    if re.search(r"\bbut\s+for\s+[^.!?]+[,]$", left, re.IGNORECASE) and re.match(
+        r"^(?:a|an|the|this|that|these|those)\b",
+        semantic_right,
+        re.IGNORECASE,
+    ):
+        risk += 38
+        reasons.append("contrastive prepositional frame separated from its main clause")
+    if re.search(
+        r"(?:^|[.!?]\s+)(?:about|around|roughly|approximately)\s+"
+        r"\d[\d,.]*\s+(?:kilometres?|kilometers?|metres?|meters?|miles?)\s+away[,]?$",
+        semantic_left,
+        re.IGNORECASE,
+    ) and re.match(
+        r"^(?:a|an|the|this|that|these|those|new)\b",
+        semantic_right,
+        re.IGNORECASE,
+    ):
+        risk += 38
+        reasons.append("distance modifier separated from its location noun")
     if (
         right[:1].islower()
         and tail not in {"other"}
@@ -795,12 +935,34 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
             "with",
             "your",
         }
+        and not re.search(
+            rf"\b(?:a|an|the|this|that|my|your|his|her|its|our|their)\s+"
+            rf"{re.escape(tail)}$",
+            semantic_left,
+            flags=re.IGNORECASE,
+        )
     ):
         risk += 28
         reasons.append("participle separated from its complement")
     if re.fullmatch(r"\d[\d,.]*", tail) and right[:1].islower():
         risk += 30
         reasons.append("numeric value separated from its unit or noun")
+    if tail in {
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+    } and re.match(r"^(?:19|20)\d{2}\b", semantic_right):
+        risk += 42
+        reasons.append("calendar month separated from its year")
     if (
         head in {"and", "or"}
         and len(right_tokens) > 1
@@ -815,18 +977,27 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     ) and re.match(r"^(?:and|or|but)\b", semantic_right, re.IGNORECASE):
         risk += 34
         reasons.append("paired contrast frame split before its counterpart")
-    if re.search(
-        r"\b(?:after|before|by|despite|during|through|while|without)\s+"
-        r"[a-z][a-z'’-]*ing$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and right[:1].islower():
+    if (
+        re.search(
+            r"\b(?:after|before|by|despite|during|through|while|without)\s+"
+            r"[a-z][a-z'’-]*ing$",
+            semantic_left,
+            re.IGNORECASE,
+        )
+        and right[:1].islower()
+    ):
         risk += 36
         reasons.append("prepositional gerund separated from its complement")
-    if (
-        tail in {"after", "before", "by", "despite", "during", "through", "while", "without"}
-        and head.endswith("ing")
-    ):
+    if tail in {
+        "after",
+        "before",
+        "by",
+        "despite",
+        "during",
+        "through",
+        "while",
+        "without",
+    } and head.endswith("ing"):
         risk += 36
         reasons.append("preposition separated from its gerund phrase")
     if (
@@ -837,15 +1008,12 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     ):
         risk += 40
         reasons.append("paired directional names split at conjunction")
-    if (
-        head in {"if", "unless", "without"}
-        and re.search(
-            r"\b(?:am|is|are|was|were|seem(?:s|ed)?|become(?:s|ing)?)\s+"
-            r"(?:too\s+|quite\s+|rather\s+|really\s+|very\s+)?"
-            r"[a-z]+(?:able|al|ful|ible|ic|ive|less|ous)$",
-            semantic_left,
-            re.IGNORECASE,
-        )
+    if head in {"if", "unless", "without"} and re.search(
+        r"\b(?:am|is|are|was|were|seem(?:s|ed)?|become(?:s|ing)?)\s+"
+        r"(?:too\s+|quite\s+|rather\s+|really\s+|very\s+)?"
+        r"[a-z]+(?:able|al|ful|ible|ic|ive|less|ous)$",
+        semantic_left,
+        re.IGNORECASE,
     ):
         risk += 32
         reasons.append("condition separated from the predicate it qualifies")
@@ -881,28 +1049,37 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     if re.search(r"\bexpect\s+to\s+always$", semantic_left, re.IGNORECASE):
         risk += 34
         reasons.append("open continuation after 'expect to always'")
-    if re.search(
-        r"\b(?:who|which|that)(?:\s+(?:you\s+know|i\s+mean))?\s+"
-        r"(?:previously|currently|also|still|often|usually|"
-        r"generally|actually|really|just|never|always)$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and right[:1].islower():
+    if (
+        re.search(
+            r"\b(?:who|which|that)(?:\s+(?:you\s+know|i\s+mean))?\s+"
+            r"(?:previously|currently|also|still|often|usually|"
+            r"generally|actually|really|just|never|always)$",
+            semantic_left,
+            re.IGNORECASE,
+        )
+        and right[:1].islower()
+    ):
         risk += 34
         reasons.append("relative-clause subject separated from its predicate")
-    if re.search(
-        r"\b(?:may|might|can|could|will|would|should|must)\s+be\s+"
-        r"(?:reading|using|watching|doing|making|seeing|getting)$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and right[:1].islower():
+    if (
+        re.search(
+            r"\b(?:may|might|can|could|will|would|should|must)\s+be\s+"
+            r"(?:reading|using|watching|doing|making|seeing|getting)$",
+            semantic_left,
+            re.IGNORECASE,
+        )
+        and right[:1].islower()
+    ):
         risk += 36
         reasons.append("progressive predicate separated from its object")
-    if re.search(
-        r"\b(?:number|amount|share|range|kind|sort)\s+of(?:\s+like)?$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and right[:1].islower():
+    if (
+        re.search(
+            r"\b(?:number|amount|share|range|kind|sort)\s+of(?:\s+like)?$",
+            semantic_left,
+            re.IGNORECASE,
+        )
+        and right[:1].islower()
+    ):
         risk += 36
         reasons.append("quantifying phrase separated from its noun")
     if re.search(
@@ -1079,12 +1256,15 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     ):
         risk += 36
         reasons.append("sentence-opening opinion marker belongs to the next cue")
-    if re.search(
-        r"\b(?:which|that|what)\s+(?:i|we|you|they|he|she)\s+"
-        r"(?:think|guess|believe),?$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and head in _INCOMPLETE_PREDICATE_TAILS:
+    if (
+        re.search(
+            r"\b(?:which|that|what)\s+(?:i|we|you|they|he|she)\s+"
+            r"(?:think|guess|believe),?$",
+            semantic_left,
+            re.IGNORECASE,
+        )
+        and head in _INCOMPLETE_PREDICATE_TAILS
+    ):
         risk += 38
         reasons.append("parenthetical opinion separated from its governing clause")
     if re.fullmatch(
@@ -1121,7 +1301,14 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     if re.search(r"\bbecause\s+at\s+the\s+time,?$", left, re.IGNORECASE):
         risk += 36
         reasons.append("reason clause opener separated from its subject")
-    if tail == "now" and head in (_SUBJECT_TAILS | {"our", "the", "a", "an"}):
+    if tail in _SENTENCE_ADVERB_TAILS and (
+        head in (_SUBJECT_TAILS | {"our", "the", "a", "an"})
+        or re.fullmatch(
+            r"(?:i|you|he|she|it|we|they)['’](?:d|ll|m|re|s|ve)",
+            head,
+            re.IGNORECASE,
+        )
+    ):
         risk += 30
         reasons.append("sentence-opening time adverb belongs to the next cue")
     if re.search(r"\bbut\s+for\s+(?:them|him|her|us|you),?$", left, re.IGNORECASE):
@@ -1236,11 +1423,14 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     ):
         risk += 36
         reasons.append("transitive predicate separated before trailing discourse filler")
-    if re.search(
-        r"\b(?:i|we|you|they|he|she)(?:['’]ve|\s+have)\s+seen,?$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and semantic_right[:1].islower():
+    if (
+        re.search(
+            r"\b(?:i|we|you|they|he|she)(?:['’]ve|\s+have)\s+seen,?$",
+            semantic_left,
+            re.IGNORECASE,
+        )
+        and semantic_right[:1].islower()
+    ):
         risk += 36
         reasons.append("perfect reporting predicate separated from its content")
     if head in {"her", "him", "it", "me", "them", "us", "you"} and re.search(
@@ -1251,12 +1441,15 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     ):
         risk += 36
         reasons.append("transitive predicate separated from its pronoun object")
-    if re.search(
-        r"\b(?:i|we|you|they|he|she)(?:['’]ve|\s+have)\s+"
-        r"(?:clearly|definitely|really|certainly|already)\s+seen,?$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and semantic_right[:1].islower():
+    if (
+        re.search(
+            r"\b(?:i|we|you|they|he|she)(?:['’]ve|\s+have)\s+"
+            r"(?:clearly|definitely|really|certainly|already)\s+seen,?$",
+            semantic_left,
+            re.IGNORECASE,
+        )
+        and semantic_right[:1].islower()
+    ):
         risk += 36
         reasons.append("perfect reporting predicate separated after its adverb")
     if re.search(r"\bwell\s+suited$", semantic_left, re.IGNORECASE) and re.match(
@@ -1264,13 +1457,16 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     ):
         risk += 32
         reasons.append("context-dependent adjective separated from its continuation")
-    if re.search(
-        r"\b(?:(?:start(?:ed|ing)?|continue(?:d|s|ing)?)\s+to\s+see|"
-        r"(?:i|we|you|they|he|she)\s+(?:think\s+that\s+)?"
-        r"(?:i|we|you|they|he|she)?\s*(?:see|seen)),?$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and right[:1].islower():
+    if (
+        re.search(
+            r"\b(?:(?:start(?:ed|ing)?|continue(?:d|s|ing)?)\s+to\s+see|"
+            r"(?:i|we|you|they|he|she)\s+(?:think\s+that\s+)?"
+            r"(?:i|we|you|they|he|she)?\s*(?:see|seen)),?$",
+            semantic_left,
+            re.IGNORECASE,
+        )
+        and right[:1].islower()
+    ):
         risk += 34
         reasons.append("reporting predicate separated from its content")
     if re.search(
@@ -1377,7 +1573,9 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     ):
         risk += 34
         reasons.append("coordinated noun list separated from its progressive predicate")
-    if re.match(r"^and\s+(?:is|are|was|were|became|becomes?)\b", semantic_right, re.I) and re.search(
+    if re.match(
+        r"^and\s+(?:is|are|was|were|became|becomes?)\b", semantic_right, re.I
+    ) and re.search(
         r"\b(?:think|believe|consider|say|said|thought)\s+that\b",
         semantic_left,
         re.IGNORECASE,
@@ -1653,9 +1851,7 @@ def _make_cue(words: Sequence[ASRWord], fallback_speaker: str) -> ASRDataSeg:
         next(iter(sources)) if len(sources) == 1 else ("mixed" if sources else "unknown"),
     )
     languages = {word.language_code for word in words if word.language_code}
-    language_code = next(iter(languages)) if len(languages) == 1 else (
-        "mixed" if languages else ""
-    )
+    language_code = next(iter(languages)) if len(languages) == 1 else ("mixed" if languages else "")
     return ASRDataSeg(
         text=_join_words(words),
         start_time=words[0].start_time,
@@ -1679,9 +1875,7 @@ def _has_unstable_japanese_boundary(left: str, right: str) -> bool:
         return False
     if _KATAKANA_RE.fullmatch(left[-1]) and _KATAKANA_RE.fullmatch(right[0]):
         return True
-    if re.fullmatch(r"[\u3400-\u9fff]", left[-1]) and re.match(
-        r"[\u3400-\u9fff]", right[0]
-    ):
+    if re.fullmatch(r"[\u3400-\u9fff]", left[-1]) and re.match(r"[\u3400-\u9fff]", right[0]):
         return True
     if re.fullmatch(r"[\u3400-\u9fff]", left[-1]) and right.startswith("しい"):
         return True
@@ -1717,10 +1911,8 @@ def _can_merge_japanese_atomic_pair(
         and _is_japanese_cue(right)
         and not _is_hard_boundary(left, right)
         and _has_unstable_japanese_boundary(left.text, right.text)
-        and _word_count(words)
-        <= hard_max_chars + MAX_JAPANESE_ATOMIC_OVERFLOW_CHARS
-        and words[-1].end_time - words[0].start_time
-        <= MAX_JAPANESE_ATOMIC_DURATION_MS
+        and _word_count(words) <= hard_max_chars + MAX_JAPANESE_ATOMIC_OVERFLOW_CHARS
+        and words[-1].end_time - words[0].start_time <= MAX_JAPANESE_ATOMIC_DURATION_MS
     )
 
 
@@ -1755,9 +1947,7 @@ def _repair_japanese_boundaries(
             and _word_count(words) <= hard_max_chars
             and words[-1].end_time - words[0].start_time <= 8000
         ):
-            result[index : index + 2] = [
-                _make_cue(words, left.speaker_id or right.speaker_id)
-            ]
+            result[index : index + 2] = [_make_cue(words, left.speaker_id or right.speaker_id)]
             logger.info(
                 "Merged incomplete Japanese filler cue at subtitles %s-%s",
                 index + 1,
@@ -1793,9 +1983,7 @@ def _repair_japanese_boundaries(
                 _word_count(words) <= hard_max_chars
                 and words[-1].end_time - words[0].start_time <= 8000
             ):
-                result[index : index + 2] = [
-                    _make_cue(words, left.speaker_id or right.speaker_id)
-                ]
+                result[index : index + 2] = [_make_cue(words, left.speaker_id or right.speaker_id)]
                 logger.info(
                     "Merged indivisible Japanese lexical boundary at subtitles %s-%s",
                     index + 1,
@@ -1835,9 +2023,7 @@ def _repair_japanese_boundaries_until_stable(
 ) -> list[ASRDataSeg]:
     result = list(segments)
     for _ in range(8):
-        signature = [
-            (segment.start_time, segment.end_time, segment.text) for segment in result
-        ]
+        signature = [(segment.start_time, segment.end_time, segment.text) for segment in result]
         repaired = _repair_japanese_boundaries(
             result,
             hard_max_chars=hard_max_chars,
@@ -1868,9 +2054,7 @@ def _merge_japanese_atomic_pairs(
             words,
             hard_max_chars=hard_max_chars,
         ):
-            result[index : index + 2] = [
-                _make_cue(words, left.speaker_id or right.speaker_id)
-            ]
+            result[index : index + 2] = [_make_cue(words, left.speaker_id or right.speaker_id)]
             logger.info(
                 "Finalized indivisible Japanese boundary at subtitles %s-%s",
                 index + 1,
@@ -1891,9 +2075,7 @@ def finalize_japanese_boundaries(
     """Apply the language-specific final pass after all generic boundary work."""
     result = list(segments)
     for _ in range(8):
-        signature = [
-            (segment.start_time, segment.end_time, segment.text) for segment in result
-        ]
+        signature = [(segment.start_time, segment.end_time, segment.text) for segment in result]
         repaired = _repair_japanese_boundaries(
             result,
             hard_max_chars=hard_max_chars,
@@ -2016,6 +2198,15 @@ def _is_hard_boundary(left: ASRDataSeg, right: ASRDataSeg) -> bool:
     if left.speaker_id and right.speaker_id and left.speaker_id != right.speaker_id:
         gap = max(0, right.start_time - left.end_time)
         assessment = assess_english_boundary(left.text, right.text)
+        exact_dependency = bool(
+            set(assessment.reasons)
+            & {
+                "attributive or comparative modifier separated from its head",
+                "numeric value separated from its unit or noun",
+                "numeric value separated from its multiplier or unit",
+                "participle separated from its complement",
+            }
+        )
         # Diarization can briefly flip speaker IDs inside one sentence. Give a
         # slightly wider tolerance only to an exceptionally strong dependency,
         # such as a modifier split from its noun.
@@ -2024,7 +2215,9 @@ def _is_hard_boundary(left: ASRDataSeg, right: ASRDataSeg) -> bool:
             if assessment.risk >= 50
             else MAX_DIARIZATION_GLITCH_GAP_MS
         )
-        if gap > allowed_gap or assessment.risk < 30:
+        if exact_dependency:
+            allowed_gap = max(allowed_gap, MAX_EXACT_DEPENDENCY_DIARIZATION_GLITCH_GAP_MS)
+        if gap > allowed_gap or (assessment.risk < 30 and not (exact_dependency and gap <= 450)):
             return True
     return right.start_time - left.end_time > MAX_RELOCATABLE_GAP_MS
 

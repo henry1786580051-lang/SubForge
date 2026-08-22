@@ -1,5 +1,36 @@
 # Changelog
 
+## v1.1.16 - 2026-08-22
+
+### Improved
+
+- Protects open complements, fixed expressions, and cross-cue dependency pairs during sentence boundary selection so semantic units are not split merely to satisfy a preferred subtitle length.
+- Uses document-level evidence before correcting recurring ASR homophones, keeping genuine acoustic terms intact when the surrounding transcript does not support a correction.
+- Detects manufacturer-introduced product identifiers and carries their canonical form into later translation and validation windows.
+- Distinguishes audio demonstrations from visual demonstrations and expands automotive guidance for vents, one-touch windows, equipment parity, and figurative reviewer language.
+- Keeps native reasoning selective: ordinary translation and format validation remain non-reasoning operations, while confirmed ownership, word-order, and proper-name risks receive focused review.
+
+### Fixed
+
+- Fixed phrase fragments such as `write home about`, `sound system`, and open `put` complements being separated across subtitle boundaries.
+- Fixed recurring `bass/base` ASR ambiguity being corrected without sufficient document evidence.
+- Fixed official seat, package, and system names drifting between adjacent translation batches.
+- Fixed quiet components being translated as human behavior, audio playback being described as something shown on screen, and automatic window controls losing their established meaning.
+- Fixed Traditional Chinese characters and Latin proper names not owned by the source or confirmed context leaking into Simplified Chinese output.
+
+### Validation
+
+- Python: `1682 passed, 11 skipped`.
+- Ruff and Pyright passed with `0 errors`; whitespace validation passed.
+- Full DeepSeek V4 Flash regression: 618 bilingual cues with zero empty translations, placeholders, untranslated cues, Traditional-script leakage, or timeline overlaps.
+- The full regression completed 351 successful API requests with a 66.6% prompt-cache hit ratio; native reasoning remained confined to confirmed high-risk review windows.
+
+### Packaging
+
+- macOS Apple Silicon: `SubForge-1.1.16-macos-arm64.dmg`.
+- Windows x64: `SubForge-1.1.16-windows-x64-setup.exe`, built and smoke-tested by GitHub Actions.
+- Whisper, forced-alignment, Community-1, ECAPA, and DeepFilterNet models remain separate on-demand downloads.
+
 ## v1.1.15 - 2026-08-19
 
 ### Improved

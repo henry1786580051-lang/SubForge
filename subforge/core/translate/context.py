@@ -29,10 +29,12 @@ CONTEXT_WINDOWS = 5
 MAX_ENTITY_MENTIONS = 160
 MAX_ENTITY_CONTEXTS = 64
 MAX_ENTITY_CONTEXT_CHARS = 6_000
+MAX_RHETORICAL_NAME_CANDIDATES = 16
 MAX_ENTITY_VARIANT_CANDIDATES = 32
 MAX_ENTITY_ALIAS_GROUPS = 12
 MAX_LEXICAL_VARIANT_CANDIDATES = 24
 MAX_NUMERIC_CONTEXTS = 32
+MAX_CALL_TO_ACTION_ENTITY_CANDIDATES = 8
 FOOTBALL_FIELD_AREA_SQUARE_METRES = 5351.0
 
 
@@ -83,10 +85,7 @@ def _compact_transcript(segments: Iterable[str], limit: int = MAX_CONTEXT_CHARS)
         (limit - len(separator) * (CONTEXT_WINDOWS - 1)) // CONTEXT_WINDOWS,
     )
     max_start = len(text) - window_size
-    starts = [
-        round(max_start * index / (CONTEXT_WINDOWS - 1))
-        for index in range(CONTEXT_WINDOWS)
-    ]
+    starts = [round(max_start * index / (CONTEXT_WINDOWS - 1)) for index in range(CONTEXT_WINDOWS)]
     windows = []
     for index, start in enumerate(starts):
         end = min(len(text), start + window_size)
@@ -162,9 +161,7 @@ def _asr_note_correction(
     ).ratio()
     if similarity < 0.45:
         return canonical
-    corrected = (
-        source[: closest.start()] + canonical_token + source[closest.end() :]
-    )
+    corrected = source[: closest.start()] + canonical_token + source[closest.end() :]
     return corrected
 
 
@@ -199,9 +196,7 @@ def _format_terms(value) -> str:
                         flags=re.IGNORECASE,
                     )
                 )
-                is_identifier = bool(
-                    re.search(r"[A-Z]{2,}|[A-Za-z]+\d|\d[A-Za-z]+", source)
-                )
+                is_identifier = bool(re.search(r"[A-Z]{2,}|[A-Za-z]+\d|\d[A-Za-z]+", source))
                 priority = 0 if is_asr else 1 if is_nonliteral else 2 if is_identifier else 3
                 prioritized_terms.append((priority, position, rendered))
             else:
@@ -265,6 +260,221 @@ def _filter_acronym_wordplay_corrections(
     return filtered
 
 
+def _refine_rhetorical_name_terms(
+    terms: list[Any],
+    candidates: list[dict[str, str]],
+    *,
+    model: str,
+    target_language: TargetLanguage,
+    use_cache: bool,
+    llm_client: Any,
+) -> list[Any]:
+    """Classify rhetorical-name candidates and polish only confirmed epithets."""
+    existing: dict[str, tuple[int, str, str]] = {}
+    for index, item in enumerate(terms):
+        if not isinstance(item, dict):
+            continue
+        source = str(item.get("source") or item.get("term") or "").strip()
+        target = str(item.get("target") or item.get("translation") or "").strip()
+        note = str(item.get("note") or "").strip()
+        if source:
+            existing[source.casefold()] = (index, target, note)
+
+    selected: list[dict[str, Any]] = []
+    for candidate in candidates:
+        source = str(candidate.get("phrase") or "").strip()
+        context = str(candidate.get("context") or "").strip()
+        if not source or not context:
+            continue
+        prior = existing.get(source.casefold())
+        selected.append(
+            {
+                "source": source,
+                "draft_target": prior[1] if prior else "",
+                "draft_note": prior[2] if prior else "",
+                "context": context,
+                "existing_index": prior[0] if prior else None,
+                "preconfirmed": bool(
+                    prior
+                    and re.search(
+                        r"(?:epithet|nickname|non-?literal|别称|別稱|绰号|綽號|非字面)",
+                        prior[2],
+                        flags=re.IGNORECASE,
+                    )
+                ),
+            }
+        )
+    if not selected:
+        return terms
+
+    system_prompt = (
+        "You are a senior subtitle terminology editor. Resolve only confirmed cultural or "
+        "geographic epithets. First classify every input. An official name, institution, title, "
+        "or ordinary compositional phrase is not an epithet. For a confirmed epithet, its target "
+        "must be concise, idiomatic in the requested target language, and preserve the referent "
+        "and connotation. It must also remain grammatical when substituted verbatim at the source "
+        "phrase's position in the supplied context; use an attributive form when the target "
+        "language requires one. Reject dictionary-word concatenations and invented proper names. If no "
+        "established target name is certain, use a natural descriptive paraphrase naming the "
+        "referent. Return pure JSON as {\"terms\":[{\"source\":\"...\","
+        "\"is_epithet\":true,\"target\":\"...\",\"note\":\"...\"}]} with exactly one item "
+        "for every input and no explanation. For non-epithets set is_epithet to false and target "
+        "to an empty string. Never copy the source phrase into target. A Chinese target must "
+        "contain Chinese characters."
+    )
+    payload = {
+        "target_language": target_language.value,
+        "terms": [
+            {
+                "source": item["source"],
+                "draft_target": item["draft_target"],
+                "draft_note": item["draft_note"],
+                "context": item["context"],
+            }
+            for item in selected
+        ],
+    }
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
+    deepseek_v4 = "deepseek" in model.casefold() and "v4" in model.casefold()
+    attempts: tuple[tuple[ReasoningMode, int, bool], ...] = (
+        (("enabled", 4096, False), ("disabled", 2048, False), ("disabled", 2048, True))
+        if deepseek_v4
+        else (("disabled", 2048, False),)
+    )
+    parsed: dict[str, Any] | None = None
+    drafts = {item["source"].casefold(): item["draft_target"] for item in selected}
+    source_spellings = {item["source"].casefold(): item["source"] for item in selected}
+    preconfirmed = {
+        item["source"].casefold() for item in selected if item["preconfirmed"]
+    }
+
+    def valid_target(source: str, target: str) -> bool:
+        if not target or len(target) > 120 or target.casefold() == source.casefold():
+            return False
+        if target_language in {
+            TargetLanguage.SIMPLIFIED_CHINESE,
+            TargetLanguage.TRADITIONAL_CHINESE,
+        }:
+            return bool(re.search(r"[㐀-鿿]", target))
+        return True
+
+    for reasoning_mode, max_output_tokens, force_change in attempts:
+        try:
+            attempt_messages = messages
+            if force_change:
+                forced_system = (
+                    system_prompt
+                    + " Every non-empty draft_target in the user payload is a prohibited literal "
+                    "calque for this attempt. Do not repeat it or make a one-character variation; "
+                    "name the referent or use a genuinely natural descriptive paraphrase."
+                )
+                attempt_messages = [
+                    {"role": "system", "content": forced_system},
+                    messages[1],
+                ]
+            response = call_llm(
+                messages=attempt_messages,
+                model=model,
+                temperature=0.1,
+                use_cache=use_cache,
+                client=llm_client,
+                reasoning_mode=reasoning_mode,
+                max_output_tokens=max_output_tokens,
+            )
+            candidate = parse_json_object(get_response_text(response))
+            parsed = candidate
+            candidate_terms = candidate.get("terms") if isinstance(candidate, dict) else None
+            returned = {
+                str(item.get("source") or "").strip().casefold(): item
+                for item in (candidate_terms or [])
+                if isinstance(item, dict)
+                and str(item.get("source") or "").strip().casefold() in drafts
+            }
+            complete = len(returned) == len(drafts) and all(
+                isinstance(item.get("is_epithet"), bool)
+                and (
+                    not item["is_epithet"]
+                    or valid_target(
+                        source_spellings[source],
+                        str(item.get("target") or "").strip(),
+                    )
+                )
+                for source, item in returned.items()
+            )
+            unchanged = any(
+                item.get("is_epithet") is True
+                and drafts[source]
+                and str(item.get("target") or "").strip() == drafts[source]
+                for source, item in returned.items()
+            )
+            rejected_confirmation = any(
+                source in preconfirmed and item.get("is_epithet") is False
+                for source, item in returned.items()
+            )
+            if complete and not unchanged and not rejected_confirmation:
+                break
+        except Exception as error:
+            logger.warning(
+                "Rhetorical-name refinement failed with %s reasoning: %s",
+                reasoning_mode,
+                error,
+            )
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("terms"), list):
+        return terms
+
+    allowed = {item["source"].casefold(): item for item in selected}
+    replacements: dict[str, dict[str, str]] = {}
+    for item in parsed["terms"]:
+        if not isinstance(item, dict):
+            continue
+        source = str(item.get("source") or "").strip()
+        if item.get("is_epithet") is not True:
+            continue
+        target = str(item.get("target") or "").strip()
+        note = str(item.get("note") or "").strip()[:120]
+        source_key = source.casefold()
+        if source_key not in allowed or not valid_target(source, target):
+            continue
+        replacements[source_key] = {
+            "source": allowed[source_key]["source"],
+            "target": target,
+            "note": note or "confirmed cultural or geographic epithet",
+        }
+    invalid_existing = {
+        int(item["existing_index"])
+        for item in selected
+        if item["existing_index"] is not None
+        and item["preconfirmed"]
+        and not valid_target(item["source"], item["draft_target"])
+    }
+    refined: list[Any] = []
+    replaced_sources: set[str] = set()
+    selected_by_index = {
+        int(item["existing_index"]): item
+        for item in selected
+        if item["existing_index"] is not None
+    }
+    for index, term in enumerate(terms):
+        selected_item = selected_by_index.get(index)
+        replacement = (
+            replacements.get(selected_item["source"].casefold()) if selected_item else None
+        )
+        if replacement:
+            refined.append(replacement)
+            replaced_sources.add(replacement["source"].casefold())
+        elif index not in invalid_existing:
+            refined.append(term)
+    for selected_item in selected:
+        replacement = replacements.get(selected_item["source"].casefold())
+        if replacement and replacement["source"].casefold() not in replaced_sources:
+            refined.append(replacement)
+            replaced_sources.add(replacement["source"].casefold())
+    return refined
+
+
 def _document_entity_mentions(segments: Iterable[str]) -> list[str]:
     """Collect bounded whole-document name/model evidence missed by sampling."""
     mentions: dict[str, str] = {}
@@ -320,9 +530,7 @@ def _document_entity_contexts(segments: Iterable[str]) -> list[str]:
         r"Porsche|Ram|Subaru|Tesla|Toyota|Volkswagen|Volvo)\b",
         flags=re.IGNORECASE,
     )
-    identifier_pattern = re.compile(
-        r"\b(?:[A-Z]{2,}[A-Za-z0-9-]*|[A-Za-z]+\d+[A-Za-z0-9-]*)\b"
-    )
+    identifier_pattern = re.compile(r"\b(?:[A-Z]{2,}[A-Za-z0-9-]*|[A-Za-z]+\d+[A-Za-z0-9-]*)\b")
     internal_name_pattern = re.compile(r"(?<!^)\b[A-Z][a-z]{3,}(?:-[A-Za-z]+)?\b")
 
     for index, segment in enumerate(normalized_segments):
@@ -360,6 +568,67 @@ def _document_entity_contexts(segments: Iterable[str]) -> list[str]:
     return contexts
 
 
+def _document_rhetorical_name_candidates(
+    segments: Iterable[str],
+) -> list[dict[str, str]]:
+    """Surface title-cased names that may be established cultural epithets.
+
+    This supplies local evidence only. The context model must still distinguish
+    an epithet from an official name or an ordinary compositional phrase.
+    """
+    normalized_segments = [
+        re.sub(
+            r"\s+",
+            " ",
+            re.sub(r"^<S\d+>\s*", "", str(segment or ""), flags=re.IGNORECASE),
+        ).strip()
+        for segment in segments
+        if str(segment or "").strip()
+    ]
+    pattern = re.compile(
+        r"\b[Tt]he\s+(?P<phrase>[A-Z][A-Za-z'’-]{2,}"
+        r"(?:\s+[A-Z][A-Za-z'’-]{2,}){1,4})\b"
+    )
+    official_suffixes = {
+        "airport",
+        "bank",
+        "bridge",
+        "building",
+        "center",
+        "centre",
+        "company",
+        "corporation",
+        "department",
+        "hotel",
+        "institute",
+        "ministry",
+        "museum",
+        "station",
+        "tower",
+        "university",
+    }
+    document = " ".join(normalized_segments)
+    candidates: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for match in pattern.finditer(document):
+        phrase = match.group("phrase").strip()
+        key = phrase.casefold()
+        if key in seen or phrase.split()[-1].casefold() in official_suffixes:
+            continue
+        seen.add(key)
+        context_start = max(0, match.start() - 160)
+        context_end = min(len(document), match.end() + 160)
+        candidates.append(
+            {
+                "phrase": phrase,
+                "context": document[context_start:context_end].strip(),
+            }
+        )
+        if len(candidates) >= MAX_RHETORICAL_NAME_CANDIDATES:
+            return candidates
+    return candidates
+
+
 def _document_entity_variant_candidates(segments: Iterable[str]) -> list[dict[str, Any]]:
     """Shortlist noisy name forms against recurring document acronyms.
 
@@ -382,8 +651,7 @@ def _document_entity_variant_candidates(segments: Iterable[str]) -> list[dict[st
             previous = acronym_counts.get(compact, (value, 0))
             acronym_counts[compact] = (previous[0], previous[1] + 1)
     canonical_acronyms = {
-        compact: (value, count)
-        for compact, (value, count) in acronym_counts.items()
+        compact: (value, count) for compact, (value, count) in acronym_counts.items()
     }
     if not canonical_acronyms:
         return []
@@ -451,6 +719,141 @@ def _document_entity_variant_candidates(segments: Iterable[str]) -> list[dict[st
     return candidates
 
 
+def _document_call_to_action_entity_candidates(
+    segments: Iterable[str],
+) -> list[dict[str, Any]]:
+    """Expose closing call-to-action names to document-level identity evidence.
+
+    Channel or publication names in a closing subscription prompt are often
+    phonetically far from the recurring acronym that the ASR intended. This
+    helper supplies evidence only; the context model must still confirm the
+    identity from the local role and repeated document mentions.
+    """
+    normalized_segments = [
+        re.sub(r"\s+", " ", str(segment or "")).strip()
+        for segment in segments
+        if str(segment or "").strip()
+    ]
+    acronym_counts = Counter(
+        match.group()
+        for segment in normalized_segments
+        for match in re.finditer(r"\b[A-Z][A-Z0-9&-]{2,9}\b", segment)
+    )
+    recurring = []
+    for value, count in acronym_counts.most_common():
+        if count < 2:
+            continue
+        self_media_evidence = any(
+            re.search(
+                rf"\b(?:filmed|produced|created|made)\s+for\s+(?:the\s+)?{re.escape(value)}\b|"
+                rf"\b{re.escape(value)}(?:['’]s)?\s+(?:channel|video|team)\b",
+                segment,
+                flags=re.IGNORECASE,
+            )
+            for segment in normalized_segments
+        )
+        item: dict[str, Any] = {"canonical": value, "count": count}
+        if self_media_evidence:
+            item["self_media_evidence"] = True
+        recurring.append(item)
+        if len(recurring) >= 8:
+            break
+    if not recurring:
+        return []
+
+    recurring_compact = {
+        re.sub(r"[^a-z0-9]", "", item["canonical"].casefold()) for item in recurring
+    }
+    pattern = re.compile(
+        r"\b(?:subscribe(?:d|ing)?\s+to|follow(?:ing)?(?:\s+us)?(?:\s+on)?)\s+"
+        r"(?:the\s+)?(?P<heard>[A-Z][A-Za-z0-9&.-]{1,20})\b",
+        re.IGNORECASE,
+    )
+    candidates: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, segment in enumerate(normalized_segments):
+        for match in pattern.finditer(segment):
+            heard = match.group("heard")
+            heard_compact = re.sub(r"[^a-z0-9]", "", heard.casefold())
+            if heard_compact in recurring_compact or heard_compact in seen:
+                continue
+            seen.add(heard_compact)
+            start = max(0, index - 1)
+            end = min(len(normalized_segments), index + 2)
+            candidates.append(
+                {
+                    "heard": heard,
+                    "recurring_candidates": recurring,
+                    "context": " | ".join(normalized_segments[start:end]),
+                }
+            )
+            if len(candidates) >= MAX_CALL_TO_ACTION_ENTITY_CANDIDATES:
+                return candidates
+    return candidates
+
+
+def _confirm_call_to_action_entity_corrections(
+    candidates: list[dict[str, Any]],
+    terminology: list[Any],
+) -> list[dict[str, str]]:
+    """Promote a closing mishear only after independent channel identity evidence.
+
+    The deterministic extractor does not choose between recurring acronyms. The
+    context model may independently label one as a channel, while phrases such
+    as ``filmed for B1M`` provide deterministic self-media evidence. Exactly one
+    supported identity is required, so phonetic similarity alone is insufficient.
+    """
+    identity_terms: set[str] = set()
+    for item in terminology:
+        if not isinstance(item, dict):
+            continue
+        source = str(item.get("source") or item.get("term") or "").strip()
+        target = str(item.get("target") or item.get("translation") or "").strip()
+        note = str(item.get("note") or item.get("context") or "").strip()
+        if not re.search(
+            r"\b(?:channel|publication|publisher|media\s+brand)\b|频道|頻道|媒体|媒體|出版",
+            note,
+            flags=re.IGNORECASE,
+        ):
+            continue
+        identity_terms.update(value.casefold() for value in (source, target) if value)
+
+    corrections: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in candidates:
+        heard = str(item.get("heard") or "").strip()
+        matches = [
+            str(candidate.get("canonical") or "").strip()
+            for candidate in item.get("recurring_candidates", [])
+            if isinstance(candidate, dict)
+            and (
+                str(candidate.get("canonical") or "").strip().casefold() in identity_terms
+                or bool(candidate.get("self_media_evidence"))
+            )
+        ]
+        matches = list(dict.fromkeys(value for value in matches if value))
+        heard_key = heard.casefold()
+        if (
+            len(matches) != 1
+            or not heard
+            or heard_key in seen
+            or heard_key == matches[0].casefold()
+        ):
+            continue
+        seen.add(heard_key)
+        corrections.append(
+            {
+                "source": heard,
+                "target": matches[0],
+                "note": (
+                    "probable ASR correction; the closing call to action and independently "
+                    "identified document channel name confirm the intended identity"
+                ),
+            }
+        )
+    return corrections
+
+
 def _document_entity_alias_groups(segments: Iterable[str]) -> list[dict[str, Any]]:
     """Group recurring phonetic proper-name variants without choosing a spelling.
 
@@ -484,16 +887,16 @@ def _document_entity_alias_groups(segments: Iterable[str]) -> list[dict[str, Any
         "where",
     }
     records: dict[str, dict[str, Any]] = {}
-    pattern = re.compile(
-        r"\b[A-Z][A-Za-z'’.-]{2,}(?:\s+[A-Z][A-Za-z'’.-]{2,}){0,2}\b"
-    )
+    pattern = re.compile(r"\b[A-Z][A-Za-z'’.-]{2,}(?:\s+[A-Z][A-Za-z'’.-]{2,}){0,2}\b")
     for index, segment in enumerate(normalized_segments):
         for match in pattern.finditer(segment):
             value = re.sub(r"\s+", " ", match.group()).strip(" ,.;:!?-'’")
             value = re.sub(r"['’]s$", "", value, flags=re.IGNORECASE)
             words = value.split()
-            if not value or value.casefold() in ignored or all(
-                word.casefold() in ignored for word in words
+            if (
+                not value
+                or value.casefold() in ignored
+                or all(word.casefold() in ignored for word in words)
             ):
                 continue
             compact = re.sub(r"[^a-z]", "", value.casefold())
@@ -544,9 +947,7 @@ def _document_entity_alias_groups(segments: Iterable[str]) -> list[dict[str, Any
             return False
         if left["word_count"] != right["word_count"]:
             return left_consonants == right_consonants
-        spelling_similarity = difflib.SequenceMatcher(
-            None, left_compact, right_compact
-        ).ratio()
+        spelling_similarity = difflib.SequenceMatcher(None, left_compact, right_compact).ratio()
         consonant_similarity = difflib.SequenceMatcher(
             None, left_consonants, right_consonants
         ).ratio()
@@ -596,9 +997,7 @@ def _document_entity_alias_groups(segments: Iterable[str]) -> list[dict[str, Any
         # evidence candidates and never become corrections on their own.
         word_counts = {int(member["word_count"]) for member in members}
         known_variants = {str(member["text"]).casefold() for member in members}
-        known_variant_token_lists = [
-            re.findall(r"[a-z]+", value) for value in known_variants
-        ]
+        known_variant_token_lists = [re.findall(r"[a-z]+", value) for value in known_variants]
         phonetic_candidates: list[dict[str, Any]] = []
         seen_candidates: set[str] = set()
         for segment_index, segment in enumerate(normalized_segments):
@@ -617,12 +1016,8 @@ def _document_entity_alias_groups(segments: Iterable[str]) -> list[dict[str, Any
                     if any(
                         candidate_tokens == known_tokens[start : start + len(candidate_tokens)]
                         for known_tokens in known_variant_token_lists
-                        for start in range(
-                            0, len(known_tokens) - len(candidate_tokens) + 1
-                        )
-                    ) or any(
-                        token in known_variants for token in candidate_tokens
-                    ):
+                        for start in range(0, len(known_tokens) - len(candidate_tokens) + 1)
+                    ) or any(token in known_variants for token in candidate_tokens):
                         continue
                     candidate_compact = _compact(candidate)
                     candidate_consonants = _consonants(candidate)
@@ -646,10 +1041,7 @@ def _document_entity_alias_groups(segments: Iterable[str]) -> list[dict[str, Any
                     ]
                     if not viable:
                         continue
-                    similarity = max(
-                        (spelling + consonants) / 2
-                        for spelling, consonants in viable
-                    )
+                    similarity = max((spelling + consonants) / 2 for spelling, consonants in viable)
                     seen_candidates.add(candidate_key)
                     phonetic_candidates.append(
                         {
@@ -813,9 +1205,7 @@ def _document_lexical_variant_candidates(segments: Iterable[str]) -> list[dict[s
                 ),
             }
         )
-    candidates.sort(
-        key=lambda item: (-float(item["similarity"]), str(item["heard"]).casefold())
-    )
+    candidates.sort(key=lambda item: (-float(item["similarity"]), str(item["heard"]).casefold()))
     return candidates[:MAX_LEXICAL_VARIANT_CANDIDATES]
 
 
@@ -840,11 +1230,7 @@ def _document_lexical_context_hints(
                 and adjective[:-3] == adverb[:-3]
             ):
                 return True
-            if (
-                adjective.endswith("y")
-                and adverb.endswith("ily")
-                and adjective[:-1] == adverb[:-3]
-            ):
+            if adjective.endswith("y") and adverb.endswith("ily") and adjective[:-1] == adverb[:-3]:
                 return True
         return False
 
@@ -929,9 +1315,7 @@ def _extend_confirmed_alias_corrections(
             canonical_key = canonical.casefold()
             canonical_sources.setdefault(canonical_key, set()).add(source.casefold())
             canonical_spelling.setdefault(canonical_key, canonical)
-        confirmed = [
-            key for key, sources in canonical_sources.items() if len(sources) >= 2
-        ]
+        confirmed = [key for key, sources in canonical_sources.items() if len(sources) >= 2]
         if len(confirmed) != 1:
             continue
         canonical = canonical_spelling[confirmed[0]]
@@ -1043,9 +1427,7 @@ def _document_numeric_corrections(segments: Iterable[str]) -> list[dict[str, str
             segment,
             flags=re.IGNORECASE,
         )
-        if not area_match or not re.search(
-            r"football\s+fields?", following, flags=re.IGNORECASE
-        ):
+        if not area_match or not re.search(r"football\s+fields?", following, flags=re.IGNORECASE):
             continue
         field_match = re.search(
             r"approximately\s+(?P<count>\d+(?:\.\d+)?|"
@@ -1062,7 +1444,9 @@ def _document_numeric_corrections(segments: Iterable[str]) -> list[dict[str, str
             area = float(re.sub(r"[,\s]", "", area_match.group("amount")))
         except ValueError:
             continue
-        if not field_count or not (0.5 <= area / (field_count * FOOTBALL_FIELD_AREA_SQUARE_METRES) <= 2.0):
+        if not field_count or not (
+            0.5 <= area / (field_count * FOOTBALL_FIELD_AREA_SQUARE_METRES) <= 2.0
+        ):
             continue
         heard = area_match.group().strip()
         spelling = "meters" if "kilometer" in area_match.group("unit").casefold() else "metres"
@@ -1081,6 +1465,107 @@ def _document_numeric_corrections(segments: Iterable[str]) -> list[dict[str, str
             }
         )
     return corrections
+
+
+def _document_audio_homophone_corrections(
+    segments: Iterable[str],
+) -> list[dict[str, str]]:
+    """Correct base/bass only when an equipment hierarchy proves the source sense."""
+    normalized_segments = [
+        re.sub(r"\s+", " ", str(segment or "")).strip()
+        for segment in segments
+        if str(segment or "").strip()
+    ]
+    document = " ".join(normalized_segments)
+    has_standard_system = bool(
+        re.search(
+            r"\b(?:standard(?:ly)?\s+)?(?:\d+|[a-z]+)[ -]speaker\s+sound\s+system\b|"
+            r"\b(?:\d+|[a-z]+)[ -]speaker\s+sound\s+system\b.{0,80}\bas\s+standard\b",
+            document,
+            flags=re.IGNORECASE,
+        )
+    )
+    has_named_upgrade = bool(
+        re.search(
+            r"\b(?:upgrade(?:d)?|optional|step\s+up\s+to|go\s+for)\b.{0,180}"
+            r"\b(?:JBL|Bose|Harman(?:\s+Kardon)?|Bang\s*&\s*Olufsen|"
+            r"Bowers\s*&\s*Wilkins|Burmester)\b|"
+            r"\b(?:JBL|Bose|Harman(?:\s+Kardon)?|Bang\s*&\s*Olufsen|"
+            r"Bowers\s*&\s*Wilkins|Burmester)\b.{0,180}\bupgrade(?:d)?\b",
+            document,
+            flags=re.IGNORECASE,
+        )
+    )
+    has_upgrade_components = bool(
+        re.search(r"\b(?:subwoofer|tweeters?)\b", document, flags=re.IGNORECASE)
+    )
+    if not (has_standard_system and has_named_upgrade and has_upgrade_components):
+        return []
+
+    corrections: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for match in re.finditer(
+        r"\bbass(?:\s+sound)?\s+systems?\b",
+        document,
+        flags=re.IGNORECASE,
+    ):
+        heard = match.group(0)
+        if heard.casefold() in seen:
+            continue
+        seen.add(heard.casefold())
+        canonical = re.sub(r"^bass\b", "base", heard, count=1, flags=re.IGNORECASE)
+        corrections.append(
+            {
+                "source": heard,
+                "target": canonical,
+                "note": (
+                    "probable ASR correction; the explicit standard speaker system, "
+                    "named upgrade, tweeter, and subwoofer comparison proves that base "
+                    "equipment is intended rather than low-frequency bass"
+                ),
+            }
+        )
+    return corrections
+
+
+def _document_manufacturer_identifiers(
+    segments: Iterable[str],
+) -> list[dict[str, str]]:
+    """Preserve a feature name explicitly introduced as a manufacturer's label."""
+    document = " ".join(
+        re.sub(r"\s+", " ", str(segment or "")).strip()
+        for segment in segments
+        if str(segment or "").strip()
+    )
+    pattern = re.compile(
+        r"\bwhat\s+(?P<maker>[A-Z][A-Za-z0-9&.'’-]*)\s+calls?\s+(?:the\s+)?"
+        r"(?P<name>[A-Za-z0-9][A-Za-z0-9&.'’-]*(?:\s+[A-Za-z0-9][A-Za-z0-9&.'’-]*){0,3})\s+"
+        r"(?P<head>seats?|system|package|trim|mode|feature|edition|technology|design)\b",
+    )
+    identifiers: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for match in pattern.finditer(document):
+        name = match.group("name").strip()
+        canonical = " ".join(
+            token
+            if token.isupper() or any(character.isdigit() for character in token)
+            else token.capitalize()
+            for token in name.split()
+        )
+        if not canonical or canonical.casefold() in seen:
+            continue
+        seen.add(canonical.casefold())
+        identifiers.append(
+            {
+                "source": f'{name} {match.group("head")}',
+                "target": canonical,
+                "note": (
+                    f'official manufacturer identifier introduced by {match.group("maker")}; '
+                    "preserve this canonical Latin identifier and translate only its generic head noun"
+                ),
+            }
+        )
+    return identifiers
 
 
 def _document_entity_corrections(
@@ -1109,8 +1594,10 @@ def _document_entity_corrections(
                 flags=re.IGNORECASE,
             )
         )
-        if not canonical_is_acronym or naming_wordplay or not (
-            ampersand_variant or recurring_acronym_variant
+        if (
+            not canonical_is_acronym
+            or naming_wordplay
+            or not (ampersand_variant or recurring_acronym_variant)
         ):
             continue
         corrections.append(
@@ -1187,7 +1674,11 @@ def build_translation_context(
     transcript = _compact_transcript(transcript_segments)
     entity_mentions = _document_entity_mentions(transcript_segments)
     entity_contexts = _document_entity_contexts(transcript_segments)
+    rhetorical_name_candidates = _document_rhetorical_name_candidates(transcript_segments)
     entity_variant_candidates = _document_entity_variant_candidates(transcript_segments)
+    call_to_action_entity_candidates = _document_call_to_action_entity_candidates(
+        transcript_segments
+    )
     entity_alias_groups = _document_entity_alias_groups(transcript_segments)
     lexical_variant_candidates = _document_lexical_variant_candidates(transcript_segments)
     lexical_context_hints = _document_lexical_context_hints(lexical_variant_candidates)
@@ -1195,6 +1686,8 @@ def build_translation_context(
     deterministic_corrections = [
         *_document_entity_corrections(entity_variant_candidates),
         *_document_numeric_corrections(transcript_segments),
+        *_document_audio_homophone_corrections(transcript_segments),
+        *_document_manufacturer_identifiers(transcript_segments),
     ]
     if not transcript:
         return TranslationContext(custom_prompt=custom_prompt)
@@ -1218,7 +1711,19 @@ def build_translation_context(
         "the complete source phrase, a concise natural target-language meaning, and label the "
         "note idiom/figurative/irony. Do not list ordinary compositional phrases or explain the "
         "speaker's intent beyond what is actually said. "
-        "Record recurring spelling corrections and domain-specific word senses. "
+        "Record recurring spelling corrections and domain-specific word senses. For a recurring "
+        "technical term whose ordinary translation could confuse its role, establish one concise "
+        "target and state in note what object, action, or semantic role the term has in this document. "
+        "Repeated transcript spelling is not proof that a word is correct. Review a repeated "
+        "homophone when its grammatical category or domain role conflicts with explicit nearby "
+        "evidence. Emit a probable ASR correction only when a concrete contrast, component list, "
+        "named upgrade, measurement, or action makes one alternative uniquely correct; otherwise "
+        "leave the repeated spelling untouched. "
+        "When the speaker explicitly says what a manufacturer calls a feature, trim, seat, system, "
+        "or product, preserve that phrase as an official identifier unless one established localized "
+        "name is certain. Do not invent a translated product label. "
+        "Distinguish closely related concepts only when the transcript itself supports the distinction; "
+        "do not create terminology entries from hypothetical examples. "
         "Reconcile document_entity_mentions against the transcript: when several spellings "
         "clearly refer to one recurring name or product, keep the established canonical form "
         "and list noisy variants as probable ASR corrections. Do not merge merely similar "
@@ -1241,6 +1746,22 @@ def build_translation_context(
         "same real name beyond reasonable doubt; then emit a probable ASR correction terminology "
         "item for the complete heard form. Reject ordinary people's names and coincidental "
         "spellings when that evidence is absent. "
+        "document_call_to_action_entity_candidates identify names heard in closing subscription "
+        "or follow prompts and list recurring document acronyms. They are evidence, never automatic "
+        "corrections. Confirm one only when the local phrase is clearly a channel or publication "
+        "call to action and one recurring candidate is unambiguously that identity; otherwise reject "
+        "it. If confirmed, emit the complete heard form as a probable ASR correction. "
+        "document_rhetorical_name_candidates are title-cased phrases introduced by 'the'. "
+        "They may be an official name, an ordinary compositional phrase, or an established "
+        "cultural or geographic epithet. Add one to terminology only when the local context "
+        "and established usage make the epithet unambiguous and a literal target-language "
+        "rendering would be awkward or misleading. Use a concise established or idiomatic "
+        "target that preserves the connotation, and label it epithet/non-literal. A confirmed "
+        "epithet target must read as independently natural target-language prose: do not merely "
+        "concatenate dictionary translations of its title-cased words. If no established target "
+        "name is known, briefly paraphrase the referent and connotation instead of coining a new "
+        "proper name. Never invent a poetic nickname or reinterpret an ordinary institution, "
+        "place, or title. "
         "document_entity_alias_groups contain recurring phonetic proper-name variants but do "
         "not choose a canonical spelling. Confirm a group only when its contexts identify one "
         "real entity. If a unique established canonical spelling is known with high confidence, "
@@ -1296,7 +1817,9 @@ def build_translation_context(
         "transcript_excerpt": transcript,
         "document_entity_mentions": entity_mentions,
         "document_entity_contexts": entity_contexts,
+        "document_rhetorical_name_candidates": rhetorical_name_candidates,
         "document_entity_variant_candidates": entity_variant_candidates,
+        "document_call_to_action_entity_candidates": call_to_action_entity_candidates,
         "document_entity_alias_groups": entity_alias_groups,
         "document_lexical_variant_candidates": lexical_variant_candidates,
         "document_numeric_contexts": numeric_contexts,
@@ -1345,8 +1868,20 @@ def build_translation_context(
             parsed_terms,
             transcript_segments,
         )
+        parsed_terms = _refine_rhetorical_name_terms(
+            parsed_terms,
+            rhetorical_name_candidates,
+            model=model,
+            target_language=target_language,
+            use_cache=use_cache,
+            llm_client=llm_client,
+        )
         alias_candidate_corrections = _extend_confirmed_alias_corrections(
             entity_alias_groups,
+            parsed_terms,
+        )
+        call_to_action_corrections = _confirm_call_to_action_entity_corrections(
+            call_to_action_entity_candidates,
             parsed_terms,
         )
         return TranslationContext(
@@ -1355,6 +1890,7 @@ def build_translation_context(
                 [
                     *deterministic_corrections,
                     *alias_candidate_corrections,
+                    *call_to_action_corrections,
                     *lexical_context_hints,
                     *parsed_terms,
                 ]

@@ -48,6 +48,14 @@ def target_language_style_rules(
         "than B, which ...'; do not attach the following belief or comment to the wrong option.",
         "Avoid repeating the same Chinese head noun twice inside one cue when one coherent noun "
         "phrase can express the source exactly.",
+        "Resolve a bare pronoun, demonstrative, or omitted conversational object from the nearest "
+        "explicit source noun only when the local reference is unique. Repeat only that concise "
+        "head noun when Chinese would otherwise be vague; never infer an unseen part, property, "
+        "or action from general knowledge or the video image.",
+        "Choose the Chinese verb that matches the explicitly established interaction and medium. "
+        "For example, an audio demonstration is something the audience hears, while a displayed "
+        "control or physical fit is something they see or test. Replace a vague literal 'show/do "
+        "this' only when the current source and read-only local context prove one concrete action.",
         "Choose technical meanings from the object, operation, and local domain rather than the "
         "most literal dictionary sense; reject a rendering that is grammatically possible but "
         "physically or professionally implausible in context.",
@@ -77,9 +85,49 @@ def target_language_style_rules(
         ),
         (
             r"\b(?:rpm|horsepower|torque|mpg|gear|clutch|steering|suspension|trim|"
-            r"reverse|cargo|wheel|tire|tyre|engine|vehicle|truck|sedan|suv)\b",
+            r"reverse|cargo|wheel|tire|tyre|engine|vehicle|truck|sedan|suv|"
+            r"sound system|speaker|subwoofer|tweeter|jbl|proxy key|parking brake|"
+            r"auto stop.start|auto down window|vent)\b",
             "Use established automotive Chinese, preserve trims and model identifiers, and "
-            "recover an elliptical unit only when the local vehicle context makes it unique.",
+            "recover an elliptical unit only when the local vehicle context makes it unique. "
+            "Translate controls and components by their demonstrated function rather than a "
+            "generic dictionary gloss. In audio-option comparisons, distinguish base/standard "
+            "equipment from bass/low-frequency sound only when speaker count, an optional branded "
+            "upgrade, or a subwoofer contrast makes the intended homophone unambiguous. Describe "
+            "awkward mechanical operation as jerky or abrupt rather than calling the component "
+            "clumsy; describe a quiet vent or fan by its low operating or wind noise; and use the "
+            "established one-touch-down term for an auto-down window.",
+        ),
+        (
+            r"\bwhat\s+(?:[A-Z][A-Za-z0-9&.'’-]*|the\s+(?:maker|manufacturer|company|brand))"
+            r"\s+calls?\b|\b(?:named|marketed|sold)\s+as\b",
+            "When the source explicitly introduces what a manufacturer calls a feature, trim, "
+            "seat, system, or product, treat the following phrase as an official identifier. "
+            "Preserve its canonical form unless global terminology supplies one established "
+            "localized name; do not replace it with an improvised literal label.",
+        ),
+        (
+            r"\bhot\s+(?:left|right)?[- ]?(?:hander|corner|turn|lap)\b",
+            "In performance-driving context, 'hot' describes a fast or aggressively driven corner "
+            "or lap, not temperature. Render the actual driving sense without adding a speed or "
+            "maneuver that the source does not support.",
+        ),
+        (
+            r"\bbiblically\s+accurate\b",
+            "Treat the contemporary figurative expression 'biblically accurate' as unusually "
+            "faithful to the archetype or to what the category ought to be. Do not introduce "
+            "the Bible or religion unless the surrounding topic is actually religious.",
+        ),
+        (
+            r"\bon\s+par\s+with\b",
+            "Render 'on par with' as being at the same level or broadly comparable. Do not turn "
+            "a neutral equality comparison into praise such as 'excellent' or 'very good'.",
+        ),
+        (
+            r"\btraffic\s+situation\b.{0,100}\bget\s+(?:get\s+)?through\s+it\b",
+            "When a vehicle gets through a traffic situation, describe maneuvering or threading "
+            "through congestion naturally; do not translate it as literally passing a vehicle "
+            "or merely 'getting through it'.",
         ),
         (
             r"\b(?:airport|terminal|concourse|pier|aircraft|runway|foundation|column|"
@@ -90,7 +138,9 @@ def target_language_style_rules(
             "path; and use elevation or level terminology instead of a generic height when the "
             "source describes designed vertical levels. Express forces transferred 'down the "
             "height' as travelling downward along the building, and render forces redistributed "
-            "back into a structure without the calque '重新分布回'.",
+            "back into a structure without the calque '重新分布回'. Translate functional "
+            "architectural metaphors such as a spine or backbone with the established domain "
+            "term for its actual role, rather than an anatomical body part.",
         ),
         (
             r"\ban\s+exercise\s+in\b",
@@ -175,9 +225,11 @@ def target_language_style_rules(
     )
     rules.extend(rule for pattern, rule in conditional_rules if _contains(source, pattern))
 
-    return "\n\n<target_language_style>\n" + "\n".join(
-        f"{index}. {rule}" for index, rule in enumerate(rules, 1)
-    ) + "\n</target_language_style>"
+    return (
+        "\n\n<target_language_style>\n"
+        + "\n".join(f"{index}. {rule}" for index, rule in enumerate(rules, 1))
+        + "\n</target_language_style>"
+    )
 
 
 def repair_mode_guidance(multispeaker: bool) -> str:
@@ -212,8 +264,7 @@ def repair_mode_guidance(multispeaker: bool) -> str:
             "action, or conclusion merely to make an isolated fragment grammatical."
         )
     return (
-        shared
-        + " Speaker values are read-only metadata. Preserve every turn, question, answer, "
+        shared + " Speaker values are read-only metadata. Preserve every turn, question, answer, "
         "interruption, qualification, tone, and speaker-specific viewpoint. A speaker change "
         "is normally a hard semantic boundary. At a tightly edited handoff that cuts one "
         "grammatical phrase, restate only the minimum shared grammatical frame needed for both "
