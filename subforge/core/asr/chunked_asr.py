@@ -145,7 +145,9 @@ class ChunkedASR:
             if isinstance(self.audio_path, bytes):
                 audio = AudioSegment.from_file(io.BytesIO(self.audio_path))
             else:
-                audio = AudioSegment.from_file(self.audio_path)
+                from subforge.core.asr.audio_io import load_audio_file
+
+                audio = load_audio_file(self.audio_path)
         except Exception:
             logger.warning("Failed to load audio by path, falling back to in-memory bytes")
             if isinstance(self.audio_path, bytes):

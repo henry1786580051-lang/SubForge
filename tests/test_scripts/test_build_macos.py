@@ -29,6 +29,7 @@ def test_create_dmg_resigns_exact_staged_app(tmp_path, monkeypatch):
 
     monkeypatch.setattr(build_macos.subprocess, "run", fake_run)
     monkeypatch.setattr(build_macos, "DMG_OUTPUT", tmp_path / "SubForge.dmg")
+    monkeypatch.setenv("SUBFORGE_CODESIGN_IDENTITY", "Developer ID Application: SubForge")
     monkeypatch.setattr(
         build_macos,
         "seal_app_inside_dmg",
@@ -54,7 +55,14 @@ def test_create_dmg_resigns_exact_staged_app(tmp_path, monkeypatch):
     assert settings["icon_size"] == 104
     assert commands == [
         ["xattr", "-cr", str(staged_app)],
-        ["codesign", "--force", "--deep", "--sign", "-", str(staged_app)],
+        [
+            "codesign",
+            "--force",
+            "--deep",
+            "--sign",
+            "Developer ID Application: SubForge",
+            str(staged_app),
+        ],
         ["codesign", "--verify", "--deep", "--strict", str(staged_app)],
     ]
     assert sealed == [tmp_path / "SubForge.dmg"]

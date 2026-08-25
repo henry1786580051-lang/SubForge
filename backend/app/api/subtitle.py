@@ -44,6 +44,7 @@ def _result_path(input_file: str, suffix: str, configured_work_dir: str = "") ->
 
 class SubtitleRequest(BaseModel):
     subtitle_file: str = Field(max_length=4096)
+    media_file: str | None = Field(default=None, max_length=4096)
     target_language: Literal[
         "chinese",
         "english",
@@ -98,6 +99,22 @@ def _resolve_custom_prompt(request_prompt: str | None, persisted_prompt: str) ->
     return persisted_prompt if request_prompt is None else request_prompt
 
 
+def _apply_translation_preview(asr_data, result, translated_indices: set[int]) -> int:
+    """Apply usable translations and return the unique completed-item count."""
+    from subforge.core.translate.base import BaseTranslator
+
+    for item in result:
+        idx = int(item.index) - 1
+        if (
+            0 <= idx < len(asr_data.segments)
+            and item.translated_text
+            and not BaseTranslator._looks_like_placeholder_translation(item.translated_text)
+        ):
+            asr_data.segments[idx].translated_text = item.translated_text
+            translated_indices.add(idx)
+    return len(translated_indices)
+
+
 @router.post("/start")
 async def start_subtitle_processing(req: SubtitleRequest):
     try:
@@ -106,7 +123,16 @@ async def start_subtitle_processing(req: SubtitleRequest):
         raise HTTPException(status_code=403, detail="Access denied")
     if not file_path.exists():
         raise HTTPException(status_code=400, detail="Subtitle file not found")
-    req = req.model_copy(update={"subtitle_file": str(file_path)})
+    updates = {"subtitle_file": str(file_path)}
+    if req.media_file:
+        try:
+            media_path = validate_path(req.media_file)
+        except ValueError:
+            raise HTTPException(status_code=403, detail="Access denied")
+        if not media_path.is_file():
+            raise HTTPException(status_code=400, detail="Media file not found")
+        updates["media_file"] = str(media_path)
+    req = req.model_copy(update=updates)
 
     from app.api.config import get_llm_runtime_config
 
@@ -135,6 +161,8 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
     asr_data = None
     llm_client = None
     llm_cancel_callback = None
+    timing_speech_segments: list[tuple[int, int]] = []
+    timing_media_duration_ms: int | None = None
     pipeline_warnings: list[str] = []
     context = create_pipeline_context(task_id)
     try:
@@ -187,7 +215,6 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
             lock_source_segments,
             validate_bilingual_result,
         )
-        from subforge.core.translate.base import BaseTranslator
         from subforge.core.translate.context import TranslationContext, build_translation_context
         from subforge.core.translate.factory import TranslatorFactory
         from subforge.core.translate.types import TargetLanguage
@@ -233,6 +260,9 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
 
         # Load subtitle into ASRData
         asr_data = ASRData.from_subtitle_file(req.subtitle_file)
+        timing_speech_segments, timing_media_duration_ms = ASRData.load_timing_metadata(
+            req.subtitle_file
+        )
         if any(segment.speaker_id for segment in asr_data.segments):
             from subforge.core.asr.speaker_diarization import smooth_speaker_assignments
 
@@ -365,32 +395,23 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
             }
             target_lang = lang_map[req.target_language]
 
-            translate_count = [0]
+            translated_indices: set[int] = set()
 
             def _on_translate_progress(result):
                 with preview_lock:
-                    for item in result:
-                        idx = int(item.index) - 1
-                        if (
-                            0 <= idx < len(asr_data.segments)
-                            and item.translated_text
-                            and not BaseTranslator._looks_like_placeholder_translation(
-                                item.translated_text
-                            )
-                        ):
-                            asr_data.segments[idx].translated_text = item.translated_text
-                    translate_count[0] = min(
-                        len(asr_data.segments),
-                        translate_count[0] + len(result),
+                    translate_count = _apply_translation_preview(
+                        asr_data,
+                        result,
+                        translated_indices,
                     )
                     pct = (
-                        65 + int(25 * translate_count[0] / len(asr_data.segments))
+                        65 + int(25 * translate_count / len(asr_data.segments))
                         if len(asr_data.segments) > 0
                         else 65
                     )
                     context.report(
                         min(pct, 90),
-                        f"Translated {translate_count[0]}/{len(asr_data.segments)}...",
+                        f"Translated {translate_count}/{len(asr_data.segments)}...",
                     )
                     _save_partial(asr_data)
 
@@ -453,6 +474,45 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
                 context.report(96, "Finalizing subtitle formatting...")
                 asr_data.replace_chinese_translation_punctuation()
 
+        # Sentence cues are assembled from exact word boundaries. Preserve the
+        # atomic timing data, but add a small display tail and use high-confidence
+        # VAD only when the matching source media is still available.
+        context.report(96, "Refining subtitle timing...")
+        if req.media_file and not timing_speech_segments:
+            subtitle_stem = Path(req.subtitle_file).stem
+            for suffix in ("_processed", "_recovery"):
+                if subtitle_stem.endswith(suffix):
+                    subtitle_stem = subtitle_stem[: -len(suffix)]
+            if Path(req.media_file).stem == subtitle_stem:
+                try:
+                    from subforge.core.asr.audio_analysis import AudioAnalysisContext
+
+                    analysis = AudioAnalysisContext(req.media_file)
+                    def _analyze_timing():
+                        return (
+                            analysis.speech_segments(
+                                threshold=0.75,
+                                min_speech_ms=120,
+                                min_silence_ms=200,
+                                speech_pad_ms=0,
+                            ),
+                            len(analysis.audio_segment()),
+                        )
+
+                    timing_speech_segments, timing_media_duration_ms = await run_blocking(
+                        _analyze_timing
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Subtitle timing VAD failed for %s; using safe tail padding only: %s",
+                        req.media_file,
+                        exc,
+                    )
+        asr_data.extend_sentence_tails_conservatively(
+            timing_speech_segments,
+            media_duration_ms=timing_media_duration_ms,
+        )
+
         # Save result
         context.report(97, "Saving subtitle file...")
         output_path = _result_path(
@@ -507,6 +567,10 @@ async def _run_subtitle(task_id: str, req: SubtitleRequest):
                     get_config_value("replace_chinese_punctuation", True)
                 ):
                     asr_data.replace_chinese_translation_punctuation()
+                asr_data.extend_sentence_tails_conservatively(
+                    timing_speech_segments,
+                    media_duration_ms=timing_media_duration_ms,
+                )
                 recovery_path = _result_path(
                     req.subtitle_file,
                     "_recovery",

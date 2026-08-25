@@ -1,5 +1,41 @@
 # Changelog
 
+## v1.1.17 - 2026-08-25
+
+### Improved
+
+- Audits word-level MLX coverage against high-confidence speech activity and restores short omissions only when two differently sized context windows decode the same new words.
+- Carries exact-content timing metadata from transcription into subtitle processing, allowing final sentence cues to receive bounded acoustic tail extension without reanalyzing unchanged media.
+- Expands spoken English amounts, currency ranges, percentages, years, models, and units before forced alignment, then restores display tokens with character-level mapping that tolerates contractions, sentence splits, and isolated unaligned words.
+- Extends cross-cue boundary review for subjects, predicates, complements, comparison phrases, sentence adverbials, names, numeric heads, and dialogue continuations while retaining selective reasoning for confirmed semantic risks.
+- Isolates third-party model downloads in cancellable worker processes and closes decoded audio resources deterministically.
+- Stores configured API credentials in the operating-system credential store when available and resolves only the secret needed by the active operation.
+
+### Fixed
+
+- Fixed short spoken phrases disappearing inside otherwise covered MLX transcription ranges.
+- Fixed compact numeric tokens receiving only a fraction of their spoken duration when one unrelated alignment word was missing or tokenized differently.
+- Fixed duplicate word cleanup shortening the surviving subtitle instead of retaining the later acoustic end time.
+- Fixed sentence cues ending before sustained speech, including cases where VAD continuation crosses one short following cue; extension remains bounded and never creates timeline overlap.
+- Fixed isolated word-level hallucinations over music surviving without corroborating speech evidence.
+- Fixed translation progress overcounting repeated preview updates and final subtitle processing losing access to the source media timing context.
+- Fixed repeated macOS Keychain prompts caused by resolving every saved provider credential during application startup.
+- Fixed DMG staging replacing an explicitly configured stable macOS signing identity with an ad-hoc signature.
+- Fixed long-running model downloads retaining uncancellable workers after the user cancels a task.
+
+### Validation
+
+- Python: `1786 passed, 11 skipped`.
+- Ruff and whitespace validation passed.
+- Regression coverage includes MLX omission recovery, mixed-language alignment, spoken-number restoration, conservative sentence-tail extension, cross-cue boundary ownership, credential persistence, and cancellable model downloads.
+- The corrected Heathrow sample exports 303 cues with zero overlaps and zero empty translations; reported amount, date, comparative, political-subject, and sentence-tail cases were checked against the source audio.
+
+### Packaging
+
+- macOS Apple Silicon: `SubForge-1.1.17-macos-arm64.dmg`.
+- Windows x64: `SubForge-1.1.17-windows-x64-setup.exe`, built and smoke-tested by GitHub Actions.
+- Whisper, forced-alignment, Community-1, ECAPA, and DeepFilterNet models remain separate on-demand downloads.
+
 ## v1.1.16 - 2026-08-22
 
 ### Improved

@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 import app.api.config as config_module
 from app.api.subtitle import (
     SubtitleRequest,
+    _apply_translation_preview,
     _resolve_custom_prompt,
     _run_subtitle,
     _validate_expected_llm_config,
@@ -17,6 +18,7 @@ from app.core.task_manager import task_manager
 
 import subforge.core.llm as llm_module
 import subforge.core.split.split as split_module
+from subforge.core.asr.asr_data import ASRData, ASRDataSeg
 from subforge.core.entities import SubtitleProcessData
 from subforge.core.translate.factory import TranslatorFactory
 from subforge.settings import LlmRuntimeConfig, detect_llm_provider
@@ -41,6 +43,28 @@ def test_subtitle_request_does_not_default_to_stale_llm_model():
 
     assert req.llm_model == ""
     assert req.custom_prompt is None
+
+
+def test_translation_preview_counts_unique_valid_indices():
+    data = ASRData(
+        [
+            ASRDataSeg("one", 0, 500),
+            ASRDataSeg("two", 600, 1_000),
+        ]
+    )
+    translated_indices: set[int] = set()
+    first = SubtitleProcessData(index=1, original_text="one", translated_text="一")
+    revised = SubtitleProcessData(index=1, original_text="one", translated_text="第一条")
+    placeholder = SubtitleProcessData(
+        index=2,
+        original_text="two",
+        translated_text="（此句合并至上一句）",
+    )
+
+    assert _apply_translation_preview(data, [first], translated_indices) == 1
+    assert _apply_translation_preview(data, [revised, placeholder], translated_indices) == 1
+    assert data.segments[0].translated_text == "第一条"
+    assert data.segments[1].translated_text == ""
 
 
 def test_explicitly_cleared_prompt_does_not_restore_stale_setting():
@@ -247,6 +271,60 @@ def test_subtitle_pipeline_cleans_chinese_translation_punctuation(tmp_path, monk
     assert created["target_language"] == "chinese"
     assert "你好 世界" in output
     assert "Hello, world." in output
+
+
+def test_subtitle_pipeline_finalizes_word_backed_sentence_timing(tmp_path, monkeypatch):
+    import asyncio
+
+    subtitle_path = tmp_path / "input.srt"
+    subtitle_path.write_text(
+        "1\n00:00:00,000 --> 00:00:00,400\nHello\n\n"
+        "2\n00:00:00,420 --> 00:00:01,000\nworld.\n\n"
+        "3\n00:00:02,000 --> 00:00:02,400\nNext\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        config_module,
+        "get_config_value",
+        lambda key, default=None: {"thread_num": 1, "batch_size": 1}.get(key, default),
+    )
+    _mock_llm_runtime(monkeypatch, {})
+
+    class FakeSplitter:
+        def __init__(self, **_kwargs):
+            pass
+
+        def split_subtitle(self, asr_data):
+            return ASRData(
+                [
+                    ASRDataSeg.from_segments(
+                        asr_data.segments[:2],
+                        text="Hello world.",
+                    ),
+                    ASRDataSeg.from_segments(
+                        asr_data.segments[2:],
+                        text="Next",
+                    ),
+                ]
+            )
+
+    monkeypatch.setattr(split_module, "SubtitleSplitter", FakeSplitter)
+
+    task = task_manager.create_task("subtitle")
+    asyncio.run(
+        _run_subtitle(
+            task.id,
+            SubtitleRequest(
+                subtitle_file=str(subtitle_path),
+                need_optimize=False,
+                need_translate=False,
+            ),
+        )
+    )
+
+    output = subtitle_path.with_stem("input_processed").read_text(encoding="utf-8")
+    assert "00:00:00,000 --> 00:00:01,160" in output
+    assert "00:00:02,000 --> 00:00:02,400" in output
 
 
 def test_subtitle_pipeline_hides_speaker_markers_in_final_output(tmp_path, monkeypatch):

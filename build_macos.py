@@ -139,8 +139,9 @@ def create_dmg(app_path: Path):
         # under Desktop. Sign the exact copy that will enter the DMG so those
         # attributes cannot invalidate the distributed bundle.
         subprocess.run(["xattr", "-cr", str(staged_app)], check=True)
+        identity = os.environ.get("SUBFORGE_CODESIGN_IDENTITY", "-").strip() or "-"
         subprocess.run(
-            ["codesign", "--force", "--deep", "--sign", "-", str(staged_app)],
+            ["codesign", "--force", "--deep", "--sign", identity, str(staged_app)],
             check=True,
         )
         subprocess.run(

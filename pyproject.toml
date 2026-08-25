@@ -31,6 +31,7 @@ dependencies = [
     "pydub>=0.25.1",
     "tenacity>=8.2.0",
     "platformdirs>=4.0.0",
+    "keyring>=25.0.0,<26",
     "tomli>=2.0.0; python_version < '3.11'",
     "modelscope>=1.32.0",
     "psutil>=7.0.0",
@@ -178,5 +179,8 @@ line-length = 100
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "W"]
+select = ["C90", "E", "F", "I", "W"]
 ignore = ["E501"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 45

@@ -156,7 +156,7 @@ def create_test_audio_file(duration_sec: int) -> str:
     temp_file = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
     temp_path = temp_file.name
     temp_file.close()
-    audio.export(temp_path, format="mp3")
+    audio.export(temp_path, format="mp3").close()
     return temp_path
 
 

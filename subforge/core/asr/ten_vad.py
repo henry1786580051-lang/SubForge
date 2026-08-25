@@ -219,13 +219,13 @@ def detect_speech_segments(
     min_silence_ms: int = 300,
     speech_pad_ms: int = 300,
 ) -> List[Tuple[int, int]]:
-    from pydub import AudioSegment
+    from subforge.core.asr.audio_io import load_audio_file
 
     path = Path(audio_path) if audio_path else None
     if path is None or not path.is_file():
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-    audio = AudioSegment.from_file(path)
+    audio = load_audio_file(path)
     audio = audio.set_frame_rate(SAMPLE_RATE).set_channels(1).set_sample_width(2)
     samples = np.asarray(audio.get_array_of_samples(), dtype=np.float32) / 32768.0
     segments = run_vad_inference(

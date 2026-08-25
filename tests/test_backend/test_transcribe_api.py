@@ -1,7 +1,6 @@
 import asyncio
 import importlib
 import sys
-import types
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
@@ -215,9 +214,15 @@ def test_huggingface_alignment_download_uses_whisperx_cache_layout(tmp_path, mon
         (snapshot / "pytorch_model.bin").write_bytes(b"weights")
         return str(snapshot)
 
-    huggingface_hub = types.ModuleType("huggingface_hub")
-    huggingface_hub.snapshot_download = fake_snapshot_download
-    monkeypatch.setitem(sys.modules, "huggingface_hub", huggingface_hub)
+    def fake_cancellable_download(operation, kwargs, cancel_event):
+        assert operation == "huggingface_snapshot"
+        assert not cancel_event.is_set()
+        return fake_snapshot_download(**kwargs)
+
+    monkeypatch.setattr(
+        "subforge.core.utils.model_download.run_cancellable_model_download",
+        fake_cancellable_download,
+    )
     monkeypatch.setattr(transcribe_api, "_get_models_dir", lambda: models_dir)
     monkeypatch.setattr(
         transcribe_api.task_manager, "update_progress", lambda *_args, **_kwargs: None
@@ -249,9 +254,15 @@ def test_speaker_verification_download_is_pinned_and_public(tmp_path, monkeypatc
             model_file.truncate(20 * 1024 * 1024)
         return local_dir
 
-    huggingface_hub = types.ModuleType("huggingface_hub")
-    huggingface_hub.snapshot_download = fake_snapshot_download
-    monkeypatch.setitem(sys.modules, "huggingface_hub", huggingface_hub)
+    def fake_cancellable_download(operation, kwargs, cancel_event):
+        assert operation == "huggingface_snapshot"
+        assert not cancel_event.is_set()
+        return fake_snapshot_download(**kwargs)
+
+    monkeypatch.setattr(
+        "subforge.core.utils.model_download.run_cancellable_model_download",
+        fake_cancellable_download,
+    )
     monkeypatch.setattr(
         transcribe_api.task_manager, "update_progress", lambda *_args, **_kwargs: None
     )

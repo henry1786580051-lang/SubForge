@@ -61,6 +61,13 @@ MLX_GAP_RECOVERY_MIN_SPEECH_SECONDS = 2.5
 MLX_GAP_RECOVERY_MIN_SPEECH_RATIO = 0.45
 MLX_GAP_RECOVERY_CONTEXT_SECONDS = 2.0
 MLX_GAP_RECOVERY_FALLBACK_CONTEXT_SECONDS = 15.0
+MLX_SHORT_GAP_MIN_SECONDS = 0.8
+MLX_SHORT_GAP_MAX_SECONDS = 3.5
+MLX_SHORT_GAP_MIN_SPEECH_SECONDS = 0.55
+MLX_SHORT_GAP_MIN_SPEECH_RATIO = 0.40
+MLX_SHORT_GAP_CONTEXT_SECONDS = (2.0, 5.0)
+MLX_SHORT_GAP_MAX_CANDIDATES = 10
+MLX_SHORT_GAP_MAX_DECODE_SECONDS = 180.0
 MLX_SPARSE_RECOVERY_MIN_DURATION_SECONDS = 10.0
 MLX_SPARSE_RECOVERY_MIN_SPEECH_SECONDS = 5.0
 MLX_SPARSE_RECOVERY_MIN_SPEECH_RATIO = 0.60
@@ -366,6 +373,9 @@ def _speech_overlap_metrics(
 def _find_uncovered_mlx_gaps(
     segments: list[dict[str, Any]],
     audio_duration: float,
+    *,
+    min_gap_seconds: float = MLX_GAP_RECOVERY_MIN_GAP_SECONDS,
+    max_gap_seconds: float | None = None,
 ) -> list[tuple[float, float]]:
     """Return ASR timeline holes large enough to justify a coverage audit."""
     timed: list[tuple[float, float]] = []
@@ -385,10 +395,16 @@ def _find_uncovered_mlx_gaps(
     uncovered: list[tuple[float, float]] = []
     cursor = 0.0
     for start, end in timed:
-        if start - cursor >= MLX_GAP_RECOVERY_MIN_GAP_SECONDS:
+        gap_seconds = start - cursor
+        if gap_seconds >= min_gap_seconds and (
+            max_gap_seconds is None or gap_seconds <= max_gap_seconds
+        ):
             uncovered.append((cursor, start))
         cursor = max(cursor, end)
-    if audio_duration - cursor >= MLX_GAP_RECOVERY_MIN_GAP_SECONDS:
+    trailing_gap = audio_duration - cursor
+    if trailing_gap >= min_gap_seconds and (
+        max_gap_seconds is None or trailing_gap <= max_gap_seconds
+    ):
         uncovered.append((cursor, audio_duration))
     return uncovered
 
@@ -442,6 +458,10 @@ def _detect_speech_in_mlx_gaps(
     audio: Any,
     sample_rate: int,
     uncovered_gaps: list[tuple[float, float]],
+    *,
+    threshold: float = 0.5,
+    min_speech_ms: int = 160,
+    min_silence_ms: int = 180,
 ) -> list[tuple[int, int]]:
     """Run VAD only inside long ASR holes instead of rescanning the full recording."""
     if not uncovered_gaps:
@@ -459,9 +479,9 @@ def _detect_speech_in_mlx_gaps(
             local_speech = vad_backend.run_vad_inference(
                 audio[start_sample:end_sample],
                 sample_rate=sample_rate,
-                threshold=0.5,
-                min_speech_ms=160,
-                min_silence_ms=180,
+                threshold=threshold,
+                min_speech_ms=min_speech_ms,
+                min_silence_ms=min_silence_ms,
                 speech_pad_ms=0,
             )
             gap_start_ms = round(gap_start * 1000)
@@ -952,6 +972,219 @@ def _alignment_word_coverage(result: dict[str, Any]) -> list[dict[str, Any]]:
     return coverage
 
 
+def _recover_short_mlx_speech_gaps(
+    result: dict[str, Any],
+    audio: Any,
+    sample_rate: int,
+    speech_segments_ms: list[tuple[int, int]],
+    transcribe_clip: Callable[[Any], dict[str, Any]],
+    max_candidates: int = MLX_SHORT_GAP_MAX_CANDIDATES,
+    max_decode_seconds: float = MLX_SHORT_GAP_MAX_DECODE_SECONDS,
+) -> dict[str, Any]:
+    """Recover short omissions only when two isolated decodes agree.
+
+    Long-form Whisper can skip a brief phrase even though the surrounding words
+    are correct.  VAD alone cannot distinguish that from music or an ordinary
+    pause, so this pass requires independent high-confidence speech plus exact
+    lexical agreement across two context windows.
+    """
+    coverage = sorted(
+        _alignment_word_coverage(result),
+        key=lambda item: (float(item["start"]), float(item["end"])),
+    )
+    if len(coverage) < 2 or not speech_segments_ms:
+        return result
+
+    audio_duration = len(audio) / sample_rate if sample_rate > 0 else 0.0
+    uncovered = _find_uncovered_mlx_gaps(
+        coverage,
+        audio_duration,
+        min_gap_seconds=MLX_SHORT_GAP_MIN_SECONDS,
+        max_gap_seconds=MLX_SHORT_GAP_MAX_SECONDS,
+    )
+    if not uncovered:
+        return result
+
+    def _tokens(text: str) -> list[str]:
+        return [
+            token.casefold().replace("’", "'")
+            for token in re.findall(r"[A-Za-z0-9]+(?:['’][A-Za-z0-9]+)?", text)
+        ]
+
+    def _boundary_word(gap_start: float, gap_end: float) -> tuple[str, str]:
+        previous = ""
+        following = ""
+        for item in coverage:
+            if float(item["end"]) <= gap_start + 0.05:
+                previous = str(item.get("text") or "")
+                continue
+            if float(item["start"]) >= gap_end - 0.05:
+                following = str(item.get("text") or "")
+                break
+        return previous, following
+
+    def _trim_boundary_echoes(
+        words: list[dict[str, Any]],
+        previous_text: str,
+        following_text: str,
+    ) -> list[dict[str, Any]]:
+        trimmed = list(words)
+        previous_tokens = _tokens(previous_text)
+        following_tokens = _tokens(following_text)
+        while trimmed and previous_tokens:
+            current = _tokens(str(trimmed[0].get("word") or ""))
+            if len(current) != 1 or current[0] != previous_tokens[-1]:
+                break
+            trimmed.pop(0)
+        while trimmed and following_tokens:
+            current = _tokens(str(trimmed[-1].get("word") or ""))
+            if len(current) != 1 or current[0] != following_tokens[0]:
+                break
+            trimmed.pop()
+        return trimmed
+
+    def _decode_gap(
+        gap_start: float,
+        gap_end: float,
+        speech_ratio: float,
+        context_seconds: float,
+    ) -> list[dict[str, Any]]:
+        decode_start = max(0.0, gap_start - context_seconds)
+        decode_end = min(audio_duration, gap_end + context_seconds)
+        start_sample = max(0, round(decode_start * sample_rate))
+        end_sample = min(len(audio), round(decode_end * sample_rate))
+        if end_sample <= start_sample:
+            return []
+
+        local_result = transcribe_clip(audio[start_sample:end_sample])
+        selected: list[dict[str, Any]] = []
+        for segment in local_result.get("segments") or []:
+            if not isinstance(segment, dict) or not _usable_mlx_recovery_segment(
+                segment,
+                speech_ratio=speech_ratio,
+            ):
+                continue
+            words = segment.get("words")
+            if not isinstance(words, list):
+                continue
+            for word in words:
+                if not isinstance(word, dict):
+                    continue
+                start = _float_seconds(word.get("start"))
+                end = _float_seconds(word.get("end"))
+                if start is None or end is None or end <= start:
+                    continue
+                absolute_start = start + decode_start
+                absolute_end = end + decode_start
+                midpoint = (absolute_start + absolute_end) / 2
+                if not (gap_start + 0.03 <= midpoint <= gap_end - 0.03):
+                    continue
+                selected_word = dict(word)
+                selected_word["start"] = max(gap_start, absolute_start)
+                selected_word["end"] = min(gap_end, absolute_end)
+                if selected_word["end"] > selected_word["start"]:
+                    selected.append(selected_word)
+
+        previous_text, following_text = _boundary_word(gap_start, gap_end)
+        return _trim_boundary_echoes(selected, previous_text, following_text)
+
+    candidates: list[tuple[float, float, float, float]] = []
+    for gap_start, gap_end in uncovered:
+        speech_seconds, speech_ratio = _speech_overlap_metrics(
+            gap_start,
+            gap_end,
+            speech_segments_ms,
+        )
+        if (
+            speech_seconds < MLX_SHORT_GAP_MIN_SPEECH_SECONDS
+            or speech_ratio < MLX_SHORT_GAP_MIN_SPEECH_RATIO
+        ):
+            continue
+
+        candidates.append((gap_start, gap_end, speech_seconds, speech_ratio))
+
+    candidates.sort(key=lambda item: (item[3], item[2]), reverse=True)
+    candidates = candidates[: max(0, int(max_candidates))]
+    candidates.sort(key=lambda item: item[0])
+
+    recovered_segments: list[dict[str, Any]] = []
+    recovered_ranges: list[dict[str, Any]] = []
+    decoded_seconds = 0.0
+    skipped_for_budget = 0
+    for gap_start, gap_end, speech_seconds, speech_ratio in candidates:
+        decode_cost = sum(
+            min(audio_duration, gap_end + context_seconds)
+            - max(0.0, gap_start - context_seconds)
+            for context_seconds in MLX_SHORT_GAP_CONTEXT_SECONDS
+        )
+        if decoded_seconds + decode_cost > max(0.0, float(max_decode_seconds)):
+            skipped_for_budget += 1
+            continue
+        decoded_seconds += decode_cost
+
+        attempts = [
+            _decode_gap(gap_start, gap_end, speech_ratio, context_seconds)
+            for context_seconds in MLX_SHORT_GAP_CONTEXT_SECONDS
+        ]
+        token_attempts = [
+            _tokens("".join(str(word.get("word") or "") for word in attempt))
+            for attempt in attempts
+        ]
+        if (
+            len(attempts) != 2
+            or not attempts[0]
+            or token_attempts[0] != token_attempts[1]
+            or len(token_attempts[0]) < 2
+        ):
+            continue
+
+        words = attempts[0]
+        text = "".join(str(word.get("word") or "") for word in words).strip()
+        if not text:
+            continue
+        recovered_segments.append(
+            {
+                "text": text,
+                "start": float(words[0]["start"]),
+                "end": float(words[-1]["end"]),
+                "words": words,
+                "recovered_short_speech_gap": True,
+            }
+        )
+        recovered_ranges.append(
+            {
+                "start": gap_start,
+                "end": gap_end,
+                "speech_seconds": speech_seconds,
+                "speech_ratio": speech_ratio,
+                "text": text,
+            }
+        )
+
+    if not recovered_segments:
+        return result
+
+    updated = dict(result)
+    updated["segments"] = sorted(
+        [
+            *[
+                dict(segment)
+                for segment in result.get("segments") or []
+                if isinstance(segment, dict)
+            ],
+            *recovered_segments,
+        ],
+        key=lambda item: (float(item.get("start", 0.0)), float(item.get("end", 0.0))),
+    )
+    updated["short_speech_gap_recovery"] = recovered_ranges
+    updated["short_speech_gap_recovery_budget"] = {
+        "candidates": len(candidates),
+        "decoded_seconds": round(decoded_seconds, 3),
+        "skipped": skipped_for_budget,
+    }
+    return updated
+
+
 def _critical_aligned_speech_gaps(
     aligned: dict[str, Any],
     speech_segments_ms: list[tuple[int, int]],
@@ -1277,6 +1510,32 @@ def run_packaged_mlx_whisper_worker() -> None:
                 speech_segments,
                 lambda clip: transcribe_clip(clip, word_timestamps=True),
             )
+
+            # Audit brief internal holes separately. Natural pauses and music
+            # are common, so a short phrase is restored only when high-confidence
+            # VAD finds speech and two context windows decode the same new words.
+            short_coverage = _alignment_word_coverage(result)
+            short_uncovered = _find_uncovered_mlx_gaps(
+                short_coverage,
+                len(audio) / SAMPLE_RATE,
+                min_gap_seconds=MLX_SHORT_GAP_MIN_SECONDS,
+                max_gap_seconds=MLX_SHORT_GAP_MAX_SECONDS,
+            )
+            short_speech = _detect_speech_in_mlx_gaps(
+                audio,
+                SAMPLE_RATE,
+                short_uncovered,
+                threshold=0.75,
+                min_speech_ms=120,
+                min_silence_ms=180,
+            )
+            result = _recover_short_mlx_speech_gaps(
+                dict(result),
+                audio,
+                SAMPLE_RATE,
+                short_speech,
+                lambda clip: transcribe_clip(clip, word_timestamps=True),
+            )
         except Exception as exc:
             raise RuntimeError("MLX speech-coverage recovery failed") from exc
 
@@ -1396,6 +1655,7 @@ _UNIT_NAMES = {
 @dataclass(frozen=True)
 class _AlignmentToken:
     display_text: str
+    spoken_text: str
     spoken_word_count: int
 
 
@@ -1942,11 +2202,42 @@ def _spoken_token(token: str) -> str:
     if core == "+":
         return finish("plus")
 
+    currency_names = {"$": "dollars", "£": "pounds", "€": "euros"}
+    magnitude_names = {
+        "k": "thousand",
+        "m": "million",
+        "mn": "million",
+        "b": "billion",
+        "bn": "billion",
+    }
+
+    currency_range = re.fullmatch(
+        r"([\$£€])(\d[\d,]*(?:\.\d+)?)[-–](\d[\d,]*(?:\.\d+)?)"
+        r"(K|M|MN|B|BN)?",
+        core,
+        re.IGNORECASE,
+    )
+    if currency_range:
+        left = _number_to_english(currency_range.group(2), allow_year=False)
+        right = _number_to_english(currency_range.group(3), allow_year=False)
+        magnitude = magnitude_names.get((currency_range.group(4) or "").lower(), "")
+        parts = [left, "to", right, magnitude, currency_names[currency_range.group(1)]]
+        return finish(" ".join(part for part in parts if part))
+
+    currency_magnitude = re.fullmatch(
+        r"([\$£€])(\d[\d,]*(?:\.\d+)?)(K|M|MN|B|BN)",
+        core,
+        re.IGNORECASE,
+    )
+    if currency_magnitude:
+        amount = _number_to_english(currency_magnitude.group(2), allow_year=False)
+        magnitude = magnitude_names[currency_magnitude.group(3).lower()]
+        return finish(f"{amount} {magnitude} {currency_names[currency_magnitude.group(1)]}")
+
     currency = re.fullmatch(r"([\$£€])(\d[\d,]*(?:\.\d+)?)", core)
     if currency:
         amount = _number_to_english(currency.group(2), allow_year=False)
-        names = {"$": "dollars", "£": "pounds", "€": "euros"}
-        return finish(f"{amount} {names[currency.group(1)]}")
+        return finish(f"{amount} {currency_names[currency.group(1)]}")
 
     percent = re.fullmatch(r"(\d[\d,]*(?:\.\d+)?)%", core)
     if percent:
@@ -1997,7 +2288,7 @@ def _prepare_spoken_alignment(
         spoken_tokens = [_spoken_token(token) for token in display_tokens]
         changed |= spoken_tokens != display_tokens
         plan_tokens = tuple(
-            _AlignmentToken(display, max(1, len(spoken.split())))
+            _AlignmentToken(display, spoken, max(1, len(spoken.split())))
             for display, spoken in zip(display_tokens, spoken_tokens)
         )
         normalized.append({**segment, "text": " ".join(spoken_tokens)})
@@ -2012,43 +2303,134 @@ def _prepare_spoken_alignment(
     return (normalized, plans) if changed else (segments, None)
 
 
-def _restore_display_alignment(aligned: dict, plans: list[_AlignmentSegmentPlan]) -> dict | None:
-    spoken_words = [
-        word
-        for segment in aligned.get("segments") or []
-        if isinstance(segment, dict)
-        for word in segment.get("words") or []
-        if isinstance(word, dict)
-    ]
-    expected = sum(token.spoken_word_count for plan in plans for token in plan.tokens)
-    if len(spoken_words) != expected:
+def _alignment_char_key(value: str) -> str:
+    return "".join(character.casefold() for character in value if character.isalnum())
+
+
+def _restore_segment_display_words(
+    aligned_words: list[dict], plan: _AlignmentSegmentPlan
+) -> list[dict] | None:
+    """Map display tokens onto aligned speech without assuming word-token parity.
+
+    WhisperX can split contractions or omit one unalignable word. The previous
+    global word-count check discarded number expansion for the entire video in
+    that case, shortening every compact numeric token. Character ranges keep
+    the mapping local and preserve all unaffected numeric/model tokens.
+    """
+    expected_ranges: list[tuple[int, int]] = []
+    expected_text = ""
+    for token in plan.tokens:
+        key = _alignment_char_key(token.spoken_text)
+        start = len(expected_text)
+        expected_text += key
+        expected_ranges.append((start, len(expected_text)))
+
+    actual_ranges: list[tuple[int, int, dict]] = []
+    actual_text = ""
+    for word in aligned_words:
+        key = _alignment_char_key(_word_text(word))
+        if not key:
+            continue
+        start = len(actual_text)
+        actual_text += key
+        actual_ranges.append((start, len(actual_text), word))
+
+    if not expected_text or not actual_text:
         return None
 
-    word_index = 0
-    restored_segments: list[dict] = []
+    from difflib import SequenceMatcher
+
+    matcher = SequenceMatcher(None, expected_text, actual_text, autojunk=False)
+    expected_to_actual: dict[int, int] = {}
+    for expected_start, actual_start, size in matcher.get_matching_blocks():
+        for offset in range(size):
+            expected_to_actual[expected_start + offset] = actual_start + offset
+
     restored_words: list[dict] = []
-    for plan in plans:
-        words: list[dict] = []
-        for token in plan.tokens:
-            group = spoken_words[word_index : word_index + token.spoken_word_count]
-            word_index += token.spoken_word_count
-            restored: dict[str, Any] = {"word": token.display_text}
-            starts = [_float_seconds(word.get("start")) for word in group]
-            ends = [_float_seconds(word.get("end")) for word in group]
+    mapped_tokens = 0
+    for token, (expected_start, expected_end) in zip(plan.tokens, expected_ranges):
+        mapped_positions = [
+            expected_to_actual[position]
+            for position in range(expected_start, expected_end)
+            if position in expected_to_actual
+        ]
+        restored: dict[str, Any] = {"word": token.display_text}
+        if mapped_positions:
+            coverage = len(mapped_positions) / max(1, expected_end - expected_start)
+            overlapping = [
+                word
+                for actual_start, actual_end, word in actual_ranges
+                if actual_end > min(mapped_positions) and actual_start <= max(mapped_positions)
+            ]
+            starts = [_float_seconds(word.get("start")) for word in overlapping]
+            ends = [_float_seconds(word.get("end")) for word in overlapping]
             valid_starts = [value for value in starts if value is not None]
             valid_ends = [value for value in ends if value is not None]
-            if len(valid_starts) == len(group) and len(valid_ends) == len(group):
+            # A compact number may represent several spoken words. Require
+            # broad character coverage so a partial match cannot shorten it.
+            minimum_coverage = 0.75 if token.spoken_word_count > 1 else 0.5
+            if coverage >= minimum_coverage and valid_starts and valid_ends:
                 restored["start"] = min(valid_starts)
                 restored["end"] = max(valid_ends)
-            scores = [
-                float(score)
-                for word in group
-                if isinstance((score := word.get("score")), (int, float))
-            ]
-            if scores:
-                restored["score"] = round(sum(scores) / len(scores), 3)
-            words.append(restored)
-            restored_words.append(restored)
+                scores = [
+                    float(score)
+                    for word in overlapping
+                    if isinstance((score := word.get("score")), (int, float))
+                ]
+                if scores:
+                    restored["score"] = round(sum(scores) / len(scores), 3)
+                mapped_tokens += 1
+        restored_words.append(restored)
+
+    return restored_words if mapped_tokens else None
+
+
+def _restore_display_alignment(aligned: dict, plans: list[_AlignmentSegmentPlan]) -> dict | None:
+    aligned_segments = [
+        segment for segment in aligned.get("segments") or [] if isinstance(segment, dict)
+    ]
+    if not aligned_segments or not plans:
+        return None
+
+    word_buckets: list[list[dict]] = [[] for _ in plans]
+    for aligned_segment in aligned_segments:
+        segment_words = [
+            word for word in aligned_segment.get("words") or [] if isinstance(word, dict)
+        ]
+        starts = [_float_seconds(word.get("start")) for word in segment_words]
+        ends = [_float_seconds(word.get("end")) for word in segment_words]
+        valid_starts = [value for value in starts if value is not None]
+        valid_ends = [value for value in ends if value is not None]
+        segment_start = _float_seconds(aligned_segment.get("start"))
+        segment_end = _float_seconds(aligned_segment.get("end"))
+        if valid_starts:
+            segment_start = min(valid_starts)
+        if valid_ends:
+            segment_end = max(valid_ends)
+
+        def plan_score(index: int) -> tuple[float, float]:
+            plan = plans[index]
+            if segment_start is None or segment_end is None:
+                return (0.0, -float(index))
+            overlap = max(0.0, min(segment_end, plan.end) - max(segment_start, plan.start))
+            midpoint_distance = abs(
+                (segment_start + segment_end) / 2 - (plan.start + plan.end) / 2
+            )
+            return (overlap, -midpoint_distance)
+
+        owner = max(range(len(plans)), key=plan_score)
+        word_buckets[owner].extend(segment_words)
+
+    restored_segments: list[dict] = []
+    restored_words: list[dict] = []
+    mapped_any = False
+    for source_words, plan in zip(word_buckets, plans):
+        words = _restore_segment_display_words(source_words, plan)
+        if words is None:
+            words = [{"word": token.display_text} for token in plan.tokens]
+        else:
+            mapped_any = True
+        restored_words.extend(words)
 
         timed_starts = [_float_seconds(word.get("start")) for word in words]
         timed_ends = [_float_seconds(word.get("end")) for word in words]
@@ -2064,6 +2446,8 @@ def _restore_display_alignment(aligned: dict, plans: list[_AlignmentSegmentPlan]
         )
 
     result = dict(aligned)
+    if not mapped_any:
+        return None
     result["segments"] = restored_segments
     result["word_segments"] = restored_words
     return result
@@ -2552,6 +2936,20 @@ class WhisperXASR(BaseASR):
                     ],
                 )
                 callback(32, f"Recovered {len(recovered_gaps)} missed speech section(s)...")
+            short_recoveries = result.get("short_speech_gap_recovery") or []
+            if short_recoveries:
+                logger.warning(
+                    "Recovered %d short speech omission(s) by dual-context consensus: %s",
+                    len(short_recoveries),
+                    [
+                        {
+                            "window": f"{float(item['start']):.1f}-{float(item['end']):.1f}s",
+                            "text": str(item.get("text") or ""),
+                        }
+                        for item in short_recoveries
+                    ],
+                )
+                callback(33, f"Recovered {len(short_recoveries)} short speech omission(s)...")
             sparse_recoveries = result.get("sparse_segment_recovery") or []
             if sparse_recoveries:
                 logger.warning(
@@ -3838,7 +4236,7 @@ class WhisperXASR(BaseASR):
             "model": self.mlx_model,
             "language": self.language or "auto",
             "mixed_language_revision": 5 if self.uses_mlx and self.language is None else 0,
-            "speech_coverage_revision": 3 if self.uses_mlx else 0,
+            "speech_coverage_revision": 4 if self.uses_mlx else 0,
             "align_device": self.align_device,
             "compute_type": self.compute_type,
             "align_model": self.align_model or "auto",

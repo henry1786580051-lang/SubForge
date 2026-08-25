@@ -571,7 +571,13 @@ def patch_packaged_mlx_metallib() -> None:
 
 
 def resign_macos_app() -> None:
-    """Refresh the ad-hoc signature after post-build bundle modifications."""
+    """Refresh the signature after post-build bundle modifications.
+
+    CI and unsigned developer machines keep using an ad-hoc signature. Local
+    release builds may set ``SUBFORGE_CODESIGN_IDENTITY`` to a stable Apple
+    signing identity so macOS Keychain can remember access decisions across
+    rebuilds.
+    """
     if platform.system() != "Darwin":
         return
     app = DIST_DIR / "SubForge.app"
@@ -587,7 +593,17 @@ def resign_macos_app() -> None:
         shutil.move(app, staged_app)
         try:
             _run(["xattr", "-cr", str(staged_app)])
-            _run(["codesign", "--force", "--deep", "--sign", "-", str(staged_app)])
+            identity = os.environ.get("SUBFORGE_CODESIGN_IDENTITY", "-").strip() or "-"
+            _run(
+                [
+                    "codesign",
+                    "--force",
+                    "--deep",
+                    "--sign",
+                    identity,
+                    str(staged_app),
+                ]
+            )
             _run(["codesign", "--verify", "--deep", "--strict", str(staged_app)])
         finally:
             if staged_app.exists():

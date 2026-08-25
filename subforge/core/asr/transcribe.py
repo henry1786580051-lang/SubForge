@@ -190,7 +190,14 @@ def transcribe(
                     removed,
                 )
 
+        # Remove obviously inflated alignment spans before VAD refinement.  A
+        # later cap would undo a valid acoustic extension on a short final word.
+        asr_data.cap_abnormal_word_durations()
+
         analysis_context = None
+        word_speech_segments: list[tuple[int, int]] | None = None
+        high_confidence_speech: list[tuple[int, int]] = []
+        corroborating_speech: list[tuple[int, int]] | None = None
         if asr_data.is_word_timestamp():
             try:
                 from subforge.core.asr.audio_analysis import AudioAnalysisContext
@@ -211,24 +218,62 @@ def transcribe(
                         min_silence_ms=180,
                         speech_pad_ms=0,
                     )
+                    word_speech_segments = speech_segments
                     asr_data.refine_word_edges_with_speech_segments(speech_segments)
+
+                    # The regular pass intentionally repairs only nearby edges.
+                    # A second, stricter pass handles the rarer WhisperX fallback
+                    # where a final word can end several seconds before the
+                    # acoustic utterance.  Requiring higher-confidence speech and
+                    # a following pause keeps continuous narration untouched.
+                    if analysis_context is not None:
+                        high_confidence_speech = detect_speech_segments(
+                            analysis_path,
+                            analysis_context=analysis_context,
+                            threshold=0.75,
+                            min_speech_ms=120,
+                            min_silence_ms=200,
+                            speech_pad_ms=0,
+                        )
+                        asr_data.refine_word_edges_with_speech_segments(
+                            high_confidence_speech,
+                            max_adjustment_ms=3200,
+                        )
+
+                        # TEN-VAD is fast and accurate on dialogue, but some
+                        # music transients can look briefly speech-like. A
+                        # sensitive Silero pass supplies independent evidence
+                        # used only for isolated word groups below.
+                        from subforge.core.asr import silero_vad, ten_vad
+
+                        if ten_vad.is_available() and silero_vad.is_available():
+                            corroborating_speech = silero_vad.run_vad_inference(
+                                analysis_context.samples(),
+                                sample_rate=16000,
+                                threshold=0.35,
+                                min_speech_ms=100,
+                                min_silence_ms=180,
+                                speech_pad_ms=0,
+                                audio_len_ms=len(analysis_context.audio_segment()),
+                            )
             except Exception as e:
                 logger.debug("Word-edge VAD refinement skipped: %s", e, exc_info=True)
-
-        asr_data.cap_abnormal_word_durations()
 
         # Fix boundary overlaps before text/energy post-processing sees the data.
         asr_data.fix_boundary_overlaps()
 
         # Filter hallucinated segments using audio energy analysis
         filter_audio_path = audio_path if preserve_original_signal else audio_for_asr
-        if analysis_context is None:
-            asr_data.filter_hallucinations(audio_path=filter_audio_path)
-        else:
-            asr_data.filter_hallucinations(
-                audio_path=filter_audio_path,
-                analysis_context=analysis_context,
-            )
+        asr_data.filter_hallucinations(
+            audio_path=filter_audio_path,
+            analysis_context=analysis_context,
+            speech_segments=word_speech_segments,
+            strict_speech_segments=(
+                high_confidence_speech if word_speech_segments is not None else None
+            ),
+            corroborating_speech_segments=corroborating_speech,
+            media_duration_ms=source_duration_ms,
+        )
 
         # Remove duplicate text emitted around VAD/chunk boundaries before the
         # final timing pass, so exports do not keep short repeated fragments.
@@ -250,6 +295,8 @@ def transcribe(
         # Keep the final exported timeline monotonic even if a post-processor
         # changed segment boundaries.
         asr_data.fix_boundary_overlaps()
+        asr_data.timing_speech_segments = high_confidence_speech
+        asr_data.media_duration_ms = source_duration_ms
 
         if diarization_turns:
             from subforge.core.asr.speaker_diarization import (
@@ -315,12 +362,12 @@ def _transcribe_segments(
     """
     import tempfile
 
-    from pydub import AudioSegment
+    from subforge.core.asr.audio_io import export_audio_file, load_audio_file
 
     if callback is None:
         callback = _noop_callback
 
-    audio = AudioSegment.from_file(audio_path)
+    audio = load_audio_file(audio_path)
     audio_len_ms = len(audio)
     all_segments = []
     total = len(speech_segments)
@@ -333,7 +380,7 @@ def _transcribe_segments(
 
             chunk_audio = audio[ext_start:ext_end]
             chunk_path = str(Path(tmp_dir) / f"vad_{idx:04d}.wav")
-            chunk_audio.export(chunk_path, format="wav")
+            export_audio_file(chunk_audio, chunk_path, format="wav")
 
             logger.info(
                 f"Transcribing segment {idx + 1}/{total}: "

@@ -14,7 +14,7 @@ export function SubtitlePanel({
   showPrompt?: boolean;
   showTranslateActions?: boolean;
 } = {}) {
-  const { subtitles, setSubtitles, updateSubtitle, selectedIds, toggleSelect, selectAll, deselectAll, subtitleFile, config, setError } = useAppStore();
+  const { subtitles, setSubtitles, updateSubtitle, selectedIds, toggleSelect, selectAll, deselectAll, subtitleFile, videoFile, config, setError } = useAppStore();
   const [editingCell, setEditingCell] = useState<{ id: number; field: "text" | "translated" } | null>(null);
   const [editValue, setEditValue] = useState("");
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: number | null } | null>(null);
@@ -108,6 +108,7 @@ export function SubtitlePanel({
     try {
       const result = await subtitleApi.start({
         subtitle_file: subtitleFile,
+        media_file: videoFile || undefined,
         target_language: config.targetLanguage,
         translator: config.translator,
         llm_provider: config.llmProvider,
@@ -123,7 +124,7 @@ export function SubtitlePanel({
       store.setTaskState(0, "", "idle");
       store.setIsProcessing(false);
     } finally { setIsTranslating(false); }
-  }, [subtitleFile, config]);
+  }, [subtitleFile, videoFile, config]);
 
   const retranslateAll = useCallback(async () => {
     if (!subtitleFile) return;
@@ -135,6 +136,7 @@ export function SubtitlePanel({
     try {
       const result = await subtitleApi.start({
         subtitle_file: subtitleFile,
+        media_file: videoFile || undefined,
         target_language: config.targetLanguage,
         translator: config.translator,
         llm_provider: config.llmProvider,
@@ -150,7 +152,7 @@ export function SubtitlePanel({
       store.setTaskState(0, "", "idle");
       store.setIsProcessing(false);
     } finally { setIsTranslating(false); }
-  }, [subtitleFile, config]);
+  }, [subtitleFile, videoFile, config]);
 
   const [exportFormat, setExportFormat] = useState<"srt" | "vtt" | "ass" | "txt" | "json">("srt");
   const [exportMode, setExportMode] = useState<"original" | "translated" | "bilingual">("bilingual");

@@ -425,7 +425,7 @@ def test_transcribe_multispeaker_always_skips_enhancement(monkeypatch):
     monkeypatch.setattr(
         transcribe_module.ASRData,
         "filter_hallucinations",
-        lambda self, audio_path: vad_paths.append(audio_path),
+        lambda self, audio_path, **_kwargs: vad_paths.append(audio_path),
     )
     config = TranscribeConfig(
         transcribe_model=TranscribeModelEnum.WHISPERX,

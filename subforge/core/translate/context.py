@@ -29,6 +29,7 @@ CONTEXT_WINDOWS = 5
 MAX_ENTITY_MENTIONS = 160
 MAX_ENTITY_CONTEXTS = 64
 MAX_ENTITY_CONTEXT_CHARS = 6_000
+MAX_BRANDED_COMMON_NOUN_TERMS = 12
 MAX_RHETORICAL_NAME_CANDIDATES = 16
 MAX_ENTITY_VARIANT_CANDIDATES = 32
 MAX_ENTITY_ALIAS_GROUPS = 12
@@ -36,6 +37,88 @@ MAX_LEXICAL_VARIANT_CANDIDATES = 24
 MAX_NUMERIC_CONTEXTS = 32
 MAX_CALL_TO_ACTION_ENTITY_CANDIDATES = 8
 FOOTBALL_FIELD_AREA_SQUARE_METRES = 5351.0
+
+_GRAMMATICAL_TERM_TOKENS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "been",
+        "being",
+        "but",
+        "for",
+        "from",
+        "he",
+        "her",
+        "hers",
+        "herself",
+        "him",
+        "himself",
+        "i",
+        "in",
+        "is",
+        "it",
+        "its",
+        "itself",
+        "me",
+        "mine",
+        "my",
+        "myself",
+        "of",
+        "on",
+        "or",
+        "our",
+        "ours",
+        "ourselves",
+        "she",
+        "that",
+        "the",
+        "their",
+        "theirs",
+        "them",
+        "themselves",
+        "they",
+        "this",
+        "those",
+        "to",
+        "us",
+        "we",
+        "with",
+        "you",
+        "your",
+        "yours",
+        "yourself",
+        "yourselves",
+    }
+)
+
+
+def is_unsafe_global_term_source(source: str) -> bool:
+    """Reject terminology whose source is only grammatical scaffolding.
+
+    Pronouns and function words are too context-dependent to become task-wide
+    replacements. A mistaken mapping such as ``me -> F-150`` would otherwise
+    rewrite every occurrence before translation and contaminate all batches.
+    """
+    raw_source = str(source or "").strip()
+    if re.search(r"\d", raw_source) or re.search(r"\b[A-Z]{2,}\b", raw_source):
+        return False
+    tokens = re.findall(r"[A-Za-z]+(?:['’][A-Za-z]+)?", raw_source.casefold())
+
+    def is_grammatical(token: str) -> bool:
+        normalized = token.replace("’", "'")
+        if normalized in _GRAMMATICAL_TERM_TOKENS:
+            return True
+        for suffix in ("'s", "'re", "'ve", "'ll", "'d", "'m"):
+            if normalized.endswith(suffix) and normalized[: -len(suffix)] in _GRAMMATICAL_TERM_TOKENS:
+                return True
+        return False
+
+    return bool(tokens) and all(is_grammatical(token) for token in tokens)
 
 
 @dataclass(frozen=True)
@@ -173,7 +256,7 @@ def _format_terms(value) -> str:
                 source = str(item.get("source") or item.get("term") or "").strip()
                 target = str(item.get("target") or item.get("translation") or "").strip()
                 note = str(item.get("note") or "").strip()[:120]
-                if not source:
+                if not source or is_unsafe_global_term_source(source):
                     continue
                 target = _asr_note_correction(source, target, note)
                 rendered = source
@@ -201,7 +284,8 @@ def _format_terms(value) -> str:
                 prioritized_terms.append((priority, position, rendered))
             else:
                 term = str(item).strip()
-                if term:
+                source = term.split(" -> ", 1)[0].lstrip("- ").strip()
+                if term and not is_unsafe_global_term_source(source):
                     prioritized_terms.append((3, position, term))
         # Keep corrections scoped to the complete heard phrase. A phonetic token
         # can refer to different names in different sentences, so promoting a
@@ -566,6 +650,94 @@ def _document_entity_contexts(segments: Iterable[str]) -> list[str]:
         if len(contexts) >= MAX_ENTITY_CONTEXTS:
             break
     return contexts
+
+
+def _document_branded_common_noun_terms(
+    segments: Iterable[str],
+) -> list[dict[str, str]]:
+    """Confirm recurring names that also retain an ordinary dictionary sense.
+
+    ASR capitalization is not reliable enough to classify each occurrence. We
+    therefore require two independent naming frames plus repeated title-cased
+    and lowercase uses before exposing a document-level translation hint. The
+    hint preserves the name only for the recurring product or venue family; it
+    explicitly leaves genuinely generic uses to normal semantic translation.
+    """
+    normalized_segments = [
+        re.sub(
+            r"\s+",
+            " ",
+            re.sub(r"^<S\d+>\s*", "", str(segment or ""), flags=re.IGNORECASE),
+        ).strip()
+        for segment in segments
+        if str(segment or "").strip()
+    ]
+    document = " ".join(normalized_segments)
+    if not document:
+        return []
+
+    ignored = {
+        "Actually",
+        "Because",
+        "However",
+        "Instead",
+        "Maybe",
+        "Meanwhile",
+        "Otherwise",
+        "Rather",
+        "Really",
+        "Today",
+        "Tomorrow",
+    }
+    title_counts = Counter(re.findall(r"\b[A-Z][a-z]{3,}\b", document))
+    terms: list[dict[str, str]] = []
+    for candidate, title_count in title_counts.most_common():
+        if candidate in ignored or title_count < 2:
+            continue
+        all_count = len(re.findall(rf"\b{re.escape(candidate)}\b", document, re.IGNORECASE))
+        lowercase_count = len(re.findall(rf"\b{re.escape(candidate.lower())}\b", document))
+        if all_count < 5 or lowercase_count < 1:
+            continue
+
+        introduced_as_name = bool(
+            re.search(
+                rf"\b(?:this|that|it)\s+(?:is|was)\s+(?:the\s+)?{re.escape(candidate)}\b",
+                document,
+                flags=re.IGNORECASE,
+            )
+        )
+        qualified_name = any(
+            match.group("prefix") not in {"A", "An", "Our", "That", "The", "This", "Your"}
+            for match in re.finditer(
+                rf"\b(?P<prefix>[A-Z][A-Za-z0-9&-]+)\s+{re.escape(candidate)}\b",
+                document,
+            )
+        )
+        organization_name = bool(
+            re.search(
+                rf"\b{re.escape(candidate)}\s+(?:Entertainment|Group|Holdings|"
+                r"Industries|Media|Studios|Technologies)\b",
+                document,
+            )
+        )
+        if sum((introduced_as_name, qualified_name, organization_name)) < 2:
+            continue
+
+        terms.append(
+            {
+                "source": candidate,
+                "target": candidate,
+                "note": (
+                    "branded common-noun family confirmed by repeated naming frames; preserve "
+                    "this Latin name when it denotes the recurring venue, product, or project "
+                    "family, including lowercase ASR occurrences, but translate clearly generic "
+                    "shape or category uses by meaning"
+                ),
+            }
+        )
+        if len(terms) >= MAX_BRANDED_COMMON_NOUN_TERMS:
+            break
+    return terms
 
 
 def _document_rhetorical_name_candidates(
@@ -1674,6 +1846,7 @@ def build_translation_context(
     transcript = _compact_transcript(transcript_segments)
     entity_mentions = _document_entity_mentions(transcript_segments)
     entity_contexts = _document_entity_contexts(transcript_segments)
+    branded_common_noun_terms = _document_branded_common_noun_terms(transcript_segments)
     rhetorical_name_candidates = _document_rhetorical_name_candidates(transcript_segments)
     entity_variant_candidates = _document_entity_variant_candidates(transcript_segments)
     call_to_action_entity_candidates = _document_call_to_action_entity_candidates(
@@ -1684,6 +1857,7 @@ def build_translation_context(
     lexical_context_hints = _document_lexical_context_hints(lexical_variant_candidates)
     numeric_contexts = _document_numeric_contexts(transcript_segments)
     deterministic_corrections = [
+        *branded_common_noun_terms,
         *_document_entity_corrections(entity_variant_candidates),
         *_document_numeric_corrections(transcript_segments),
         *_document_audio_homophone_corrections(transcript_segments),
@@ -1697,6 +1871,10 @@ def build_translation_context(
         "Extract only information useful for consistent translation. "
         "Return pure JSON with keys: summary, terminology, style. "
         "terminology must be a list of {source, target, note}. "
+        "Never create a terminology item whose source is only a pronoun or grammatical "
+        "function words, including I, me, my, we, us, you, he, she, it, they, or their "
+        "inflected forms. These words are context-dependent and can never be global aliases "
+        "for a person, brand, vehicle, product, or other proper noun. "
         "For a probable ASR correction, source MUST be the complete heard form and target "
         "MUST be the complete corrected canonical form; never repeat the malformed source "
         "as target while mentioning a different correction only in note. "

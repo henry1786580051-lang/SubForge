@@ -30,6 +30,7 @@ from subforge.core.asr.whisperx_asr import (
     _recover_aligned_gaps_from_native_words,
     _recover_mlx_sparse_segments,
     _recover_mlx_speech_gaps,
+    _recover_short_mlx_speech_gaps,
     _refine_words_with_char_alignments,
     _restore_display_alignment,
     _script_language_evidence,
@@ -538,6 +539,173 @@ def test_mlx_gap_recovery_uses_context_and_keeps_only_words_inside_gap():
         "recovered",
         "speech",
     ]
+
+
+def test_short_mlx_gap_recovery_requires_dual_context_consensus():
+    result = {
+        "segments": [
+            {
+                "text": "across",
+                "start": 1.0,
+                "end": 3.0,
+                "words": [{"word": " across", "start": 2.4, "end": 3.0}],
+            },
+            {
+                "text": "It's ambitious.",
+                "start": 5.0,
+                "end": 7.0,
+                "words": [
+                    {"word": " It's", "start": 5.0, "end": 5.4},
+                    {"word": " ambitious.", "start": 5.5, "end": 6.2},
+                ],
+            },
+        ]
+    }
+    calls = 0
+
+    def transcribe_clip(_clip):
+        nonlocal calls
+        calls += 1
+        decode_start = 1.0 if calls == 1 else 0.0
+        return {
+            "segments": [
+                {
+                    "text": "across the globe. It's",
+                    "start": 0.0,
+                    "end": 6.0,
+                    "avg_logprob": -0.2,
+                    "no_speech_prob": 0.01,
+                    "compression_ratio": 1.1,
+                    "words": [
+                        {
+                            "word": " across",
+                            "start": 2.5 - decode_start,
+                            "end": 3.0 - decode_start,
+                        },
+                        {
+                            "word": " the",
+                            "start": 3.1 - decode_start,
+                            "end": 3.5 - decode_start,
+                        },
+                        {
+                            "word": " globe.",
+                            "start": 3.6 - decode_start,
+                            "end": 4.2 - decode_start,
+                        },
+                        {
+                            "word": " It's",
+                            "start": 5.0 - decode_start,
+                            "end": 5.4 - decode_start,
+                        },
+                    ],
+                }
+            ]
+        }
+
+    recovered = _recover_short_mlx_speech_gaps(
+        result,
+        list(range(1_000)),
+        100,
+        [(3_100, 4_500)],
+        transcribe_clip,
+    )
+
+    assert calls == 2
+    assert [segment["text"] for segment in recovered["segments"]] == [
+        "across",
+        "the globe.",
+        "It's ambitious.",
+    ]
+    inserted = recovered["segments"][1]
+    assert inserted["start"] == pytest.approx(3.1)
+    assert inserted["end"] == pytest.approx(4.2)
+    assert recovered["short_speech_gap_recovery"][0]["text"] == "the globe."
+
+
+def test_short_mlx_gap_recovery_respects_decode_budget():
+    result = {
+        "segments": [
+            {
+                "text": "Before",
+                "start": 1.0,
+                "end": 3.0,
+                "words": [{"word": " Before", "start": 2.0, "end": 3.0}],
+            },
+            {
+                "text": "After",
+                "start": 5.0,
+                "end": 6.0,
+                "words": [{"word": " After", "start": 5.0, "end": 6.0}],
+            },
+        ]
+    }
+    calls = 0
+
+    def transcribe_clip(_clip):
+        nonlocal calls
+        calls += 1
+        return {"segments": []}
+
+    recovered = _recover_short_mlx_speech_gaps(
+        result,
+        list(range(1_000)),
+        100,
+        [(3_100, 4_500)],
+        transcribe_clip,
+        max_decode_seconds=0,
+    )
+
+    assert recovered is result
+    assert calls == 0
+
+
+def test_short_mlx_gap_recovery_rejects_context_disagreement():
+    result = {
+        "segments": [
+            {
+                "text": "Before",
+                "start": 1.0,
+                "end": 3.0,
+                "words": [{"word": " Before", "start": 2.0, "end": 3.0}],
+            },
+            {
+                "text": "After",
+                "start": 5.0,
+                "end": 6.0,
+                "words": [{"word": " After", "start": 5.0, "end": 6.0}],
+            },
+        ]
+    }
+    attempts = iter(("new words", "different words"))
+
+    def transcribe_clip(_clip):
+        first, second = next(attempts).split()
+        return {
+            "segments": [
+                {
+                    "text": f"{first} {second}",
+                    "start": 3.1,
+                    "end": 4.5,
+                    "avg_logprob": -0.1,
+                    "no_speech_prob": 0.01,
+                    "compression_ratio": 1.0,
+                    "words": [
+                        {"word": f" {first}", "start": 3.1, "end": 3.6},
+                        {"word": f" {second}", "start": 3.7, "end": 4.3},
+                    ],
+                }
+            ]
+        }
+
+    recovered = _recover_short_mlx_speech_gaps(
+        result,
+        list(range(1_000)),
+        100,
+        [(3_100, 4_500)],
+        transcribe_clip,
+    )
+
+    assert recovered is result
 
 
 def test_mlx_gap_recovery_expands_context_after_isolated_decode_is_empty():
@@ -1178,6 +1346,8 @@ def test_whisperx_normalizes_english_numbers_models_units_and_symbols():
     assert _spoken_token("M4") == "M four"
     assert _spoken_token("543hp") == "five hundred forty three horsepower"
     assert _spoken_token("$79,995.") == ("seventy nine thousand nine hundred ninety five dollars.")
+    assert _spoken_token("£30-60BN") == "thirty to sixty billion pounds"
+    assert _spoken_token("$12.5BN") == "twelve point five billion dollars"
     assert _spoken_token("10%") == "ten percent"
     assert _spoken_token("0-60") == "zero to sixty"
     assert _spoken_token("AWD") == "A W D"
@@ -1253,6 +1423,122 @@ def test_whisperx_rejects_incomplete_spoken_mapping():
     )
 
 
+def test_whisperx_spoken_mapping_tolerates_contraction_tokenization():
+    segments = [{"text": "That's 415.", "start": 1.0, "end": 3.0}]
+    _, plans = _prepare_spoken_alignment(segments, "en")
+
+    assert plans is not None
+    restored = _restore_display_alignment(
+        {
+            "segments": [
+                {
+                    "words": [
+                        {"word": "That", "start": 1.0, "end": 1.2},
+                        {"word": "'s", "start": 1.2, "end": 1.3},
+                        {"word": "four", "start": 1.5, "end": 1.8},
+                        {"word": "hundred", "start": 1.9, "end": 2.3},
+                        {"word": "fifteen", "start": 2.4, "end": 2.9},
+                    ]
+                }
+            ]
+        },
+        plans,
+    )
+
+    assert restored is not None
+    words = restored["segments"][0]["words"]
+    assert [word["word"] for word in words] == ["That's", "415."]
+    assert words[0]["start"] == 1.0
+    assert words[0]["end"] == 1.3
+    assert words[1]["start"] == 1.5
+    assert words[1]["end"] == 2.9
+
+
+def test_whisperx_spoken_mapping_keeps_unaffected_number_after_missing_word():
+    segments = [{"text": "Prefix 415.", "start": 1.0, "end": 3.0}]
+    _, plans = _prepare_spoken_alignment(segments, "en")
+
+    assert plans is not None
+    restored = _restore_display_alignment(
+        {
+            "segments": [
+                {
+                    "words": [
+                        {"word": "four", "start": 1.5, "end": 1.8},
+                        {"word": "hundred", "start": 1.9, "end": 2.3},
+                        {"word": "fifteen", "start": 2.4, "end": 2.9},
+                    ]
+                }
+            ]
+        },
+        plans,
+    )
+
+    assert restored is not None
+    words = restored["segments"][0]["words"]
+    assert "start" not in words[0]
+    assert words[1]["start"] == 1.5
+    assert words[1]["end"] == 2.9
+
+
+def test_whisperx_spoken_mapping_recombines_sentence_split_alignment():
+    segments = [
+        {
+            "text": "The ayes, 415. The noes, 119.",
+            "start": 1.0,
+            "end": 6.0,
+        }
+    ]
+    _, plans = _prepare_spoken_alignment(segments, "en")
+
+    assert plans is not None
+    restored = _restore_display_alignment(
+        {
+            "segments": [
+                {
+                    "start": 1.0,
+                    "end": 3.0,
+                    "words": [
+                        {"word": "The", "start": 1.0, "end": 1.1},
+                        {"word": "ayes,", "start": 1.2, "end": 1.5},
+                        {"word": "four", "start": 1.7, "end": 2.0},
+                        {"word": "hundred", "start": 2.1, "end": 2.5},
+                        {"word": "fifteen.", "start": 2.6, "end": 3.0},
+                    ],
+                },
+                {
+                    "start": 3.5,
+                    "end": 5.8,
+                    "words": [
+                        {"word": "The", "start": 3.5, "end": 3.6},
+                        {"word": "noes,", "start": 3.7, "end": 4.0},
+                        {"word": "one", "start": 4.2, "end": 4.5},
+                        {"word": "hundred", "start": 4.6, "end": 5.0},
+                        {"word": "nineteen.", "start": 5.1, "end": 5.8},
+                    ],
+                },
+            ]
+        },
+        plans,
+    )
+
+    assert restored is not None
+    assert len(restored["segments"]) == 1
+    words = restored["segments"][0]["words"]
+    assert [word["word"] for word in words] == [
+        "The",
+        "ayes,",
+        "415.",
+        "The",
+        "noes,",
+        "119.",
+    ]
+    assert words[2]["start"] == 1.7
+    assert words[2]["end"] == 3.0
+    assert words[5]["start"] == 4.2
+    assert words[5]["end"] == 5.8
+
+
 def test_whisperx_maps_standard_model_name_to_mlx_repo():
     assert _mlx_model_repo("large-v2") == "mlx-community/whisper-large-v2-mlx"
     assert _mlx_model_repo("mlx-community/custom-model") == "mlx-community/custom-model"
@@ -1318,7 +1604,8 @@ def test_whisperx_runs_mlx_decode_through_worker_protocol(monkeypatch, tmp_path)
 
     def fake_popen(command, *, env, stdout, **_kwargs):
         observed["command"] = command
-        request = json.loads(open(env["SUBFORGE_MLX_WHISPER_REQUEST"], encoding="utf-8").read())
+        with open(env["SUBFORGE_MLX_WHISPER_REQUEST"], encoding="utf-8") as request_file:
+            request = json.load(request_file)
         observed["request"] = request
         with open(env["SUBFORGE_MLX_WHISPER_OUTPUT"], "w", encoding="utf-8") as output:
             json.dump(
@@ -1382,7 +1669,8 @@ def test_whisperx_classifies_final_audit_ranges_through_worker(monkeypatch, tmp_
             raise AssertionError("completed worker must not be terminated")
 
     def fake_popen(_command, *, env, **_kwargs):
-        request = json.loads(open(env["SUBFORGE_MLX_WHISPER_REQUEST"], encoding="utf-8").read())
+        with open(env["SUBFORGE_MLX_WHISPER_REQUEST"], encoding="utf-8") as request_file:
+            request = json.load(request_file)
         observed["request"] = request
         with open(env["SUBFORGE_MLX_WHISPER_OUTPUT"], "w", encoding="utf-8") as output:
             json.dump(

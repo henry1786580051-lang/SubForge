@@ -1036,6 +1036,7 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
     taskMessage,
     taskProgress,
     taskStatus,
+    videoFile,
   } = useAppStore();
   const [promptFocused, setPromptFocused] = useState(false);
   const [subtitleFocusRequest, setSubtitleFocusRequest] = useState<{
@@ -1102,6 +1103,7 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
     setIsProcessing(true);
     await startTask("subtitle", {
       subtitle_file: subtitleFile,
+      media_file: videoFile || undefined,
       target_language: config.targetLanguage,
       translator: config.translator,
       llm_provider: config.llmProvider,
@@ -1125,6 +1127,7 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
     setStep,
     startTask,
     subtitleFile,
+    videoFile,
   ]);
 
   return (

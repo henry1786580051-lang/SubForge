@@ -11,6 +11,10 @@ APP_VERSION = os.environ.get('SUBFORGE_BUILD_VERSION', '0.0.0-dev')
 optional_hiddenimports = []
 optional_datas = []
 optional_binaries = []
+try:
+    optional_hiddenimports += collect_submodules('keyring.backends')
+except Exception:
+    pass
 if os.name == 'nt':
     optional_hiddenimports += [
         'colorama',

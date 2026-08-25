@@ -30,7 +30,7 @@ def test_base_asr_does_not_read_or_write_cache_when_disabled(monkeypatch, tmp_pa
     from pydub.generators import Sine
 
     audio_path = tmp_path / "audio.wav"
-    Sine(440).to_audio_segment(duration=500).export(audio_path, format="wav")
+    Sine(440).to_audio_segment(duration=500).export(audio_path, format="wav").close()
     fake_cache = FakeCache()
     fake_cache.values["asr-v2:DummyASR:any"] = "cached"
 
@@ -50,7 +50,7 @@ def test_base_asr_uses_cache_only_when_enabled(monkeypatch, tmp_path):
     from pydub.generators import Sine
 
     audio_path = tmp_path / "audio.wav"
-    Sine(440).to_audio_segment(duration=500).export(audio_path, format="wav")
+    Sine(440).to_audio_segment(duration=500).export(audio_path, format="wav").close()
     fake_cache = FakeCache()
     fake_cache.values["asr-v2:DummyASR:any"] = "cached"
 

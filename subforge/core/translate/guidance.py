@@ -33,8 +33,9 @@ def target_language_style_rules(
     rules = [
         "Reconstruct idiomatic Chinese syntax instead of mirroring English word order.",
         "Preserve imagery, contrast, irony, and rhetorical force already present in the source "
-        "with concise idiomatic Chinese; prefer precise verbs and clean rhythm, but never add "
-        "decorative language, emphasis, or facts absent from the source.",
+        "with concise idiomatic Chinese. When a coherent concrete metaphor also works in Chinese, "
+        "keep one consistent image instead of flattening it into generic success, impact, or domain "
+        "wording; never add decorative language, emphasis, or facts absent from the source.",
         "Keep every material subject, predicate, object, modifier, negation, comparison, "
         "number, name, and conclusion exactly once under its owning key.",
         "Make adjacent cues read naturally in sequence without completing one cue with "
@@ -59,6 +60,9 @@ def target_language_style_rules(
         "Choose technical meanings from the object, operation, and local domain rather than the "
         "most literal dictionary sense; reject a rendering that is grammatically possible but "
         "physically or professionally implausible in context.",
+        "Map semantic roles before choosing Chinese word order. Preserve who causes, experiences, "
+        "receives, accompanies, funds, or performs an action; never turn a family, audience, partner, "
+        "or other participant into the instrument of that action merely because English uses 'with'.",
         "Render figurative actions and idioms by their function in the sentence rather than by "
         "an impossible literal action. Preserve a one-off unfamiliar proper noun as written unless "
         "document evidence gives one unambiguous canonical form.",
@@ -67,9 +71,11 @@ def target_language_style_rules(
         "After fidelity and cue ownership are secure, preserve the speaker's voice, emphasis, "
         "imagery, and rhythm. Prefer compact, vivid, idiomatic Chinese over flat explanatory "
         "paraphrase, but never embellish, intensify, or invent an image absent from the source.",
-        "Avoid translationese and bureaucratic nominalization. Use an implicit Chinese subject "
-        "when its reference is unmistakable, but retain or minimally recover any subject needed "
-        "to prevent ambiguity across subtitle boundaries.",
+        "Avoid translationese and bureaucratic nominalization. Recast abstract English noun chains "
+        "as precise Chinese verbs, states, or modifier-head phrases when that preserves the meaning; "
+        "do not mechanically write 具有意义, 作为一种, 进行交付, or 成本高达. Use an implicit Chinese "
+        "subject when its reference is unmistakable, but retain or minimally recover any subject "
+        "needed to prevent ambiguity across subtitle boundaries.",
     ]
 
     conditional_rules = (
@@ -124,6 +130,34 @@ def target_language_style_rules(
             "a neutral equality comparison into praise such as 'excellent' or 'very good'.",
         ),
         (
+            r"\bon\s+paper\b|\b(?:economic|financial|commercial)\s+sense\b|"
+            r"\bcosts?\s+of\b.{0,100}\bruns?\s+into\b",
+            "Use natural Chinese financial and feasibility phrasing. Distinguish 账面上, 理论上, "
+            "and financially viable from a literal 纸面上 or 具有经济意义, and make recurring cost "
+            "statements predicate-led rather than leaving a noun phrase for the next cue.",
+        ),
+        (
+            r"\b(?:spark|ignite|inspire|awaken)\b.{0,100}"
+            r"\b(?:family|children|kids|audience|community|team)\b",
+            "For causative emotion or interest, keep the animate participant as the experiencer or "
+            "beneficiary. Express that they become interested, excited, or inspired; do not make "
+            "them the tool used to create the emotion.",
+        ),
+        (
+            r"\b(?:approach|architecture|design|concept|strategy|technology)\b.{0,100}"
+            r"\b(?:product|delivered|delivery|implementation|implemented)\b",
+            "When English packages a concept as a product, delivery, approach, or implementation, "
+            "state the actual Chinese relation directly, such as productization, deployment, or how "
+            "the idea is realized; avoid stacked abstract nouns and literal 作为一种/交付方式 calques.",
+        ),
+        (
+            r"\b(?:home\s+run|ball\s+game|with\s+a\s+vengeance|roaring\s+success|"
+            r"enter(?:ed|s|ing)?\s+the\s+chat)\b",
+            "Preserve the source's recognizable rhetorical image, escalation, or punchline when it "
+            "remains natural in Chinese. Do not reduce a coherent image to generic 成功, 领域, 加入, "
+            "or 取得 unless a literal image would genuinely mislead the audience.",
+        ),
+        (
             r"\btraffic\s+situation\b.{0,100}\bget\s+(?:get\s+)?through\s+it\b",
             "When a vehicle gets through a traffic situation, describe maneuvering or threading "
             "through congestion naturally; do not translate it as literally passing a vehicle "
@@ -134,7 +168,11 @@ def target_language_style_rules(
             r"structural|load|excavation|elevation|varying heights?)\b",
             "Use established civil-aviation and construction Chinese. Distinguish a terminal "
             "concourse, passenger gate, and aircraft stand; express visible structural members "
-            "as exposed when that is the physical meaning; follow the actual structural load "
+            "as exposed when that is the physical meaning. In an airport route-network context, "
+            "render possible passenger connections as concise transfer combinations or route "
+            "connections rather than a literal generic possibility; reserve physical connection "
+            "wording for infrastructure. "
+            "Follow the actual structural load "
             "path; and use elevation or level terminology instead of a generic height when the "
             "source describes designed vertical levels. Express forces transferred 'down the "
             "height' as travelling downward along the building, and render forces redistributed "

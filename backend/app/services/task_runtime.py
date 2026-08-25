@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 from app.core.task_manager import task_manager
 from subforge.application import PipelineContext
@@ -42,7 +43,7 @@ def schedule_background_task(
     *,
     task_type: str,
     resource_key: str,
-    runner: Callable[[str], Awaitable[None]],
+    runner: Callable[[str], Coroutine[Any, Any, None]],
     background_tasks: set[asyncio.Task],
 ) -> str:
     """Create, register, and retain a managed background task consistently."""

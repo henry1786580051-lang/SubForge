@@ -89,6 +89,28 @@ def test_effective_config_discards_corrupted_persisted_types():
     assert config["enable_audio_enhancement"] is True
 
 
+def test_effective_config_never_uses_unresolved_keyring_reference_as_secret():
+    reference = "keyring://llm-profile:missing"
+
+    config = config_module._effective_config(
+        {
+            "llm_provider": "deepseek",
+            "llm_profiles": {
+                "deepseek": {
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-chat",
+                    "api_key": reference,
+                }
+            },
+            "whisper_api_key": reference,
+        }
+    )
+
+    assert config["llm_api_key"] == ""
+    assert config["llm_profiles"]["deepseek"]["api_key"] == ""
+    assert config["whisper_api_key"] == ""
+
+
 @pytest.mark.parametrize(
     ("key", "value"),
     [
@@ -203,6 +225,79 @@ def test_public_config_reports_credentials_without_exposing_them():
         "model": "mimo",
         "api_key_configured": True,
     }
+
+
+def test_get_config_does_not_unlock_keychain_credentials(monkeypatch):
+    reference = "keyring://llm-profile:deepseek"
+    monkeypatch.setattr(
+        config_module,
+        "_read_settings",
+        lambda: {
+            "llm_provider": "deepseek",
+            "llm_profiles": {
+                "deepseek": {
+                    "base_url": "https://api.deepseek.com",
+                    "api_key": reference,
+                    "model": "deepseek-chat",
+                },
+                "minimax": {
+                    "base_url": "https://api.minimaxi.com/anthropic",
+                    "api_key": "keyring://llm-profile:minimax",
+                    "model": "MiniMax-M3",
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(
+        config_module,
+        "restore_secret_value",
+        lambda value: (_ for _ in ()).throw(AssertionError("must stay lazy")),
+    )
+
+    public = asyncio.run(config_module.get_config())
+
+    assert public["llm_api_key"] == ""
+    assert public["llm_api_key_configured"] is True
+    assert public["llm_profiles"]["deepseek"]["api_key_configured"] is True
+    assert public["llm_profiles"]["minimax"]["api_key_configured"] is True
+
+
+def test_runtime_unlocks_only_active_llm_provider(monkeypatch):
+    values = {
+        "keyring://llm-profile:deepseek": "deepseek-secret",
+        "keyring://llm-profile:minimax": "minimax-secret",
+    }
+    calls = []
+    monkeypatch.setattr(
+        config_module,
+        "_read_settings",
+        lambda: {
+            "llm_provider": "deepseek",
+            "llm_profiles": {
+                "deepseek": {
+                    "base_url": "https://api.deepseek.com",
+                    "api_key": "keyring://llm-profile:deepseek",
+                    "model": "deepseek-chat",
+                },
+                "minimax": {
+                    "base_url": "https://api.minimaxi.com/anthropic",
+                    "api_key": "keyring://llm-profile:minimax",
+                    "model": "MiniMax-M3",
+                },
+            },
+        },
+    )
+
+    def restore(value):
+        calls.append(value)
+        return values[value]
+
+    monkeypatch.setattr(config_module, "restore_secret_value", restore)
+
+    runtime = config_module.get_llm_runtime_config()
+
+    assert runtime.api_key == "deepseek-secret"
+    assert calls == ["keyring://llm-profile:deepseek"]
 
 
 def test_azure_translator_endpoint_must_be_https():

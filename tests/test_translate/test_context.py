@@ -8,6 +8,7 @@ from subforge.core.translate.context import (
     _compact_transcript,
     _confirm_call_to_action_entity_corrections,
     _document_audio_homophone_corrections,
+    _document_branded_common_noun_terms,
     _document_call_to_action_entity_candidates,
     _document_entity_alias_groups,
     _document_entity_contexts,
@@ -42,6 +43,44 @@ def test_compact_transcript_samples_the_middle_of_long_transcript():
 
 def test_compact_transcript_keeps_short_transcript_unchanged():
     assert _compact_transcript([" first ", "second"], limit=100) == "first second"
+
+
+def test_document_branded_common_noun_terms_require_repeated_naming_frames():
+    terms = _document_branded_common_noun_terms(
+        [
+            "This is the Sphere.",
+            "This is the MSG Sphere.",
+            "Sphere Entertainment licenses the design.",
+            "The Sphere is now expanding.",
+            "A sphere is an efficient geometric structure.",
+            "Other spheres may be built as venues.",
+        ]
+    )
+
+    assert terms == [
+        {
+            "source": "Sphere",
+            "target": "Sphere",
+            "note": (
+                "branded common-noun family confirmed by repeated naming frames; preserve "
+                "this Latin name when it denotes the recurring venue, product, or project "
+                "family, including lowercase ASR occurrences, but translate clearly generic "
+                "shape or category uses by meaning"
+            ),
+        }
+    ]
+
+
+def test_document_branded_common_noun_terms_do_not_promote_generic_repetition():
+    assert _document_branded_common_noun_terms(
+        [
+            "This is the bridge.",
+            "The Bridge carries traffic.",
+            "A bridge crosses the river.",
+            "Another bridge is planned.",
+            "The bridge needs repairs.",
+        ]
+    ) == []
 
 
 def test_document_rhetorical_name_candidates_keep_local_evidence_without_deciding():
@@ -299,6 +338,44 @@ def test_format_terms_prefers_explicit_asr_spelling_over_translated_target():
 
     assert "Infinity -> Infiniti" in rendered
     assert "Infinity -> 英菲尼迪" not in rendered
+
+
+def test_format_terms_rejects_pronoun_to_vehicle_global_mapping():
+    rendered = _format_terms(
+        [
+            {
+                "source": "me",
+                "target": "F-150",
+                "note": "probable ASR correction",
+            },
+            {
+                "source": "me's",
+                "target": "F-150's",
+                "note": "probable ASR correction",
+            },
+            {
+                "source": "bear with me",
+                "target": "请多包涵",
+                "note": "idiom",
+            },
+        ]
+    )
+
+    assert "me -> F-150" not in rendered
+    assert "me's -> F-150's" not in rendered
+    assert "bear with me -> 请多包涵" in rendered
+
+
+def test_format_terms_keeps_uppercase_and_alphanumeric_identifiers():
+    rendered = _format_terms(
+        [
+            {"source": "US", "target": "美国", "note": "geographic abbreviation"},
+            {"source": "I-95", "target": "I-95", "note": "highway identifier"},
+        ]
+    )
+
+    assert "US -> 美国" in rendered
+    assert "I-95 -> I-95" in rendered
 
 
 def test_format_terms_recovers_unquoted_canonical_name_from_asr_note():

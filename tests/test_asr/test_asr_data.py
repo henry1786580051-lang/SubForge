@@ -27,6 +27,21 @@ def test_language_metadata_survives_srt_task_boundary(tmp_path):
     get_subtitle_language_cache().delete(data._language_metadata_key(str(subtitle_path)))
 
 
+def test_timing_metadata_survives_exact_srt_and_rejects_edited_file(tmp_path):
+    subtitle_path = tmp_path / "timed.srt"
+    data = ASRData([ASRDataSeg("Welcome", 0, 500)])
+    data.save(str(subtitle_path))
+    data.save_timing_metadata(str(subtitle_path), [(0, 620)], 1_000)
+
+    assert ASRData.load_timing_metadata(str(subtitle_path)) == ([(0, 620)], 1_000)
+
+    subtitle_path.write_text(
+        subtitle_path.read_text(encoding="utf-8").replace("Welcome", "Edited"),
+        encoding="utf-8",
+    )
+    assert ASRData.load_timing_metadata(str(subtitle_path)) == ([], None)
+
+
 def test_merged_segment_records_mixed_source_languages():
     merged = ASRDataSeg.from_segments(
         [
@@ -624,6 +639,28 @@ class TestDeduplicateAlignmentEchoes:
             "building.",
             "off-plan.",
         ]
+        assert [segment.end_time for segment in asr_data.segments] == [500, 1500, 2500]
+        assert [segment.words[-1].end_time for segment in asr_data.segments] == [
+            500,
+            1500,
+            2500,
+        ]
+
+    def test_preserves_tail_of_short_exact_alignment_echo(self):
+        asr_data = ASRData(
+            [
+                self._word("that.", 0, 100),
+                self._word("that.", 120, 720),
+                self._word("Next", 1500, 1750),
+            ],
+            granularity="word",
+        )
+
+        asr_data.deduplicate_alignment_echoes()
+
+        assert [segment.text for segment in asr_data.segments] == ["that.", "Next"]
+        assert asr_data.segments[0].end_time == 720
+        assert asr_data.segments[0].words[-1].end_time == 720
 
     def test_keeps_normal_suffix_across_a_sentence_boundary(self):
         asr_data = ASRData(
@@ -845,7 +882,7 @@ class TestAudioEnergyPauseRestore:
         from pydub import AudioSegment
 
         audio_path = tmp_path / "quiet_intro.wav"
-        AudioSegment.silent(duration=3000).export(audio_path, format="wav")
+        AudioSegment.silent(duration=3000).export(audio_path, format="wav").close()
 
         asr_data = ASRData(
             [
@@ -867,6 +904,79 @@ class TestAudioEnergyPauseRestore:
             "to",
         ]
 
+    def test_filter_hallucinations_removes_isolated_word_run_rejected_by_vad(self):
+        asr_data = ASRData(
+            [
+                ASRDataSeg("!", 6042, 6062),
+                ASRDataSeg("Today,", 28600, 28783),
+                ASRDataSeg("I", 28803, 28823),
+                ASRDataSeg("will", 28864, 28945),
+                ASRDataSeg("introduce", 28966, 29229),
+                ASRDataSeg("a", 29250, 29270),
+                ASRDataSeg("recipe", 29290, 29412),
+                ASRDataSeg("for", 29452, 29513),
+                ASRDataSeg("a", 29594, 29655),
+                ASRDataSeg("delicious", 29716, 29980),
+                ASRDataSeg("Hey", 68581, 68721),
+                ASRDataSeg("everyone,", 68762, 69143),
+            ],
+            granularity="word",
+        )
+
+        asr_data.filter_hallucinations(
+            speech_segments=[(27840, 28880), (68656, 69856)],
+            strict_speech_segments=[(68672, 69824)],
+            corroborating_speech_segments=[(69216, 69920)],
+            media_duration_ms=90000,
+        )
+
+        assert [(seg.text, seg.start_time, seg.end_time) for seg in asr_data.segments] == [
+            ("Hey", 68581, 68721),
+            ("everyone,", 68762, 69143),
+        ]
+
+    def test_filter_hallucinations_keeps_isolated_words_with_corroborating_speech(self):
+        asr_data = ASRData(
+            [
+                ASRDataSeg("Quiet", 10000, 10300),
+                ASRDataSeg("but", 10320, 10480),
+                ASRDataSeg("real", 10500, 10800),
+            ],
+            granularity="word",
+        )
+
+        asr_data.filter_hallucinations(
+            speech_segments=[(10000, 10100)],
+            strict_speech_segments=[],
+            corroborating_speech_segments=[(10100, 10600)],
+            media_duration_ms=20000,
+        )
+
+        assert [(seg.text, seg.start_time, seg.end_time) for seg in asr_data.segments] == [
+            ("Quiet", 10000, 10300),
+            ("but", 10320, 10480),
+            ("real", 10500, 10800),
+        ]
+
+    def test_filter_hallucinations_keeps_punctuation_attached_to_real_words(self):
+        asr_data = ASRData(
+            [
+                ASRDataSeg("That", 10000, 10300),
+                ASRDataSeg("works", 10320, 10600),
+                ASRDataSeg("!", 10610, 10630),
+            ],
+            granularity="word",
+        )
+
+        asr_data.filter_hallucinations(
+            speech_segments=[(10000, 10600)],
+            strict_speech_segments=[(10000, 10600)],
+            corroborating_speech_segments=[(10000, 10600)],
+            media_duration_ms=20000,
+        )
+
+        assert [segment.text for segment in asr_data.segments] == ["That", "works", "!"]
+
     def test_filter_hallucinations_restores_zero_gap_pause_from_audio(self, tmp_path):
         from pydub import AudioSegment
 
@@ -874,7 +984,7 @@ class TestAudioEnergyPauseRestore:
         silence = AudioSegment.silent(duration=800)
         audio = tone + silence + tone
         audio_path = tmp_path / "pause.wav"
-        audio.export(audio_path, format="wav")
+        audio.export(audio_path, format="wav").close()
 
         asr_data = ASRData(
             [
@@ -895,7 +1005,7 @@ class TestAudioEnergyPauseRestore:
 
         audio = self._tone() + AudioSegment.silent(duration=800) + self._tone()
         audio_path = tmp_path / "internal_pause.wav"
-        audio.export(audio_path, format="wav")
+        audio.export(audio_path, format="wav").close()
 
         asr_data = ASRData(
             [
@@ -925,7 +1035,7 @@ class TestAudioEnergyPauseRestore:
             + self._tone(duration_ms=1200)
         )
         audio_path = tmp_path / "two_active_clusters.wav"
-        audio.export(audio_path, format="wav")
+        audio.export(audio_path, format="wav").close()
 
         asr_data = ASRData([ASRDataSeg("Yeah. That is zesty.", 0, 8200)])
 
@@ -939,7 +1049,7 @@ class TestAudioEnergyPauseRestore:
     def test_filter_hallucinations_removes_overlong_short_segment(self, tmp_path):
         audio = self._tone(duration_ms=12000)
         audio_path = tmp_path / "active_noise.wav"
-        audio.export(audio_path, format="wav")
+        audio.export(audio_path, format="wav").close()
 
         asr_data = ASRData([ASRDataSeg("Still very clear.", 0, 12000)])
 
@@ -952,7 +1062,7 @@ class TestAudioEnergyPauseRestore:
 
         audio = self._tone() + AudioSegment.silent(duration=6000)
         audio_path = tmp_path / "trailing_silence.wav"
-        audio.export(audio_path, format="wav")
+        audio.export(audio_path, format="wav").close()
 
         asr_data = ASRData([ASRDataSeg("First driving impressions today now", 0, 7000)])
 
@@ -964,7 +1074,7 @@ class TestAudioEnergyPauseRestore:
     def test_filter_hallucinations_caps_overlong_segment_in_active_noise(self, tmp_path):
         audio = self._tone(duration_ms=12000)
         audio_path = tmp_path / "active_long.wav"
-        audio.export(audio_path, format="wav")
+        audio.export(audio_path, format="wav").close()
 
         asr_data = ASRData(
             [
@@ -984,7 +1094,7 @@ class TestAudioEnergyPauseRestore:
     def test_filter_hallucinations_trims_sentence_tail_in_active_noise(self, tmp_path):
         audio = self._tone(duration_ms=6000)
         audio_path = tmp_path / "active_sentence_tail.wav"
-        audio.export(audio_path, format="wav")
+        audio.export(audio_path, format="wav").close()
 
         asr_data = ASRData(
             [
@@ -1005,7 +1115,7 @@ class TestAudioEnergyPauseRestore:
     def test_filter_hallucinations_does_not_trim_non_terminal_active_noise(self, tmp_path):
         audio = self._tone(duration_ms=6000)
         audio_path = tmp_path / "active_non_terminal.wav"
-        audio.export(audio_path, format="wav")
+        audio.export(audio_path, format="wav").close()
 
         asr_data = ASRData(
             [
@@ -1625,6 +1735,24 @@ class TestConservativeTimingRepair:
         assert data.segments[2].start_time == 2_170
         assert data.segments[3].end_time == 3_030
 
+    def test_high_confidence_pass_repairs_large_utterance_tail_error(self):
+        data = ASRData(
+            [
+                ASRDataSeg("annual", 1_500, 1_800),
+                ASRDataSeg("revenue.", 1_850, 2_050),
+                ASRDataSeg("Next", 4_700, 4_900),
+            ],
+            granularity="word",
+        )
+
+        data.refine_word_edges_with_speech_segments(
+            [(1_400, 4_250), (4_650, 5_000)],
+            max_adjustment_ms=3_200,
+        )
+
+        assert data.segments[1].end_time == 4_280
+        assert data.segments[2].start_time == 4_700
+
     def test_does_not_move_internal_word_boundary_during_continuous_speech(self):
         data = ASRData(
             [
@@ -1657,10 +1785,37 @@ class TestConservativeTimingRepair:
         assert data.segments[1].end_time == 620_100
         assert data.segments[2].start_time == 628_690
 
-    def test_extends_short_sentence_tail_into_large_gap_only(self):
+    @staticmethod
+    def _aligned_sentence(
+        text: str,
+        start: int,
+        end: int,
+        *,
+        translated_text: str = "",
+        word_end: int | None = None,
+    ) -> ASRDataSeg:
+        atomic_end = end if word_end is None else word_end
+        return ASRDataSeg(
+            text,
+            start,
+            end,
+            translated_text=translated_text,
+            words=[
+                ASRWord(
+                    text=text,
+                    start_time=start,
+                    end_time=atomic_end,
+                    timing_source="forced_alignment",
+                )
+            ],
+            timestamp_granularity="sentence",
+            timing_source="forced_alignment",
+        )
+
+    def test_extends_aligned_sentence_with_small_safe_tail(self):
         data = ASRData(
             [
-                ASRDataSeg(
+                self._aligned_sentence(
                     "and 229 pound feet of torque.",
                     289_845,
                     290_569,
@@ -1672,14 +1827,13 @@ class TestConservativeTimingRepair:
 
         data.extend_sentence_tails_conservatively()
 
-        assert data.segments[0].end_time > 290_569
-        assert data.segments[0].end_time <= 293_030
+        assert data.segments[0].end_time == 290_729
         assert data.segments[1].start_time == 293_120
 
-    def test_extends_number_heavy_sentence_that_is_still_short(self):
+    def test_extension_is_independent_of_sentence_text_or_length(self):
         data = ASRData(
             [
-                ASRDataSeg(
+                self._aligned_sentence(
                     "Odometer showing 186,764 miles but that is also",
                     607_689,
                     611_289,
@@ -1691,14 +1845,13 @@ class TestConservativeTimingRepair:
 
         data.extend_sentence_tails_conservatively()
 
-        assert data.segments[0].end_time > 611_289
-        assert data.segments[0].end_time <= 612_450
+        assert data.segments[0].end_time == 611_449
         assert data.segments[1].start_time == 612_540
 
-    def test_extends_plain_short_sentence_tail_into_large_gap(self):
+    def test_uses_high_confidence_vad_for_a_larger_bounded_tail(self):
         data = ASRData(
             [
-                ASRDataSeg(
+                self._aligned_sentence(
                     "The way these get off the line is unreal.",
                     970_000,
                     972_100,
@@ -1708,13 +1861,29 @@ class TestConservativeTimingRepair:
             ]
         )
 
-        data.extend_sentence_tails_conservatively()
+        data.extend_sentence_tails_conservatively([(969_900, 972_620)])
 
-        assert data.segments[0].end_time > 972_100
-        assert data.segments[0].end_time <= 973_710
+        assert data.segments[0].end_time == 972_650
         assert data.segments[1].start_time == 973_800
 
-    def test_does_not_extend_when_gap_is_small_or_segment_is_long_enough(self):
+    def test_uses_high_confidence_vad_for_multi_second_alignment_fallback(self):
+        data = ASRData(
+            [
+                self._aligned_sentence(
+                    "more than $1.2BN in annual revenue.",
+                    181_982,
+                    183_270,
+                ),
+                ASRDataSeg("The venue reportedly", 185_942, 186_985),
+            ]
+        )
+
+        data.extend_sentence_tails_conservatively([(180_224, 185_296)])
+
+        assert data.segments[0].end_time == 185_326
+        assert data.segments[0].end_time < data.segments[1].start_time
+
+    def test_does_not_extend_without_atomic_word_provenance(self):
         data = ASRData(
             [
                 ASRDataSeg(
@@ -1734,14 +1903,15 @@ class TestConservativeTimingRepair:
         assert data.segments[0].end_time == 3_800
         assert data.segments[2].end_time == 5_700
 
-    def test_does_not_extend_complete_number_sentence_that_is_long_enough(self):
+    def test_does_not_extend_when_existing_tail_is_already_sufficient(self):
         data = ASRData(
             [
-                ASRDataSeg(
+                self._aligned_sentence(
                     "If I had to guess I would say probably over 200,000.",
                     616_313,
                     620_100,
                     translated_text="如果非要猜，可能超过200,000",
+                    word_end=619_900,
                 ),
                 ASRDataSeg(
                     "I'll tell you what though.", 628_694, 631_197, translated_text="不过我跟你说"
@@ -1752,3 +1922,57 @@ class TestConservativeTimingRepair:
         data.extend_sentence_tails_conservatively()
 
         assert data.segments[0].end_time == 620_100
+
+    def test_bounds_vad_extension_that_crosses_the_next_cue(self):
+        data = ASRData(
+            [
+                self._aligned_sentence("Current sentence.", 1_000, 2_000),
+                ASRDataSeg("Next sentence.", 2_500, 3_000),
+            ]
+        )
+
+        data.extend_sentence_tails_conservatively([(900, 2_700)])
+
+        assert data.segments[0].end_time == 2_420
+        assert data.segments[0].end_time < data.segments[1].start_time
+
+    def test_caps_crossing_vad_extension_for_a_distant_next_cue(self):
+        data = ASRData(
+            [
+                self._aligned_sentence("Current sentence.", 1_000, 2_000),
+                ASRDataSeg("Next sentence.", 5_000, 5_500),
+            ]
+        )
+
+        data.extend_sentence_tails_conservatively([(900, 5_200)])
+
+        assert data.segments[0].end_time == 3_200
+        assert data.segments[0].end_time < data.segments[1].start_time
+
+    def test_extends_final_sentence_with_media_duration_bound(self):
+        data = ASRData([self._aligned_sentence("Final sentence.", 1_000, 2_000)])
+
+        data.extend_sentence_tails_conservatively(
+            [(900, 2_420)],
+            media_duration_ms=2_500,
+        )
+
+        assert data.segments[0].end_time == 2_450
+
+    def test_final_sentence_never_exceeds_media_duration(self):
+        data = ASRData([self._aligned_sentence("Final sentence.", 1_000, 2_000)])
+
+        data.extend_sentence_tails_conservatively(
+            [(900, 2_700)],
+            media_duration_ms=2_300,
+        )
+
+        assert data.segments[0].end_time == 2_160
+        assert data.segments[0].end_time <= 2_300
+
+    def test_final_sentence_can_use_vad_without_media_duration(self):
+        data = ASRData([self._aligned_sentence("Final sentence.", 1_000, 2_000)])
+
+        data.extend_sentence_tails_conservatively([(900, 2_120)])
+
+        assert data.segments[0].end_time == 2_150

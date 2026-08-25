@@ -23,6 +23,12 @@ from subforge.settings import (
     detect_llm_provider,
     validate_llm_runtime_config,
 )
+from subforge.settings.credentials import (
+    is_secret_configured,
+    protect_settings_credentials,
+    restore_secret_value,
+    usable_secret_value,
+)
 
 router = APIRouter()
 
@@ -50,11 +56,13 @@ def _find_settings_path() -> Path | None:
 
 
 def _read_settings() -> dict:
+    """Read persisted settings without unlocking OS credential entries."""
     with _settings_lock:
         path = _find_settings_path()
         if path:
             try:
-                return json.loads(path.read_text(encoding="utf-8"))
+                stored = json.loads(path.read_text(encoding="utf-8"))
+                return stored if isinstance(stored, dict) else {}
             except (json.JSONDecodeError, OSError):
                 pass
         return {}
@@ -69,6 +77,12 @@ def get_config_value(key: str, default: T) -> T:
     """Read a single config value with TTL cache."""
     global _settings_cache, _cache_time
     with _settings_lock:
+        if key in SECRET_SETTING_KEYS:
+            stored = _read_settings()
+            value = usable_secret_value(
+                restore_secret_value(_stored_secret_value(stored, key))
+            )
+            return coerce_setting_value(value, default)
         now = time.monotonic()
         if _settings_cache is None or (now - _cache_time) > _CACHE_TTL:
             _settings_cache = _effective_config(_read_settings())
@@ -85,6 +99,7 @@ def invalidate_config_cache():
 
 def _write_settings(data: dict):
     with _settings_lock:
+        persisted = protect_settings_credentials(data)
         path = _find_settings_path()
         if not path:
             # Create in the first candidate location
@@ -94,7 +109,10 @@ def _write_settings(data: dict):
             path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = path.with_name(f".{path.name}.tmp")
         try:
-            temp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            temp_path.write_text(
+                json.dumps(persisted, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
             try:
                 os.chmod(temp_path, 0o600)
             except OSError:
@@ -161,7 +179,18 @@ def _active_llm_provider(stored: dict) -> str:
     return _detect_llm_provider(str(stored.get("llm_base_url") or ""))
 
 
-def _effective_config(stored: dict) -> dict:
+def _stored_secret_value(stored: dict, key: str) -> str:
+    """Select one persisted secret without resolving unrelated credentials."""
+    if key == "llm_api_key":
+        provider = _active_llm_provider(stored)
+        profiles = _sanitize_llm_profiles(stored.get("llm_profiles"))
+        profile = profiles.get(provider)
+        if profile and profile.get("api_key"):
+            return str(profile["api_key"])
+    return str(stored.get(key) or "")
+
+
+def _effective_config(stored: dict, *, preserve_secret_references: bool = False) -> dict:
     """Apply platform constraints to persisted settings without rewriting them."""
     config = coerce_flat_settings(stored, defaults=_DEFAULTS)
     if not _WHISPERX_SUPPORTED and config.get("transcribe_model") == "whisperx":
@@ -187,17 +216,25 @@ def _effective_config(stored: dict) -> dict:
         config["llm_base_url"] = active_profile["base_url"]
         config["llm_api_key"] = active_profile["api_key"]
         config["llm_model"] = active_profile["model"]
+    if not preserve_secret_references:
+        for key in SECRET_SETTING_KEYS:
+            config[key] = usable_secret_value(config.get(key))
+        for profile in profiles.values():
+            profile["api_key"] = usable_secret_value(profile.get("api_key"))
     return config
 
 
 def get_llm_runtime_config() -> LlmRuntimeConfig:
     """Read and validate one atomic active-provider snapshot for a task."""
     with _settings_lock:
-        config = _effective_config(_read_settings())
+        stored = _read_settings()
+        config = _effective_config(stored)
         runtime = LlmRuntimeConfig(
             provider=str(config.get("llm_provider") or "custom"),
             base_url=str(config.get("llm_base_url") or "").strip(),
-            api_key=str(config.get("llm_api_key") or ""),
+            api_key=usable_secret_value(
+                restore_secret_value(_stored_secret_value(stored, "llm_api_key"))
+            ),
             model=str(config.get("llm_model") or "").strip(),
         )
     validate_llm_runtime_config(runtime)
@@ -208,13 +245,13 @@ def _public_config(config: dict) -> dict:
     """Return configuration metadata without exposing persisted credentials."""
     public = dict(config)
     for key in SECRET_SETTING_KEYS:
-        public[f"{key}_configured"] = bool(config.get(key))
+        public[f"{key}_configured"] = is_secret_configured(config.get(key))
         public[key] = ""
     public["llm_profiles"] = {
         provider: {
             "base_url": profile.get("base_url", ""),
             "model": profile.get("model", ""),
-            "api_key_configured": bool(profile.get("api_key")),
+            "api_key_configured": is_secret_configured(profile.get("api_key")),
         }
         for provider, profile in config.get("llm_profiles", {}).items()
         if isinstance(profile, dict)
@@ -337,7 +374,9 @@ def _validate_config_update(key: str, value: str | int | float | bool):
 async def get_config():
     """Get current application configuration."""
     stored = _read_settings()
-    config = _public_config(_effective_config(stored))
+    config = _public_config(
+        _effective_config(stored, preserve_secret_references=True)
+    )
     return {
         **config,
         "runtime_platform": platform.system().lower(),
@@ -500,11 +539,10 @@ async def test_llm_connection():
 @router.get("/test-whisper")
 async def test_whisper_connection():
     """Test Whisper API connection."""
-    stored = _read_settings()
-    config = {**_DEFAULTS, **stored}
+    config = _effective_config(_read_settings())
 
     base_url = (config.get("whisper_base_url") or "").rstrip("/")
-    api_key = config.get("whisper_api_key") or ""
+    api_key = get_config_value("whisper_api_key", "")
 
     if not base_url:
         return {"ok": False, "error": "未配置 Whisper API Base URL"}
@@ -527,7 +565,7 @@ async def test_whisper_connection():
 async def test_azure_translator_connection():
     """Test the official Azure Translator credentials with a minimal request."""
     config = _effective_config(_read_settings())
-    api_key = str(config.get("azure_translator_key") or "").strip()
+    api_key = str(get_config_value("azure_translator_key", "") or "").strip()
     if not api_key:
         return {"ok": False, "error": "未配置 Microsoft Azure Translator API Key"}
 
@@ -562,11 +600,10 @@ async def list_whisper_models():
     """Fetch available models from the configured Whisper API provider."""
     import httpx
 
-    stored = _read_settings()
-    config = {**_DEFAULTS, **stored}
+    config = _effective_config(_read_settings())
 
     base_url = (config.get("whisper_base_url") or "").rstrip("/")
-    api_key = config.get("whisper_api_key") or ""
+    api_key = get_config_value("whisper_api_key", "")
 
     if not base_url:
         return {"error": "未配置 Whisper API Base URL", "models": []}

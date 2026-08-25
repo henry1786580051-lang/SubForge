@@ -142,6 +142,7 @@ export const transcribeApi = {
 export const subtitleApi = {
   start: (data: {
     subtitle_file: string;
+    media_file?: string;
     target_language?: string;
     translator?: string;
     llm_provider?: string;

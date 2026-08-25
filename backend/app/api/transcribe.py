@@ -4,6 +4,7 @@ import logging
 import platform
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Literal
@@ -546,6 +547,11 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
             context.checkpoint()
             result.save(str(subtitle_path))
             result.save_language_metadata(str(subtitle_path))
+            result.save_timing_metadata(
+                str(subtitle_path),
+                getattr(result, "timing_speech_segments", []),
+                getattr(result, "media_duration_ms", None),
+            )
             task_manager.complete_task(
                 task_id,
                 {
@@ -1173,22 +1179,26 @@ async def _download_huggingface_alignment_model(task_id: str, model_id: str):
                 return
             task_manager.update_progress(task_id, 5, f"正在下载{spec.language_name}词级对齐模型...")
 
-            def _snapshot_download():
-                from huggingface_hub import snapshot_download
+            from subforge.core.utils.model_download import run_cancellable_model_download
 
-                return snapshot_download(
-                    repo_id=spec.model_name,
-                    cache_dir=str(models_dir),
-                    allow_patterns=[
+            cancel_event = threading.Event()
+            await run_blocking(
+                run_cancellable_model_download,
+                "huggingface_snapshot",
+                {
+                    "repo_id": spec.model_name,
+                    "cache_dir": str(models_dir),
+                    "allow_patterns": [
                         "*.json",
                         "*.txt",
                         "*.model",
                         "*.bin",
                         "*.safetensors",
                     ],
-                )
-
-            await run_blocking(_snapshot_download)
+                },
+                cancel_event,
+                on_cancel=cancel_event.set,
+            )
             task_manager.update_progress(task_id, 95, "正在校验模型文件...")
             if not _alignment_model_ready(model_id, models_dir):
                 raise RuntimeError("下载完成但模型配置或权重文件不完整")
@@ -1220,12 +1230,16 @@ async def _download_faster_whisper_model(task_id: str, model_id: str, dest: Path
                 task_id, 5, f"正在下载 FasterWhisper {model_value} 模型..."
             )
 
-            def _download_snapshot():
-                from faster_whisper.utils import download_model
+            from subforge.core.utils.model_download import run_cancellable_model_download
 
-                return download_model(model_value, output_dir=str(staging))
-
-            await run_blocking(_download_snapshot)
+            cancel_event = threading.Event()
+            await run_blocking(
+                run_cancellable_model_download,
+                "faster_whisper",
+                {"size_or_id": model_value, "output_dir": str(staging)},
+                cancel_event,
+                on_cancel=cancel_event.set,
+            )
             task_manager.update_progress(task_id, 95, "正在校验 CTranslate2 模型...")
             if not is_faster_whisper_model_dir(staging):
                 raise RuntimeError(
@@ -1272,16 +1286,20 @@ async def _download_diarization_model(task_id: str, model_id: str, dest: Path):
                 shutil.rmtree(staging, ignore_errors=True)
             task_manager.update_progress(task_id, 5, "正在验证 Hugging Face 授权...")
 
-            def _snapshot_download():
-                from huggingface_hub import snapshot_download
+            from subforge.core.utils.model_download import run_cancellable_model_download
 
-                return snapshot_download(
-                    repo_id=DIARIZATION_MODELS[model_id]["repo"],
-                    token=token,
-                    local_dir=str(staging),
-                )
-
-            await run_blocking(_snapshot_download)
+            cancel_event = threading.Event()
+            await run_blocking(
+                run_cancellable_model_download,
+                "huggingface_snapshot",
+                {
+                    "repo_id": DIARIZATION_MODELS[model_id]["repo"],
+                    "token": token,
+                    "local_dir": str(staging),
+                },
+                cancel_event,
+                on_cancel=cancel_event.set,
+            )
             if not is_diarization_model_dir(staging):
                 raise RuntimeError("下载完成但 Community-1 核心配置或权重文件缺失")
             if dest.exists():
@@ -1318,17 +1336,21 @@ async def _download_speaker_verification_model(task_id: str, model_id: str, dest
                 shutil.rmtree(staging, ignore_errors=True)
             task_manager.update_progress(task_id, 5, "正在下载独立声纹校验模型...")
 
-            def _snapshot_download():
-                from huggingface_hub import snapshot_download
+            from subforge.core.utils.model_download import run_cancellable_model_download
 
-                return snapshot_download(
-                    repo_id=info["repo"],
-                    revision=info["revision"],
-                    local_dir=str(staging),
-                    allow_patterns=[info["filename"], "README.md", "config.yaml"],
-                )
-
-            await run_blocking(_snapshot_download)
+            cancel_event = threading.Event()
+            await run_blocking(
+                run_cancellable_model_download,
+                "huggingface_snapshot",
+                {
+                    "repo_id": info["repo"],
+                    "revision": info["revision"],
+                    "local_dir": str(staging),
+                    "allow_patterns": [info["filename"], "README.md", "config.yaml"],
+                },
+                cancel_event,
+                on_cancel=cancel_event.set,
+            )
             staged_model = staging / info["filename"]
             if not staged_model.is_file() or staged_model.stat().st_size < 20 * 1024 * 1024:
                 raise RuntimeError("下载完成但 ECAPA512-LM ONNX 权重缺失或不完整")

@@ -25,10 +25,10 @@ class AudioAnalysisContext:
     def audio_segment(self):
         with self._lock:
             if self._audio is None:
-                from pydub import AudioSegment
+                from subforge.core.asr.audio_io import load_audio_file
 
                 self._audio = (
-                    AudioSegment.from_file(self.audio_path)
+                    load_audio_file(self.audio_path)
                     .set_frame_rate(16000)
                     .set_channels(1)
                     .set_sample_width(2)

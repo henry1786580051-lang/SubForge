@@ -180,13 +180,14 @@ def detect_speech_segments(
         List of (start_ms, end_ms) tuples for detected speech segments
     """
     import numpy as np
-    from pydub import AudioSegment
+
+    from subforge.core.asr.audio_io import load_audio_file
 
     if not audio_path or not Path(audio_path).is_file():
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
     # Load audio as 16kHz mono
-    audio = AudioSegment.from_file(audio_path)
+    audio = load_audio_file(audio_path)
     audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
     samples = np.array(audio.get_array_of_samples(), dtype=np.float32) / 32768.0
     audio_len_ms = len(audio)

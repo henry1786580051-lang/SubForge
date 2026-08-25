@@ -175,11 +175,11 @@ class TestRunVadInference:
     def test_returns_list_of_tuples(self, noise_wav):
         """run_vad_inference should return List[Tuple[int, int]]."""
         import numpy as np
-        from pydub import AudioSegment
 
+        from subforge.core.asr.audio_io import load_audio_file
         from subforge.core.asr.silero_vad import run_vad_inference
 
-        audio = AudioSegment.from_file(noise_wav)
+        audio = load_audio_file(noise_wav)
         audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
         samples = np.array(audio.get_array_of_samples(), dtype=np.float32) / 32768.0
 

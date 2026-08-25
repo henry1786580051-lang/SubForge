@@ -54,7 +54,13 @@ jobs:
           - name: macOS Intel
             os: macos-15-intel
             uv-extra: ""
-            artifact-name: desktop-macOS
+            artifact-name: desktop-macOS-intel
+            build-flavor: ""
+            cuda: false
+          - name: macOS Apple Silicon
+            os: macos-15
+            uv-extra: "--extra denoise --extra whisperx"
+            artifact-name: desktop-macOS-arm64
             build-flavor: ""
             cuda: false
 
