@@ -393,6 +393,56 @@ def test_deepseek_controls_are_not_sent_to_other_providers(monkeypatch):
     assert "max_tokens" not in completions.kwargs
 
 
+def test_glm_53_routine_request_uses_low_always_on_thinking(monkeypatch):
+    client, completions = _capturing_client("https://open.bigmodel.cn/api/paas/v4")
+    monkeypatch.setattr(client_module, "log_llm_response", lambda _response: None)
+
+    client_module.call_llm(
+        [{"role": "user", "content": "split"}],
+        "glm-5.3-flash",
+        temperature=0.1,
+        client=client,
+        reasoning_mode="disabled",
+        max_output_tokens=4096,
+    )
+
+    assert completions.kwargs["extra_body"] == {"thinking": {"type": "enabled"}}
+    assert completions.kwargs["reasoning_effort"] == "low"
+    assert completions.kwargs["max_tokens"] == 4096
+    assert completions.kwargs["temperature"] == 1.0
+    assert completions.kwargs["top_p"] == 0.95
+
+
+def test_glm_53_confirmed_repair_uses_high_reasoning(monkeypatch):
+    client, completions = _capturing_client("https://open.bigmodel.cn/api/paas/v4/")
+    monkeypatch.setattr(client_module, "log_llm_response", lambda _response: None)
+
+    client_module.call_llm(
+        [{"role": "user", "content": "repair semantic ownership"}],
+        "GLM-5.3-Flash",
+        client=client,
+        reasoning_mode="enabled",
+        reasoning_effort="low",
+    )
+
+    assert completions.kwargs["extra_body"] == {"thinking": {"type": "enabled"}}
+    assert completions.kwargs["reasoning_effort"] == "high"
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("glm-5.3-flash", True),
+        ("GLM_5.3", True),
+        ("glm-5.2", False),
+        ("deepseek-v4-flash", True),
+        ("MiniMax-M3", False),
+    ],
+)
+def test_selective_native_reasoning_model_detection(model, expected):
+    assert client_module.prefers_native_reasoning(model) is expected
+
+
 def test_call_llm_rejects_unknown_reasoning_mode():
     client, _completions = _capturing_client("https://api.deepseek.com")
 

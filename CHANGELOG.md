@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.1.18 - 2026-08-27
+
+### Improved
+
+- Adds first-class GLM-5.3 and GLM-5.3-Flash request handling on Zhipu's official endpoint while keeping provider-specific controls isolated from other OpenAI-compatible services.
+- Maps SubForge's selective reasoning policy onto GLM-5.3's always-on thinking contract: routine translation and validation use low effort, while confirmed semantic repairs use high effort.
+- Keeps task-wide translation instructions and global context in a stable prompt prefix for GLM requests, improving automatic context-cache reuse across subtitle batches.
+- Applies the existing wait-and-retry policy to temporary Zhipu GLM API throttling instead of failing an otherwise recoverable subtitle task.
+
+### Fixed
+
+- Fixed GLM-5.3 requests failing when generic translation paths attempted to disable thinking, which this model family does not support.
+- Fixed source-dependent style guidance fragmenting the reusable GLM prompt prefix and reducing cache effectiveness.
+
+### Validation
+
+- Python: `1795 passed, 11 skipped`.
+- Focused GLM provider, retry, prompt-layout, and translation validation coverage: `647 passed`.
+- Ruff and whitespace validation passed; desktop packaging verification completed for the release build.
+
+### Packaging
+
+- macOS Apple Silicon: `SubForge-1.1.18-macos-arm64.dmg`.
+- Windows x64: `SubForge-1.1.18-windows-x64-setup.exe`, built and smoke-tested by GitHub Actions.
+- Whisper, forced-alignment, Community-1, ECAPA, and DeepFilterNet models remain separate on-demand downloads.
+
 ## v1.1.17 - 2026-08-25
 
 ### Improved

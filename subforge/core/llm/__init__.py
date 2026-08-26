@@ -8,6 +8,7 @@ from .client import (
     close_client,
     create_client,
     get_llm_client,
+    is_glm_53_model,
     prefers_native_reasoning,
 )
 from .response import get_response_text, parse_json_object, strip_reasoning_blocks
@@ -18,6 +19,7 @@ __all__ = [
     "close_client",
     "create_client",
     "get_llm_client",
+    "is_glm_53_model",
     "prefers_native_reasoning",
     "check_llm_connection",
     "get_available_models",

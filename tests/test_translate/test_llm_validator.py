@@ -3477,6 +3477,40 @@ class TestValidateLLmResponse:
         assert [call["reasoning_mode"] for call in calls] == ["disabled"]
         assert [call["max_output_tokens"] for call in calls] == [4096]
 
+    @pytest.mark.parametrize(
+        ("model", "context_before_style"),
+        [
+            ("glm-5.3-flash", True),
+            ("deepseek-v4-flash", False),
+        ],
+    )
+    def test_glm_alone_uses_cache_stable_prompt_prefix(
+        self,
+        monkeypatch,
+        model,
+        context_before_style,
+    ):
+        translator = _make_translator()
+        translator.model = model
+        translator.translation_context = TranslationContext(summary="Automotive review")
+        calls = []
+
+        monkeypatch.setattr(
+            translator,
+            "_target_language_style_rules",
+            lambda _source: "\n<BATCH_STYLE>source-specific</BATCH_STYLE>",
+        )
+        monkeypatch.setattr(
+            "subforge.core.translate.llm_translator.call_llm",
+            lambda **kwargs: calls.append(kwargs) or _llm_response({"1": "你好"}),
+        )
+
+        assert translator._agent_loop("prompt", {"1": "hello"}) == {"1": "你好"}
+        prompt = calls[0]["messages"][0]["content"]
+        assert (prompt.index("<global_context>") < prompt.index("<BATCH_STYLE>")) is (
+            context_before_style
+        )
+
     def test_deepseek_v4_agent_never_enables_reasoning_for_format_retry(self, monkeypatch):
         translator = _make_translator(is_reflect=True)
         translator.model = "deepseek-v4-flash"

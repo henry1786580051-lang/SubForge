@@ -15,6 +15,7 @@ import openai
 from subforge.core.llm import (
     call_llm,
     get_response_text,
+    is_glm_53_model,
     parse_json_object,
     prefers_native_reasoning,
 )
@@ -2221,7 +2222,9 @@ Return exactly one JSON object with all and only the current_subtitles keys:
                 else f"{system_prompt}\n\n{compact_output}"
             )
         system_prompt += self._dialogue_prompt_rules(subtitle_dict)
-        system_prompt += self._target_language_style_rules(subtitle_dict.values())
+        style_rules = self._target_language_style_rules(subtitle_dict.values())
+        if not is_glm_53_model(self.model):
+            system_prompt += style_rules
         context_text = self.translation_context.render()
         if context_text:
             system_prompt = (
@@ -2233,6 +2236,10 @@ Return exactly one JSON object with all and only the current_subtitles keys:
                 "Translate ONLY the current_subtitles keys. "
                 "previous_context and next_context are context only; do not output them."
             )
+        if is_glm_53_model(self.model):
+            # GLM caches the stable task-wide prefix. Append batch-specific
+            # source hints only after the shared global context.
+            system_prompt += style_rules
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -5662,10 +5669,14 @@ Return exactly one JSON object with all and only the current_subtitles keys:
             custom_prompt=self.custom_prompt,
         )
         system_prompt += self._dialogue_prompt_rules(subtitle_dict)
-        system_prompt += self._target_language_style_rules(subtitle_dict.values())
+        style_rules = self._target_language_style_rules(subtitle_dict.values())
+        if not is_glm_53_model(self.model):
+            system_prompt += style_rules
         context_text = self.translation_context.render()
         if context_text:
             system_prompt += f"\n\n<global_context>\n{context_text}\n</global_context>"
+        if is_glm_53_model(self.model):
+            system_prompt += style_rules
         system_prompt += (
             "\n\n<recovery_rules>\n"
             "This is a boundary-safe recovery pass. Every output key is locked to exactly "

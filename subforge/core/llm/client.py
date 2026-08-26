@@ -210,15 +210,35 @@ def _is_deepseek_model(model: str) -> bool:
     return normalized.startswith("deepseek")
 
 
+def _is_zhipu_client(client: Any = None) -> bool:
+    """Return whether this request uses Zhipu's official OpenAI endpoint."""
+    if client is None:
+        base_url = os.getenv("OPENAI_BASE_URL", "")
+    else:
+        base_url = getattr(client, "_subforge_base_url", "")
+        if not base_url:
+            base_url = getattr(client, "base_url", "")
+    hostname = (urlparse(str(base_url or "").strip()).hostname or "").lower()
+    return hostname == "open.bigmodel.cn"
+
+
+def is_glm_53_model(model: str) -> bool:
+    """Return whether a model uses GLM 5.3's always-on thinking contract."""
+    normalized = re.sub(r"[^a-z0-9]+", "", str(model or "").lower())
+    return normalized.startswith("glm53")
+
+
 def prefers_native_reasoning(model: str) -> bool:
     """Return whether a model benefits from SubForge's selective thinking path.
 
-    DeepSeek V4 models expose native thinking controls.  Restricting the policy to
-    that family keeps OpenAI-compatible providers from receiving speculative
-    parameters and avoids increasing latency for models that do not support them.
+    DeepSeek V4 can switch thinking on for sparse repairs. GLM 5.3 cannot disable
+    thinking, but maps the same intent to low/high reasoning effort at the provider
+    adapter. Other OpenAI-compatible providers must not receive speculative fields.
     """
     normalized = re.sub(r"[^a-z0-9]+", "", str(model or "").lower())
-    return normalized.startswith("deepseek") and "v4" in normalized
+    return (normalized.startswith("deepseek") and "v4" in normalized) or is_glm_53_model(
+        model
+    )
 
 
 def _retry_after_seconds(error: Exception) -> float | None:
@@ -269,6 +289,7 @@ def _call_llm_once(
     kwargs.pop("_subforge_cache_namespace", None)
     request_kwargs = dict(kwargs)
     deepseek_request = _is_deepseek_client(client) and _is_deepseek_model(model)
+    zhipu_glm_53_request = _is_zhipu_client(client) and is_glm_53_model(model)
     if deepseek_request and reasoning_mode != "default":
         extra_body = dict(request_kwargs.pop("extra_body", {}) or {})
         extra_body["thinking"] = {"type": reasoning_mode}
@@ -278,9 +299,28 @@ def _call_llm_once(
     if deepseek_request and max_output_tokens is not None:
         request_kwargs["max_tokens"] = max(256, int(max_output_tokens))
 
+    if zhipu_glm_53_request:
+        # GLM 5.3/5.3-Flash reject thinking.type=disabled. Preserve SubForge's
+        # selective policy by mapping routine work to low effort and confirmed
+        # semantic rewrites to high effort instead of forwarding the raw switch.
+        extra_body = dict(request_kwargs.pop("extra_body", {}) or {})
+        extra_body["thinking"] = {"type": "enabled"}
+        request_kwargs["extra_body"] = extra_body
+        requested_effort = str(request_kwargs.pop("reasoning_effort", "") or "").lower()
+        if reasoning_mode == "enabled":
+            request_kwargs["reasoning_effort"] = (
+                requested_effort if requested_effort in {"high", "max"} else "high"
+            )
+        else:
+            request_kwargs["reasoning_effort"] = "low"
+        if max_output_tokens is not None:
+            request_kwargs["max_tokens"] = max(256, int(max_output_tokens))
+        request_kwargs["temperature"] = 1.0
+        request_kwargs.setdefault("top_p", 0.95)
+
     # DeepSeek ignores sampling parameters in thinking mode. Omitting them keeps
     # request logs honest and avoids relying on compatibility-only behavior.
-    if not (deepseek_request and reasoning_mode == "enabled"):
+    if not zhipu_glm_53_request and not (deepseek_request and reasoning_mode == "enabled"):
         request_kwargs["temperature"] = temperature
 
     try:
@@ -383,6 +423,15 @@ def _call_llm_api(
             temperature,
             client=client,
             provider_name="NVIDIA API",
+            **kwargs,
+        )
+    if _is_zhipu_client(client) and is_glm_53_model(model):
+        return _call_until_provider_available(
+            messages,
+            model,
+            temperature,
+            client=client,
+            provider_name="Zhipu GLM API",
             **kwargs,
         )
     if _is_deepseek_client(client) and _is_deepseek_model(model):
