@@ -197,6 +197,43 @@ def test_switch_llm_provider_keeps_credentials_isolated_and_restores_them(
     assert stored["llm_profiles"]["mimo"]["api_key"] == "mimo-secret"
 
 
+def test_provider_runtime_config_reads_inactive_nvidia_profile_without_switching(
+    tmp_path,
+    monkeypatch,
+):
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "llm_provider": "deepseek",
+                "llm_profiles": {
+                    "deepseek": {
+                        "base_url": "https://api.deepseek.com",
+                        "api_key": "deepseek-secret",
+                        "model": "deepseek-chat",
+                    },
+                    "nvidia": {
+                        "base_url": "https://integrate.api.nvidia.com/v1",
+                        "api_key": "nvidia-secret",
+                        "model": "nvidia/nemotron-3-ultra-550b-a55b",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config_module, "_SETTINGS_CANDIDATES", [settings_path])
+
+    runtime = config_module.get_llm_provider_runtime_config("nvidia")
+    status = config_module.get_llm_provider_status("nvidia")
+
+    assert runtime.provider == "nvidia"
+    assert runtime.api_key == "nvidia-secret"
+    assert runtime.model == "nvidia/nemotron-3-ultra-550b-a55b"
+    assert status["api_key_configured"] is True
+    assert config_module._active_llm_provider(config_module._read_settings()) == "deepseek"
+
+
 def test_public_config_reports_credentials_without_exposing_them():
     public = config_module._public_config(
         {

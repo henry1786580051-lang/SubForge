@@ -19,6 +19,7 @@ from subforge.core.utils.logger import setup_logger
 
 from .anthropic_client import MiniMaxAnthropicClient
 from .request_logger import create_logging_http_client, log_llm_error, log_llm_response
+from .telemetry import LLMTaskTelemetry, telemetry_for_client
 
 _global_client: Optional[Any] = None
 _global_client_identity: Optional[tuple[str, str]] = None
@@ -28,9 +29,20 @@ logger = setup_logger("llm_client")
 
 # Timeout for LLM API calls (seconds)
 LLM_TIMEOUT = 120.0
+KIMI_K3_REQUEST_TIMEOUT = 300.0
+NEMOTRON_3_ULTRA_REQUEST_TIMEOUT = 300.0
+NEMOTRON_3_ULTRA_TRANSIENT_MAX_ATTEMPTS = 12
+NEMOTRON_3_ULTRA_RETRY_SPACING = 1.5
+KIMI_K3_RATE_LIMIT_RETRY_SPACING = 2.0
+KIMI_K3_RATE_LIMIT_MAX_WAIT = 600.0
 PERSISTENT_RATE_LIMIT_MAX_WAIT = 60.0
 PERSISTENT_TRANSIENT_MAX_ATTEMPTS = 3
 ReasoningMode = Literal["default", "enabled", "disabled"]
+
+_kimi_k3_retry_lock = threading.Lock()
+_kimi_k3_next_retry_at = 0.0
+_nemotron_ultra_retry_lock = threading.Lock()
+_nemotron_ultra_next_retry_at = 0.0
 
 
 class LLMRequestCancelled(RuntimeError):
@@ -91,6 +103,7 @@ def create_client(base_url: str, api_key: str, *, timeout: float = LLM_TIMEOUT) 
     setattr(client, "_subforge_log_context", log_context)
     setattr(client, "_subforge_base_url", base_url)
     setattr(client, "_subforge_cancel_event", threading.Event())
+    setattr(client, "_subforge_telemetry", LLMTaskTelemetry())
     return client
 
 
@@ -134,6 +147,16 @@ def _wait_for_retry(client: Any, seconds: float) -> None:
     time.sleep(seconds)
 
 
+def _record_retry_telemetry(client: Any, *, kind: str, wait_seconds: float) -> None:
+    """Observe a selected retry delay without changing provider behavior."""
+    target = client if client is not None else _global_client
+    if target is None:
+        return
+    telemetry = telemetry_for_client(target)
+    if telemetry is not None:
+        telemetry.record_retry(kind=kind, wait_seconds=wait_seconds)
+
+
 def set_client_log_context(client: Any, **context: str) -> None:
     """Attach task metadata without changing the public client constructor."""
     target = getattr(client, "_subforge_log_context", None)
@@ -148,9 +171,7 @@ def get_llm_client() -> Any:
     base_url = normalize_base_url(os.getenv("OPENAI_BASE_URL", "").strip())
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not base_url or not api_key:
-        raise ValueError(
-            "OPENAI_BASE_URL and OPENAI_API_KEY environment variables must be set"
-        )
+        raise ValueError("OPENAI_BASE_URL and OPENAI_API_KEY environment variables must be set")
     identity = (base_url, api_key)
 
     if _global_client is None or _global_client_identity != identity:
@@ -205,9 +226,32 @@ def _is_deepseek_client(client: Any = None) -> bool:
     return hostname == "api.deepseek.com"
 
 
+def _normalized_model_leaf(model: str) -> str:
+    """Normalize the provider-independent model name from a namespaced ID."""
+    leaf = str(model or "").strip().strip("/").lower().rsplit("/", 1)[-1]
+    return re.sub(r"[^a-z0-9]+", "", leaf)
+
+
 def _is_deepseek_model(model: str) -> bool:
-    normalized = re.sub(r"[^a-z0-9]+", "", str(model or "").lower())
-    return normalized.startswith("deepseek")
+    return _normalized_model_leaf(model).startswith("deepseek")
+
+
+def is_deepseek_v4_model(model: str) -> bool:
+    """Return whether a bare or namespaced model ID selects DeepSeek V4."""
+    return _normalized_model_leaf(model).startswith("deepseekv4")
+
+
+def is_kimi_k3_model(model: str) -> bool:
+    """Return whether a bare or namespaced model ID selects Kimi K3."""
+    return _normalized_model_leaf(model) == "kimik3"
+
+
+def is_nemotron_3_ultra_model(model: str) -> bool:
+    """Return whether a model ID selects Nemotron 3 Ultra 550B A55B."""
+    return _normalized_model_leaf(model) in {
+        "nemotron3ultra550ba55b",
+        "nvidianemotron3ultra550ba55b",
+    }
 
 
 def _is_zhipu_client(client: Any = None) -> bool:
@@ -223,21 +267,23 @@ def _is_zhipu_client(client: Any = None) -> bool:
 
 
 def is_glm_53_model(model: str) -> bool:
-    """Return whether a model uses GLM 5.3's always-on thinking contract."""
-    normalized = re.sub(r"[^a-z0-9]+", "", str(model or "").lower())
-    return normalized.startswith("glm53")
+    """Return whether a bare or namespaced model ID selects GLM 5.3."""
+    return _normalized_model_leaf(model).startswith("glm53")
 
 
 def prefers_native_reasoning(model: str) -> bool:
     """Return whether a model benefits from SubForge's selective thinking path.
 
-    DeepSeek V4 can switch thinking on for sparse repairs. GLM 5.3 cannot disable
-    thinking, but maps the same intent to low/high reasoning effort at the provider
-    adapter. Other OpenAI-compatible providers must not receive speculative fields.
+    DeepSeek V4 and Nemotron 3 Ultra can switch thinking on for sparse repairs.
+    GLM 5.3 and Kimi K3 map the same routing to model-specific effort levels;
+    each provider adapter sends only controls documented by that endpoint.
+    Other OpenAI-compatible providers receive no speculative fields.
     """
-    normalized = re.sub(r"[^a-z0-9]+", "", str(model or "").lower())
-    return (normalized.startswith("deepseek") and "v4" in normalized) or is_glm_53_model(
-        model
+    return (
+        is_deepseek_v4_model(model)
+        or is_glm_53_model(model)
+        or is_kimi_k3_model(model)
+        or is_nemotron_3_ultra_model(model)
     )
 
 
@@ -270,6 +316,44 @@ def _persistent_rate_limit_wait_seconds(error: Exception, attempt: int) -> float
     return min(PERSISTENT_RATE_LIMIT_MAX_WAIT, base + random.uniform(0.0, 1.0))
 
 
+def _reserve_kimi_k3_retry_wait_seconds(
+    base_wait_seconds: float,
+    attempt: int,
+) -> float:
+    """Stagger K3 retries and cool down sustained free-endpoint throttling."""
+    global _kimi_k3_next_retry_at
+
+    now = time.monotonic()
+    if attempt <= 5:
+        cooldown = max(0.0, base_wait_seconds)
+    else:
+        cooldown_step = min(4, (attempt - 6) // 5)
+        cooldown = max(
+            base_wait_seconds,
+            min(KIMI_K3_RATE_LIMIT_MAX_WAIT, 60.0 * (2**cooldown_step)),
+        )
+    with _kimi_k3_retry_lock:
+        retry_at = max(
+            now + cooldown,
+            _kimi_k3_next_retry_at,
+        )
+        _kimi_k3_next_retry_at = retry_at + KIMI_K3_RATE_LIMIT_RETRY_SPACING
+    return max(0.0, retry_at - now)
+
+
+def _reserve_nemotron_ultra_retry_wait_seconds(base_wait_seconds: float) -> float:
+    """Stagger concurrent retries against Nemotron Ultra's shared free pool."""
+    global _nemotron_ultra_next_retry_at
+
+    now = time.monotonic()
+    with _nemotron_ultra_retry_lock:
+        retry_at = max(now + max(0.0, base_wait_seconds), _nemotron_ultra_next_retry_at)
+        _nemotron_ultra_next_retry_at = (
+            retry_at + NEMOTRON_3_ULTRA_RETRY_SPACING
+        )
+    return max(0.0, retry_at - now)
+
+
 def _call_llm_once(
     messages: List[dict],
     model: str,
@@ -289,6 +373,11 @@ def _call_llm_once(
     kwargs.pop("_subforge_cache_namespace", None)
     request_kwargs = dict(kwargs)
     deepseek_request = _is_deepseek_client(client) and _is_deepseek_model(model)
+    nvidia_request = _is_nvidia_client(client)
+    nvidia_deepseek_v4_request = nvidia_request and is_deepseek_v4_model(model)
+    nvidia_glm_53_request = nvidia_request and is_glm_53_model(model)
+    nvidia_kimi_k3_request = nvidia_request and is_kimi_k3_model(model)
+    nvidia_nemotron_ultra_request = nvidia_request and is_nemotron_3_ultra_model(model)
     zhipu_glm_53_request = _is_zhipu_client(client) and is_glm_53_model(model)
     if deepseek_request and reasoning_mode != "default":
         extra_body = dict(request_kwargs.pop("extra_body", {}) or {})
@@ -298,6 +387,61 @@ def _call_llm_once(
             request_kwargs.setdefault("reasoning_effort", "high")
     if deepseek_request and max_output_tokens is not None:
         request_kwargs["max_tokens"] = max(256, int(max_output_tokens))
+
+    if nvidia_deepseek_v4_request:
+        # NVIDIA exposes DeepSeek V4 reasoning through reasoning_effort rather
+        # than DeepSeek's provider-specific thinking object.
+        if reasoning_mode == "enabled":
+            requested_effort = str(request_kwargs.pop("reasoning_effort", "") or "").lower()
+            request_kwargs["reasoning_effort"] = (
+                requested_effort if requested_effort in {"high", "max"} else "high"
+            )
+        elif reasoning_mode == "disabled":
+            request_kwargs["reasoning_effort"] = "none"
+        if max_output_tokens is not None:
+            request_kwargs["max_tokens"] = max(256, int(max_output_tokens))
+
+    if nvidia_glm_53_request and max_output_tokens is not None:
+        # NVIDIA's public GLM contract currently documents only standard
+        # OpenAI-compatible controls. Model-family prompts and audit routing
+        # still apply, while unsupported thinking fields stay provider-local.
+        request_kwargs["max_tokens"] = max(256, int(max_output_tokens))
+
+    if nvidia_kimi_k3_request:
+        # Kimi K3 always thinks. Use its documented low/high effort control so
+        # routine batches stay economical while confirmed repairs get more depth.
+        requested_effort = str(request_kwargs.pop("reasoning_effort", "") or "").lower()
+        request_kwargs["reasoning_effort"] = (
+            requested_effort
+            if reasoning_mode == "enabled" and requested_effort in {"high", "max"}
+            else "high"
+            if reasoning_mode == "enabled"
+            else "low"
+        )
+        if max_output_tokens is not None:
+            request_kwargs["max_tokens"] = max(256, int(max_output_tokens))
+        request_kwargs["temperature"] = 1.0
+        request_kwargs.setdefault("top_p", 0.95)
+        # NVIDIA's free K3 endpoint can queue a valid request for longer than
+        # the generic two-minute client deadline. Avoid turning slow service
+        # into duplicate retries and additional rate-limit pressure.
+        request_kwargs.setdefault("timeout", KIMI_K3_REQUEST_TIMEOUT)
+
+    if nvidia_nemotron_ultra_request:
+        # The hosted endpoint defaults to generating a full reasoning trace.
+        # Keep constrained subtitle work direct and reserve thinking for the
+        # sparse semantic repairs selected by the existing audit pipeline.
+        request_kwargs.pop("reasoning_effort", None)
+        extra_body = dict(request_kwargs.pop("extra_body", {}) or {})
+        chat_template_kwargs = dict(extra_body.get("chat_template_kwargs", {}) or {})
+        chat_template_kwargs["enable_thinking"] = reasoning_mode == "enabled"
+        extra_body["chat_template_kwargs"] = chat_template_kwargs
+        request_kwargs["extra_body"] = extra_body
+        if max_output_tokens is not None:
+            request_kwargs["max_tokens"] = max(256, int(max_output_tokens))
+        request_kwargs["temperature"] = 1.0
+        request_kwargs.setdefault("top_p", 0.95)
+        request_kwargs.setdefault("timeout", NEMOTRON_3_ULTRA_REQUEST_TIMEOUT)
 
     if zhipu_glm_53_request:
         # GLM 5.3/5.3-Flash reject thinking.type=disabled. Preserve SubForge's
@@ -320,7 +464,15 @@ def _call_llm_once(
 
     # DeepSeek ignores sampling parameters in thinking mode. Omitting them keeps
     # request logs honest and avoids relying on compatibility-only behavior.
-    if not zhipu_glm_53_request and not (deepseek_request and reasoning_mode == "enabled"):
+    thinking_deepseek_request = (
+        deepseek_request or nvidia_deepseek_v4_request
+    ) and reasoning_mode == "enabled"
+    if (
+        not zhipu_glm_53_request
+        and not nvidia_kimi_k3_request
+        and not nvidia_nemotron_ultra_request
+        and not thinking_deepseek_request
+    ):
         request_kwargs["temperature"] = temperature
 
     try:
@@ -330,10 +482,24 @@ def _call_llm_once(
             **request_kwargs,
         )
     except Exception as exc:
-        log_llm_error(exc)
+        telemetry_entry = log_llm_error(exc)
+        telemetry = telemetry_for_client(client)
+        if telemetry is not None and telemetry_entry is not None:
+            telemetry.record_attempt(
+                telemetry_entry,
+                succeeded=False,
+                reasoning_mode=reasoning_mode,
+            )
         raise
 
-    log_llm_response(response)
+    telemetry_entry = log_llm_response(response)
+    telemetry = telemetry_for_client(client)
+    if telemetry is not None and telemetry_entry is not None:
+        telemetry.record_attempt(
+            telemetry_entry,
+            succeeded=True,
+            reasoning_mode=reasoning_mode,
+        )
     return response
 
 
@@ -359,6 +525,11 @@ def _call_standard_llm_api(
                 wait_seconds,
                 attempt + 1,
             )
+            _record_retry_telemetry(
+                client,
+                kind=("rate_limit" if isinstance(error, openai.RateLimitError) else "transient"),
+                wait_seconds=wait_seconds,
+            )
             _wait_for_retry(client, wait_seconds)
     raise RuntimeError("LLM retry loop exited unexpectedly")
 
@@ -369,6 +540,10 @@ def _call_until_provider_available(
     temperature: float = 1,
     client: Optional[OpenAI] = None,
     provider_name: str = "LLM provider",
+    stagger_rate_limits: bool = False,
+    stagger_nemotron_rate_limits: bool = False,
+    transient_max_attempts: int = PERSISTENT_TRANSIENT_MAX_ATTEMPTS,
+    stagger_transient_errors: bool = False,
     **kwargs: Any,
 ) -> Any:
     """Wait through rate limits until a persistent provider accepts the request."""
@@ -380,12 +555,21 @@ def _call_until_provider_available(
         except (openai.RateLimitError, anthropic.RateLimitError) as error:
             attempt += 1
             wait_seconds = _persistent_rate_limit_wait_seconds(error, attempt)
+            if stagger_rate_limits:
+                wait_seconds = _reserve_kimi_k3_retry_wait_seconds(wait_seconds, attempt)
+            elif stagger_nemotron_rate_limits:
+                wait_seconds = _reserve_nemotron_ultra_retry_wait_seconds(wait_seconds)
             logger.warning(
                 "%s is rate limited; waiting %.1fs before retry %d. "
                 "The task will remain active until service recovers.",
                 provider_name,
                 wait_seconds,
                 attempt,
+            )
+            _record_retry_telemetry(
+                client,
+                kind="rate_limit",
+                wait_seconds=wait_seconds,
             )
             _wait_for_retry(client, wait_seconds)
         except (
@@ -394,16 +578,23 @@ def _call_until_provider_available(
             openai.APIConnectionError,
         ) as error:
             transient_attempt += 1
-            if transient_attempt >= PERSISTENT_TRANSIENT_MAX_ATTEMPTS:
+            if transient_attempt >= transient_max_attempts:
                 raise
             wait_seconds = min(30.0, float(2**transient_attempt))
+            if stagger_transient_errors:
+                wait_seconds = _reserve_nemotron_ultra_retry_wait_seconds(wait_seconds)
             logger.warning(
                 "%s request failed with %s; waiting %.1fs before bounded retry %d/%d.",
                 provider_name,
                 type(error).__name__,
                 wait_seconds,
                 transient_attempt + 1,
-                PERSISTENT_TRANSIENT_MAX_ATTEMPTS,
+                transient_max_attempts,
+            )
+            _record_retry_telemetry(
+                client,
+                kind="transient",
+                wait_seconds=wait_seconds,
             )
             _wait_for_retry(client, wait_seconds)
 
@@ -417,12 +608,21 @@ def _call_llm_api(
 ) -> Any:
     """Dispatch to the model-specific retry policy."""
     if _is_nvidia_client(client):
+        nemotron_ultra = is_nemotron_3_ultra_model(model)
         return _call_until_provider_available(
             messages,
             model,
             temperature,
             client=client,
             provider_name="NVIDIA API",
+            stagger_rate_limits=is_kimi_k3_model(model),
+            stagger_nemotron_rate_limits=nemotron_ultra,
+            transient_max_attempts=(
+                NEMOTRON_3_ULTRA_TRANSIENT_MAX_ATTEMPTS
+                if nemotron_ultra
+                else PERSISTENT_TRANSIENT_MAX_ATTEMPTS
+            ),
+            stagger_transient_errors=nemotron_ultra,
             **kwargs,
         )
     if _is_zhipu_client(client) and is_glm_53_model(model):
@@ -469,6 +669,7 @@ def call_llm(
     use_cache: bool = True,
     reasoning_mode: ReasoningMode = "default",
     max_output_tokens: Optional[int] = None,
+    cache_namespace: str = "",
     **kwargs: Any,
 ) -> Any:
     """Call LLM API with optional caching.
@@ -479,6 +680,7 @@ def call_llm(
             race conditions when multiple tasks use different credentials.
             Also bypasses cache (client object is not serializable).
         use_cache: Whether to use the disk LLM cache for global-client calls.
+        cache_namespace: Optional pipeline identity appended to global cache keys.
     """
     if reasoning_mode not in {"default", "enabled", "disabled"}:
         raise ValueError(f"Unsupported reasoning_mode: {reasoning_mode}")
@@ -493,13 +695,15 @@ def call_llm(
         response = _call_llm_api(messages, model, temperature, **kwargs)
     else:
         # Global singleton path: use cache
+        provider_namespace = normalize_base_url(os.getenv("OPENAI_BASE_URL", "").strip())
+        scoped_namespace = str(cache_namespace or "").strip()
+        if scoped_namespace:
+            provider_namespace = f"{provider_namespace}|{scoped_namespace}"
         response = _call_llm_cached(
             messages,
             model,
             temperature,
-            _subforge_cache_namespace=normalize_base_url(
-                os.getenv("OPENAI_BASE_URL", "").strip()
-            ),
+            _subforge_cache_namespace=provider_namespace,
             **kwargs,
         )
 

@@ -217,18 +217,18 @@ def create_logging_http_client(
     )
 
 
-def log_llm_response(response: Any) -> None:
+def log_llm_response(response: Any) -> dict[str, Any] | None:
     """记录完整的请求+响应（在 SDK 解析响应后调用）"""
     key = _current_request_key.get()
     if key is None:
         logger.debug("No request context found for LLM response log")
-        return
+        return None
 
     with _log_lock:
         pending = _pending_requests.pop(key, None)
     _current_request_key.set(None)
     if pending is None:
-        return
+        return None
 
     # HTTP response hooks run when headers arrive. The SDK may still spend most of
     # the request reading and parsing a long generated body, so close the timer here.
@@ -278,18 +278,19 @@ def log_llm_response(response: Any) -> None:
         log_entry["response"] = response_data
 
     _write_log(log_entry)
+    return log_entry
 
 
-def log_llm_error(error: Exception) -> None:
+def log_llm_error(error: Exception) -> dict[str, Any] | None:
     """Log and release the exact pending request when the SDK raises."""
     key = _current_request_key.get()
     if key is None:
-        return
+        return None
     with _log_lock:
         pending = _pending_requests.pop(key, None)
     _current_request_key.set(None)
     if pending is None:
-        return
+        return None
 
     ctx = get_task_context()
     explicit_ctx = pending.get("context", {})
@@ -314,3 +315,4 @@ def log_llm_error(error: Exception) -> None:
     if pending.get("log_level") != "summary":
         log_entry["request"] = pending.get("request", {})
     _write_log(log_entry)
+    return log_entry

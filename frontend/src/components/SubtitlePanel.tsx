@@ -3,18 +3,21 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useAppStore } from "@/store/appStore";
-import { subtitleApi, subtitlesApi, filesApi, configApi } from "@/lib/api";
+import { subtitlesApi, filesApi, configApi } from "@/lib/api";
+import type { TaskStarter } from "@/lib/useTaskMonitor";
 
 export function SubtitlePanel({
+  startTask,
   focusRequest = null,
   showPrompt = true,
   showTranslateActions = true,
 }: {
+  startTask: TaskStarter;
   focusRequest?: { id: number; token: number } | null;
   showPrompt?: boolean;
   showTranslateActions?: boolean;
-} = {}) {
-  const { subtitles, setSubtitles, updateSubtitle, selectedIds, toggleSelect, selectAll, deselectAll, subtitleFile, videoFile, config, setError } = useAppStore();
+}) {
+  const { subtitles, setSubtitles, updateSubtitle, selectedIds, toggleSelect, selectAll, deselectAll, subtitleFile, videoFile, config, setError, isProcessing } = useAppStore();
   const [editingCell, setEditingCell] = useState<{ id: number; field: "text" | "translated" } | null>(null);
   const [editValue, setEditValue] = useState("");
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: number | null } | null>(null);
@@ -98,61 +101,27 @@ export function SubtitlePanel({
     deselectAll();
   }, [subtitles, setSubtitles, deselectAll, setError]);
 
-  const translateAll = useCallback(async () => {
-    if (!subtitleFile) return;
+  const runTranslation = useCallback(async (needOptimize: boolean) => {
+    if (!subtitleFile || useAppStore.getState().isProcessing) return;
     setIsTranslating(true);
-    const store = useAppStore.getState();
-    store.setError(null);
-    store.setIsProcessing(true);
-    store.setTaskState(0, "Starting translation...", "running");
     try {
-      const result = await subtitleApi.start({
+      await startTask("subtitle", {
         subtitle_file: subtitleFile,
         media_file: videoFile || undefined,
         target_language: config.targetLanguage,
         translator: config.translator,
         llm_provider: config.llmProvider,
         llm_model: config.llmModel,
-        need_optimize: false,
+        need_optimize: needOptimize,
         need_translate: true,
         need_reflect: config.needReflect,
         custom_prompt: config.customPrompt,
       });
-      store.setCurrentTaskId(result.task_id);
-    } catch (err) {
-      store.setError(err instanceof Error ? err.message : "Translation failed");
-      store.setTaskState(0, "", "idle");
-      store.setIsProcessing(false);
     } finally { setIsTranslating(false); }
-  }, [subtitleFile, videoFile, config]);
+  }, [subtitleFile, videoFile, config, startTask]);
 
-  const retranslateAll = useCallback(async () => {
-    if (!subtitleFile) return;
-    setIsTranslating(true);
-    const store = useAppStore.getState();
-    store.setError(null);
-    store.setIsProcessing(true);
-    store.setTaskState(0, "Starting translation...", "running");
-    try {
-      const result = await subtitleApi.start({
-        subtitle_file: subtitleFile,
-        media_file: videoFile || undefined,
-        target_language: config.targetLanguage,
-        translator: config.translator,
-        llm_provider: config.llmProvider,
-        llm_model: config.llmModel,
-        need_optimize: config.needOptimize,
-        need_translate: true,
-        need_reflect: config.needReflect,
-        custom_prompt: config.customPrompt,
-      });
-      store.setCurrentTaskId(result.task_id);
-    } catch (err) {
-      store.setError(err instanceof Error ? err.message : "Translation failed");
-      store.setTaskState(0, "", "idle");
-      store.setIsProcessing(false);
-    } finally { setIsTranslating(false); }
-  }, [subtitleFile, videoFile, config]);
+  const translateAll = useCallback(() => runTranslation(false), [runTranslation]);
+  const retranslateAll = useCallback(() => runTranslation(config.needOptimize), [runTranslation, config.needOptimize]);
 
   const [exportFormat, setExportFormat] = useState<"srt" | "vtt" | "ass" | "txt" | "json">("srt");
   const [exportMode, setExportMode] = useState<"original" | "translated" | "bilingual">("bilingual");
@@ -321,10 +290,10 @@ export function SubtitlePanel({
           <div className="w-px h-3.5 bg-border mx-1" />
           {showTranslateActions && (
             <>
-              <button onClick={translateAll} disabled={!subtitleFile || isTranslating} className="px-2 py-1 text-[12px] rounded text-text-muted hover:text-accent hover:bg-accent-dim transition-all disabled:opacity-30 btn-press" title="翻译全部 (Ctrl+T)">
+              <button onClick={translateAll} disabled={!subtitleFile || isTranslating || isProcessing} className="px-2 py-1 text-[12px] rounded text-text-muted hover:text-accent hover:bg-accent-dim transition-all disabled:opacity-30 btn-press" title="翻译全部 (Ctrl+T)">
                 {isTranslating ? "翻译中..." : "翻译全部"}
               </button>
-              <button onClick={retranslateAll} disabled={isTranslating} className="px-2 py-1 text-[12px] rounded text-text-muted hover:text-accent hover:bg-accent-dim transition-all disabled:opacity-30 btn-press">
+              <button onClick={retranslateAll} disabled={isTranslating || isProcessing} className="px-2 py-1 text-[12px] rounded text-text-muted hover:text-accent hover:bg-accent-dim transition-all disabled:opacity-30 btn-press">
                 重新翻译全部
               </button>
             </>
@@ -370,7 +339,7 @@ export function SubtitlePanel({
             合并
           </button>
           <div className="h-px bg-border my-1" />
-          <button onClick={() => { translateAll(); setContextMenu(null); }} disabled={!subtitleFile} className="w-full px-3 py-1.5 text-left text-[12px] text-accent hover:bg-accent-dim flex items-center gap-2 disabled:opacity-30">
+          <button onClick={() => { translateAll(); setContextMenu(null); }} disabled={!subtitleFile || isTranslating || isProcessing} className="w-full px-3 py-1.5 text-left text-[12px] text-accent hover:bg-accent-dim flex items-center gap-2 disabled:opacity-30">
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" /></svg>
             翻译全部
           </button>

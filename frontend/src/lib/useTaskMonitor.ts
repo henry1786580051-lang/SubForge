@@ -12,6 +12,11 @@ import {
 } from "@/lib/api";
 import { mergeTaskPreview } from "@/lib/taskPreview";
 
+export type TaskStarter = (
+  type: "transcribe" | "subtitle",
+  payload: Record<string, unknown>
+) => Promise<void>;
+
 function getWebSocketBase(): string {
   if (API_BASE) return API_BASE.replace(/^http/, "ws");
   if (typeof window === "undefined") return "";
@@ -48,11 +53,39 @@ export function useTaskMonitor() {
   // optimization/translation often changes text without changing segment count.
   const lastPartialKeyRef = useRef<string | null>(null);
   const previewRevisionRef = useRef(0);
+  const updateGuardRef = useRef({ taskId: "", terminal: false, generation: 0 });
+  const actionGenerationRef = useRef(0);
+  const pendingStartRef = useRef<number | null>(null);
 
   function handleTaskUpdate(task: TaskInfo) {
     // Guard against stale task updates (e.g., after cancel)
     const store = useAppStore.getState();
     if (task.id !== store.currentTaskId) return;
+    const guard = updateGuardRef.current;
+    if (guard.taskId !== task.id) {
+      guard.taskId = task.id;
+      guard.terminal = false;
+      guard.generation++;
+      previewRevisionRef.current = 0;
+      lastPartialKeyRef.current = null;
+    }
+    // Terminal updates are sticky: an in-flight poll must not restart a task or
+    // replace the completed editor with an older partial file.
+    if (guard.terminal) return;
+    guard.terminal = ["completed", "failed", "cancelled"].includes(task.status);
+    const partialKey = `${task.subtitle_file}:${task.progress}:${task.message}`;
+    const legacyPreview = task.status === "running" && task.subtitle_file
+      && !task.preview_revision && !task.preview_delta && !task.preview_segments;
+    if (guard.terminal || (task.preview_revision || 0) > previewRevisionRef.current
+      || (legacyPreview && partialKey !== lastPartialKeyRef.current)) {
+      guard.generation++;
+    }
+    const generation = guard.generation;
+    let expectedSubtitles = store.subtitles;
+    const isCurrentRead = () => aliveRef.current
+      && task.id === useAppStore.getState().currentTaskId
+      && generation === updateGuardRef.current.generation
+      && expectedSubtitles === useAppStore.getState().subtitles;
 
     const uiStatus = task.status === "cancelled" ? "idle" : task.status;
     setTaskState(
@@ -74,16 +107,16 @@ export function useTaskMonitor() {
       setSubtitles(previewUpdate.segments);
       previewRevisionRef.current = previewUpdate.revision;
     }
+    expectedSubtitles = useAppStore.getState().subtitles;
 
     // Compatibility fallback for older backends that only expose a partial file.
-    if (task.status === "running" && task.subtitle_file) {
-      const partialKey = `${task.subtitle_file}:${task.progress}:${task.message}`;
+    if (legacyPreview && task.subtitle_file) {
       if (partialKey === lastPartialKeyRef.current) return;
       lastPartialKeyRef.current = partialKey;
       subtitlesApi
         .load(task.subtitle_file)
         .then((subFile) => {
-          if (task.id !== useAppStore.getState().currentTaskId) return;
+          if (!isCurrentRead()) return;
           if (!task.preview_segments) setSubtitles(subFile.segments);
         })
         .catch(() => {});
@@ -104,11 +137,11 @@ export function useTaskMonitor() {
         subtitlesApi
           .load(result.subtitle_file as string)
           .then((subFile) => {
-            if (task.id !== useAppStore.getState().currentTaskId) return;
+            if (!isCurrentRead()) return;
             setSubtitles(subFile.segments);
           })
           .catch((err) => {
-            if (task.id !== useAppStore.getState().currentTaskId) return;
+            if (!isCurrentRead()) return;
             setError(err instanceof Error ? err.message : "Failed to load subtitles");
           });
       }
@@ -130,11 +163,11 @@ export function useTaskMonitor() {
         subtitlesApi
           .load(result.subtitle_file as string)
           .then((subFile) => {
-            if (task.id !== useAppStore.getState().currentTaskId) return;
+            if (!isCurrentRead()) return;
             setSubtitles(subFile.segments);
           })
           .catch((err) => {
-            if (task.id !== useAppStore.getState().currentTaskId) return;
+            if (!isCurrentRead()) return;
             setError(err instanceof Error ? err.message : "Failed to load translated subtitles");
           });
       }
@@ -152,7 +185,7 @@ export function useTaskMonitor() {
           subtitlesApi
             .load(recoveryFile)
             .then((subFile) => {
-              if (task.id !== useAppStore.getState().currentTaskId) return;
+              if (!isCurrentRead()) return;
               setSubtitles(subFile.segments);
             })
             .catch(() => {});
@@ -177,8 +210,9 @@ export function useTaskMonitor() {
   const connectWs = useCallback(() => {
     // Close existing connection first
     if (wsRef.current) {
-      wsRef.current.close();
+      const previous = wsRef.current;
       wsRef.current = null;
+      previous.close();
     }
     try {
       const ws = new WebSocket(`${getWebSocketBase()}/ws/tasks`);
@@ -201,7 +235,8 @@ export function useTaskMonitor() {
       };
       ws.onerror = () => {};
       ws.onclose = () => {
-        if (aliveRef.current) {
+        if (aliveRef.current && wsRef.current === ws) {
+          wsRef.current = null;
           wsTimeoutRef.current = setTimeout(() => connectWsRef.current(), 3000);
         }
       };
@@ -233,12 +268,17 @@ export function useTaskMonitor() {
       return;
     }
 
+    let pending = false;
     pollRef.current = setInterval(async () => {
+      if (pending) return;
+      pending = true;
       try {
         const task = await tasksApi.get(currentTaskId);
         handleTaskUpdateRef.current(task);
       } catch {
         // ignore poll errors
+      } finally {
+        pending = false;
       }
     }, 1000);
 
@@ -252,6 +292,19 @@ export function useTaskMonitor() {
       type: "transcribe" | "subtitle",
       payload: Record<string, unknown>
     ) => {
+      const store = useAppStore.getState();
+      if (pendingStartRef.current !== null
+        || (store.currentTaskId && store.taskStatus === "running")) return;
+      const generation = ++actionGenerationRef.current;
+      pendingStartRef.current = generation;
+      const isCurrentStart = () => aliveRef.current
+        && generation === actionGenerationRef.current
+        && useAppStore.getState().currentTaskId === null;
+      // Detach the old task before awaiting the new ID, including any late reads.
+      updateGuardRef.current.generation++;
+      setCurrentTaskId(null);
+      if (pollRef.current) clearInterval(pollRef.current);
+      setIsProcessing(true);
       setError(null);
       setTaskState(0, "Starting...", "running");
       setTaskAttention(null);
@@ -269,11 +322,26 @@ export function useTaskMonitor() {
             payload as Parameters<typeof subtitleApi.start>[0]
           );
         }
-        setCurrentTaskId(result.task_id);
+        if (isCurrentStart()) {
+          setCurrentTaskId(result.task_id);
+        } else {
+          // Cancelling the pending HTTP request alone cannot stop a backend task
+          // that was already created. Retire its late ID instead of attaching it.
+          try {
+            await tasksApi.cancel(result.task_id);
+          } catch (err) {
+            if (aliveRef.current) {
+              setError(`无法确认旧任务已取消：${err instanceof Error ? err.message : result.task_id}`);
+            }
+          }
+        }
       } catch (err) {
+        if (!isCurrentStart()) return;
         setError(err instanceof Error ? err.message : "Failed to start task");
         setTaskState(0, "", "idle");
         setIsProcessing(false);
+      } finally {
+        if (pendingStartRef.current === generation) pendingStartRef.current = null;
       }
     },
     [setCurrentTaskId, setError, setTaskAttention, setTaskState, setIsProcessing]
@@ -281,19 +349,41 @@ export function useTaskMonitor() {
 
   const cancelTask = useCallback(async () => {
     const taskId = useAppStore.getState().currentTaskId;
+    const generation = ++actionGenerationRef.current;
+    pendingStartRef.current = null;
+    const isCurrentCancellation = () => aliveRef.current
+      && generation === actionGenerationRef.current
+      && taskId === useAppStore.getState().currentTaskId
+      && !(updateGuardRef.current.taskId === taskId && updateGuardRef.current.terminal);
     if (taskId) {
       try {
         await tasksApi.cancel(taskId);
-      } catch {
-        // ignore
+      } catch (err) {
+        if (!isCurrentCancellation()) return;
+        // Completion may have won the race. Otherwise keep monitoring instead
+        // of presenting an unacknowledged cancellation as a stopped worker.
+        try {
+          const latest = await tasksApi.get(taskId);
+          if (!isCurrentCancellation()) return;
+          handleTaskUpdateRef.current(latest);
+          if (["completed", "failed", "cancelled"].includes(latest.status)) return;
+        } catch {
+          // Retain the current task so a later poll can reconnect.
+        }
+        if (isCurrentCancellation()) {
+          setError(`取消任务失败：${err instanceof Error ? err.message : "请重试"}`);
+        }
+        return;
       }
     }
+    if (!isCurrentCancellation()) return;
+    updateGuardRef.current.generation++;
     if (pollRef.current) clearInterval(pollRef.current);
     setIsProcessing(false);
     setTaskAttention(null);
     setTaskState(0, "", "idle");
     setCurrentTaskId(null);
-  }, [setIsProcessing, setTaskAttention, setTaskState, setCurrentTaskId]);
+  }, [setIsProcessing, setTaskAttention, setTaskState, setCurrentTaskId, setError]);
 
   return { startTask, cancelTask };
 }

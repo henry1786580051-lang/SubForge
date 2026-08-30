@@ -3,6 +3,7 @@
 
 Starts FastAPI backend in background and opens a native window.
 """
+
 import base64
 import multiprocessing
 import os
@@ -312,13 +313,13 @@ def main():
 
     # Open native window with JS API
     import webview
+
     api = Api()
 
     def on_loaded():
         """Signal that pywebview API is ready."""
         webview.windows[0].evaluate_js(
-            "window.__pywebview_ready = true; "
-            "window.dispatchEvent(new Event('pywebviewready'));"
+            "window.__pywebview_ready = true; window.dispatchEvent(new Event('pywebviewready'));"
         )
 
     window = webview.create_window(
@@ -438,10 +439,14 @@ if __name__ == "__main__":
             install_whisperx_runtime_stubs()
             from whisperx.alignment import align as _align  # noqa: F401
             from whisperx.alignment import load_align_model as _load_align_model  # noqa: F401
-            from whisperx.asr import load_model as _load_model  # noqa: F401
             from whisperx.audio import load_audio as _load_audio  # noqa: F401
 
-            print("WhisperX ASR import: ok")
+            # macOS uses MLX Whisper for ASR and WhisperX only for forced
+            # alignment. Windows packages WhisperX ASR/FasterWhisper as well.
+            if sys.platform == "win32":
+                from whisperx.asr import load_model as _load_model  # noqa: F401
+
+            print("WhisperX runtime import: ok")
             print("WhisperX forced alignment import: ok")
             raise SystemExit(0)
         except Exception:
@@ -461,11 +466,7 @@ if __name__ == "__main__":
                 raise RuntimeError("MLX Metal probe returned an invalid result")
 
             mps_backend = getattr(getattr(torch, "backends", None), "mps", None)
-            if not (
-                mps_backend
-                and mps_backend.is_built()
-                and mps_backend.is_available()
-            ):
+            if not (mps_backend and mps_backend.is_built() and mps_backend.is_available()):
                 raise RuntimeError("PyTorch MPS is unavailable in this execution session")
             mps_probe = torch.ones(1, device="mps") + 1
             if float(mps_probe.cpu().item()) != 2.0:
@@ -491,7 +492,9 @@ if __name__ == "__main__":
             print("WhisperX alignment import: ok")
             print(f"Default MLX model: {default_mlx_model()}")
             print(f"Default align model: {DEFAULT_EN_ALIGN_MODEL}")
-            print(f"Align model file: {align_file} ({'found' if align_file.exists() else 'missing'})")
+            print(
+                f"Align model file: {align_file} ({'found' if align_file.exists() else 'missing'})"
+            )
             raise SystemExit(0)
         except Exception:
             traceback.print_exc()
@@ -539,6 +542,8 @@ if __name__ == "__main__":
                 "/api/transcribe/start",
                 "/api/subtitle/start",
                 "/api/subtitles/load",
+                "/api/free-models/nvidia",
+                "/api/free-models/nvidia/scan",
             }
             missing = required_paths - route_paths
             if missing:

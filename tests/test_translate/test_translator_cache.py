@@ -28,7 +28,12 @@ class FakeCache:
 
 
 class DummyTranslator(BaseTranslator):
-    def __init__(self, fake_cache: FakeCache, use_cache: bool):
+    def __init__(
+        self,
+        fake_cache: FakeCache,
+        use_cache: bool,
+        cache_namespace: str = "",
+    ):
         self.fake_cache = fake_cache
         super().__init__(
             thread_num=1,
@@ -36,6 +41,7 @@ class DummyTranslator(BaseTranslator):
             target_language=TargetLanguage.SIMPLIFIED_CHINESE,
             update_callback=None,
             use_cache=use_cache,
+            cache_namespace=cache_namespace,
         )
 
     def _translate_chunk(self, subtitle_chunk):
@@ -132,6 +138,32 @@ def test_translator_uses_cache_when_enabled(monkeypatch):
     assert fake_cache.set_calls == 0
 
 
+def test_candidate_translator_cache_cannot_read_legacy_entries(monkeypatch):
+    fake_cache = FakeCache()
+    legacy_key = "DummyTranslator:any:简体中文"
+    candidate_key = f"translation-quality:candidate:phase8-r1:{legacy_key}"
+    fake_cache.values[legacy_key] = [
+        SubtitleProcessData(index=1, original_text="Hello", translated_text="旧译文")
+    ]
+    monkeypatch.setattr(translate_base, "get_translate_cache", lambda: fake_cache)
+    monkeypatch.setattr(translate_base, "is_cache_enabled", lambda: True)
+
+    translator = DummyTranslator(
+        fake_cache,
+        use_cache=True,
+        cache_namespace="translation-quality:candidate:phase8-r1",
+    )
+    translator._get_cache_key = lambda _chunk: legacy_key
+
+    result = translator._safe_translate_chunk(
+        [SubtitleProcessData(index=1, original_text="Hello")]
+    )
+
+    assert result[0].translated_text == "新译文:Hello"
+    assert candidate_key in fake_cache.values
+    assert fake_cache.values[legacy_key][0].translated_text == "旧译文"
+
+
 def test_translate_subtitle_rejects_failed_chunks(monkeypatch):
     fake_cache = FakeCache()
     monkeypatch.setattr(translate_base, "get_translate_cache", lambda: fake_cache)
@@ -197,6 +229,43 @@ def test_complete_recovery_becomes_success_after_finalization_and_validation(
     assert [item.index for item in progress[-1]] == list(range(1, 11))
     assert progress[-1][-1].translated_text == "收尾审计后的恢复译文"
     assert result.segments[-1].translated_text == "收尾审计后的恢复译文"
+
+
+@pytest.mark.parametrize("failure", ["request", "validation"])
+def test_failed_recovery_finalization_runs_once_and_preserves_the_checkpoint(
+    monkeypatch, failure
+):
+    fake_cache = FakeCache()
+    monkeypatch.setattr(translate_base, "get_translate_cache", lambda: fake_cache)
+    monkeypatch.setattr(translate_base, "is_cache_enabled", lambda: False)
+    translator = PartiallyFailingTranslator(fake_cache, use_cache=False)
+    progress = []
+    calls = []
+    translator.update_callback = lambda items: progress.append(
+        [(item.index, item.translated_text) for item in items]
+    )
+    data = ASRData([
+        ASRDataSeg(f"source {index}", index * 1000, (index + 1) * 1000)
+        for index in range(10)
+    ])
+
+    def reject_finalization(source, translated):
+        calls.append([item.index for item in source])
+        translated[0].translated_text = ""
+        if failure == "request":
+            raise RuntimeError("provider unavailable after an intermediate rewrite")
+        return translated
+
+    monkeypatch.setattr(translator, "_finalize_translated_list", reject_finalization)
+    with pytest.raises(RuntimeError, match="Single item translation failed"):
+        translator.translate_subtitle(data)
+
+    assert len(calls) == 1
+    assert progress[-1] == [
+        *[(index, f"译文{index}") for index in range(1, 10)],
+        (10, "最后一次可恢复的候选译文"),
+    ]
+    assert all(not segment.translated_text for segment in data.segments)
 
 
 @pytest.mark.parametrize(

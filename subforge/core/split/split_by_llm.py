@@ -59,6 +59,7 @@ def split_by_llm(
     hard_max_word_count_english: int | None = None,
     llm_client: Any = None,
     target_language: str = "",
+    cache_namespace: str = "",
 ) -> List[str]:
     """使用LLM进行文本断句（固定使用句子Segments）
 
@@ -82,6 +83,7 @@ def split_by_llm(
             hard_max_word_count_english or policy.english_hard_limit,
             llm_client,
             target_language,
+            cache_namespace,
         )
     except Exception as e:
         logger.error(f"Sentence splitting failed: {e}")
@@ -96,6 +98,7 @@ def _split_with_agent_loop(
     hard_max_word_count_english: int,
     llm_client: Any = None,
     target_language: str = "",
+    cache_namespace: str = "",
 ) -> List[str]:
     """使用agent loop 建立反馈循环进行文本断句，自动验证和修正"""
     prompt_path = "split/sentence"
@@ -132,6 +135,7 @@ def _split_with_agent_loop(
             model=model,
             temperature=0.1,
             client=llm_client,
+            cache_namespace=cache_namespace,
             # Splitting is a constrained copy task: the model may only insert
             # <br> markers. Native reasoning can consume the entire output
             # budget before emitting those markers, so reserve it for the

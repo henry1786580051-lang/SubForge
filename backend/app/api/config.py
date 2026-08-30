@@ -241,6 +241,60 @@ def get_llm_runtime_config() -> LlmRuntimeConfig:
     return runtime
 
 
+def get_llm_provider_runtime_config(provider: str) -> LlmRuntimeConfig:
+    """Resolve one saved provider profile without changing the active provider."""
+    if provider not in _LLM_PROVIDER_URLS:
+        raise ValueError(f"Unsupported LLM provider: {provider}")
+    with _settings_lock:
+        stored = _read_settings()
+        profiles = _sanitize_llm_profiles(stored.get("llm_profiles"))
+        profile = profiles.get(provider)
+        if profile is None and _active_llm_provider(stored) == provider:
+            profile = {
+                "base_url": str(stored.get("llm_base_url") or ""),
+                "api_key": str(stored.get("llm_api_key") or ""),
+                "model": str(stored.get("llm_model") or ""),
+            }
+        profile = profile or {
+            "base_url": _LLM_PROVIDER_URLS[provider],
+            "api_key": "",
+            "model": "",
+        }
+        runtime = LlmRuntimeConfig(
+            provider=provider,
+            base_url=str(profile.get("base_url") or _LLM_PROVIDER_URLS[provider]).strip(),
+            api_key=usable_secret_value(
+                restore_secret_value(profile.get("api_key"))
+            ),
+            model=str(profile.get("model") or "").strip(),
+        )
+    validate_llm_runtime_config(runtime)
+    return runtime
+
+
+def get_llm_provider_status(provider: str) -> dict[str, str | bool]:
+    """Return non-secret saved profile metadata without opening the keychain."""
+    if provider not in _LLM_PROVIDER_URLS:
+        raise ValueError(f"Unsupported LLM provider: {provider}")
+    with _settings_lock:
+        stored = _read_settings()
+        profiles = _sanitize_llm_profiles(stored.get("llm_profiles"))
+        profile = profiles.get(provider)
+        if profile is None and _active_llm_provider(stored) == provider:
+            profile = {
+                "base_url": str(stored.get("llm_base_url") or ""),
+                "api_key": str(stored.get("llm_api_key") or ""),
+                "model": str(stored.get("llm_model") or ""),
+            }
+        profile = profile or {}
+    return {
+        "provider": provider,
+        "base_url": str(profile.get("base_url") or _LLM_PROVIDER_URLS[provider]).strip(),
+        "model": str(profile.get("model") or "").strip(),
+        "api_key_configured": is_secret_configured(profile.get("api_key")),
+    }
+
+
 def _public_config(config: dict) -> dict:
     """Return configuration metadata without exposing persisted credentials."""
     public = dict(config)

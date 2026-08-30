@@ -62,4 +62,30 @@ describe("mergeTaskPreview", () => {
       )
     ).toBeNull();
   });
+
+  it("waits for a full snapshot after a missing delta instead of making loss permanent", () => {
+    const current = [segment(1), segment(2)];
+    const delta = task({ preview_revision: 4, preview_delta: {
+      mode: "patch", total: 2, segments: [{ id: 2, translated: "second" }],
+    } });
+    expect(mergeTaskPreview(current, delta, 2)).toBeNull();
+    const snapshot = [segment(1, "first"), segment(2, "second")];
+    expect(mergeTaskPreview(current, task({ preview_revision: 4, preview_segments: snapshot }), 2))
+      .toEqual({ segments: snapshot, revision: 4 });
+  });
+
+  it("rejects an append whose base length or IDs do not match", () => {
+    expect(mergeTaskPreview([segment(1)], task({ preview_revision: 2, preview_delta: {
+      mode: "append", total: 3, segments: [segment(3)],
+    } }), 1)).toBeNull();
+    expect(mergeTaskPreview([segment(1)], task({ preview_revision: 2, preview_delta: {
+      mode: "append", total: 2, segments: [segment(1)],
+    } }), 1)).toBeNull();
+  });
+
+  it("rejects a patch for a cue that does not exist in the current snapshot", () => {
+    expect(mergeTaskPreview([segment(1)], task({ preview_revision: 2, preview_delta: {
+      mode: "patch", total: 1, segments: [{ id: 2, translated: "wrong base" }],
+    } }), 1)).toBeNull();
+  });
 });

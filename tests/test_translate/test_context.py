@@ -72,15 +72,18 @@ def test_document_branded_common_noun_terms_require_repeated_naming_frames():
 
 
 def test_document_branded_common_noun_terms_do_not_promote_generic_repetition():
-    assert _document_branded_common_noun_terms(
-        [
-            "This is the bridge.",
-            "The Bridge carries traffic.",
-            "A bridge crosses the river.",
-            "Another bridge is planned.",
-            "The bridge needs repairs.",
-        ]
-    ) == []
+    assert (
+        _document_branded_common_noun_terms(
+            [
+                "This is the bridge.",
+                "The Bridge carries traffic.",
+                "A bridge crosses the river.",
+                "Another bridge is planned.",
+                "The bridge needs repairs.",
+            ]
+        )
+        == []
+    )
 
 
 def test_document_rhetorical_name_candidates_keep_local_evidence_without_deciding():
@@ -243,9 +246,7 @@ def test_refine_rhetorical_name_terms_falls_back_when_reasoning_keeps_literal_dr
         calls.append(kwargs)
         item = next(responses)
         content = json.dumps({"terms": [item]}, ensure_ascii=False)
-        return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
-        )
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
 
     monkeypatch.setattr(context_module, "call_llm", fake_call_llm)
     result = _refine_rhetorical_name_terms(
@@ -274,9 +275,7 @@ def test_refine_rhetorical_name_terms_prohibits_repeated_literal_draft(monkeypat
     def fake_call_llm(**kwargs):
         calls.append(kwargs)
         content = json.dumps({"terms": [next(responses)]}, ensure_ascii=False)
-        return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
-        )
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
 
     monkeypatch.setattr(context_module, "call_llm", fake_call_llm)
     result = _refine_rhetorical_name_terms(
@@ -862,12 +861,15 @@ def test_document_audio_homophone_correction_requires_complete_equipment_evidenc
 
 
 def test_document_audio_homophone_correction_preserves_real_bass_discussion():
-    assert _document_audio_homophone_corrections(
-        [
-            "The bass system controls low-frequency effects.",
-            "Turn up the bass and listen to the subwoofer.",
-        ]
-    ) == []
+    assert (
+        _document_audio_homophone_corrections(
+            [
+                "The bass system controls low-frequency effects.",
+                "Turn up the bass and listen to the subwoofer.",
+            ]
+        )
+        == []
+    )
 
 
 def test_document_manufacturer_identifier_preserves_canonical_feature_name():
@@ -930,6 +932,59 @@ def test_context_disables_native_reasoning_for_deepseek_v4(monkeypatch):
     assert "do not merely concatenate dictionary translations" in calls[0]["messages"][0]["content"]
     assert "Repeated transcript spelling is not proof" in calls[0]["messages"][0]["content"]
     assert "what a manufacturer calls a feature" in calls[0]["messages"][0]["content"]
+
+
+def test_kimi_k3_context_uses_compact_model_specific_prompt(monkeypatch):
+    calls = []
+    response_text = json.dumps(
+        {"summary": "Nile infrastructure", "terminology": [], "style": "Documentary"}
+    )
+
+    def fake_call_llm(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=response_text))]
+        )
+
+    monkeypatch.setattr(context_module, "call_llm", fake_call_llm)
+    data = ASRData([ASRDataSeg("Egypt is building a new delta.", 0, 1000)])
+
+    result = build_translation_context(
+        data,
+        model="moonshotai/kimi-k3",
+        target_language=TargetLanguage.SIMPLIFIED_CHINESE,
+        use_cache=False,
+    )
+
+    assert result.summary == "Nile infrastructure"
+    assert calls[0]["messages"][0]["content"] == context_module.KIMI_K3_CONTEXT_PROMPT
+    assert calls[0]["reasoning_mode"] == "disabled"
+
+
+def test_kimi_k2_context_keeps_shared_prompt(monkeypatch):
+    calls = []
+    response_text = json.dumps(
+        {"summary": "Nile infrastructure", "terminology": [], "style": "Documentary"}
+    )
+    monkeypatch.setattr(
+        context_module,
+        "call_llm",
+        lambda **kwargs: calls.append(kwargs)
+        or SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=response_text))]
+        ),
+    )
+    data = ASRData([ASRDataSeg("Egypt is building a new delta.", 0, 1000)])
+
+    build_translation_context(
+        data,
+        model="moonshotai/kimi-k2.6",
+        target_language=TargetLanguage.SIMPLIFIED_CHINESE,
+        use_cache=False,
+    )
+
+    assert calls[0]["messages"][0]["content"] != context_module.KIMI_K3_CONTEXT_PROMPT
+    assert "high-confidence idioms" in calls[0]["messages"][0]["content"]
 
 
 def test_context_keeps_deterministic_numeric_corrections_when_model_omits_them(

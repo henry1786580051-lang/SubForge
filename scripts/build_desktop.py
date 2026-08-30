@@ -143,7 +143,9 @@ def restore_version_file(original: bytes | None) -> None:
 
 
 def clean() -> None:
-    for path in [BUILD_DIR, DIST_DIR, ARTIFACT_DIR, FRONTEND_DIR / ".next"]:
+    # Evaluation manifests and reports also live under artifacts/. They are
+    # durable evidence, not disposable desktop build output.
+    for path in [BUILD_DIR, DIST_DIR, FRONTEND_DIR / ".next"]:
         if path.exists():
             print(f"Removing {path.relative_to(ROOT)}")
             shutil.rmtree(path)
@@ -643,11 +645,18 @@ def _verify_data_root(data_root: Path, label: str) -> None:
         / "bin"
         / ("ffprobe.exe" if platform.system() == "Windows" else "ffprobe"),
     ]
+    # Windows and Apple Silicon builds include this engine. Intel's base build
+    # can omit it, but any build that installs it must retain its VAD data.
+    if (
+        platform.system() == "Windows"
+        or _requires_mlx_metallib()
+        or importlib.util.find_spec("faster_whisper") is not None
+    ):
+        required.append(data_root / "faster_whisper" / "assets" / "silero_vad_v6.onnx")
     if platform.system() == "Windows":
         required.extend(
             [
                 data_root / "resource" / "bin" / "whisper-cli.exe",
-                data_root / "faster_whisper" / "assets" / "silero_vad_v6.onnx",
             ]
         )
     if _requires_mlx_metallib():
@@ -721,7 +730,11 @@ def archive(version: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--clean", action="store_true", help="Remove build/dist/artifacts first")
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Remove build, dist, and frontend build cache first",
+    )
     parser.add_argument(
         "--no-archive", action="store_true", help="Build and verify without creating zip archives"
     )

@@ -57,3 +57,26 @@ def test_global_call_cache_is_scoped_to_provider_base_url(monkeypatch):
     client_module.call_llm([{"role": "user", "content": "hello"}], "shared-model")
 
     assert calls[0][3]["_subforge_cache_namespace"] == "https://api.deepseek.com/v1"
+
+
+def test_global_call_cache_appends_pipeline_namespace_without_changing_default(monkeypatch):
+    calls = []
+
+    def fake_cached(messages, model, temperature, **kwargs):
+        calls.append(kwargs["_subforge_cache_namespace"])
+        return object()
+
+    monkeypatch.setattr(client_module, "_call_llm_cached", fake_cached)
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.deepseek.com")
+
+    client_module.call_llm([{"role": "user", "content": "legacy"}], "shared-model")
+    client_module.call_llm(
+        [{"role": "user", "content": "candidate"}],
+        "shared-model",
+        cache_namespace="translation-quality:candidate:phase8-r1",
+    )
+
+    assert calls == [
+        "https://api.deepseek.com/v1",
+        "https://api.deepseek.com/v1|translation-quality:candidate:phase8-r1",
+    ]

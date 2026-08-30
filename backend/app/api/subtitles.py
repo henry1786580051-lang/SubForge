@@ -1,5 +1,6 @@
 import math
 import re
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
@@ -7,6 +8,7 @@ from pydantic import BaseModel, field_validator
 
 from app.security import validate_path
 from subforge.core.utils.atomic_write import atomic_write_srt, atomic_write_text, encode_srt_text
+from subforge.core.utils.subtitle_parsing import parse_subtitle_text
 
 _ASS_TAG_RE = re.compile(r"\{[^}]*\}")
 
@@ -14,6 +16,11 @@ router = APIRouter()
 
 # Format → (converter, media_type) mapping — single source of truth
 _FORMAT_MAP: dict[str, tuple] = {}  # populated below after converter defs
+
+
+def _download_header(filename: str, fmt: str) -> str:
+    # HTTP headers must remain ASCII; preserve Unicode names via RFC 5987.
+    return f"attachment; filename=\"export.{fmt}\"; filename*=UTF-8''{quote(filename, safe='')}"
 
 
 def _export_segments(segments: list[dict], fmt: str) -> tuple[str, str]:
@@ -249,7 +256,7 @@ async def export_subtitle(
     return Response(
         content=encode_srt_text(output) if format == "srt" else output.encode("utf-8"),
         media_type=media_type,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": _download_header(filename, format)},
     )
 
 
@@ -304,7 +311,7 @@ async def export_subtitle_post(req: ExportRequest):
     return Response(
         content=encode_srt_text(output) if req.format == "srt" else output.encode("utf-8"),
         media_type=media_type,
-        headers={"Content-Disposition": f'attachment; filename="{req.filename}"'},
+        headers={"Content-Disposition": _download_header(req.filename, req.format)},
     )
 
 
@@ -465,12 +472,14 @@ def parse_vtt(content: str) -> list[dict]:
                 text_lines.append(lines[i].strip())
                 i += 1
 
+            text, translated, speaker = parse_subtitle_text("\n".join(text_lines))
             segments.append({
                 "id": idx,
                 "start": start.strip(),
                 "end": end.strip().split(" ")[0],
-                "text": "\n".join(text_lines),
-                "translated": "",
+                "text": text,
+                "translated": translated,
+                "speaker": speaker,
             })
         else:
             i += 1
@@ -509,13 +518,15 @@ def parse_ass(content: str) -> list[dict]:
                 idx += 1
                 text = parts[text_idx] if text_idx >= 0 else ""
                 text = _ASS_TAG_RE.sub("", text).replace("\\N", "\n")
+                text, translated, speaker = parse_subtitle_text(text)
 
                 segments.append({
                     "id": idx,
                     "start": parts[start_idx],
                     "end": parts[end_idx],
                     "text": text,
-                    "translated": "",
+                    "translated": translated,
+                    "speaker": speaker,
                 })
 
     return segments

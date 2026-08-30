@@ -1,8 +1,9 @@
 "use client";
 
+import { Icon } from "@iconify/react";
 import { useAppStore, WorkflowStep } from "@/store/appStore";
 
-const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || "1.1.18";
+const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || "1.2.0";
 
 const steps: { id: WorkflowStep; label: string; icon: string }[] = [
   { id: "import", label: "导入", icon: "M12 4v16m-8-8h16" },
@@ -74,6 +75,24 @@ export function Sidebar() {
             {!sidebarCollapsed && <span className="flex-1 text-left">{s.label}</span>}
           </button>
         ))}
+
+        <button
+          onClick={() => setActiveView("free-models")}
+          title={sidebarCollapsed ? "白嫖" : undefined}
+          className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] transition-all duration-200 btn-press ${
+            activeView === "free-models"
+              ? "nav-item-active"
+              : "text-text-muted hover:text-text-secondary hover:bg-surface-hover"
+          }`}
+        >
+          <div className="relative">
+            <Icon icon="solar:gift-bold-duotone" className="h-[18px] w-[18px] shrink-0" />
+            {!sidebarCollapsed && activeView === "free-models" && (
+              <div className="absolute -left-[13px] top-1/2 h-4 w-[2px] -translate-y-1/2 rounded-full bg-accent" />
+            )}
+          </div>
+          {!sidebarCollapsed && <span className="flex-1 text-left">白嫖</span>}
+        </button>
 
         {!sidebarCollapsed && (
           <>

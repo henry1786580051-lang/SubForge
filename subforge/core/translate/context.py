@@ -13,6 +13,7 @@ from subforge.core.asr.asr_data import ASRData
 from subforge.core.llm import (
     call_llm,
     get_response_text,
+    is_kimi_k3_model,
     parse_json_object,
 )
 from subforge.core.llm.client import ReasoningMode
@@ -37,6 +38,22 @@ MAX_LEXICAL_VARIANT_CANDIDATES = 24
 MAX_NUMERIC_CONTEXTS = 32
 MAX_CALL_TO_ACTION_ENTITY_CANDIDATES = 8
 FOOTBALL_FIELD_AREA_SQUARE_METRES = 5351.0
+
+KIMI_K3_CONTEXT_PROMPT = (
+    "Prepare compact global context for professional subtitle translation. "
+    "Return pure JSON with exactly summary, terminology, and style. terminology must be "
+    "a list of {source, target, note}. Summarize the document subject, speaker register, "
+    "and discourse situation so later batches can resolve references and ellipsis. Extract "
+    "only recurring or high-risk names, organizations, products, model identifiers, technical "
+    "terms, units, idioms, and domain-specific senses. Preserve canonical Latin names when "
+    "appropriate. A probable ASR correction is allowed only when repeated document evidence "
+    "or explicit local facts identify one unique intended complete phrase; label it clearly. "
+    "Candidate lists are evidence, not corrections. Never create global mappings for pronouns, "
+    "function words, ordinary vocabulary, or uncertain one-off names. Preserve all numbers and "
+    "magnitudes. The style field must describe the source's actual register and the concise, "
+    "native target-language tone it requires, without adding facts or decorative language. "
+    "Anonymous speaker tokens are context metadata and must never become terminology."
+)
 
 _GRAMMATICAL_TERM_TOKENS = frozenset(
     {
@@ -114,7 +131,10 @@ def is_unsafe_global_term_source(source: str) -> bool:
         if normalized in _GRAMMATICAL_TERM_TOKENS:
             return True
         for suffix in ("'s", "'re", "'ve", "'ll", "'d", "'m"):
-            if normalized.endswith(suffix) and normalized[: -len(suffix)] in _GRAMMATICAL_TERM_TOKENS:
+            if (
+                normalized.endswith(suffix)
+                and normalized[: -len(suffix)] in _GRAMMATICAL_TERM_TOKENS
+            ):
                 return True
         return False
 
@@ -258,12 +278,6 @@ def _format_terms(value) -> str:
                 note = str(item.get("note") or "").strip()[:120]
                 if not source or is_unsafe_global_term_source(source):
                     continue
-                target = _asr_note_correction(source, target, note)
-                rendered = source
-                if target:
-                    rendered += f" -> {target}"
-                if note:
-                    rendered += f" ({note})"
                 is_asr = bool(
                     re.search(
                         r"(?:asr|phonetic|mishear|recognition|spoken\s+self-correction|"
@@ -272,6 +286,12 @@ def _format_terms(value) -> str:
                         flags=re.IGNORECASE,
                     )
                 )
+                target = _asr_note_correction(source, target, note)
+                rendered = source
+                if target:
+                    rendered += f" -> {target}"
+                if note:
+                    rendered += f" ({note})"
                 is_nonliteral = bool(
                     re.search(
                         r"(?:idiom|figurative|irony|sarcasm|non-?literal|习语|反讽|讽刺|非字面)",
@@ -352,6 +372,7 @@ def _refine_rhetorical_name_terms(
     target_language: TargetLanguage,
     use_cache: bool,
     llm_client: Any,
+    cache_namespace: str = "",
 ) -> list[Any]:
     """Classify rhetorical-name candidates and polish only confirmed epithets."""
     existing: dict[str, tuple[int, str, str]] = {}
@@ -400,8 +421,8 @@ def _refine_rhetorical_name_terms(
         "phrase's position in the supplied context; use an attributive form when the target "
         "language requires one. Reject dictionary-word concatenations and invented proper names. If no "
         "established target name is certain, use a natural descriptive paraphrase naming the "
-        "referent. Return pure JSON as {\"terms\":[{\"source\":\"...\","
-        "\"is_epithet\":true,\"target\":\"...\",\"note\":\"...\"}]} with exactly one item "
+        'referent. Return pure JSON as {"terms":[{"source":"...",'
+        '"is_epithet":true,"target":"...","note":"..."}]} with exactly one item '
         "for every input and no explanation. For non-epithets set is_epithet to false and target "
         "to an empty string. Never copy the source phrase into target. A Chinese target must "
         "contain Chinese characters."
@@ -431,9 +452,7 @@ def _refine_rhetorical_name_terms(
     parsed: dict[str, Any] | None = None
     drafts = {item["source"].casefold(): item["draft_target"] for item in selected}
     source_spellings = {item["source"].casefold(): item["source"] for item in selected}
-    preconfirmed = {
-        item["source"].casefold() for item in selected if item["preconfirmed"]
-    }
+    preconfirmed = {item["source"].casefold() for item in selected if item["preconfirmed"]}
 
     def valid_target(source: str, target: str) -> bool:
         if not target or len(target) > 120 or target.casefold() == source.casefold():
@@ -464,6 +483,7 @@ def _refine_rhetorical_name_terms(
                 model=model,
                 temperature=0.1,
                 use_cache=use_cache,
+                cache_namespace=cache_namespace,
                 client=llm_client,
                 reasoning_mode=reasoning_mode,
                 max_output_tokens=max_output_tokens,
@@ -537,9 +557,7 @@ def _refine_rhetorical_name_terms(
     refined: list[Any] = []
     replaced_sources: set[str] = set()
     selected_by_index = {
-        int(item["existing_index"]): item
-        for item in selected
-        if item["existing_index"] is not None
+        int(item["existing_index"]): item for item in selected if item["existing_index"] is not None
     }
     for index, term in enumerate(terms):
         selected_item = selected_by_index.get(index)
@@ -1729,10 +1747,10 @@ def _document_manufacturer_identifiers(
         seen.add(canonical.casefold())
         identifiers.append(
             {
-                "source": f'{name} {match.group("head")}',
+                "source": f"{name} {match.group('head')}",
                 "target": canonical,
                 "note": (
-                    f'official manufacturer identifier introduced by {match.group("maker")}; '
+                    f"official manufacturer identifier introduced by {match.group('maker')}; "
                     "preserve this canonical Latin identifier and translate only its generic head noun"
                 ),
             }
@@ -1825,6 +1843,7 @@ def build_translation_context(
     custom_prompt: str = "",
     use_cache: bool = True,
     llm_client: Any = None,
+    cache_namespace: str = "",
 ) -> TranslationContext:
     """Generate a task-wide summary and terminology list for LLM translation.
 
@@ -1989,6 +2008,8 @@ def build_translation_context(
         "Tokens such as <S1> and <S2> are anonymous dialogue-turn metadata. Use them to "
         "understand roles and tone, but never include them as terminology or translated text."
     )
+    if is_kimi_k3_model(model):
+        system_prompt = KIMI_K3_CONTEXT_PROMPT
     user_payload = {
         "target_language": target_language.value,
         "user_requirements": custom_prompt,
@@ -2026,6 +2047,7 @@ def build_translation_context(
                         model=model,
                         temperature=0.1,
                         use_cache=use_cache,
+                        cache_namespace=cache_namespace,
                         client=llm_client,
                         reasoning_mode=reasoning_mode,
                         max_output_tokens=max_output_tokens,
@@ -2052,6 +2074,7 @@ def build_translation_context(
             model=model,
             target_language=target_language,
             use_cache=use_cache,
+            cache_namespace=cache_namespace,
             llm_client=llm_client,
         )
         alias_candidate_corrections = _extend_confirmed_alias_corrections(

@@ -2,6 +2,7 @@ import asyncio
 import logging
 import threading
 import uuid
+from copy import deepcopy
 from enum import Enum
 from typing import Any, Callable
 
@@ -115,12 +116,16 @@ class TaskManager:
             if subtitle_file is not None:
                 task.subtitle_file = subtitle_file
             if preview_segments is not None:
+                preview_segments = deepcopy(preview_segments)
                 preview_delta = self._build_preview_delta(
                     task.preview_segments or [], preview_segments
                 )
                 task.preview_segments = preview_segments
                 task.preview_revision += 1
-        self._notify_listeners(task_id, preview_delta=preview_delta)
+            revision = task.preview_revision
+        self._notify_listeners(
+            task_id, preview_delta=preview_delta, expected_preview_revision=revision
+        )
 
     def publish_preview(
         self,
@@ -139,6 +144,7 @@ class TaskManager:
                 TaskStatus.CANCELLED,
             }:
                 return
+            preview_segments = deepcopy(preview_segments)
             preview_delta = self._build_preview_delta(task.preview_segments or [], preview_segments)
             task.preview_segments = preview_segments
             task.preview_revision += 1
@@ -147,7 +153,10 @@ class TaskManager:
                 task.subtitle_file = subtitle_file
             if message is not None:
                 task.message = message
-        self._notify_listeners(task_id, preview_delta=preview_delta)
+            revision = task.preview_revision
+        self._notify_listeners(
+            task_id, preview_delta=preview_delta, expected_preview_revision=revision
+        )
 
     @staticmethod
     def _build_preview_delta(
@@ -174,6 +183,8 @@ class TaskManager:
                     continue
                 if old.get("id") != segment.get("id"):
                     break
+                if old.keys() - segment.keys():
+                    break
                 patch = {"id": segment.get("id")}
                 patch.update(
                     {
@@ -199,8 +210,8 @@ class TaskManager:
                 return
             task.status = TaskStatus.COMPLETED
             task.progress = 100
-            task.result = result
-            final_segments = result.get("segments") if isinstance(result, dict) else None
+            task.result = deepcopy(result)
+            final_segments = task.result.get("segments") if isinstance(task.result, dict) else None
             task.preview_segments = final_segments if isinstance(final_segments, list) else None
             task.attention = None
             self._running_tasks.pop(task_id, None)
@@ -226,7 +237,7 @@ class TaskManager:
                 return
             task.status = TaskStatus.FAILED
             task.error = error
-            task.result = result
+            task.result = deepcopy(result)
             task.attention = None
             self._running_tasks.pop(task_id, None)
             self._cancel_callbacks.pop(task_id, None)
@@ -363,6 +374,34 @@ class TaskManager:
                 self._attention_resolutions.pop(t.id, None)
                 self._release_resource(t.id)
 
+    def finalize_cancelled_task(
+        self,
+        task_id: str,
+        result: dict[str, Any] | None = None,
+        *,
+        preview_segments: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """Attach a drained worker's recovery without marking cancellation successful work."""
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None or task.status in {TaskStatus.COMPLETED, TaskStatus.FAILED}:
+                return
+            task.status = TaskStatus.CANCELLED
+            task.attention = None
+            task.result = deepcopy(result)
+            self._cancel_callbacks.pop(task_id, None)
+            self._attention_conditions.pop(task_id, None)
+            self._attention_resolutions.pop(task_id, None)
+            if preview_segments is not None:
+                task.preview_segments = deepcopy(preview_segments)
+                task.preview_revision += 1
+            if result and result.get("recovery_file"):
+                task.subtitle_file = str(result["recovery_file"])
+                task.message = "Task cancelled; partial result saved"
+            if task_id not in self._running_tasks:
+                self._release_resource(task_id)
+        self._notify_listeners(task_id)
+
     def add_listener(self, callback: Callable):
         with self._lock:
             self._listeners.append(callback)
@@ -371,11 +410,27 @@ class TaskManager:
         with self._lock:
             self._listeners = [listener for listener in self._listeners if listener != callback]
 
-    def _notify_listeners(self, task_id: str, *, preview_delta: dict[str, Any] | None = None):
+    def _notify_listeners(
+        self,
+        task_id: str,
+        *,
+        preview_delta: dict[str, Any] | None = None,
+        expected_preview_revision: int | None = None,
+    ):
         with self._lock:
             task = self._tasks.get(task_id)
             if not task:
                 return
+            # A second worker may publish before this notification acquires the
+            # lock. Never label an older delta with the newer task's revision.
+            if preview_delta is not None:
+                if task.status != TaskStatus.RUNNING:
+                    preview_delta = None
+                elif expected_preview_revision != task.preview_revision:
+                    segments = task.preview_segments or []
+                    preview_delta = {
+                        "mode": "replace", "segments": segments, "total": len(segments)
+                    }
             result = task.result
             if (
                 task.status == TaskStatus.COMPLETED
@@ -384,27 +439,27 @@ class TaskManager:
                 and "segments" in result
             ):
                 task_data = task.model_dump(exclude={"preview_segments", "result"})
-                task_data["result"] = {
+                task_data["result"] = deepcopy({
                     key: value for key, value in result.items() if key != "segments"
-                }
+                })
                 # Completion must be self-contained. The preceding preview
                 # broadcast and this terminal event are scheduled separately,
                 # so clients may otherwise observe completion first and keep a
                 # stale editor snapshot until they reload the file manually.
-                task_data["preview_segments"] = result["segments"]
+                task_data["preview_segments"] = deepcopy(result["segments"])
             elif (
-                task.status == TaskStatus.FAILED
+                task.status in {TaskStatus.FAILED, TaskStatus.CANCELLED}
                 and isinstance(result, dict)
                 and result.get("recovery_file")
             ):
                 task_data = task.model_dump(exclude={"preview_segments"})
                 # Recovery must also be self-contained: the preview broadcast
                 # immediately before failure can arrive after this event.
-                task_data["preview_segments"] = task.preview_segments
+                task_data["preview_segments"] = deepcopy(task.preview_segments)
             else:
                 task_data = task.model_dump(exclude={"preview_segments"})
             if preview_delta is not None:
-                task_data["preview_delta"] = preview_delta
+                task_data["preview_delta"] = deepcopy(preview_delta)
             listeners = list(self._listeners)
         for listener in listeners:
             try:

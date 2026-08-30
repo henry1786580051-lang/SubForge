@@ -7,6 +7,7 @@ import openai
 import pytest
 
 from subforge.core.llm import client as client_module
+from subforge.core.llm.telemetry import LLMTaskTelemetry
 
 
 def _rate_limit_error(retry_after: str | None = None) -> openai.RateLimitError:
@@ -174,6 +175,91 @@ def test_nvidia_waits_until_rate_limit_recovers_for_third_party_model(monkeypatc
     assert outcomes == []
 
 
+def test_nvidia_kimi_k3_staggers_rate_limit_retries(monkeypatch):
+    success = object()
+    outcomes = [_rate_limit_error("60"), success]
+    reservations = []
+    sleeps = []
+    client = SimpleNamespace(_subforge_base_url="https://integrate.api.nvidia.com/v1")
+
+    def fake_call(*_args, **_kwargs):
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    def reserve(wait_seconds, attempt):
+        reservations.append((wait_seconds, attempt))
+        return 63.0
+
+    monkeypatch.setattr(client_module, "_call_llm_once", fake_call)
+    monkeypatch.setattr(client_module, "_reserve_kimi_k3_retry_wait_seconds", reserve)
+    monkeypatch.setattr(client_module.time, "sleep", sleeps.append)
+
+    result = client_module._call_llm_api([], "moonshotai/kimi-k3", client=client)
+
+    assert result is success
+    assert reservations == [(60.0, 1)]
+    assert sleeps == [63.0]
+
+
+def test_nvidia_non_k3_models_keep_existing_rate_limit_wait(monkeypatch):
+    success = object()
+    outcomes = [_rate_limit_error("60"), success]
+    sleeps = []
+    client = SimpleNamespace(_subforge_base_url="https://integrate.api.nvidia.com/v1")
+
+    def fake_call(*_args, **_kwargs):
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(client_module, "_call_llm_once", fake_call)
+    monkeypatch.setattr(
+        client_module,
+        "_reserve_kimi_k3_retry_wait_seconds",
+        lambda _seconds, _attempt: pytest.fail(
+            "non-K3 models must not use the K3 retry gate"
+        ),
+    )
+    monkeypatch.setattr(client_module.time, "sleep", sleeps.append)
+
+    result = client_module._call_llm_api([], "moonshotai/kimi-k2.6", client=client)
+
+    assert result is success
+    assert sleeps == [60.0]
+
+
+@pytest.mark.parametrize(
+    ("attempt", "expected_wait"),
+    [
+        (1, 5.0),
+        (5, 60.0),
+        (6, 60.0),
+        (11, 120.0),
+        (16, 240.0),
+        (21, 480.0),
+        (26, 600.0),
+        (50, 600.0),
+    ],
+)
+def test_kimi_k3_sustained_rate_limit_uses_progressive_cooldown(
+    monkeypatch,
+    attempt,
+    expected_wait,
+):
+    monkeypatch.setattr(client_module.time, "monotonic", lambda: 100.0)
+    monkeypatch.setattr(client_module, "_kimi_k3_next_retry_at", 0.0)
+
+    wait_seconds = client_module._reserve_kimi_k3_retry_wait_seconds(
+        5.0 if attempt == 1 else 60.0,
+        attempt,
+    )
+
+    assert wait_seconds == expected_wait
+
+
 def test_nvidia_does_not_retry_authentication_errors(monkeypatch):
     client = SimpleNamespace(_subforge_base_url="https://integrate.api.nvidia.com/v1")
 
@@ -280,6 +366,33 @@ def test_deepseek_retries_transient_timeouts_but_not_forever(monkeypatch):
     assert sleeps == [2.0, 4.0]
 
 
+def test_retry_policy_records_wait_without_changing_retry_behavior(monkeypatch):
+    telemetry = LLMTaskTelemetry()
+    client = SimpleNamespace(
+        _subforge_base_url="https://api.deepseek.com/v1",
+        _subforge_telemetry=telemetry,
+    )
+    outcomes = [_rate_limit_error("3"), object()]
+    sleeps = []
+
+    def fake_call(*_args, **_kwargs):
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(client_module, "_call_llm_once", fake_call)
+    monkeypatch.setattr(client_module.time, "sleep", sleeps.append)
+
+    client_module._call_llm_api([], "deepseek-v4-flash", client=client)
+
+    snapshot = telemetry.snapshot()
+    assert sleeps == [3.0]
+    assert snapshot.retry_count == 1
+    assert snapshot.rate_limit_retries == 1
+    assert snapshot.retry_wait_ms == 3000
+
+
 def test_persistent_rate_limit_wait_is_interrupted_by_task_cancellation(monkeypatch):
     client = SimpleNamespace(
         _subforge_base_url="https://api.deepseek.com/v1",
@@ -374,7 +487,7 @@ def test_deepseek_non_thinking_request_keeps_sampling(monkeypatch):
     assert "reasoning_effort" not in completions.kwargs
 
 
-def test_deepseek_controls_are_not_sent_to_other_providers(monkeypatch):
+def test_nvidia_deepseek_thinking_uses_documented_controls(monkeypatch):
     client, completions = _capturing_client("https://integrate.api.nvidia.com/v1")
     monkeypatch.setattr(client_module, "log_llm_response", lambda _response: None)
 
@@ -387,10 +500,248 @@ def test_deepseek_controls_are_not_sent_to_other_providers(monkeypatch):
         max_output_tokens=8192,
     )
 
-    assert completions.kwargs["temperature"] == 0.3
+    assert "temperature" not in completions.kwargs
+    assert "extra_body" not in completions.kwargs
+    assert completions.kwargs["reasoning_effort"] == "high"
+    assert completions.kwargs["max_tokens"] == 8192
+
+
+def test_nvidia_deepseek_routine_translation_disables_thinking(monkeypatch):
+    client, completions = _capturing_client("https://integrate.api.nvidia.com/v1")
+    monkeypatch.setattr(client_module, "log_llm_response", lambda _response: None)
+
+    client_module.call_llm(
+        [{"role": "user", "content": "translate"}],
+        "deepseek-ai/deepseek-v4-flash",
+        temperature=0.1,
+        client=client,
+        reasoning_mode="disabled",
+        max_output_tokens=4096,
+    )
+
+    assert completions.kwargs["temperature"] == 0.1
+    assert "extra_body" not in completions.kwargs
+    assert completions.kwargs["reasoning_effort"] == "none"
+    assert completions.kwargs["max_tokens"] == 4096
+
+
+def test_nvidia_glm_53_keeps_family_budget_without_unsupported_controls(monkeypatch):
+    client, completions = _capturing_client("https://integrate.api.nvidia.com/v1")
+    monkeypatch.setattr(client_module, "log_llm_response", lambda _response: None)
+
+    client_module.call_llm(
+        [{"role": "user", "content": "translate"}],
+        "z-ai/glm-5.3-flash",
+        temperature=0.1,
+        client=client,
+        reasoning_mode="enabled",
+        max_output_tokens=4096,
+    )
+
+    assert completions.kwargs["temperature"] == 0.1
+    assert completions.kwargs["max_tokens"] == 4096
     assert "extra_body" not in completions.kwargs
     assert "reasoning_effort" not in completions.kwargs
+
+
+@pytest.mark.parametrize("reasoning_mode", ["default", "disabled"])
+def test_nvidia_kimi_k3_routine_work_uses_low_reasoning(monkeypatch, reasoning_mode):
+    client, completions = _capturing_client("https://integrate.api.nvidia.com/v1")
+    monkeypatch.setattr(client_module, "log_llm_response", lambda _response: None)
+
+    client_module.call_llm(
+        [{"role": "user", "content": "translate"}],
+        "moonshotai/kimi-k3",
+        temperature=0.2,
+        client=client,
+        reasoning_mode=reasoning_mode,
+        max_output_tokens=4096,
+    )
+
+    assert "extra_body" not in completions.kwargs
+    assert completions.kwargs["reasoning_effort"] == "low"
+    assert completions.kwargs["temperature"] == 1.0
+    assert completions.kwargs["top_p"] == 0.95
+    assert completions.kwargs["max_tokens"] == 4096
+    assert completions.kwargs["timeout"] == client_module.KIMI_K3_REQUEST_TIMEOUT
+
+
+def test_nvidia_kimi_k3_confirmed_repair_uses_thinking(monkeypatch):
+    client, completions = _capturing_client("https://integrate.api.nvidia.com/v1")
+    monkeypatch.setattr(client_module, "log_llm_response", lambda _response: None)
+
+    client_module.call_llm(
+        [{"role": "user", "content": "repair semantic ownership"}],
+        "moonshotai/kimi-k3",
+        client=client,
+        reasoning_mode="enabled",
+        max_output_tokens=6144,
+    )
+
+    assert "extra_body" not in completions.kwargs
+    assert completions.kwargs["reasoning_effort"] == "high"
+    assert completions.kwargs["temperature"] == 1.0
+    assert completions.kwargs["top_p"] == 0.95
+    assert completions.kwargs["max_tokens"] == 6144
+    assert completions.kwargs["timeout"] == client_module.KIMI_K3_REQUEST_TIMEOUT
+
+
+def test_nvidia_kimi_k3_preserves_explicit_max_reasoning(monkeypatch):
+    client, completions = _capturing_client("https://integrate.api.nvidia.com/v1")
+    monkeypatch.setattr(client_module, "log_llm_response", lambda _response: None)
+
+    client_module.call_llm(
+        [{"role": "user", "content": "repair ambiguous discourse ownership"}],
+        "moonshotai/kimi-k3",
+        client=client,
+        reasoning_mode="enabled",
+        reasoning_effort="max",
+    )
+
+    assert completions.kwargs["reasoning_effort"] == "max"
+
+
+@pytest.mark.parametrize("reasoning_mode", ["default", "disabled"])
+def test_nvidia_nemotron_ultra_disables_thinking_for_routine_work(
+    monkeypatch, reasoning_mode
+):
+    client, completions = _capturing_client("https://integrate.api.nvidia.com/v1")
+    monkeypatch.setattr(client_module, "log_llm_response", lambda _response: None)
+
+    client_module.call_llm(
+        [{"role": "user", "content": "translate"}],
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        temperature=0.2,
+        client=client,
+        reasoning_mode=reasoning_mode,
+        reasoning_effort="max",
+        max_output_tokens=4096,
+    )
+
+    assert completions.kwargs["extra_body"] == {
+        "chat_template_kwargs": {"enable_thinking": False}
+    }
+    assert "reasoning_effort" not in completions.kwargs
+    assert completions.kwargs["temperature"] == 1.0
+    assert completions.kwargs["top_p"] == 0.95
+    assert completions.kwargs["max_tokens"] == 4096
+    assert completions.kwargs["timeout"] == client_module.NEMOTRON_3_ULTRA_REQUEST_TIMEOUT
+
+
+def test_nvidia_nemotron_ultra_enables_thinking_for_confirmed_repair(monkeypatch):
+    client, completions = _capturing_client("https://integrate.api.nvidia.com/v1")
+    monkeypatch.setattr(client_module, "log_llm_response", lambda _response: None)
+
+    client_module.call_llm(
+        [{"role": "user", "content": "repair semantic ownership"}],
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        client=client,
+        reasoning_mode="enabled",
+        reasoning_effort="low",
+        max_output_tokens=6144,
+    )
+
+    assert completions.kwargs["extra_body"] == {
+        "chat_template_kwargs": {"enable_thinking": True},
+    }
+    assert "reasoning_effort" not in completions.kwargs
+    assert completions.kwargs["max_tokens"] == 6144
+
+
+def test_nvidia_nemotron_ultra_omits_unsupported_effort_controls(
+    monkeypatch,
+):
+    client, completions = _capturing_client("https://integrate.api.nvidia.com/v1")
+    monkeypatch.setattr(client_module, "log_llm_response", lambda _response: None)
+
+    client_module.call_llm(
+        [{"role": "user", "content": "repair a confirmed complex semantic defect"}],
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        client=client,
+        reasoning_mode="enabled",
+        reasoning_effort="high",
+    )
+
+    assert completions.kwargs["extra_body"] == {
+        "chat_template_kwargs": {"enable_thinking": True}
+    }
+
+
+def test_nvidia_nemotron_ultra_staggers_rate_limit_retries(monkeypatch):
+    success = object()
+    outcomes = [_rate_limit_error(), success]
+    sleeps = []
+    reservations = []
+    client = SimpleNamespace(_subforge_base_url="https://integrate.api.nvidia.com/v1")
+
+    def fake_call(*_args, **_kwargs):
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(client_module, "_call_llm_once", fake_call)
+    monkeypatch.setattr(
+        client_module,
+        "_reserve_nemotron_ultra_retry_wait_seconds",
+        lambda seconds: reservations.append(seconds) or 7.0,
+    )
+    monkeypatch.setattr(client_module.time, "sleep", sleeps.append)
+
+    result = client_module._call_llm_api(
+        [], "nvidia/nemotron-3-ultra-550b-a55b", client=client
+    )
+
+    assert result is success
+    assert len(reservations) == 1
+    assert sleeps == [7.0]
+
+
+def test_nvidia_nemotron_ultra_waits_through_temporary_overload(monkeypatch):
+    success = object()
+    outcomes = [_status_error(503) for _ in range(4)] + [success]
+    sleeps = []
+    client = SimpleNamespace(_subforge_base_url="https://integrate.api.nvidia.com/v1")
+
+    def fake_call(*_args, **_kwargs):
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(client_module, "_call_llm_once", fake_call)
+    monkeypatch.setattr(
+        client_module,
+        "_reserve_nemotron_ultra_retry_wait_seconds",
+        lambda seconds: seconds,
+    )
+    monkeypatch.setattr(client_module.time, "sleep", sleeps.append)
+
+    result = client_module._call_llm_api(
+        [], "nvidia/nemotron-3-ultra-550b-a55b", client=client
+    )
+
+    assert result is success
+    assert sleeps == [2.0, 4.0, 8.0, 16.0]
+
+
+def test_nvidia_other_models_do_not_receive_family_controls(monkeypatch):
+    client, completions = _capturing_client("https://integrate.api.nvidia.com/v1")
+    monkeypatch.setattr(client_module, "log_llm_response", lambda _response: None)
+
+    client_module.call_llm(
+        [{"role": "user", "content": "translate"}],
+        "meta/llama-3.3-70b-instruct",
+        temperature=0.2,
+        client=client,
+        reasoning_mode="enabled",
+        max_output_tokens=4096,
+    )
+
+    assert completions.kwargs["temperature"] == 0.2
     assert "max_tokens" not in completions.kwargs
+    assert "extra_body" not in completions.kwargs
+    assert "reasoning_effort" not in completions.kwargs
 
 
 def test_glm_53_routine_request_uses_low_always_on_thinking(monkeypatch):
@@ -434,8 +785,20 @@ def test_glm_53_confirmed_repair_uses_high_reasoning(monkeypatch):
     [
         ("glm-5.3-flash", True),
         ("GLM_5.3", True),
+        ("z-ai/glm-5.3-flash", True),
         ("glm-5.2", False),
         ("deepseek-v4-flash", True),
+        ("deepseek-ai/deepseek-v4-pro", True),
+        ("deepseek-ai/deepseek-v4-flash-0731", True),
+        ("nvidia/deepseek-v4-flash", True),
+        ("z-ai/glm-5.3-flash/", True),
+        ("moonshotai/kimi-k3", True),
+        ("Kimi_K3", True),
+        ("moonshotai/kimi-k3.1", False),
+        ("moonshotai/kimi-k2.6", False),
+        ("nvidia/nemotron-3-ultra-550b-a55b", True),
+        ("NVIDIA_Nemotron-3-Ultra-550B-A55B", True),
+        ("nvidia/nemotron-3-super-120b-a12b", False),
         ("MiniMax-M3", False),
     ],
 )

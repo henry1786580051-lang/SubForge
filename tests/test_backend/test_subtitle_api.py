@@ -1,5 +1,7 @@
+import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,9 +11,11 @@ import app.api.config as config_module
 from app.api.subtitle import (
     SubtitleRequest,
     _apply_translation_preview,
+    _pipeline_result_path,
     _resolve_custom_prompt,
     _run_subtitle,
     _validate_expected_llm_config,
+    _write_candidate_telemetry,
 )
 from app.api.subtitles import parse_srt
 from app.core.task_manager import task_manager
@@ -20,7 +24,13 @@ import subforge.core.llm as llm_module
 import subforge.core.split.split as split_module
 from subforge.core.asr.asr_data import ASRData, ASRDataSeg
 from subforge.core.entities import SubtitleProcessData
+from subforge.core.llm.telemetry import LLMTaskTelemetry
 from subforge.core.translate.factory import TranslatorFactory
+from subforge.core.translate.quality.pipeline_identity import (
+    QUALITY_PIPELINE_FLAG,
+    QUALITY_PIPELINE_REVISION,
+    resolve_translation_pipeline_identity,
+)
 from subforge.settings import LlmRuntimeConfig, detect_llm_provider
 
 
@@ -36,6 +46,21 @@ def _mock_llm_runtime(monkeypatch, settings):
             model=str(settings.get("llm_model", "gpt-4o-mini")),
         ),
     )
+
+
+@pytest.fixture
+def passthrough_optimizer(monkeypatch):
+    import subforge.core.optimize.optimize as optimize_module
+
+    class Optimizer:
+        def __init__(self, **kwargs):
+            pass
+
+        def optimize_subtitle(self, data):
+            return data
+
+    monkeypatch.setattr(optimize_module, "SubtitleOptimizer", Optimizer)
+    monkeypatch.setattr(llm_module, "create_client", lambda **kwargs: SimpleNamespace(close=lambda: None))
 
 
 def test_subtitle_request_does_not_default_to_stale_llm_model():
@@ -110,6 +135,44 @@ def test_result_path_moves_session_uploads_to_durable_work_dir(tmp_path, monkeyp
     assert result == durable / "input_processed.srt"
 
 
+def test_candidate_result_path_is_task_scoped_and_refuses_overwrite(tmp_path):
+    source = tmp_path / "input.srt"
+    source.write_text("", encoding="utf-8")
+    identity = resolve_translation_pipeline_identity(
+        {
+            QUALITY_PIPELINE_FLAG: "1",
+            QUALITY_PIPELINE_REVISION: "phase8-r1",
+        }
+    )
+
+    result = _pipeline_result_path(
+        str(source),
+        "processed",
+        identity,
+        task_id="abc-123",
+    )
+
+    assert result == tmp_path / "input_candidate_phase8-r1_abc-123_processed.srt"
+    result.write_text("existing", encoding="utf-8")
+    with pytest.raises(FileExistsError, match="already exists"):
+        _pipeline_result_path(
+            str(source),
+            "processed",
+            identity,
+            task_id="abc-123",
+        )
+
+    result.unlink()
+    result.with_suffix(".telemetry.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(FileExistsError, match="telemetry artifact already exists"):
+        _pipeline_result_path(
+            str(source),
+            "processed",
+            identity,
+            task_id="abc-123",
+        )
+
+
 def test_backend_parse_srt_preserves_bilingual_fields():
     srt = """1
 00:00:00,000 --> 00:00:02,000
@@ -134,6 +197,7 @@ you should also recognize this 1986 Mercedes-Benz 420 SEL
 def test_subtitle_pipeline_uses_explicit_llm_client_without_env_mutation(
     tmp_path,
     monkeypatch,
+    passthrough_optimizer,
 ):
     import asyncio
     import os
@@ -182,6 +246,7 @@ def test_subtitle_pipeline_uses_explicit_llm_client_without_env_mutation(
                 _kwargs.get("max_word_count_english"),
             )
             created["splitter_target_language"] = _kwargs.get("target_language")
+            created["splitter_cache_namespace"] = _kwargs.get("cache_namespace")
 
         def split_subtitle(self, asr_data):
             return asr_data
@@ -195,7 +260,7 @@ def test_subtitle_pipeline_uses_explicit_llm_client_without_env_mutation(
         subtitle_file=str(subtitle_path),
         llm_provider="custom",
         llm_model="mimo-v2.5",
-        need_optimize=False,
+        need_optimize=True,
         need_translate=False,
     )
 
@@ -207,12 +272,210 @@ def test_subtitle_pipeline_uses_explicit_llm_client_without_env_mutation(
         "splitter_client": client,
         "splitter_limits": (31, 16),
         "splitter_target_language": "",
+        "splitter_cache_namespace": "",
         "closed": True,
     }
     assert os.environ["OPENAI_API_KEY"] == "original-key"
     assert os.environ["OPENAI_BASE_URL"] == "https://original.test/v1"
 
 
+def test_candidate_subtitle_pipeline_writes_isolated_output_and_metadata(
+    tmp_path,
+    monkeypatch,
+    passthrough_optimizer,
+):
+    import asyncio
+
+    subtitle_path = tmp_path / "input.srt"
+    subtitle_path.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello world\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        config_module,
+        "get_config_value",
+        lambda key, default=None: {"thread_num": 1, "batch_size": 1}.get(key, default),
+    )
+    _mock_llm_runtime(monkeypatch, {"llm_api_key": "test-key", "llm_base_url": "https://example.test/v1"})
+    created = {}
+
+    class FakeSplitter:
+        def __init__(self, **kwargs):
+            created["cache_namespace"] = kwargs.get("cache_namespace")
+
+        def split_subtitle(self, asr_data):
+            return asr_data
+
+    monkeypatch.setattr(split_module, "SubtitleSplitter", FakeSplitter)
+    identity = resolve_translation_pipeline_identity(
+        {
+            QUALITY_PIPELINE_FLAG: "1",
+            QUALITY_PIPELINE_REVISION: "phase8-r1",
+        }
+    )
+    task = task_manager.create_task("subtitle")
+
+    asyncio.run(
+        _run_subtitle(
+            task.id,
+            SubtitleRequest(
+                subtitle_file=str(subtitle_path),
+                need_optimize=True,
+                need_translate=False,
+            ),
+            identity,
+        )
+    )
+
+    output_path = tmp_path / f"input_candidate_phase8-r1_{task.id}_processed.srt"
+    result = task_manager.get_task(task.id).result
+    assert output_path.is_file()
+    assert not subtitle_path.with_stem("input_processed").exists()
+    assert created["cache_namespace"] == identity.cache_namespace
+    assert result["subtitle_file"] == str(output_path)
+    assert result["pipeline"] == {"variant": "candidate", "revision": "phase8-r1"}
+
+
+def test_candidate_subtitle_pipeline_writes_task_scoped_efficiency_snapshot(
+    tmp_path,
+    monkeypatch,
+):
+    import asyncio
+    import json
+
+    subtitle_path = tmp_path / "input.srt"
+    subtitle_path.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello world\n",
+        encoding="utf-8",
+    )
+    settings = {
+        "llm_model": "deepseek-v4-flash",
+        "llm_api_key": "task-key",
+        "llm_base_url": "https://api.deepseek.com/v1",
+        "thread_num": 1,
+        "batch_size": 1,
+    }
+    monkeypatch.setattr(
+        config_module,
+        "get_config_value",
+        lambda key, default=None: settings.get(key, default),
+    )
+    _mock_llm_runtime(monkeypatch, settings)
+
+    class Client:
+        _subforge_telemetry = LLMTaskTelemetry()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(llm_module, "create_client", lambda **_kwargs: Client())
+
+    class FakeSplitter:
+        def __init__(self, **_kwargs):
+            pass
+
+        def split_subtitle(self, asr_data):
+            return asr_data
+
+    monkeypatch.setattr(split_module, "SubtitleSplitter", FakeSplitter)
+    identity = resolve_translation_pipeline_identity(
+        {
+            QUALITY_PIPELINE_FLAG: "1",
+            QUALITY_PIPELINE_REVISION: "phase8-r1",
+        }
+    )
+    task = task_manager.create_task("subtitle")
+
+    asyncio.run(
+        _run_subtitle(
+            task.id,
+            SubtitleRequest(
+                subtitle_file=str(subtitle_path),
+                llm_provider="deepseek",
+                llm_model="deepseek-v4-flash",
+                need_optimize=False,
+                need_translate=False,
+            ),
+            identity,
+        )
+    )
+
+    result = task_manager.get_task(task.id).result
+    telemetry_path = Path(result["telemetry_file"])
+    payload = json.loads(telemetry_path.read_text(encoding="utf-8"))
+    assert telemetry_path.name.endswith("_processed.telemetry.json")
+    assert payload["task_id"] == task.id
+    assert len(payload["workload_id"]) == 64
+    assert payload["pipeline"] == {
+        "variant": "candidate",
+        "revision": "phase8-r1",
+    }
+    assert payload["metrics"]["request_attempts"] == 0
+
+
+def test_candidate_telemetry_includes_text_free_repair_shadow(tmp_path):
+    identity = resolve_translation_pipeline_identity(
+        {
+            QUALITY_PIPELINE_FLAG: "1",
+            QUALITY_PIPELINE_REVISION: "phase8-r1",
+        }
+    )
+
+    class Client:
+        _subforge_telemetry = LLMTaskTelemetry()
+
+    class Summary:
+        @staticmethod
+        def to_dict():
+            return {
+                "schema_version": 1,
+                "counts": {"recorded_plan_observations": 0},
+            }
+
+    class Translator:
+        @staticmethod
+        def shadow_repair_summary():
+            return Summary()
+
+        @staticmethod
+        def canonical_evidence_summary():
+            return CanonicalSummary()
+
+    class CanonicalSummary:
+        @staticmethod
+        def to_dict():
+            return {
+                "schema_version": 1,
+                "counts": {
+                    "terminology_line_count": 2,
+                    "asr_labeled_line_count": 1,
+                    "parseable_mapping_count": 1,
+                    "mapping_with_source_match_count": 1,
+                    "source_mapping_match_count": 1,
+                    "supported_source_mapping_match_count": 0,
+                    "rejected_source_mapping_match_count": 1,
+                },
+            }
+
+    telemetry_path = _write_candidate_telemetry(
+        tmp_path / "candidate.srt",
+        Client(),
+        identity,
+        Translator(),
+    )
+
+    assert telemetry_path is not None
+    payload = json.loads(telemetry_path.read_text(encoding="utf-8"))
+    assert payload["repair_shadow"] == {
+        "schema_version": 1,
+        "counts": {"recorded_plan_observations": 0},
+    }
+    assert payload["canonical_evidence"] == CanonicalSummary.to_dict()
+    assert set(payload["canonical_evidence"]) == {"schema_version", "counts"}
+    assert all(
+        isinstance(value, int)
+        for value in payload["canonical_evidence"]["counts"].values()
+    )
 def test_subtitle_pipeline_cleans_chinese_translation_punctuation(tmp_path, monkeypatch):
     import asyncio
 
@@ -268,12 +531,12 @@ def test_subtitle_pipeline_cleans_chinese_translation_punctuation(tmp_path, monk
     )
 
     output = subtitle_path.with_stem("input_processed").read_text(encoding="utf-8")
-    assert created["target_language"] == "chinese"
+    assert created == {}  # Disabling smart splitting must not call the splitter.
     assert "你好 世界" in output
     assert "Hello, world." in output
 
 
-def test_subtitle_pipeline_finalizes_word_backed_sentence_timing(tmp_path, monkeypatch):
+def test_subtitle_pipeline_finalizes_word_backed_sentence_timing(tmp_path, monkeypatch, passthrough_optimizer):
     import asyncio
 
     subtitle_path = tmp_path / "input.srt"
@@ -288,7 +551,7 @@ def test_subtitle_pipeline_finalizes_word_backed_sentence_timing(tmp_path, monke
         "get_config_value",
         lambda key, default=None: {"thread_num": 1, "batch_size": 1}.get(key, default),
     )
-    _mock_llm_runtime(monkeypatch, {})
+    _mock_llm_runtime(monkeypatch, {"llm_api_key": "test-key", "llm_base_url": "https://example.test/v1"})
 
     class FakeSplitter:
         def __init__(self, **_kwargs):
@@ -316,7 +579,7 @@ def test_subtitle_pipeline_finalizes_word_backed_sentence_timing(tmp_path, monke
             task.id,
             SubtitleRequest(
                 subtitle_file=str(subtitle_path),
-                need_optimize=False,
+                need_optimize=True,
                 need_translate=False,
             ),
         )
@@ -466,9 +729,11 @@ def test_subtitle_pipeline_does_not_split_bilingual_cues_after_translation(
     assert "我觉得没必要切到运动模式 毕竟咱们现在是奔着省油去的" in output
 
 
+@pytest.mark.parametrize("candidate", [False, True])
 def test_failed_translation_saves_punctuation_cleaned_recovery_file(
     tmp_path,
     monkeypatch,
+    candidate,
 ):
     import asyncio
 
@@ -520,6 +785,16 @@ def test_failed_translation_saves_punctuation_cleaned_recovery_file(
     )
 
     task = task_manager.create_task("subtitle")
+    identity = (
+        resolve_translation_pipeline_identity(
+            {
+                QUALITY_PIPELINE_FLAG: "1",
+                QUALITY_PIPELINE_REVISION: "phase8-r1",
+            }
+        )
+        if candidate
+        else None
+    )
     asyncio.run(
         _run_subtitle(
             task.id,
@@ -530,15 +805,99 @@ def test_failed_translation_saves_punctuation_cleaned_recovery_file(
                 need_optimize=False,
                 need_translate=True,
             ),
+            identity,
         )
     )
 
-    recovery_path = subtitle_path.with_stem("input_recovery")
+    recovery_path = (
+        subtitle_path.with_stem(f"input_candidate_phase8-r1_{task.id}_recovery")
+        if candidate
+        else subtitle_path.with_stem("input_recovery")
+    )
     recovery = recovery_path.read_text(encoding="utf-8")
     task_result = task_manager.get_task(task.id)
 
     assert "第一条 已经完成" in recovery
     assert "第二条" not in recovery
     assert task_result.status.value == "failed"
-    assert task_result.result == {"recovery_file": str(recovery_path)}
+    expected_result = {"recovery_file": str(recovery_path)}
+    if candidate:
+        expected_result["pipeline"] = {
+            "variant": "candidate",
+            "revision": "phase8-r1",
+        }
+    assert task_result.result == expected_result
     assert task_result.subtitle_file == str(recovery_path)
+
+
+@pytest.mark.parametrize("failure", ["cancel", "readonly", "save_failed", "all_outputs_failed"])
+def test_lifecycle_preserves_usable_translation_on_cancel_or_output_error(tmp_path, monkeypatch, failure):
+    import asyncio
+    import tempfile
+
+    import subforge.config as paths
+
+    source = tmp_path / "input.srt"
+    source.write_text("1\n00:00:00,000 --> 00:00:01,000\nFirst source.\n", encoding="utf-8")
+    work = tmp_path / "durable"
+    monkeypatch.setattr(paths, "WORK_PATH", work)
+    monkeypatch.setattr(config_module, "get_config_value", lambda key, default=None: {
+        "thread_num": 1, "batch_size": 1, "replace_chinese_punctuation": True,
+    }.get(key, default))
+    _mock_llm_runtime(monkeypatch, {})
+    original_save = ASRData.save
+    named_temporary_file = tempfile.NamedTemporaryFile
+    monkeypatch.setattr(tempfile, "NamedTemporaryFile", lambda **kwargs: named_temporary_file(**{"dir": tmp_path, **kwargs}))
+
+    def save(data, path, *args, **kwargs):
+        path = Path(path)
+        if (
+            path.name.endswith("_processed.srt")
+            or (failure == "readonly" and path.parent == tmp_path and path.name == "input_recovery.srt")
+            or (failure == "all_outputs_failed" and not path.name.endswith("_partial.srt"))
+        ):
+            raise PermissionError("output folder is read-only")
+        return original_save(data, str(path), *args, **kwargs)
+
+    monkeypatch.setattr(ASRData, "save", save)
+    task = task_manager.create_task("subtitle")
+
+    class Translator:
+        def __init__(self, **kwargs):
+            self.callback = kwargs["update_callback"]
+
+        def translate_subtitle(self, data):
+            self.callback([SubtitleProcessData(index=1, original_text="First source.", translated_text="第一条，已经完成。")])
+            if failure == "cancel":
+                task_manager.cancel_task(task.id)
+                raise asyncio.CancelledError()
+            if failure == "readonly":
+                raise RuntimeError("provider stopped")
+            return data
+
+    monkeypatch.setattr(TranslatorFactory, "create_translator", staticmethod(lambda **kw: Translator(**kw)))
+    req = SubtitleRequest(subtitle_file=str(source), translator="bing", need_optimize=False)
+    if failure == "cancel":
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(_run_subtitle(task.id, req))
+    else:
+        asyncio.run(_run_subtitle(task.id, req))
+
+    info = task_manager.get_task(task.id)
+    assert info.status.value == ("cancelled" if failure == "cancel" else "failed")
+    assert info.result and info.result.get("recovery_file")
+    output = Path(info.result["recovery_file"])
+    assert output.is_file()
+    if failure == "all_outputs_failed":
+        assert "第一条，已经完成。" in output.read_text(encoding="utf-8-sig")
+    else:
+        assert "第一条 已经完成" in output.read_text(encoding="utf-8-sig")
+    assert "First source." in source.read_text()
+    if failure == "readonly":
+        assert output.is_relative_to(work)
+        assert info.result.get("warnings")
+    elif failure == "all_outputs_failed":
+        assert output.name.endswith("_partial.srt")
+        assert info.result.get("warnings")
+    else:
+        assert output == source.with_stem("input_recovery")

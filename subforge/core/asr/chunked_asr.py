@@ -8,6 +8,7 @@ import io
 import math
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from copy import deepcopy
 from typing import Callable, List, Optional, Tuple, Union
 
 from pydub import AudioSegment
@@ -215,6 +216,26 @@ class ChunkedASR:
         chunk_progress = [0] * total_chunks
         last_overall = 0
         progress_lock = threading.Lock()
+        segment_callback = self.asr_kwargs.get("segment_callback")
+        previews: dict[int, ASRData] = {}
+        preview_lock = threading.Lock()
+
+        def publish_chunk(idx: int, data: ASRData):
+            if not callable(segment_callback):
+                return
+            # Keep snapshots in chunk-local time. Merge on copies so preview
+            # offsets cannot leak back into the final transcription or retries.
+            with preview_lock:
+                previews[idx] = deepcopy(data)
+                last_index = max(previews)
+                snapshot = self._merge_results(
+                    [previews.get(i, ASRData([])) for i in range(last_index + 1)],
+                    chunks[:last_index + 1],
+                )
+                try:
+                    segment_callback(deepcopy(snapshot))
+                except Exception:
+                    logger.warning("Unable to publish chunk preview", exc_info=True)
 
         def transcribe_single_chunk(
             idx: int, chunk_bytes: bytes, offset_ms: int
@@ -237,7 +258,10 @@ class ChunkedASR:
 
             # 为当前 chunk 创建独立的 ASR 实例
             # 使用 chunk_bytes 作为音频输入
-            chunk_asr = self.asr_class(chunk_bytes, **self.asr_kwargs)
+            asr_kwargs = dict(self.asr_kwargs)
+            if callable(segment_callback):
+                asr_kwargs["segment_callback"] = lambda data: publish_chunk(idx, data)
+            chunk_asr = self.asr_class(chunk_bytes, **asr_kwargs)
 
             # 调用 ASR 的 run() 方法转录
             try:
@@ -245,7 +269,11 @@ class ChunkedASR:
             except Exception as exc:
                 if not self._can_retry_chunk(exc, chunk_bytes):
                     raise
-                asr_data = self._retry_failed_chunk(chunk_bytes, chunk_callback, exc)
+                asr_data = self._retry_failed_chunk(
+                    chunk_bytes, chunk_callback, exc, asr_kwargs=asr_kwargs
+                )
+
+            publish_chunk(idx, asr_data)
 
             logger.debug(
                 f"Chunk {idx + 1}/{total_chunks} 转录完成，获得 {len(asr_data.segments)}  segments"
@@ -293,6 +321,8 @@ class ChunkedASR:
         chunk_bytes: bytes,
         callback: Optional[Callable[[int, str], None]],
         exc: Exception,
+        *,
+        asr_kwargs: Optional[dict] = None,
     ) -> ASRData:
         audio = AudioSegment.from_file(io.BytesIO(chunk_bytes))
         duration_ms = len(audio)
@@ -318,7 +348,7 @@ class ChunkedASR:
         retry = ChunkedASR(
             asr_class=self.asr_class,
             audio_path=chunk_bytes,
-            asr_kwargs=self.asr_kwargs,
+            asr_kwargs=self.asr_kwargs if asr_kwargs is None else asr_kwargs,
             chunk_length=max(1, math.ceil(retry_length_ms / MS_PER_SECOND)),
             chunk_overlap=max(0, self.chunk_overlap_ms // MS_PER_SECOND),
             chunk_concurrency=1,

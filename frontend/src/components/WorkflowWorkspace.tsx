@@ -15,6 +15,7 @@ import {
   type SubtitleSegment,
 } from "@/lib/api";
 import { formatDuration, formatSize } from "@/lib/format";
+import type { TaskStarter } from "@/lib/useTaskMonitor";
 import { SubtitlePanel } from "@/components/SubtitlePanel";
 import {
   ASR_ENGINES,
@@ -30,10 +31,6 @@ import {
 } from "@/features/workflow/quality";
 import { LLM_PROVIDERS } from "@/features/settings/catalog";
 
-type TaskStarter = (
-  type: "transcribe" | "subtitle",
-  payload: Record<string, unknown>
-) => Promise<void>;
 type AppConfig = ReturnType<typeof useAppStore.getState>["config"];
 
 interface WorkflowWorkspaceProps {
@@ -1135,6 +1132,7 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
       <div className="grid h-full min-h-0 grid-cols-[minmax(560px,1fr)_360px] gap-5 max-xl:grid-cols-1">
         <section className="min-h-0 overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
           <SubtitlePanel
+            startTask={startTask}
             focusRequest={subtitleFocusRequest}
             showPrompt={false}
             showTranslateActions={false}

@@ -958,6 +958,62 @@ class TestAudioEnergyPauseRestore:
             ("real", 10500, 10800),
         ]
 
+    def test_filter_hallucinations_removes_short_run_in_confirmed_long_nonspeech(self):
+        asr_data = ASRData(
+            [
+                ASRDataSeg("Previous", 0, 400),
+                ASRDataSeg("speech", 420, 900),
+                ASRDataSeg("Thank", 12000, 12200),
+                ASRDataSeg("you.", 12220, 12480),
+                ASRDataSeg("Next", 24000, 24300),
+                ASRDataSeg("sentence", 24320, 24800),
+            ],
+            granularity="word",
+        )
+
+        asr_data.filter_hallucinations(
+            speech_segments=[(0, 900), (24000, 24800)],
+            strict_speech_segments=[(0, 900), (24000, 24800)],
+            corroborating_speech_segments=[(0, 900), (24000, 24800)],
+            media_duration_ms=30000,
+        )
+
+        assert [segment.text for segment in asr_data.segments] == [
+            "Previous",
+            "speech",
+            "Next",
+            "sentence",
+        ]
+
+    def test_filter_hallucinations_keeps_short_isolated_real_utterance(self):
+        asr_data = ASRData(
+            [
+                ASRDataSeg("Previous", 0, 400),
+                ASRDataSeg("speech", 420, 900),
+                ASRDataSeg("Thank", 12000, 12200),
+                ASRDataSeg("you.", 12220, 12480),
+                ASRDataSeg("Next", 24000, 24300),
+                ASRDataSeg("sentence", 24320, 24800),
+            ],
+            granularity="word",
+        )
+
+        asr_data.filter_hallucinations(
+            speech_segments=[(0, 900), (12080, 12320), (24000, 24800)],
+            strict_speech_segments=[(0, 900), (24000, 24800)],
+            corroborating_speech_segments=[(0, 900), (24000, 24800)],
+            media_duration_ms=30000,
+        )
+
+        assert [segment.text for segment in asr_data.segments] == [
+            "Previous",
+            "speech",
+            "Thank",
+            "you.",
+            "Next",
+            "sentence",
+        ]
+
     def test_filter_hallucinations_keeps_punctuation_attached_to_real_words(self):
         asr_data = ASRData(
             [
@@ -1237,6 +1293,25 @@ class TestChineseTranslationPunctuationFinalization:
         asr_data.replace_chinese_translation_punctuation()
 
         assert asr_data.segments[0].translated_text == "甲、乙、丙"
+
+    def test_finalization_is_idempotent(self):
+        asr_data = ASRData(
+            [
+                ASRDataSeg(
+                    "Technical terms.",
+                    0,
+                    1000,
+                    translated_text="版本3.5，详见himss.com。",
+                )
+            ]
+        )
+
+        asr_data.replace_chinese_translation_punctuation()
+        finalized = asr_data.segments[0].translated_text
+        asr_data.replace_chinese_translation_punctuation()
+
+        assert finalized == "版本3.5 详见himss.com"
+        assert asr_data.segments[0].translated_text == finalized
 
 
 class TestFormatConversionEdgeCases:

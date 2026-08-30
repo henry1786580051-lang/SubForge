@@ -3,11 +3,14 @@
 import threading
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import replace
 from typing import Callable, List, Optional
 
 from subforge.core.asr.asr_data import ASRData, ASRDataSeg
 from subforge.core.entities import SubtitleProcessData
 from subforge.core.translate.quality import (
+    capture_segment_integrity,
+    inspect_segment_integrity,
     inspect_translation_batch,
     is_placeholder_translation,
     is_untranslated_output,
@@ -45,6 +48,7 @@ class BaseTranslator(ABC):
         target_language: TargetLanguage,
         update_callback: Optional[Callable],
         use_cache: bool = True,
+        cache_namespace: str = "",
     ):
         if thread_num <= 0:
             raise ValueError("thread_num must be positive")
@@ -57,6 +61,7 @@ class BaseTranslator(ABC):
         self.is_running = True
         self.update_callback = update_callback
         self.use_cache = use_cache
+        self.cache_namespace = str(cache_namespace or "").strip()
         self.executor = None
         self._executor_lock = threading.Lock()
         self._cache = get_translate_cache()
@@ -99,7 +104,7 @@ class BaseTranslator(ABC):
             except PartialTranslationError as error:
                 recovered = self._finalize_complete_recovery(translate_data_list, error)
                 if recovered is None:
-                    self._publish_finalized_recovery(translate_data_list, error)
+                    self._publish_recovery_checkpoint(translate_data_list, error)
                     raise RuntimeError(str(error)) from error
                 logger.warning(
                     "Recovered a complete provisional translation after document-level "
@@ -117,7 +122,15 @@ class BaseTranslator(ABC):
             self._validate_translated_list(translate_data_list, translated_list)
 
             # 设置Subtitle segment的翻译文本
+            source_integrity = capture_segment_integrity(asr_data.segments)
             new_segments = self._set_segments_translated_text(asr_data.segments, translated_list)
+            integrity_diagnostics = inspect_segment_integrity(source_integrity, new_segments)
+            if integrity_diagnostics:
+                rule_ids = [item.rule_id for item in integrity_diagnostics[:20]]
+                raise RuntimeError(
+                    "Translation write-back changed source text or timestamps; "
+                    f"refusing to save the result. Rules: {rule_ids}"
+                )
 
             return ASRData(new_segments)
         except RuntimeError:
@@ -146,38 +159,26 @@ class BaseTranslator(ABC):
         """Allow translators to run whole-document consistency checks."""
         return translated_list
 
-    def _publish_finalized_recovery(
+    def _publish_recovery_checkpoint(
         self,
         source_list: List[SubtitleProcessData],
         error: PartialTranslationError,
     ) -> None:
-        """Publish the best complete recovery after document-level finalization.
+        """Publish usable progress after the one complete-recovery attempt fails.
 
-        A provisional item is still a genuine target-language answer, but it may
-        have failed a strict local validator. When every source key has either a
-        completed or provisional answer, let the normal whole-document finalizer
-        repair cross-key repetition and fluency before the API writes recovery.
-        The task remains failed; this only improves the checkpoint the user keeps.
+        Provisional items are not completion evidence. Do not rerun the whole
+        document finalizer here or publish its rejected intermediate mutations.
         """
         recovery_by_index = {item.index: item for item in error.completed}
         recovery_by_index.update({item.index: item for item in error.provisional})
         if not recovery_by_index:
             return
 
-        source_indices = {item.index for item in source_list}
         recovery = [
             recovery_by_index[item.index]
             for item in source_list
             if item.index in recovery_by_index
         ]
-        if set(recovery_by_index) == source_indices:
-            try:
-                recovery = self._finalize_translated_list(source_list, recovery)
-            except Exception:
-                logger.exception(
-                    "Whole-document recovery finalization failed; publishing the "
-                    "best provisional translations"
-                )
         if self.update_callback and recovery:
             self.update_callback(recovery)
 
@@ -193,7 +194,9 @@ class BaseTranslator(ABC):
         if set(recovery_by_index) != source_indices:
             return None
 
-        recovery = [recovery_by_index[item.index] for item in source_list]
+        # Finalizers may edit their inputs before a later request or validator
+        # fails. Keep the last usable checkpoint separate from that candidate.
+        recovery = [replace(recovery_by_index[item.index]) for item in source_list]
         try:
             recovery = self._finalize_translated_list(source_list, recovery)
             self._validate_translated_list(source_list, recovery)
@@ -317,7 +320,11 @@ class BaseTranslator(ABC):
         return is_placeholder_translation(text)
 
     def _is_untranslated_output(self, output: str, source: str) -> bool:
-        return is_untranslated_output(output, source, self.target_language)
+        return is_untranslated_output(
+            output,
+            source,
+            self.target_language,
+        )
 
     def _get_cache_key(self, chunk: List[SubtitleProcessData]) -> str:
         """生成缓存键"""
@@ -330,6 +337,8 @@ class BaseTranslator(ABC):
         """安全的翻译块"""
         try:
             cache_key = self._get_cache_key(chunk)
+            if self.cache_namespace:
+                cache_key = f"{self.cache_namespace}:{cache_key}"
             if self.use_cache and is_cache_enabled():
                 try:
                     cached_result = self._cache.get(cache_key, default=None)

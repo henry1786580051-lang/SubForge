@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from subforge.core.llm.response import (
+    get_response_history_message,
     get_response_text,
     parse_json_object,
     strip_reasoning_blocks,
@@ -49,6 +50,22 @@ def test_get_response_text_uses_only_anthropic_text_blocks():
     assert get_response_text(response) == '{"1":"译文"}'
 
 
+def test_get_response_history_message_preserves_kimi_reasoning():
+    message = SimpleNamespace(
+        content='{"1":"译文"}',
+        reasoning_content="private chain",
+        reasoning=None,
+        tool_calls=None,
+    )
+    response = SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    assert get_response_history_message(response) == {
+        "role": "assistant",
+        "content": '{"1":"译文"}',
+        "reasoning_content": "private chain",
+    }
+
+
 def test_parse_json_object_handles_reasoning_fence_and_numeric_keys():
     content = '<think>analysis</think>\n```json\n{1: "你好", "2": "世界"}\n```'
 
@@ -60,9 +77,7 @@ def test_parse_json_object_handles_common_list_wrappers():
         "1": "你好",
         "2": "世界",
     }
-    assert parse_json_object('[{"key": 1, "translation": "你好"}]') == {
-        "1": "你好"
-    }
+    assert parse_json_object('[{"key": 1, "translation": "你好"}]') == {"1": "你好"}
 
 
 def test_parse_json_object_rejects_plain_list():

@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from app.core.blocking import run_blocking
 from app.core.task_manager import TaskResourceBusyError, task_manager
-from app.security import validate_path
+from app.security import grant_path, validate_path
 from app.services.task_runtime import create_pipeline_context, schedule_background_task
 from subforge.application import subtitle_preview_segments
 from subforge.core.asr.alignment_models import (
@@ -546,6 +546,7 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
             subtitle_path = work_dir / f"{video_stem}.srt"
             context.checkpoint()
             result.save(str(subtitle_path))
+            grant_path(str(subtitle_path))
             result.save_language_metadata(str(subtitle_path))
             result.save_timing_metadata(
                 str(subtitle_path),

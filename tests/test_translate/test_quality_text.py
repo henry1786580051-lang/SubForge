@@ -2,8 +2,10 @@ import pytest
 
 from subforge.core.entities import SubtitleProcessData
 from subforge.core.translate.quality import (
+    contains_reasoning_leak,
     inspect_translation_batch,
     is_placeholder_translation,
+    is_source_copy,
     is_untranslated_output,
 )
 from subforge.core.translate.types import TargetLanguage
@@ -68,6 +70,30 @@ def test_target_script_detection_still_translates_url_call_to_action():
     )
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "<think>private chain</think>最终译文",
+        "```json\n{\"1\": \"译文\"}\n```",
+        "Reasoning: first compare the clauses",
+        "作为一名 AI 我无法翻译",
+    ],
+)
+def test_reasoning_leak_detection_uses_high_confidence_markers(text):
+    assert contains_reasoning_leak(text)
+
+
+@pytest.mark.parametrize("text", ["以下是结果", "分析结果如下", "这是一段正常译文"])
+def test_reasoning_leak_detection_does_not_reject_normal_narration(text):
+    assert not contains_reasoning_leak(text)
+
+
+def test_source_copy_detection_matches_substantial_normalized_text():
+    assert is_source_copy("The same source sentence.", "The same source sentence!")
+    assert not is_source_copy("BMW", "BMW")
+    assert not is_source_copy("这是译文", "This is the source")
+
+
 def test_batch_report_collects_every_completeness_failure():
     source = [
         SubtitleProcessData(1, "One"),
@@ -93,3 +119,17 @@ def test_batch_report_collects_every_completeness_failure():
     assert report.placeholders == ["3"]
     assert report.missing == ["4"]
     assert not report.valid
+
+
+def test_batch_report_rejects_reasoning_residue():
+    source = [SubtitleProcessData(1, "One")]
+    translated = [SubtitleProcessData(1, "One", "<think>分析</think>第一条")]
+
+    report = inspect_translation_batch(
+        source,
+        translated,
+        TargetLanguage.SIMPLIFIED_CHINESE,
+    )
+
+    assert report.reasoning_leaks == ["1"]
+    assert "reasoning leaks: ['1']" in report.error_detail()

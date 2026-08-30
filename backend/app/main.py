@@ -14,6 +14,7 @@ sys.path.insert(0, str(_project_root))
 from app.api import (  # noqa: E402
     config,
     files,
+    free_models,
     llm_logs,
     subtitle,
     subtitles,
@@ -64,6 +65,7 @@ app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(transcribe.router, prefix="/api/transcribe", tags=["transcribe"])
 app.include_router(subtitle.router, prefix="/api/subtitle", tags=["subtitle"])
 app.include_router(config.router, prefix="/api/config", tags=["config"])
+app.include_router(free_models.router, prefix="/api/free-models", tags=["free-models"])
 app.include_router(files.router, prefix="/api/files", tags=["files"])
 app.include_router(subtitles.router, prefix="/api/subtitles", tags=["subtitles"])
 app.include_router(llm_logs.router, prefix="/api/llm-logs", tags=["llm-logs"])

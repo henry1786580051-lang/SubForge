@@ -8,6 +8,10 @@ from subforge.core.translate.context import TranslationContext
 from subforge.core.translate.deeplx_translator import DeepLXTranslator
 from subforge.core.translate.google_translator import GoogleTranslator
 from subforge.core.translate.llm_translator import LLMTranslator
+from subforge.core.translate.quality.pipeline_identity import (
+    LEGACY_TRANSLATION_PIPELINE,
+    TranslationPipelineIdentity,
+)
 from subforge.core.translate.types import TargetLanguage, TranslatorType
 from subforge.core.utils.logger import setup_logger
 
@@ -33,6 +37,8 @@ class TranslatorFactory:
         azure_translator_key: str = "",
         azure_translator_region: str = "",
         azure_translator_endpoint: str = "",
+        cache_namespace: str = "",
+        pipeline_identity: TranslationPipelineIdentity = LEGACY_TRANSLATION_PIPELINE,
     ) -> BaseTranslator:
         """创建翻译器实例"""
         try:
@@ -50,8 +56,10 @@ class TranslatorFactory:
                     is_reflect=is_reflect,
                     update_callback=update_callback,
                     use_cache=use_cache,
+                    cache_namespace=cache_namespace,
                     translation_context=translation_context,
                     llm_client=llm_client,
+                    collect_canonical_evidence_telemetry=pipeline_identity.is_candidate,
                 )
             elif translator_type == TranslatorType.GOOGLE:
                 batch_num = 5
@@ -62,6 +70,7 @@ class TranslatorFactory:
                     timeout=20,
                     update_callback=update_callback,
                     use_cache=use_cache,
+                    cache_namespace=cache_namespace,
                 )
             elif translator_type == TranslatorType.BING:
                 batch_num = 10
@@ -71,6 +80,7 @@ class TranslatorFactory:
                     target_language=target_language,
                     update_callback=update_callback,
                     use_cache=use_cache,
+                    cache_namespace=cache_namespace,
                     api_key=azure_translator_key,
                     region=azure_translator_region,
                     endpoint=azure_translator_endpoint,
@@ -84,6 +94,7 @@ class TranslatorFactory:
                     timeout=20,
                     update_callback=update_callback,
                     use_cache=use_cache,
+                    cache_namespace=cache_namespace,
                 )
         except Exception as e:
             logger.error(f"Failed to create translator: {str(e)}")

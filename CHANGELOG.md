@@ -1,5 +1,47 @@
 # Changelog
 
+## v1.2.0 - 2026-08-31
+
+### Added
+
+- Adds a dedicated free-model availability page for NVIDIA's hosted catalog, with bounded, cancellable probes and separate results for responding, rate-limited, restricted, incompatible, and unavailable models. A successful probe is an availability check, not a translation-quality or quota guarantee.
+- Adds model-specific NVIDIA adapters for DeepSeek V4, GLM-5.3, Kimi K3, and Nemotron 3 Ultra. Model-family translation rules remain shared where appropriate, while endpoint-specific reasoning controls, output budgets, timeouts, and retry policies stay isolated.
+- Adds reproducible translation-quality manifests, offline replays, boundary diagnostics, evidence checks, repair planning, and task-level request/token/retry telemetry for evaluating future changes without replacing the validated production pipeline.
+- Expands the SRT post-editing protocol and contributor optimization guides, including source/timing preservation, single-speaker versus dialogue checks, sample provenance, and acceptance gates.
+
+### Improved
+
+- Extracts English and Chinese boundary detectors into focused modules with shared features and registries, preserving the existing production selection policy instead of enabling an unvalidated candidate workflow.
+- Removes keyword-triggered canned sentence rewrites that could introduce facts or delete qualifiers. Remaining local repairs require evidence from the current text and respect target language, speaker changes, language changes, and meaningful timing gaps.
+- Preserves validated translations when a later semantic-repair request fails, prevents overlapping repair windows from overwriting newer content, and avoids rerunning the complete finalizer when recovery has already failed once.
+- Keeps DeepSeek and switchable-reasoning models selective: routine translation and format checks do not become whole-document thinking passes. GLM/Kimi effort and Nemotron thinking are handled by their own adapters.
+- Preserves durable evaluation reports under `artifacts/` during a clean desktop build and continues to keep a single managed macOS app output.
+
+### Fixed
+
+- Fixed task start/cancel races, duplicate starts, stale cancellation responses clearing newer tasks, and delayed file loads overwriting edits made in the subtitle editor.
+- Fixed live preview updates becoming inconsistent after missing or out-of-order WebSocket messages; version gaps now recover from complete snapshots, and terminal results are protected from later mutable updates.
+- Fixed chunked transcription previews showing only a local chunk instead of cumulative subtitles on the global timeline.
+- Fixed failed or cancelled translation tasks losing usable recovery output when the requested folder was not writable. Recovery falls back to a task-specific application work directory and retains an existing temporary checkpoint if both persistent saves fail.
+- Fixed cleanup releasing same-file task locks while cancelled blocking workers were still running.
+- Fixed bilingual SRT, VTT, and ASS re-import handling, Unicode download filenames, and exact-file authorization for generated outputs.
+- Fixed the disabled text-optimization option still entering optimization paths.
+- Fixed packaged FasterWhisper missing its Silero VAD data on macOS, while allowing Intel builds that intentionally omit this optional engine. Packaged WhisperX smoke checks now match each platform's actual ASR runtime.
+
+### Validation
+
+- Python offline regression: `2414 passed, 35 deselected`; frontend: `26 passed`.
+- Ruff, TypeScript, ESLint, Next.js production build, and whitespace checks passed. Pyright reports `0 errors` with 29 existing warnings.
+- Regression coverage includes translation preservation, retry isolation, recovery finalization, task lifecycle races, preview revisions, bilingual parsing, and packaging resources.
+- The final safety audit used existing development samples only; this release does not claim a new end-to-end translation accuracy score or a measured API-token reduction.
+
+### Packaging
+
+- macOS Apple Silicon: `SubForge-1.2.0-macos-arm64.dmg`, built locally.
+- Windows x64: `SubForge-1.2.0-windows-x64-setup.exe`, built and installation-smoke-tested by GitHub Actions. No separate CUDA installer is produced.
+- Release assets are collected in a draft and published only after verification; historical release notes are retained.
+- Large ASR, forced-alignment, and speaker models remain separate downloads. Existing settings and model directories are not included in the installers.
+
 ## v1.1.18 - 2026-08-27
 
 ### Improved

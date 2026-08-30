@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Literal, Optional, Tuple, cast
 
-from langdetect import LangDetectException, detect
-
 from ..entities import SubtitleLayoutEnum
 from ..utils.atomic_write import atomic_write_srt, atomic_write_text
+from ..utils.subtitle_parsing import parse_subtitle_text
+from ..utils.subtitle_text import finalize_chinese_translation_punctuation
 from ..utils.text_utils import is_mainly_cjk
 
 # 多语言分词模式(支持词级和字符级语言)
@@ -70,9 +70,7 @@ def infer_text_language(text: str) -> str:
     normalized = unicodedata.normalize("NFC", str(text or ""))
     has_latin = bool(re.search(r"[A-Za-z]", normalized))
     has_kana = bool(re.search(r"[\u3040-\u30ff\u31f0-\u31ff]", normalized))
-    has_hangul = bool(
-        re.search(r"[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]", normalized)
-    )
+    has_hangul = bool(re.search(r"[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]", normalized))
     if has_kana:
         return "mixed" if has_latin else "ja"
     if has_hangul:
@@ -422,33 +420,9 @@ class ASRData:
         ASCII identifiers such as decimals, model names, and domain names.
         """
         for seg in self.segments:
-            translated = seg.translated_text
-            if not translated:
-                continue
-
-            has_han = bool(re.search(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", translated))
-            cleaned = []
-            for index, character in enumerate(translated):
-                if character in "，。":
-                    cleaned.append(" ")
-                    continue
-                if character in ",." and has_han:
-                    previous = translated[index - 1] if index > 0 else ""
-                    following = translated[index + 1] if index + 1 < len(translated) else ""
-                    if (
-                        previous.isascii()
-                        and previous.isalnum()
-                        and following.isascii()
-                        and following.isalnum()
-                    ):
-                        cleaned.append(character)
-                    else:
-                        cleaned.append(" ")
-                    continue
-                cleaned.append(character)
-            translated = "".join(cleaned)
-            translated = re.sub(r"、+\s*$", "", translated)
-            seg.translated_text = re.sub(r"[ \t]{2,}", " ", translated).strip()
+            seg.translated_text = finalize_chinese_translation_punctuation(
+                seg.translated_text
+            )
         return self
 
     def save(
@@ -920,14 +894,16 @@ class ASRData:
         media_duration_ms: Optional[int],
         group_gap_ms: int = 1200,
         isolation_ms: int = 3000,
+        short_group_isolation_ms: int = 10_000,
     ) -> None:
         """Remove isolated word runs rejected by independent speech evidence.
 
         Word timestamps must remain atomic, so the sentence-level energy pass
         cannot safely process them. This pass groups neighboring words only for
         validation and removes a group only when regular VAD, strict VAD, and a
-        corroborating detector all reject it. Missing detector evidence fails
-        open and leaves lexical content untouched.
+        corroborating detector all reject it. One- and two-word groups require
+        much longer isolation and near-zero detector overlap. Missing detector
+        evidence fails open and leaves lexical content untouched.
         """
         import logging
 
@@ -1016,10 +992,14 @@ class ASRData:
             lexical_units = sum(
                 len(re.findall(_WORD_SPLIT_PATTERN, segment.text)) for segment in group
             )
-            if lexical_units < 3:
+            if lexical_units < 1:
                 continue
+            is_short_group = lexical_units <= 2
+            required_isolation_ms = short_group_isolation_ms if is_short_group else isolation_ms
 
-            previous_end = self.segments[groups[group_index - 1][1] - 1].end_time if group_index else 0
+            previous_end = (
+                self.segments[groups[group_index - 1][1] - 1].end_time if group_index else 0
+            )
             if group_index + 1 < len(groups):
                 following_start = self.segments[groups[group_index + 1][0]].start_time
             elif media_duration_ms is not None:
@@ -1027,8 +1007,8 @@ class ASRData:
             else:
                 following_start = group_end_ms
             if (
-                group_start_ms - previous_end < isolation_ms
-                or following_start - group_end_ms < isolation_ms
+                group_start_ms - previous_end < required_isolation_ms
+                or following_start - group_end_ms < required_isolation_ms
             ):
                 continue
 
@@ -1047,10 +1027,14 @@ class ASRData:
                 group_end_ms,
                 corroborating_speech_segments,
             )
-            if regular_overlap / duration_ms >= 0.35:
-                continue
-            if strict_overlap >= 120 or corroborating_overlap >= 120:
-                continue
+            if is_short_group:
+                if regular_overlap >= 80 or strict_overlap >= 80 or corroborating_overlap >= 80:
+                    continue
+            else:
+                if regular_overlap / duration_ms >= 0.35:
+                    continue
+                if strict_overlap >= 120 or corroborating_overlap >= 120:
+                    continue
 
             remove_indexes.update(range(start_index, end_index))
             logger.warning(
@@ -1308,9 +1292,7 @@ class ASRData:
                 and left_word.endswith(right_word)
             )
             numeric_two_echo = (
-                right_word == "too"
-                and left_word.isdigit()
-                and left_word.endswith("2")
+                right_word == "too" and left_word.isdigit() and left_word.endswith("2")
             )
             if not (exact_echo or suffix_echo or numeric_two_echo):
                 index += 1
@@ -2265,9 +2247,7 @@ class ASRData:
 
         self.segments.sort(key=lambda s: (s.start_time, s.end_time))
         speech = sorted(
-            (max(0, start), max(0, end))
-            for start, end in (speech_segments or [])
-            if end > start
+            (max(0, start), max(0, end)) for start, end in (speech_segments or []) if end > start
         )
         extended = 0
         vad_extended = 0
@@ -2523,218 +2503,8 @@ class ASRData:
         srt_time_pattern = re.compile(
             r"(\d{2}):(\d{2}):(\d{1,2})[.,](\d{3})\s-->\s(\d{2}):(\d{2}):(\d{1,2})[.,](\d{3})"
         )
-        speaker_pattern = re.compile(r"^\[(说话人\d+|Speaker \d+)\]\s*")
         blocks = re.split(r"\n\s*\n", srt_str.strip())
 
-        def _line_family(text: str) -> str:
-            """Classify a subtitle text line without being fooled by model names.
-
-            A Chinese translation often contains Latin tokens such as W126,
-            AMG, Mercedes-Benz, or email addresses. Presence of meaningful CJK
-            text therefore wins over embedded Latin identifiers. Han, Japanese,
-            and Korean remain distinct so bilingual CJK cues can be separated.
-            """
-            stripped = text.strip()
-            if not stripped:
-                return "empty"
-
-            normalized = unicodedata.normalize("NFC", stripped)
-            counts = {
-                "han": len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", normalized)),
-                "kana": len(re.findall(r"[\u3040-\u30ff\u31f0-\u31ff]", normalized)),
-                "hangul": len(
-                    re.findall(
-                        r"[\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\uac00-\ud7af\ud7b0-\ud7ff]",
-                        normalized,
-                    )
-                ),
-                "latin": len(re.findall(r"[A-Za-z]", normalized)),
-            }
-            non_latin = counts["han"] + counts["kana"] + counts["hangul"]
-            if counts["hangul"] >= 2 and counts["hangul"] >= counts["han"]:
-                return "hangul"
-            if counts["kana"]:
-                return "japanese"
-            if counts["han"] >= 2:
-                return "han"
-            if counts["latin"] >= 2 and non_latin == 0:
-                return "latin"
-            if counts["hangul"]:
-                return "hangul"
-            if counts["han"]:
-                return "han"
-            return "other"
-
-        def _group_family(lines: list[str]) -> str:
-            joined = " ".join(line.strip() for line in lines if line.strip())
-            family = _line_family(joined)
-            if family in {"han", "japanese", "hangul", "latin"}:
-                return family
-            families = [_line_family(line) for line in lines if line.strip()]
-            counts = {
-                family_name: families.count(family_name)
-                for family_name in ("han", "japanese", "hangul", "latin")
-            }
-            winner, winner_count = max(counts.items(), key=lambda item: item[1])
-            if winner_count > 0 and list(counts.values()).count(winner_count) == 1:
-                return winner
-            return "other"
-
-        def _fallback_different_language(left: str, right: str) -> bool:
-            try:
-                return detect(left) != detect(right)
-            except LangDetectException:
-                return False
-
-        def _split_bilingual_lines(text_lines: list[str]) -> tuple[str, str] | None:
-            non_empty = [line for line in text_lines if line.strip()]
-            if len(non_empty) < 2:
-                return None
-
-            dialogue_marked = all(re.match(r"^-\s+", line.strip()) for line in non_empty)
-            if dialogue_marked:
-                non_empty = [re.sub(r"^-\s+", "", line.strip()) for line in non_empty]
-
-            # Generated translated-on-top subtitles may contain language-neutral
-            # amounts or identical numeric lines. Keep these round-trippable even
-            # when speaker display markers are intentionally hidden.
-            if len(non_empty) == 2:
-                left_family = _line_family(non_empty[0])
-                right_family = _line_family(non_empty[1])
-                short_latin_line = re.compile(r"^[A-Za-z][.!?]?$", re.IGNORECASE)
-                left_title = re.fullmatch(r"[《“\"'](.+?)[》”\"']?[。.]?", non_empty[0].strip())
-                right_title = re.fullmatch(r"[《“\"'](.+?)[》”\"']?[。.]?", non_empty[1].strip())
-                if left_family == right_family == "latin":
-                    canonical_locator = re.compile(
-                        r"^(?:https?://)?[A-Za-z0-9._%+-]+"
-                        r"(?:@[A-Za-z0-9.-]+|(?:\.[A-Za-z0-9-]+)+)"
-                        r"(?:/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]*)?[.!]?$",
-                        re.IGNORECASE,
-                    )
-                    spoken_locator = re.compile(
-                        r"\b(?:dot|slash|at)\b",
-                        re.IGNORECASE,
-                    )
-                    left_is_locator = bool(canonical_locator.fullmatch(non_empty[0].strip()))
-                    right_is_locator = bool(canonical_locator.fullmatch(non_empty[1].strip()))
-                    left_is_spoken = bool(spoken_locator.search(non_empty[0]))
-                    right_is_spoken = bool(spoken_locator.search(non_empty[1]))
-                    # A generated bilingual URL may remain Latin in both languages:
-                    # canonical target above, spoken ASR source below (or vice versa).
-                    # Preserve that pair instead of reopening it as one source-only cue.
-                    if left_is_locator and right_is_spoken:
-                        return non_empty[1], non_empty[0]
-                    if right_is_locator and left_is_spoken:
-                        return non_empty[0], non_empty[1]
-                    if (
-                        left_is_locator
-                        and right_is_locator
-                        and non_empty[0].rstrip(".!").casefold()
-                        == non_empty[1].rstrip(".!").casefold()
-                    ):
-                        return non_empty[1], non_empty[0]
-                    if (
-                        left_title
-                        and re.sub(r"\W+", "", left_title.group(1)).lower()
-                        == re.sub(r"\W+", "", non_empty[1]).lower()
-                    ):
-                        return non_empty[1], non_empty[0]
-                    if (
-                        right_title
-                        and re.sub(r"\W+", "", right_title.group(1)).lower()
-                        == re.sub(r"\W+", "", non_empty[0]).lower()
-                    ):
-                        return non_empty[0], non_empty[1]
-                if (
-                    left_family == "han"
-                    and right_family == "other"
-                    and (
-                        re.search(r"\d", non_empty[1])
-                        or short_latin_line.fullmatch(non_empty[1].strip())
-                    )
-                ):
-                    return non_empty[1], non_empty[0]
-                if (
-                    right_family == "han"
-                    and left_family == "other"
-                    and (
-                        re.search(r"\d", non_empty[0])
-                        or short_latin_line.fullmatch(non_empty[0].strip())
-                    )
-                ):
-                    return non_empty[0], non_empty[1]
-                normalized_left = re.sub(r"\s+", "", non_empty[0])
-                normalized_right = re.sub(r"\s+", "", non_empty[1])
-                neutral_left = re.sub(r"[^\w]+", "", normalized_left)
-                neutral_right = re.sub(r"[^\w]+", "", normalized_right)
-                if (
-                    left_family == right_family == "other"
-                    and re.search(r"\d", normalized_left + normalized_right)
-                    and (
-                        dialogue_marked
-                        or normalized_left == normalized_right
-                        or neutral_left == neutral_right
-                    )
-                ):
-                    return non_empty[1], non_empty[0]
-
-            best: tuple[int, int, str, str] | None = None
-            for split_index in range(1, len(non_empty)):
-                left = non_empty[:split_index]
-                right = non_empty[split_index:]
-                left_family = _group_family(left)
-                right_family = _group_family(right)
-
-                score = 0
-                language_pair = {left_family, right_family}
-                if language_pair in (
-                    {"han", "latin"},
-                    {"han", "hangul"},
-                    {"han", "japanese"},
-                ):
-                    score = 100
-                elif (
-                    left_family != right_family
-                    and left_family != "other"
-                    and right_family != "other"
-                ):
-                    score = 60
-                elif (
-                    left_family != right_family
-                    and len(left) == 1
-                    and len(right) == 1
-                    and _fallback_different_language(left[0], right[0])
-                ):
-                    score = 40
-
-                if score <= 0:
-                    continue
-                # Prefer balanced split points when multiple options look valid.
-                balance_penalty = abs(len(left) - len(right))
-                candidate = (score - balance_penalty, split_index, left_family, right_family)
-                if best is None or candidate > best:
-                    best = candidate
-
-            if best is None:
-                return None
-
-            _, split_index, left_family, right_family = best
-            left_text = "\n".join(non_empty[:split_index]).strip()
-            right_text = "\n".join(non_empty[split_index:]).strip()
-
-            language_pair = {left_family, right_family}
-            if language_pair in (
-                {"han", "latin"},
-                {"han", "hangul"},
-                {"han", "japanese"},
-            ):
-                # SubForge's bilingual SRT workflow translates source speech to
-                # Chinese. Resolve either display order back to source/target.
-                if left_family != "han":
-                    return left_text, right_text
-                return right_text, left_text
-
-            return left_text, right_text
 
         # Process all blocks based on detected mode
         for block in blocks:
@@ -2764,37 +2534,10 @@ class ASRData:
                 ]
             )
 
-            text_lines = lines[2:]
-
-            # Extract speaker_id from the first text line if present
-            speaker_id = ""
-            if text_lines:
-                speaker_match = speaker_pattern.match(text_lines[0])
-                if speaker_match:
-                    speaker_id = speaker_match.group(1)
-                    text_lines[0] = text_lines[0][speaker_match.end() :]
-
-            bilingual = _split_bilingual_lines(text_lines)
-            if bilingual:
-                original, translated = bilingual
-                segments.append(
-                    ASRDataSeg(
-                        original,
-                        start_time,
-                        end_time,
-                        translated,
-                        speaker_id=speaker_id,
-                    )
-                )
-            elif len(text_lines) == 1:
-                segments.append(
-                    ASRDataSeg(text_lines[0], start_time, end_time, speaker_id=speaker_id)
-                )
-            else:
-                # Multi-line subtitle: preserve line breaks with \n
-                segments.append(
-                    ASRDataSeg("\n".join(text_lines), start_time, end_time, speaker_id=speaker_id)
-                )
+            original, translated, speaker_id = parse_subtitle_text("\n".join(lines[2:]))
+            segments.append(
+                ASRDataSeg(original, start_time, end_time, translated, speaker_id=speaker_id)
+            )
 
         return ASRData.from_imported_segments(segments)
 
@@ -2874,7 +2617,8 @@ class ASRData:
             cleaned_text = cleaned_text.strip()
 
             if cleaned_text and cleaned_text != " ":
-                segments.append(ASRDataSeg(cleaned_text, start_time, end_time))
+                original, translated, speaker = parse_subtitle_text(cleaned_text)
+                segments.append(ASRDataSeg(original, start_time, end_time, translated, speaker_id=speaker))
 
         return ASRData.from_imported_segments(segments)
 
@@ -3008,7 +2752,8 @@ class ASRData:
                                 segment.translated_text = text
                             temp_segments[time_key] = segment
                     else:
-                        segments.append(ASRDataSeg(text, start_time, end_time))
+                        original, translated, speaker = parse_subtitle_text(text)
+                        segments.append(ASRDataSeg(original, start_time, end_time, translated, speaker_id=speaker))
 
         for segment in temp_segments.values():
             segments.append(segment)

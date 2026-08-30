@@ -3,11 +3,43 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Iterable
+from difflib import SequenceMatcher
 
 from subforge.core.entities import SubtitleProcessData
 from subforge.core.translate.types import TargetLanguage
+
+_REASONING_LEAK_RE = re.compile(
+    r"(?:<think>|</think>|<analysis>|</analysis>|<reasoning>|</reasoning>|"
+    r"作为\s*(?:一个|一名)?\s*AI|推理过程\s*[:：]|"
+    r"(?:analysis|reasoning)\s*:|```(?:json|markdown)?)",
+    flags=re.IGNORECASE,
+)
+
+
+def _compact_similarity_text(text: str) -> str:
+    return re.sub(r"[^0-9a-z\u3400-\u9fff]+", "", str(text or "").casefold())
+
+
+def contains_reasoning_leak(text: str) -> bool:
+    """Detect high-confidence private reasoning or response-format residue."""
+    return bool(_REASONING_LEAK_RE.search(str(text or "")))
+
+
+def is_source_copy(output: str, source: str) -> bool:
+    """Detect a substantial output that is effectively an unchanged source copy."""
+    normalized_output = _compact_similarity_text(output)
+    normalized_source = _compact_similarity_text(source)
+    if not normalized_output or not normalized_source or len(normalized_output) < 4:
+        return False
+    similarity = SequenceMatcher(
+        None,
+        normalized_output,
+        normalized_source,
+        autojunk=False,
+    ).ratio()
+    return similarity >= 0.94
 
 
 def is_placeholder_translation(text: str) -> bool:
@@ -96,7 +128,6 @@ def is_untranslated_output(
     )
     if url_only.fullmatch(source) or spoken_url_only.fullmatch(source):
         return False
-
     source_words = re.findall(r"[A-Za-z]+", source)
     if not source_words:
         return False
@@ -128,11 +159,19 @@ class TranslationCompletenessReport:
     duplicates: list[str] = field(default_factory=list)
     placeholders: list[str] = field(default_factory=list)
     untranslated: list[str] = field(default_factory=list)
+    reasoning_leaks: list[str] = field(default_factory=list)
 
     @property
     def valid(self) -> bool:
         return not any(
-            (self.missing, self.empty, self.duplicates, self.placeholders, self.untranslated)
+            (
+                self.missing,
+                self.empty,
+                self.duplicates,
+                self.placeholders,
+                self.untranslated,
+                self.reasoning_leaks,
+            )
         )
 
     def error_detail(self) -> str:
@@ -147,6 +186,8 @@ class TranslationCompletenessReport:
             parts.append(f"placeholder translations: {self.placeholders[:20]}")
         if self.untranslated:
             parts.append(f"untranslated indices: {self.untranslated[:20]}")
+        if self.reasoning_leaks:
+            parts.append(f"reasoning leaks: {self.reasoning_leaks[:20]}")
         return "; ".join(parts)
 
 
@@ -173,6 +214,8 @@ def inspect_translation_batch(
             continue
         if is_placeholder_translation(output):
             report.placeholders.append(str(source.index))
+        if contains_reasoning_leak(output):
+            report.reasoning_leaks.append(str(source.index))
         if is_untranslated_output(
             output,
             source.original_text,

@@ -23,6 +23,7 @@ class GoogleTranslator(BaseTranslator):
         timeout: int,
         update_callback: Optional[Callable],
         use_cache: bool = True,
+        cache_namespace: str = "",
     ):
         super().__init__(
             thread_num=thread_num,
@@ -30,6 +31,7 @@ class GoogleTranslator(BaseTranslator):
             target_language=target_language,
             update_callback=update_callback,
             use_cache=use_cache,
+            cache_namespace=cache_namespace,
         )
         self.timeout = timeout
         self.session = requests.Session()

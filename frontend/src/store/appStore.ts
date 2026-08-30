@@ -8,7 +8,7 @@ export interface Toast {
   message: string;
   type: "success" | "error" | "info";
 }
-export type ActiveView = "workflow" | "settings" | "llm-logs";
+export type ActiveView = "workflow" | "settings" | "llm-logs" | "free-models";
 
 interface AppState {
   // Current workflow step

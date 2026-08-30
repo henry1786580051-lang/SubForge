@@ -7,6 +7,30 @@ from dataclasses import dataclass
 from typing import Iterable, Sequence, cast
 
 from subforge.core.asr.asr_data import ASRDataSeg, ASRWord, TimestampSource
+from subforge.core.split.boundary_detectors import comparison as comparison_boundary
+from subforge.core.split.boundary_detectors import coordination as coordination_boundary
+from subforge.core.split.boundary_detectors import discourse as discourse_boundary
+from subforge.core.split.boundary_detectors import entity as entity_boundary
+from subforge.core.split.boundary_detectors import grammar as grammar_boundary
+from subforge.core.split.boundary_detectors import numeric as numeric_boundary
+from subforge.core.split.boundary_detectors import predicate as predicate_boundary
+from subforge.core.split.boundary_features import (
+    CLAUSE_RE as _CLAUSE_RE,
+)
+from subforge.core.split.boundary_features import (
+    TERMINAL_RE as _TERMINAL_RE,
+)
+from subforge.core.split.boundary_features import (
+    EnglishBoundaryFeatures,
+    extract_english_boundary_features,
+)
+from subforge.core.split.boundary_features import (
+    tokenize_english as _tokens,
+)
+from subforge.core.split.boundary_registry import (
+    BoundaryScoreContribution,
+    record_boundary_score,
+)
 from subforge.core.utils.logger import setup_logger
 
 logger = setup_logger("subtitle_boundary")
@@ -25,9 +49,6 @@ MAX_TRAILING_ADVERB_DIARIZATION_GLITCH_GAP_MS = 3500
 MAX_DUPLICATE_CORRECTION_GAP_MS = 600
 MIN_REPAIR_IMPROVEMENT = 8.0
 
-_TOKEN_RE = re.compile(r"[A-Za-z0-9]+(?:['’][A-Za-z0-9]+)?")
-_TERMINAL_RE = re.compile(r"[.!?][\"')\]]*$")
-_CLAUSE_RE = re.compile(r"[,;:][\"')\]]*$")
 _JAPANESE_RE = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff]")
 _KATAKANA_RE = re.compile(r"^[\u30a0-\u30ff\u31f0-\u31ffー]+$")
 _JAPANESE_PARTICLE_HEAD_RE = re.compile(
@@ -329,6 +350,28 @@ _SENTENCE_ADVERB_TAILS = {
     "ultimately",
 }
 
+_ATTRIBUTIVE_DEGREE_ADVERBS = {
+    "especially",
+    "exceptionally",
+    "extremely",
+    "fairly",
+    "genuinely",
+    "highly",
+    "incredibly",
+    "particularly",
+    "pretty",
+    "quite",
+    "rather",
+    "really",
+    "relatively",
+    "remarkably",
+    "strikingly",
+    "surprisingly",
+    "truly",
+    "unusually",
+    "very",
+}
+
 _OPEN_COMPLEMENT_TAILS = {
     "devoting",
     "give",
@@ -501,74 +544,6 @@ _HYPHENATED_ATTRIBUTIVE_TAILS = {
     "rear-wheel",
     "short-term",
 }
-_VEHICLE_BRANDS = {
-    "acura",
-    "audi",
-    "bmw",
-    "cadillac",
-    "chevrolet",
-    "dodge",
-    "ford",
-    "gmc",
-    "honda",
-    "hyundai",
-    "jeep",
-    "kia",
-    "lexus",
-    "lincoln",
-    "mazda",
-    "mercedes",
-    "nissan",
-    "porsche",
-    "ram",
-    "subaru",
-    "tesla",
-    "toyota",
-    "volkswagen",
-    "volvo",
-}
-_US_STATE_NAMES = {
-    "alabama",
-    "alaska",
-    "arizona",
-    "arkansas",
-    "california",
-    "colorado",
-    "connecticut",
-    "delaware",
-    "florida",
-    "georgia",
-    "hawaii",
-    "idaho",
-    "illinois",
-    "indiana",
-    "iowa",
-    "kansas",
-    "kentucky",
-    "louisiana",
-    "maine",
-    "maryland",
-    "massachusetts",
-    "michigan",
-    "minnesota",
-    "mississippi",
-    "missouri",
-    "montana",
-    "nebraska",
-    "nevada",
-    "ohio",
-    "oklahoma",
-    "oregon",
-    "pennsylvania",
-    "tennessee",
-    "texas",
-    "utah",
-    "vermont",
-    "virginia",
-    "washington",
-    "wisconsin",
-    "wyoming",
-}
 _THAT_COMPLEMENT_TAILS = {
     ("find", "out"),
     ("found", "out"),
@@ -581,10 +556,6 @@ _THAT_COMPLEMENT_TAILS = {
 }
 
 
-def _tokens(text: str) -> list[str]:
-    return [token.replace("’", "'").lower() for token in _TOKEN_RE.findall(text)]
-
-
 def _ends_with_phrase(tokens: Sequence[str]) -> bool:
     return any(
         len(tokens) >= len(phrase) and tuple(tokens[-len(phrase) :]) == phrase
@@ -592,1281 +563,1050 @@ def _ends_with_phrase(tokens: Sequence[str]) -> bool:
     )
 
 
-def _has_terminal_punctuation(text: str) -> bool:
-    """Return whether *text* closes a sentence rather than trailing off.
-
-    ASR commonly renders a hesitation as three periods. Treating the final dot
-    as a sentence terminator hides dependencies such as ``I think it's... /``.
-    """
-    stripped = re.sub(r"[\"')\]]+$", "", str(text or "").strip())
-    if stripped.endswith(("...", "…")):
-        return False
-    return bool(_TERMINAL_RE.search(str(text or "").strip()))
-
-
 @dataclass(frozen=True)
 class BoundaryAssessment:
     risk: int
     reasons: tuple[str, ...]
+    contributions: tuple[BoundaryScoreContribution, ...] = ()
 
     @property
     def unstable(self) -> bool:
         return self.risk >= 20
 
+    @property
+    def registered_risk(self) -> int:
+        return sum(contribution.weight for contribution in self.contributions)
 
-def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:  # noqa: C901
-    """Assess whether an English cue boundary splits a dependent phrase."""
-    left = str(left or "").strip()
-    right = str(right or "").strip()
-    capitalized_dependent_of = bool(
-        left
-        and right
-        and re.match(r"^Of\s+(?!course\b)", right, re.IGNORECASE)
-        and not _CLAUSE_RE.search(right)
-    )
-    if (
-        not left
-        or not right
-        or (_has_terminal_punctuation(left) and not capitalized_dependent_of)
-    ):
-        return BoundaryAssessment(0, ())
+    @property
+    def unregistered_risk(self) -> int:
+        return self.risk - self.registered_risk
 
-    left_tokens = _tokens(left)
-    right_tokens = _tokens(right)
-    if not left_tokens or not right_tokens:
-        return BoundaryAssessment(0, ())
 
-    tail = left_tokens[-1]
-    previous = left_tokens[-2] if len(left_tokens) > 1 else ""
-    head = right_tokens[0]
+def _score_english_boundary_foundation(
+    features: EnglishBoundaryFeatures,
+    reasons: list[str],
+    contributions: list[BoundaryScoreContribution],
+) -> int:
+    left_tokens = list(features.left_tokens)
+    tail = features.tail
+    previous = features.previous
+    semantic_tail = features.semantic_tail
     risk = 0
-    reasons: list[str] = []
 
-    # Oral transcripts frequently leave a real grammatical dependency before
-    # a parenthetical filler. Inspect that effective tail as well as the last
-    # literal token, otherwise ``that, you know,`` looks complete to the scorer.
-    semantic_left = re.sub(
-        r"(?:[,;:]?\s*(?:you\s+know|i\s+mean))[,;:]?\s*$",
-        "",
-        left,
-        flags=re.IGNORECASE,
-    ).strip()
-    semantic_tokens = _tokens(semantic_left)
-    semantic_tail = semantic_tokens[-1] if semantic_tokens else tail
-    semantic_right = re.sub(
-        r"^(?:(?:you\s+know|i\s+mean)[,;:]?\s*)+",
-        "",
-        right,
-        flags=re.IGNORECASE,
-    ).strip()
+    if grammar_boundary.incomplete_multiword(
+        left_ends_with_dangling_phrase=_ends_with_phrase(left_tokens)
+    ):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.incomplete_multiword",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.dangling_function_word(
+        features,
+        tail_is_hard_dangling=tail in _HARD_DANGLING_TAILS,
+    ):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.dangling_function_word",
+            reasons=reasons,
+            contributions=contributions,
+            reason_values={"token": tail},
+        )
+    if grammar_boundary.dangling_function_word_before_filler(
+        features,
+        semantic_tail_is_hard_dangling=semantic_tail in _HARD_DANGLING_TAILS,
+    ):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.dangling_function_word_before_filler",
+            reasons=reasons,
+            contributions=contributions,
+            reason_values={"token": semantic_tail},
+        )
+    if grammar_boundary.dangling_subject(
+        features,
+        tail_is_subject=tail in _SUBJECT_TAILS,
+    ):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.dangling_subject",
+            reasons=reasons,
+            contributions=contributions,
+            reason_values={"token": tail},
+        )
+    if grammar_boundary.standalone_subject(
+        features,
+        tail_is_subject=tail in _SUBJECT_TAILS,
+    ):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.standalone_subject",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.sentence_final_subject(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.sentence_final_subject",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.subject_before_adverbial_predicate(
+        features,
+        tail_is_subject=tail in _SUBJECT_TAILS,
+    ):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.subject_before_adverbial_predicate",
+            reasons=reasons,
+            contributions=contributions,
+            reason_values={"token": tail},
+        )
+    if predicate_boundary.subject_adverb(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.subject_adverb",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if coordination_boundary.relative_clause_subject(features):
+        risk += record_boundary_score(
+            "split.boundary.english.coordination.relative_clause_subject",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.incomplete_predicate(
+        features,
+        tail_is_incomplete_predicate=tail in _INCOMPLETE_PREDICATE_TAILS,
+    ):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.incomplete_predicate",
+            reasons=reasons,
+            contributions=contributions,
+            reason_values={"token": tail},
+        )
+    if grammar_boundary.contracted_negative_auxiliary(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.incomplete_predicate",
+            reasons=reasons,
+            contributions=contributions,
+            reason_values={"token": tail},
+        )
+    if predicate_boundary.negative_auxiliary_complement(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.negative_auxiliary_complement",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.linking_verb_complement(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.linking_verb_complement",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.subject_auxiliary(
+        features,
+        tail_is_subject_auxiliary=tail in _SUBJECT_AUX_TAILS,
+    ):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.subject_auxiliary",
+            reasons=reasons,
+            contributions=contributions,
+            reason_values={"token": tail},
+        )
+    if predicate_boundary.progressive_complement(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.progressive_complement",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.adverb_gerund(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.adverb_gerund",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.auxiliary_participle(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.auxiliary_participle",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.dangling_modifier(
+        features,
+        tail_is_modifier=tail in _MODIFIER_TAILS,
+    ):
+        rule_id = (
+            "split.boundary.english.grammar.dangling_modifier_strong"
+            if tail in {"also", "definitely", "main", "really"}
+            else "split.boundary.english.grammar.dangling_modifier"
+        )
+        risk += record_boundary_score(
+            rule_id,
+            reasons=reasons,
+            contributions=contributions,
+            reason_values={"token": tail},
+        )
+    if grammar_boundary.dangling_attributive(
+        features,
+        tail_is_attributive=tail in _ATTRIBUTIVE_TAILS,
+    ):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.dangling_attributive",
+            reasons=reasons,
+            contributions=contributions,
+            reason_values={"token": tail},
+        )
+    if grammar_boundary.filler_noun_modifier(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.filler_noun_modifier",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.determiner_head(
+        features,
+        tail_is_attributive=tail in _ATTRIBUTIVE_TAILS,
+    ):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.determiner_head",
+            reasons=reasons,
+            contributions=contributions,
+            reason_values={"token": tail},
+        )
+    if predicate_boundary.sentence_adverb_finite(
+        features,
+        tail_is_sentence_adverb=tail in _SENTENCE_ADVERB_TAILS,
+    ):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.sentence_adverb_finite",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.auxiliary_sentence_adverb(
+        features,
+        tail_is_sentence_adverb=tail in _SENTENCE_ADVERB_TAILS,
+        previous_is_subject_auxiliary=previous in _SUBJECT_AUX_TAILS,
+    ):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.auxiliary_sentence_adverb",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.time_frame_participle(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.time_frame_participle",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    return risk
 
-    complete_does_clause = bool(
-        tail == "does"
-        and re.search(
-            r"\b(?:see|show|check|find\s+out)\s+how\s+"
-            r"(?:he|she|it|this|that)\s+does$",
-            left,
-            flags=re.IGNORECASE,
-        )
-    )
-    complete_degree_adverb = bool(
-        tail == "much"
-        and head in {"and", "but", "like"}
-        and re.search(
-            r"\b(?:elevate|help|improve|like|love|matter)\b[^.!?]*\bso\s+much$",
-            left,
-            flags=re.IGNORECASE,
-        )
-    )
-    complete_superlative = bool(
-        tail == "most"
-        and head in {"and", "but", "or"}
-        and re.search(r"\b[a-z][a-z'’-]*\s+the\s+most$", semantic_left, re.IGNORECASE)
-    )
-    complete_fixed_phrase = bool(
-        head in {"a", "an", "the"}
-        and re.search(
-            r"\b(?:don['’]t|do\s+not)\s+get\s+me\s+wrong$",
-            left,
-            flags=re.IGNORECASE,
-        )
-    )
-    complete_ease_of_use_phrase = bool(
-        head == "in" and re.search(r"\b(?:the\s+)?ease\s+of\s+use$", left, flags=re.IGNORECASE)
-    )
-    complete_demonstrative_object = bool(
-        tail in {"this", "that"}
-        and re.search(
-            r"\b(?:hear|see|watch|feel|like|love|hate|want|need|recommend|"
-            r"prefer|use)\s+(?:all\s+of\s+)?(?:this|that)$",
-            semantic_left,
-            flags=re.IGNORECASE,
-        )
-    )
-    complete_own_idiom = bool(
-        tail == "own"
-        and re.search(
-            r"\bof\s+(?:his|her|its|my|our|their|your)\s+own[,;:]?$",
-            semantic_left,
-            re.IGNORECASE,
-        )
-    )
-    complete_visibility_preposition = bool(
-        tail == "of"
-        and head in {"and", "but", "because", "so", "while"}
-        and re.search(
-            r"\b(?:easy|hard|difficult)\s+to\s+(?:see|look)\s+out\s+of$",
-            semantic_left,
-            flags=re.IGNORECASE,
-        )
-    )
-    complete_predicative_adjective = bool(
-        head in {"and", "but", "or"}
-        and bool(_CLAUSE_RE.search(left))
-        and re.search(
-            r"\b(?:am|is|are|was|were|be|been|being|become(?:s|d)?|"
-            r"feel(?:s|t)?|look(?:s|ed)?|remain(?:s|ed)?|seem(?:s|ed)?)\s+"
-            r"(?:quite\s+|rather\s+|really\s+|so\s+|too\s+|very\s+)?"
-            rf"{re.escape(tail)}[,;:]?$",
-            semantic_left,
-            re.IGNORECASE,
-        )
-    )
-    complete_scalar_complement = bool(
-        tail in {"less", "more"}
-        and head in {"and", "but", "or"}
-        and bool(_CLAUSE_RE.search(left))
-        and re.search(
-            r"\b(?:cost|last|measure|take|weigh)(?:s|ed)?\s+(?:less|more)[,;:]?$",
-            semantic_left,
-            re.IGNORECASE,
-        )
-    )
 
-    if _ends_with_phrase(left_tokens):
-        risk += 36
-        reasons.append("incomplete multi-word phrase")
-    if tail in _HARD_DANGLING_TAILS and not complete_visibility_preposition:
-        risk += 32
-        reasons.append(f"dangling function word '{tail}'")
-    if semantic_tail != tail and semantic_tail in _HARD_DANGLING_TAILS:
-        risk += 34
-        reasons.append(f"dangling function word '{semantic_tail}' before trailing discourse filler")
-    if (
-        tail in _SUBJECT_TAILS
-        and right[:1].islower()
-        and not _CLAUSE_RE.search(left)
-        and not complete_demonstrative_object
-    ):
-        risk += 26
-        reasons.append(f"dangling subject '{tail}'")
-    if (
-        len(left_tokens) == 1
-        and tail in _SUBJECT_TAILS
-        and head not in {"and", "but", "or", "so"}
-    ):
-        risk += 34
-        reasons.append("standalone subject separated from its predicate")
-    if re.search(
-        r"(?:^|[.!?]\s+)(?:i|you|he|she|it|we|they)(?:\s+(?:all|both|guys))?$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and head not in {"and", "but", "or", "so"}:
-        risk += 36
-        reasons.append("sentence-final subject belongs to the following predicate")
-    if tail in _SUBJECT_TAILS and re.match(
-        r"^(?:really|actually|definitely|certainly|probably|usually|often)\b",
-        semantic_right,
-        re.IGNORECASE,
-    ):
-        risk += 34
-        reasons.append(f"dangling subject '{tail}' before its adverbial predicate")
-    if (
-        re.search(
-            r"\b(?:i|you|he|she|it|we|they|this|that|who|which)"
-            r"(?:['’](?:d|ll|m|re|s|ve))?\s+"
-            r"(?:probably|possibly|maybe|never|always|still|already|currently|"
-            r"actually|really|definitely|usually|often)"
-            r"(?:\s+(?:probably|possibly|maybe|never|always|still|already|currently|"
-            r"actually|really|definitely|usually|often))*$",
-            semantic_left,
-            re.IGNORECASE,
+def _score_english_boundary_relations(
+    features: EnglishBoundaryFeatures,
+    reasons: list[str],
+    contributions: list[BoundaryScoreContribution],
+) -> int:
+    tail = features.tail
+    risk = 0
+
+    if comparison_boundary.clause_after_than(features):
+        risk += record_boundary_score(
+            "split.boundary.english.comparison.clause_after_than",
+            reasons=reasons,
+            contributions=contributions,
         )
-        and semantic_right[:1].islower()
-    ):
-        risk += 36
-        reasons.append("subject and adverb separated from its predicate")
-    if re.search(
-        r"\b(?:that|who|which)\s+[A-Z][A-Za-z'’-]*$",
-        left,
-    ) and re.match(
-        r"^and\s+(?:I|you|he|she|it|we|they)\s+"
-        r"(?:am|are|can|could|did|do|does|had|has|have|is|may|might|must|"
-        r"shall|should|was|were|will|would|[a-z][a-z'’-]*(?:ed|s)?)\b",
-        right,
-    ):
-        risk += 38
-        reasons.append("coordinated relative-clause subject separated from its predicate")
-    if tail in _INCOMPLETE_PREDICATE_TAILS and not complete_does_clause:
-        risk += 32
-        reasons.append(f"incomplete predicate '{tail}'")
-    if tail in {"haven't", "hasn't", "hadn't"}:
-        risk += 32
-        reasons.append(f"incomplete predicate '{tail}'")
-    if re.search(
-        r"\b(?:can|could|did|do|does|had|has|have|will|would|"
-        r"can['’]t|couldn['’]t|didn['’]t|doesn['’]t|don['’]t|"
-        r"won['’]t|wouldn['’]t)\s+(?:actually\s+|really\s+)?(?:never|no)$",
-        semantic_left,
-        flags=re.IGNORECASE,
-    ):
-        risk += 36
-        reasons.append("negative auxiliary is separated from its complement")
-    if (
-        tail in {"become", "became", "becomes", "remain", "remained", "remains"}
-        and not re.match(r"^(?:what|whatever|whoever)\b", semantic_left, re.IGNORECASE)
-        and re.match(
-            r"^(?:a|an|the|one|another|any|some|this|that|these|those|"
-            r"[A-Za-z][A-Za-z'’-]*(?:ly|al|ble|ful|ic|ive|less|ous)\b)",
-            semantic_right,
-            re.IGNORECASE,
+    if comparison_boundary.noun_phrase_before_than(features):
+        risk += record_boundary_score(
+            "split.boundary.english.comparison.noun_phrase_before_than",
+            reasons=reasons,
+            contributions=contributions,
         )
-    ):
-        risk += 38
-        reasons.append("linking verb separated from its complement")
-    if tail in _SUBJECT_AUX_TAILS and right[:1].islower():
-        risk += 30
-        reasons.append(f"subject and auxiliary stranded at '{tail}'")
-    if (
-        semantic_right[:1].islower()
-        and re.search(
-            r"\b(?:am|is|are|was|were|be|been|being|"
-            r"(?:i|you|he|she|it|we|they|this|that|who|which)"
-            r"['’](?:m|re|s))\s+"
-            r"(?:(?:probably|possibly|maybe|never|always|still|already|currently|"
-            r"actually|really|definitely|usually|often)\s+)*"
-            r"[a-z][a-z'’-]*ing$",
-            semantic_left,
-            re.IGNORECASE,
+    if comparison_boundary.scalar_predicate(features):
+        risk += record_boundary_score(
+            "split.boundary.english.comparison.scalar_predicate",
+            reasons=reasons,
+            contributions=contributions,
         )
-    ):
-        risk += 32
-        reasons.append("progressive predicate separated from its complement")
-    if (
-        previous in {"about", "by", "for", "of", "with", "without"}
-        and tail in {"actually", "basically", "just", "literally", "really", "simply"}
-        and re.match(r"^[a-z][a-z'’-]*ing\b", semantic_right, re.IGNORECASE)
-    ):
-        risk += 32
-        reasons.append("adverb separated from its gerund")
-    if head in {"been", "being"} and re.search(
-        r"\b(?:have|has|had)\s+(?:always|already|also|never|not|often|still|"
-        r"typically|traditionally|usually|[a-z]+ly)$",
-        semantic_left,
-        re.IGNORECASE,
-    ):
-        risk += 38
-        reasons.append("auxiliary phrase separated from its participle")
-    if tail in _MODIFIER_TAILS and not (
-        complete_degree_adverb
-        or complete_superlative
-        or complete_predicative_adjective
-        or complete_scalar_complement
-    ):
-        risk += 30 if tail in {"also", "definitely", "main", "really"} else 24
-        reasons.append(f"dangling modifier '{tail}'")
-    if tail in _ATTRIBUTIVE_TAILS and right[:1].islower() and not complete_own_idiom:
-        risk += 24
-        reasons.append(f"dangling attributive '{tail}'")
-    if re.search(
-        r"\b(?:a|an|the|such\s+a)\s+(?:kind\s+of|sort\s+of|like)$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and semantic_right[:1].islower():
-        risk += 38
-        reasons.append("filler separated from the noun it modifies")
-    if (
-        tail in _ATTRIBUTIVE_TAILS
-        and len(left_tokens) >= 2
-        and left_tokens[-2] in {"a", "an", "the", "his", "her", "its", "my", "our", "their", "your"}
-        and not complete_own_idiom
-    ):
-        risk += 30
-        reasons.append(f"determiner separated from its '{tail}' head noun")
-    if tail in _SENTENCE_ADVERB_TAILS and re.match(
-        r"^(?:(?:i|you|he|she|it|we|they)(?:['’](?:d|ll|m|re|s|ve))?|"
-        r"am|are|can|could|did|do|does|had|has|have|is|looks?|may|might|must|"
-        r"seems?|shall|should|was|were|will|would)\b",
-        semantic_right,
-        re.IGNORECASE,
-    ):
-        risk += 34
-        reasons.append("sentence adverb separated from its finite predicate")
-    if (
-        tail in _SENTENCE_ADVERB_TAILS
-        and (
-            previous in _SUBJECT_AUX_TAILS
-            or re.fullmatch(
-                r"(?:am|are|is|was|were|be|been|can|could|may|might|must|"
-                r"shall|should|will|would)",
-                previous,
-                re.IGNORECASE,
-            )
+    if comparison_boundary.frame_object(features):
+        risk += record_boundary_score(
+            "split.boundary.english.comparison.frame_object",
+            reasons=reasons,
+            contributions=contributions,
         )
-        and re.match(r"^[a-z][a-z'’-]*ing\b", semantic_right, re.IGNORECASE)
-    ):
-        risk += 38
-        reasons.append("auxiliary and sentence adverb separated from their predicate")
-    if tail == "year" and re.match(r"^leading\s+up\s+to\b", semantic_right, re.IGNORECASE):
-        risk += 38
-        reasons.append("time frame separated from its defining participial phrase")
-    if tail == "than":
-        risk += 36
-        reasons.append("comparative clause separated after 'than'")
-    if re.search(r"\b(?:less|more)\b", semantic_left, re.IGNORECASE) and re.match(
-        r"^[a-z][a-z'’-]*\s+than\b",
-        semantic_right,
-        re.IGNORECASE,
-    ):
-        risk += 38
-        reasons.append("comparative noun phrase separated before 'than'")
-    if re.search(
-        r"\b(?:could|may|might|should|would)?\s*(?:have\s+)?"
-        r"(?:cost|last|measure|take|weigh)\s*$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and re.match(r"^(?:less|more)\b", semantic_right, re.IGNORECASE):
-        risk += 40
-        reasons.append("scalar predicate separated from its comparative complement")
-    if re.search(
-        r"\b(?:arrange|arranged|behave|behaved|feel|felt|look|looked|"
-        r"seem|seemed|sound|sounded|work|worked)(?:\s+\S+){0,6}\s+like$",
-        semantic_left,
-        re.IGNORECASE,
-    ):
-        risk += 38
-        reasons.append("comparison frame separated from its object")
-    if re.search(
-        r"\b(?:\d[\d,.]*|one|two|three|four|five|six|seven|eight|nine|ten)\s+"
-        r"(?:centimetres?|centimeters?|feet|foot|inches?|kilometres?|kilometers?|"
-        r"metres?|meters?|miles?|percent|%)$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and re.match(
-        r"^(?:closer|farther|further|higher|lower|greater|less|more|nearer|"
-        r"shorter|taller|wider)\b",
-        semantic_right,
-        re.IGNORECASE,
-    ):
-        risk += 38
-        reasons.append("measurement separated from its comparative relation")
-    if re.search(
-        r"\b(?:needs?|needed)\s+to\s+[a-z][a-z'’-]*ly$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and re.match(r"^[a-z][a-z'’-]*(?:\s+|$)", semantic_right, re.IGNORECASE):
-        risk += 38
-        reasons.append("infinitive adverb separated from its predicate")
-    if re.search(
-        r"\b(?:welcoming|serving|handling|accommodating)$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and re.match(
-        r"^(?:about|around|between|more\s+than|over|up\s+to|\d)",
-        semantic_right,
-        re.IGNORECASE,
-    ):
-        risk += 38
-        reasons.append("transitive participle separated from its quantified object")
-    if re.fullmatch(
-        r"(?:each|every|per)\s+(?:day|week|month|year|annum)[.!?]?",
-        semantic_right,
-        re.IGNORECASE,
-    ):
-        risk += 36
-        reasons.append("frequency phrase separated from its quantified statement")
-    if tail in {"about", "around", "approximately", "roughly"} and re.match(
-        r"^\d[\d,.]*\b",
-        semantic_right,
-    ):
-        risk += 38
-        reasons.append("approximate magnitude separated from its numeric value")
-    if re.search(
-        r"\b(?:can|could|may|might|must|shall|should|will|would)\s+"
-        r"[a-z][a-z'’-]*ly$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and re.match(r"^[a-z][a-z'’-]*(?:\s+|$)", semantic_right, re.IGNORECASE):
-        risk += 38
-        reasons.append("modal adverb separated from its predicate")
-    if re.search(r"\bbut\s+for\s+[^.!?]+[,]$", left, re.IGNORECASE) and re.match(
-        r"^(?:a|an|the|this|that|these|those)\b",
-        semantic_right,
-        re.IGNORECASE,
-    ):
-        risk += 38
-        reasons.append("contrastive prepositional frame separated from its main clause")
-    if re.search(
-        r"(?:^|[.!?]\s+)(?:about|around|roughly|approximately)\s+"
-        r"\d[\d,.]*\s+(?:kilometres?|kilometers?|metres?|meters?|miles?)\s+away[,]?$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and re.match(
-        r"^(?:a|an|the|this|that|these|those|new)\b",
-        semantic_right,
-        re.IGNORECASE,
-    ):
-        risk += 38
-        reasons.append("distance modifier separated from its location noun")
-    if (
-        right[:1].islower()
-        and tail not in {"other"}
-        and re.fullmatch(r"[a-z][a-z'’-]*(?:al|ble|ful|ic|ive|less|ous)", tail)
-        and not complete_predicative_adjective
-    ):
-        risk += 22
-        reasons.append("attributive or comparative modifier separated from its head")
-    if re.search(
-        r"\b(?:a|an|some|any)\s+"
-        r"[a-z][a-z'’-]*(?:al|ant|ary|ent|ful|ic|ive|less|ory|ous)$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and re.match(r"^[A-Za-z][A-Za-z'’-]*\b", semantic_right):
-        risk += 40
-        reasons.append("determiner and adjective separated from their head noun")
-    if (
-        not _TERMINAL_RE.search(left)
-        and re.fullmatch(
-            r"(?:currently|now|today|tonight|yesterday)[.!?]?",
-            semantic_right,
-            re.IGNORECASE,
+    if numeric_boundary.measurement_comparative(features):
+        risk += record_boundary_score(
+            "split.boundary.english.numeric.measurement_comparative",
+            reasons=reasons,
+            contributions=contributions,
         )
-    ):
-        risk += 40
-        reasons.append("sentence-final temporal adverb separated from its clause")
-    if (
-        right[:1].islower()
-        and tail in _COMPARATIVE_MODIFIER_TAILS
-        and not complete_predicative_adjective
-    ):
-        risk += 22
-        reasons.append("attributive or comparative modifier separated from its head")
-    if re.search(
-        r"\b(?:a|an|the)\s+(?:turbocharged|supercharged)$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and re.match(
-        r"^[A-Z][A-Za-z0-9-]*(?:\s+[A-Z][A-Za-z0-9-]*)?\b",
-        right,
-    ):
-        risk += 38
-        reasons.append("powertrain modifier separated from its vehicle name")
-    if (
-        right[:1].islower()
-        and re.fullmatch(r"[a-z][a-z'’-]*(?:ing|ed)", tail)
-        and head
-        in {
-            "a",
-            "all",
-            "an",
-            "another",
-            "any",
-            "by",
-            "each",
-            "every",
-            "for",
-            "from",
-            "his",
-            "her",
-            "its",
-            "my",
-            "of",
-            "other",
-            "our",
-            "some",
-            "the",
-            "their",
-            "this",
-            "those",
-            "to",
-            "with",
-            "your",
-        }
-        and not re.search(
-            rf"\b(?:a|an|the|this|that|my|your|his|her|its|our|their)\s+"
-            rf"{re.escape(tail)}$",
-            semantic_left,
-            flags=re.IGNORECASE,
+    if predicate_boundary.infinitive_adverb(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.infinitive_adverb",
+            reasons=reasons,
+            contributions=contributions,
         )
+    if predicate_boundary.participle_quantified_object(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.participle_quantified_object",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.frequency_quantified_statement(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.frequency_quantified_statement",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if numeric_boundary.approximate_magnitude(features):
+        risk += record_boundary_score(
+            "split.boundary.english.numeric.approximate_magnitude",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.modal_adverb(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.modal_adverb",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.contrastive_prepositional_frame(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.contrastive_prepositional_frame",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.distance_location_noun(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.distance_location_noun",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.morphological_attributive_modifier(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.attributive_or_comparative_modifier",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.determiner_adjective_head(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.determiner_adjective_head",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.determiner_degree_modifier_head(
+        features,
+        tail_is_attributive_degree_adverb=tail in _ATTRIBUTIVE_DEGREE_ADVERBS,
     ):
-        risk += 28
-        reasons.append("participle separated from its complement")
-    if re.search(
-        r"\b(?:call(?:ed|s)?|name(?:d|s)?|read(?:s)?|say(?:s)?)$",
-        semantic_left,
-        re.IGNORECASE,
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.determiner_degree_modifier_head",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.sentence_final_temporal_adverb(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.sentence_final_temporal_adverb",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.lexical_comparative_modifier(
+        features,
+        tail_is_comparative_modifier=tail in _COMPARATIVE_MODIFIER_TAILS,
     ):
-        risk += 36
-        reasons.append("reporting predicate separated from its quoted object")
-    completed_calendar_year = bool(
-        re.search(r"\b(?:19|20)\d{2},$", semantic_left)
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.attributive_or_comparative_modifier",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if entity_boundary.powertrain_vehicle_name(features):
+        risk += record_boundary_score(
+            "split.boundary.english.entity.powertrain_vehicle_name",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.participle_complement(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.participle_complement",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.reporting_quoted_object(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.reporting_quoted_object",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if numeric_boundary.value_unit_or_noun(features):
+        risk += record_boundary_score(
+            "split.boundary.english.numeric.value_unit_or_noun",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if numeric_boundary.calendar_month_year(features):
+        risk += record_boundary_score(
+            "split.boundary.english.numeric.calendar_month_year",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.coordinated_noun_phrase(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.coordinated_noun_phrase",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if coordination_boundary.paired_contrast(features):
+        risk += record_boundary_score(
+            "split.boundary.english.coordination.paired_contrast",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.prepositional_gerund_complement(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.prepositional_gerund_complement",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.preposition_gerund(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.preposition_gerund",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if coordination_boundary.directional_names(features):
+        risk += record_boundary_score(
+            "split.boundary.english.coordination.directional_names",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.condition_qualified_predicate(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.condition_qualified_predicate",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    hyphenated_tail = grammar_boundary.hyphenated_attributive_tail(
+        features,
+        allowed_tails=_HYPHENATED_ATTRIBUTIVE_TAILS,
     )
-    if (
-        re.fullmatch(r"\d[\d,.]*", tail)
-        and right[:1].islower()
-        and not completed_calendar_year
-    ):
-        risk += 30
-        reasons.append("numeric value separated from its unit or noun")
-    if tail in {
-        "january",
-        "february",
-        "march",
-        "april",
-        "may",
-        "june",
-        "july",
-        "august",
-        "september",
-        "october",
-        "november",
-        "december",
-    } and re.match(r"^(?:19|20)\d{2}\b", semantic_right):
-        risk += 42
-        reasons.append("calendar month separated from its year")
-    if (
-        head in {"and", "or"}
-        and len(right_tokens) > 1
-        and re.search(r"\b(?:of|with|between)\s+[a-z][a-z'’-]*$", semantic_left, re.IGNORECASE)
-    ):
-        risk += 24
-        reasons.append("coordinated noun phrase split at conjunction")
-    if re.search(
-        r"\b(?:on|upon)\s+(?:the\s+)?(?:one|other)\s+hand$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and re.match(r"^(?:and|or|but)\b", semantic_right, re.IGNORECASE):
-        risk += 34
-        reasons.append("paired contrast frame split before its counterpart")
-    if (
-        re.search(
-            r"\b(?:after|before|by|despite|during|through|while|without)\s+"
-            r"[a-z][a-z'’-]*ing$",
-            semantic_left,
-            re.IGNORECASE,
+    if hyphenated_tail:
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.hyphenated_attributive",
+            reasons=reasons,
+            contributions=contributions,
+            reason_values={"token": hyphenated_tail},
         )
-        and right[:1].islower()
-    ):
-        risk += 36
-        reasons.append("prepositional gerund separated from its complement")
-    if tail in {
-        "after",
-        "before",
-        "by",
-        "despite",
-        "during",
-        "through",
-        "while",
-        "without",
-    } and head.endswith("ing"):
-        risk += 36
-        reasons.append("preposition separated from its gerund phrase")
-    if (
-        tail in {"east", "north", "south", "west"}
-        and head in {"and", "or"}
-        and len(right_tokens) > 1
-        and right_tokens[1] in {"east", "north", "south", "west"}
-    ):
-        risk += 40
-        reasons.append("paired directional names split at conjunction")
-    if head in {"if", "unless", "without"} and re.search(
-        r"\b(?:am|is|are|was|were|seem(?:s|ed)?|become(?:s|ing)?)\s+"
-        r"(?:too\s+|quite\s+|rather\s+|really\s+|very\s+)?"
-        r"[a-z]+(?:able|al|ful|ible|ic|ive|less|ous)$",
-        semantic_left,
-        re.IGNORECASE,
-    ):
-        risk += 32
-        reasons.append("condition separated from the predicate it qualifies")
-    raw_tail = re.search(r"([A-Za-z]+(?:-[A-Za-z]+)+)$", left)
-    if (
-        raw_tail
-        and raw_tail.group(1).lower() in _HYPHENATED_ATTRIBUTIVE_TAILS
-        and right[:1].islower()
-    ):
-        risk += 36
-        reasons.append(
-            f"hyphenated attributive '{raw_tail.group(1).lower()}' separated from its noun"
+    return risk
+
+
+def _score_english_boundary_completions(
+    features: EnglishBoundaryFeatures,
+    reasons: list[str],
+    contributions: list[BoundaryScoreContribution],
+) -> int:
+    tail = features.tail
+    head = features.head
+    risk = 0
+
+    if entity_boundary.vehicle_brand_model(features):
+        risk += record_boundary_score(
+            "split.boundary.english.entity.vehicle_brand_model",
+            reasons=reasons,
+            contributions=contributions,
+            reason_values={"token": tail},
         )
-    if tail in _VEHICLE_BRANDS and head in {
-        "car",
-        "cars",
-        "crossover",
-        "electric",
-        "hybrid",
-        "model",
-        "models",
-        "sedan",
-        "suv",
-        "truck",
-        "vehicle",
-        "vehicles",
-    }:
-        risk += 34
-        reasons.append(f"vehicle brand '{tail}' separated from its model or type")
-    if tail in _OPEN_COMPLEMENT_TAILS and right[:1].islower():
-        risk += 30 if tail in {"devoting", "getting"} else 26
-        reasons.append(f"open complement after '{tail}'")
-    if re.search(r"\bexpect\s+to\s+always$", semantic_left, re.IGNORECASE):
-        risk += 34
-        reasons.append("open continuation after 'expect to always'")
-    if (
-        re.search(
-            r"\b(?:who|which|that)(?:\s+(?:you\s+know|i\s+mean))?\s+"
-            r"(?:previously|currently|also|still|often|usually|"
-            r"generally|actually|really|just|never|always)$",
-            semantic_left,
-            re.IGNORECASE,
-        )
-        and right[:1].islower()
+    if grammar_boundary.open_complement(
+        features,
+        tail_is_open_complement=tail in _OPEN_COMPLEMENT_TAILS,
     ):
-        risk += 34
-        reasons.append("relative-clause subject separated from its predicate")
-    if (
-        re.search(
-            r"\b(?:may|might|can|could|will|would|should|must)\s+be\s+"
-            r"(?:reading|using|watching|doing|making|seeing|getting)$",
-            semantic_left,
-            re.IGNORECASE,
+        rule_id = (
+            "split.boundary.english.grammar.open_complement_strong"
+            if tail in {"devoting", "getting"}
+            else "split.boundary.english.grammar.open_complement"
         )
-        and right[:1].islower()
-    ):
-        risk += 36
-        reasons.append("progressive predicate separated from its object")
-    if (
-        re.search(
-            r"\b(?:number|amount|share|range|kind|sort)\s+of(?:\s+like)?$",
-            semantic_left,
-            re.IGNORECASE,
+        risk += record_boundary_score(
+            rule_id,
+            reasons=reasons,
+            contributions=contributions,
+            reason_values={"token": tail},
         )
-        and right[:1].islower()
-    ):
-        risk += 36
-        reasons.append("quantifying phrase separated from its noun")
-    if re.search(
-        r"\b(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+"
-        r"(?:channel|cylinder|door|inch|liter|litre|seat|speaker|speed)$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and re.match(r"^[A-Za-z][A-Za-z0-9&.+/-]*\b", right):
-        risk += 38
-        reasons.append("numeric compound modifier separated from its head noun")
-    if re.search(
-        r"\bone\s+thing\b.*\binteresting\s+is,?\s+(?:you\s+know,?\s+)?"
-        r"with\s+[a-z][a-z'’-]*s?,?$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and re.match(r"^(?:i|we|you|they|he|she|it)\b", right, re.IGNORECASE):
-        risk += 38
-        reasons.append("topic frame separated from its following predicate")
-    if tail == "so" and head in {"many", "much", "few", "little"}:
-        risk += 34
-        reasons.append(f"degree phrase split inside 'so {head}'")
-    if tail == "more" and tuple(right_tokens[:2]) == ("and", "more"):
-        risk += 38
-        reasons.append("repeated degree phrase split inside 'more and more'")
-    if tail == "up" and tuple(right_tokens[:2]) == ("and", "running"):
-        risk += 38
-        reasons.append("fixed state phrase split inside 'up and running'")
-    if tail == "finally" and head == "up" and tuple(right_tokens[1:3]) == ("and", "running"):
-        risk += 38
-        reasons.append("aspect marker split from 'up and running'")
-    if re.match(r"^(?:finally\s+)?up\s+and\s+running\b", semantic_right, re.IGNORECASE):
-        risk += 38
-        reasons.append("state predicate 'up and running' separated from its subject")
-    if re.search(r"\b\d[\d,.]*$", semantic_left) and head in {
-        "percent",
-        "percentage",
-        "times",
-    }:
-        risk += 40
-        reasons.append("numeric value separated from its multiplier or unit")
-    if (
-        len(right_tokens) == 1
-        and right[:1].islower()
-        and re.fullmatch(r"[A-Za-z][A-Za-z'’-]*[.!?]?", right)
-        and len(left_tokens) + len(right_tokens) <= HARD_MAX_WORDS
+    if grammar_boundary.expect_to_always(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.expect_to_always",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.relative_clause_subject(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.relative_clause_subject",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.progressive_object(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.progressive_object",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.quantifying_phrase_noun(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.quantifying_phrase_noun",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if numeric_boundary.compound_modifier(features):
+        risk += record_boundary_score(
+            "split.boundary.english.numeric.compound_modifier",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.topic_frame(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.topic_frame",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.degree_so(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.degree_so",
+            reasons=reasons,
+            contributions=contributions,
+            reason_values={"token": head},
+        )
+    if comparison_boundary.repeated_degree(features):
+        risk += record_boundary_score(
+            "split.boundary.english.comparison.repeated_degree",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.up_and_running(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.up_and_running",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.up_and_running_aspect(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.up_and_running_aspect",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.up_and_running_subject(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.up_and_running_subject",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if numeric_boundary.multiplier_or_unit(features):
+        risk += record_boundary_score(
+            "split.boundary.english.numeric.multiplier_or_unit",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.single_word_completion(
+        features,
+        hard_max_words=HARD_MAX_WORDS,
     ):
         # A lone lowercase completion is exceptionally strong evidence that a
         # brief speaker-label flip occurred inside one phrase. Keep this above
         # the strong-dependency threshold used by _is_hard_boundary.
-        risk += 52
-        reasons.append("single-word completion stranded in the next subtitle")
-    if (
-        len(left_tokens) <= 5
-        and left_tokens[0] in {"a", "an", "the", "this", "that", "these", "those"}
-        and head
-        in {
-            "became",
-            "becomes",
-            "caused",
-            "created",
-            "did",
-            "does",
-            "had",
-            "has",
-            "made",
-            "makes",
-            "played",
-            "plays",
-            "provided",
-            "provides",
-            "showed",
-            "shows",
-            "used",
-            "uses",
-            "was",
-            "were",
-        }
-    ):
-        risk += 34
-        reasons.append("short noun subject separated from its predicate")
-    if head in _PHRASAL_PARTICLES and tail in {"fall", "get", "gets", "go", "look", "take"}:
-        risk += 32
-        reasons.append(f"split phrasal verb '{tail} {head}'")
-    if head == "away" and re.search(
-        r"\b(?:take|takes|took|taken|taking)\b(?:\s+\S+){1,6}$",
-        left,
-        flags=re.IGNORECASE,
-    ):
-        risk += 34
-        reasons.append("split phrasal construction 'take ... away'")
-    if head in {"is", "are", "was", "were"} and tail in _COPULA_COMPLEMENT_TAILS:
-        risk += 28
-        reasons.append(f"subject complement split before '{head}'")
-    if tail == "one" and right[:1].islower():
-        risk += 24
-        reasons.append("omitted relative clause separated from 'one'")
-    if re.search(r"\b(?:this|that|it)\s+(?:is|was),?\s+i\s+(?:think|guess),?$", left, re.I):
-        risk += 30
-        reasons.append("copula separated from its complement by a parenthetical")
-    if re.search(r"(?:^|[.!?]\s+)(?:and|but|now|so),?$", left, re.I):
-        risk += 34
-        reasons.append("new-clause connective stranded at previous cue end")
-    if re.search(
-        r"\bdid\s+(?:i|you|he|she|we|they)\s+(?:think|feel|believe)$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and re.match(
-        r"^(?:i|you|he|she|it|we|they)\s+(?:am|are|is|was|were|would|could)\b",
-        semantic_right,
-        re.IGNORECASE,
-    ):
-        risk += 40
-        reasons.append("emphatic inversion separated from its complement")
-    if re.search(
-        r"\bthat\s+(?:really|very)\s+[a-z][a-z'’-]*[,]?$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and re.match(
-        r"^like[,]?\s+.+\s+one\b",
-        semantic_right,
-        re.IGNORECASE,
-    ):
-        risk += 40
-        reasons.append("filler separated from the demonstrative head noun")
-    if re.fullmatch(
-        r"(?:and|but|so)(?:\s+so)?(?:,?\s+(?:you\s+know|i\s+mean))?[,]?",
-        left,
-        re.IGNORECASE,
-    ):
-        risk += 38
-        reasons.append("standalone discourse bridge belongs to the following clause")
-    discourse_only_tokens = {
-        "and",
-        "but",
-        "guess",
-        "i",
-        "is",
-        "it's",
-        "mean",
-        "so",
-        "think",
-        "well",
-        "yeah",
-        "you",
-        "know",
-    }
-    if (
-        len(left_tokens) >= 3
-        and set(left_tokens) <= discourse_only_tokens
-        and ({"think", "guess", "know", "mean"} & set(left_tokens))
-    ):
-        risk += 40
-        reasons.append("filler-only discourse frame belongs to the following clause")
-    if re.fullmatch(
-        r"(?:but\s+)?at\s+the\s+same\s+time"
-        r"(?:,?\s+(?:you\s+know|i\s+mean))?[,]?",
-        left,
-        re.IGNORECASE,
-    ):
-        risk += 40
-        reasons.append("standalone contrast frame belongs to the following clause")
-    if re.search(r"[.!?,;]\s+i\s+mean,?$", left, re.IGNORECASE):
-        risk += 36
-        reasons.append("sentence-opening filler belongs to the next cue")
-    if re.search(
-        r"\b(?:am|is|are|was|were|be|been|being|have|has|had|do|does|did|"
-        r"can|could|may|might|must|shall|should|will|would|not),?\s+"
-        r"(?:you\s+know|i\s+mean),?$",
-        left,
-        re.IGNORECASE,
-    ):
-        risk += 36
-        reasons.append("incomplete predicate before trailing discourse filler")
-    if re.search(
-        r"\b(?:it|this|that)(?:['’]s|\s+is)\s+actually,?\s+"
-        r"(?:you\s+know|i\s+mean),?$",
-        left,
-        re.IGNORECASE,
-    ):
-        risk += 36
-        reasons.append("predicate separated after a discourse modifier")
-    if re.search(r"\bthere(?:['’]s|\s+is)\s+no,?$", left, re.IGNORECASE):
-        risk += 36
-        reasons.append("negative existential separated from its complement")
-    if re.search(
-        r"\b(?:it|this|that)(?:['’]s|\s+is)\s+actually,?$",
-        left,
-        re.IGNORECASE,
-    ):
-        risk += 34
-        reasons.append("predicate separated after a discourse modifier")
-    if re.search(
-        r"[.!?]\s+(?:i|we|you)\s+(?:think|guess|believe),?$",
-        left,
-        re.IGNORECASE,
-    ):
-        risk += 36
-        reasons.append("sentence-opening opinion marker belongs to the next cue")
-    if (
-        re.search(
-            r"\b(?:which|that|what)\s+(?:i|we|you|they|he|she)\s+"
-            r"(?:think|guess|believe),?$",
-            semantic_left,
-            re.IGNORECASE,
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.single_word_completion",
+            reasons=reasons,
+            contributions=contributions,
         )
-        and head in _INCOMPLETE_PREDICATE_TAILS
-    ):
-        risk += 38
-        reasons.append("parenthetical opinion separated from its governing clause")
-    if re.fullmatch(
-        r"(?:i|we|you)\s+(?:think|guess|believe),?",
-        left,
-        re.IGNORECASE,
-    ) and re.match(r"^(?:\d|this|that|the|a|an|it|there|[a-z]+ing\b)", right, re.I):
-        risk += 34
-        reasons.append("standalone opinion marker belongs to the following clause")
-    if (
-        head == "and"
-        and len(left_tokens) <= 3
-        and right[:1].islower()
-        and not _TERMINAL_RE.search(left)
-        and re.match(
-            r"^(?:i|you|he|she|it|we|they)\b",
-            left,
-            re.IGNORECASE,
+    if predicate_boundary.short_noun_subject(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.short_noun_subject",
+            reasons=reasons,
+            contributions=contributions,
         )
-        and re.match(r"^and\s+[a-z]+", right, re.IGNORECASE)
+    if grammar_boundary.phrasal_verb(
+        features,
+        head_is_phrasal_particle=head in _PHRASAL_PARTICLES,
     ):
-        risk += 30
-        reasons.append("short predicate separated from its coordinated continuation")
-    if re.search(
-        r"[.!?]\s+(?:today|tomorrow|tonight|meanwhile|instead),?$",
-        left,
-        re.IGNORECASE,
-    ):
-        risk += 36
-        reasons.append("sentence-opening time marker belongs to the next cue")
-    if head == "wrong" and re.search(r"\b(?:don['’]t|do\s+not)\s+get\s+me$", left, re.IGNORECASE):
-        risk += 38
-        reasons.append("fixed phrase split inside 'do not get me wrong'")
-    if re.search(r"\bbecause\s+at\s+the\s+time,?$", left, re.IGNORECASE):
-        risk += 36
-        reasons.append("reason clause opener separated from its subject")
-    if tail in _SENTENCE_ADVERB_TAILS and (
-        head in (_SUBJECT_TAILS | {"our", "the", "a", "an"})
-        or re.fullmatch(
-            r"(?:i|you|he|she|it|we|they)['’](?:d|ll|m|re|s|ve)",
-            head,
-            re.IGNORECASE,
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.phrasal_verb",
+            reasons=reasons,
+            contributions=contributions,
+            reason_values={"left": tail, "right": head},
         )
-    ):
-        risk += 30
-        reasons.append("sentence-opening time adverb belongs to the next cue")
-    if re.search(r"\bbut\s+for\s+(?:them|him|her|us|you),?$", left, re.IGNORECASE):
-        risk += 34
-        reasons.append("contrastive beneficiary phrase belongs to the next cue")
-    if (tail, head) in _DEPENDENCY_PAIRS:
-        risk += 34
-        reasons.append(f"split lexical unit '{tail} {head}'")
-    if tail in {"down", "over", "up"} and head == "here":
-        risk += 34
-        reasons.append(f"directional phrase split inside '{tail} here'")
-    if tail in {
-        "one",
-        "two",
-        "three",
-        "four",
-        "five",
-        "six",
-        "seven",
-        "eight",
-        "nine",
-    } and re.match(r"^and\s+a\s+half\s+(?:foot|feet|inch|inches)\b", right, re.IGNORECASE):
-        risk += 38
-        reasons.append("mixed-number measurement split before 'and a half'")
-    if tail == "intake" and tuple(right_tokens[:2]) == ("and", "exhaust"):
-        risk += 34
-        reasons.append("coordinate automotive term split between intake and exhaust")
-    if head == "or" and re.fullmatch(r"[a-z]+\d+", tail):
-        risk += 34
-        reasons.append("alphanumeric model alternative split before 'or'")
-    if tail == "same" and head == "as":
-        risk += 36
-        reasons.append("comparison split between 'same' and 'as'")
-    if head in {"as", "than"} and re.search(
-        r"\b(?:same|similar|different)\b[^.!?]*\b(?:life|work)$",
-        semantic_left,
-        re.IGNORECASE,
-    ):
-        risk += 36
-        reasons.append("comparison frame separated from its counterpart")
-    if head in {"as", "than"} and re.search(
-        r"\b(?:isn['’]t|is\s+not|aren['’]t|are\s+not|wasn['’]t|was\s+not|"
-        r"weren['’]t|were\s+not)\s+(?:quite|nearly|almost|as|so)$",
-        left,
-        flags=re.IGNORECASE,
-    ):
-        risk += 38
-        reasons.append("negated comparison split from its complement")
-    if re.search(r"\bthis\s+is\s+what['’]s$", left, re.IGNORECASE) and head == "so":
-        risk += 36
-        reasons.append("'what is so' complement split")
-    if re.search(r"\bwhat['’]s\s+so$", left, re.IGNORECASE) and head in {
-        "good",
-        "great",
-        "special",
-    }:
-        risk += 36
-        reasons.append("'what is so' complement split")
-    if tail == "like" and head in {"this", "that", "it", "these", "those"}:
-        risk += 32
-        reasons.append(f"comparison complement split before '{head}'")
-    if tail == "like" and re.match(r"^[A-Z][A-Za-z'’-]+\b", right):
-        risk += 34
-        reasons.append("comparative marker separated from its example")
-    if re.search(
-        r"\bbetween\s+(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|\d+)$",
-        left,
-        re.IGNORECASE,
-    ) and re.match(
-        r"^and\s+(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|\d+)\b",
-        right,
-        re.IGNORECASE,
-    ):
-        risk += 38
-        reasons.append("numeric range split at conjunction")
-    if re.search(
-        r"\b(?:i|we|you|they)\s+(?:(?:can|could|do|did)\s+)?"
-        r"(?:see|saw|notice|noticed|find|found),?$",
-        left,
-        re.IGNORECASE,
-    ) and re.match(
-        r"^(?:a|an|the|some|many|several|changes?)\b",
-        right,
-        re.IGNORECASE,
-    ):
-        risk += 34
-        reasons.append("transitive predicate separated from its object")
-    if re.search(
-        r"\b(?:i|we|you|they|he|she)\s+"
-        r"(?:(?:can|could|did|do|does|don['’]t|doesn['’]t|didn['’]t|"
-        r"may|might|must|should|will|would)\s+)?"
-        r"(?:build|choose|create|find|get|give|make|seek|take|use),?$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and re.match(
-        r"^(?:a|an|any|it|methods?|something|the|them|these|those|ways?)\b",
-        semantic_right,
-        re.IGNORECASE,
-    ):
-        risk += 36
-        reasons.append("transitive predicate separated from its object")
-    if re.search(
-        r"\b(?:i|we|you|they)\s+(?:(?:can|could|do|did)\s+)?"
-        r"(?:see|saw|notice|noticed|find|found),?\s+"
-        r"(?:you\s+know|i\s+mean),?$",
-        left,
-        re.IGNORECASE,
-    ) and re.match(
-        r"^(?:a|an|the|some|many|several|changes?)\b",
-        right,
-        re.IGNORECASE,
-    ):
-        risk += 36
-        reasons.append("transitive predicate separated before trailing discourse filler")
-    if (
-        re.search(
-            r"\b(?:i|we|you|they|he|she)(?:['’]ve|\s+have)\s+seen,?$",
-            semantic_left,
-            re.IGNORECASE,
+    if grammar_boundary.take_away(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.take_away",
+            reasons=reasons,
+            contributions=contributions,
         )
-        and semantic_right[:1].islower()
+    if predicate_boundary.subject_complement(
+        features,
+        tail_is_copula_complement=tail in _COPULA_COMPLEMENT_TAILS,
     ):
-        risk += 36
-        reasons.append("perfect reporting predicate separated from its content")
-    if head in {"her", "him", "it", "me", "them", "us", "you"} and re.search(
-        r"\b(?:can|could|did|do|does|may|might|must|should|to|will|would)\s+"
-        r"[a-z][a-z'’-]*$",
-        semantic_left,
-        re.IGNORECASE,
-    ):
-        risk += 36
-        reasons.append("transitive predicate separated from its pronoun object")
-    if (
-        re.search(
-            r"\b(?:i|we|you|they|he|she)(?:['’]ve|\s+have)\s+"
-            r"(?:clearly|definitely|really|certainly|already)\s+seen,?$",
-            semantic_left,
-            re.IGNORECASE,
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.subject_complement",
+            reasons=reasons,
+            contributions=contributions,
+            reason_values={"head": head},
         )
-        and semantic_right[:1].islower()
-    ):
-        risk += 36
-        reasons.append("perfect reporting predicate separated after its adverb")
-    if re.search(r"\bwell\s+suited$", semantic_left, re.IGNORECASE) and re.match(
-        r"^and\b", semantic_right, re.IGNORECASE
-    ):
-        risk += 32
-        reasons.append("context-dependent adjective separated from its continuation")
-    if (
-        re.search(
-            r"\b(?:(?:start(?:ed|ing)?|continue(?:d|s|ing)?)\s+to\s+see|"
-            r"(?:i|we|you|they|he|she)\s+(?:think\s+that\s+)?"
-            r"(?:i|we|you|they|he|she)?\s*(?:see|seen)),?$",
-            semantic_left,
-            re.IGNORECASE,
+    if predicate_boundary.omitted_relative_one(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.omitted_relative_one",
+            reasons=reasons,
+            contributions=contributions,
         )
-        and right[:1].islower()
+    if predicate_boundary.copula_parenthetical_complement(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.copula_parenthetical_complement",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.new_clause_connective(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.new_clause_connective",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.emphatic_inversion_complement(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.emphatic_inversion_complement",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    return risk
+
+
+def _score_english_boundary_discourse(
+    features: EnglishBoundaryFeatures,
+    reasons: list[str],
+    contributions: list[BoundaryScoreContribution],
+) -> int:
+    tail = features.tail
+    head = features.head
+    risk = 0
+
+    if discourse_boundary.filler_demonstrative_noun(features):
+        risk += record_boundary_score(
+            "split.boundary.english.discourse.filler_demonstrative_noun",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if discourse_boundary.standalone_bridge(features):
+        risk += record_boundary_score(
+            "split.boundary.english.discourse.standalone_bridge",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if discourse_boundary.filler_only_frame(features):
+        risk += record_boundary_score(
+            "split.boundary.english.discourse.filler_only_frame",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.standalone_contrast_frame(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.standalone_contrast_frame",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if discourse_boundary.sentence_opening_filler(features):
+        risk += record_boundary_score(
+            "split.boundary.english.discourse.sentence_opening_filler",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if discourse_boundary.incomplete_predicate_before_filler(features):
+        risk += record_boundary_score(
+            "split.boundary.english.discourse.incomplete_predicate_before_filler",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if discourse_boundary.predicate_after_modifier_strong(features):
+        risk += record_boundary_score(
+            "split.boundary.english.discourse.predicate_after_modifier_strong",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.negative_existential_complement(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.negative_existential_complement",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if discourse_boundary.predicate_after_modifier(features):
+        risk += record_boundary_score(
+            "split.boundary.english.discourse.predicate_after_modifier",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if discourse_boundary.sentence_opening_opinion(features):
+        risk += record_boundary_score(
+            "split.boundary.english.discourse.sentence_opening_opinion",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if discourse_boundary.parenthetical_opinion(
+        features,
+        head_is_incomplete_predicate=head in _INCOMPLETE_PREDICATE_TAILS,
     ):
-        risk += 34
-        reasons.append("reporting predicate separated from its content")
-    if re.search(
-        r"\b(?:point|thing)\s+that\s+(?:i|we|you|they|he|she)\s+"
-        r"(?:was\s+)?(?:trying\s+to\s+)?(?:make|say|show),?$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and head in {"is", "was"}:
-        risk += 38
-        reasons.append("reporting frame separated from its copular content")
-    if re.search(
-        r"\bwhether\s+(?:i|we|you|they|he|she)\s+(?:think|believe|know),?$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and re.match(r"^(?:how|what|where|which|who|why)\b", semantic_right, re.IGNORECASE):
-        risk += 36
-        reasons.append("embedded question frame separated from its complement")
-    if semantic_tail == "what" and right[:1].islower():
-        risk += 34
-        reasons.append("interrogative complement separated after 'what'")
-    if re.search(
-        r"\b(?:note|mention|observe|report|say|show)\b.*\bthat\b.*"
-        r"\band\s+[a-z][a-z'’-]*$",
-        semantic_left,
-        re.IGNORECASE,
-    ) and re.match(
-        r"^[a-z][a-z'’-]*s\s+and\s+[a-z][a-z'’-]*\s+"
-        r"(?:as|are|were|become|became|becomes|have|has|had)\b",
-        semantic_right,
-        re.IGNORECASE,
+        risk += record_boundary_score(
+            "split.boundary.english.discourse.parenthetical_opinion",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if discourse_boundary.standalone_opinion(features):
+        risk += record_boundary_score(
+            "split.boundary.english.discourse.standalone_opinion",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if coordination_boundary.short_predicate_continuation(features):
+        risk += record_boundary_score(
+            "split.boundary.english.coordination.short_predicate_continuation",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.sentence_opening_time_marker(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.sentence_opening_time_marker",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.do_not_get_me_wrong(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.do_not_get_me_wrong",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.reason_clause_subject(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.reason_clause_subject",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.sentence_opening_time_adverb(
+        features,
+        tail_is_sentence_adverb=tail in _SENTENCE_ADVERB_TAILS,
+        head_is_subject_or_determiner=head
+        in (_SUBJECT_TAILS | {"our", "the", "a", "an"}),
     ):
-        risk += 40
-        reasons.append("compound member split inside a coordinated reported subject")
-    if head in {
-        "become",
-        "becomes",
-        "became",
-        "is",
-        "are",
-        "was",
-        "were",
-        "have",
-        "has",
-        "had",
-    } and re.search(
-        r"\b[a-z][a-z'’-]*(?:\s+[a-z][a-z'’-]*){0,3}\s+and\s+"
-        r"[a-z][a-z'’-]*$",
-        left,
-        flags=re.IGNORECASE,
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.sentence_opening_time_adverb",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.contrastive_beneficiary(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.contrastive_beneficiary",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.lexical_unit(
+        tail_head_is_dependency_pair=(tail, head) in _DEPENDENCY_PAIRS
     ):
-        risk += 34
-        reasons.append("coordinated subject separated from its predicate")
-    if re.match(
-        r"^and\s+(?!(?:i|you|he|she|it|we|they)\b)"
-        r"[a-z][a-z'’-]*(?:\s+[a-z][a-z'’-]*){0,2}\s+"
-        r"(?:as|are|were|become|became|becomes|have|has|had)\b",
-        semantic_right,
-        re.IGNORECASE,
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.lexical_unit",
+            reasons=reasons,
+            contributions=contributions,
+            reason_values={"left": tail, "right": head},
+        )
+    if grammar_boundary.direction_here(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.direction_here",
+            reasons=reasons,
+            contributions=contributions,
+            reason_values={"token": tail},
+        )
+    return risk
+
+
+def _score_english_boundary_clause_ownership(
+    features: EnglishBoundaryFeatures,
+    reasons: list[str],
+    contributions: list[BoundaryScoreContribution],
+) -> int:
+    head = features.head
+    risk = 0
+
+    if numeric_boundary.mixed_measurement(features):
+        risk += record_boundary_score(
+            "split.boundary.english.numeric.mixed_measurement",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if coordination_boundary.automotive_intake_exhaust(features):
+        risk += record_boundary_score(
+            "split.boundary.english.coordination.automotive_intake_exhaust",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if entity_boundary.alphanumeric_model_alternative(features):
+        risk += record_boundary_score(
+            "split.boundary.english.entity.alphanumeric_model_alternative",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if comparison_boundary.same_as(features):
+        risk += record_boundary_score(
+            "split.boundary.english.comparison.same_as",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if comparison_boundary.frame_counterpart(features):
+        risk += record_boundary_score(
+            "split.boundary.english.comparison.frame_counterpart",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if comparison_boundary.negated_complement(features):
+        risk += record_boundary_score(
+            "split.boundary.english.comparison.negated_complement",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.what_is_so_after_demonstrative(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.what_is_so_complement",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.what_is_so_adjective(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.what_is_so_complement",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if comparison_boundary.dynamic_complement(features):
+        risk += record_boundary_score(
+            "split.boundary.english.comparison.dynamic_complement",
+            reasons=reasons,
+            contributions=contributions,
+            reason_values={"token": head},
+        )
+    if comparison_boundary.example(features):
+        risk += record_boundary_score(
+            "split.boundary.english.comparison.example",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if numeric_boundary.range_conjunction(features):
+        risk += record_boundary_score(
+            "split.boundary.english.numeric.range_conjunction",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.transitive_object_basic(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.transitive_object_basic",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.transitive_object_extended(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.transitive_object_extended",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if discourse_boundary.transitive_predicate_before_filler(features):
+        risk += record_boundary_score(
+            "split.boundary.english.discourse.transitive_predicate_before_filler",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.perfect_reporting_content(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.perfect_reporting_content",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.transitive_pronoun_object(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.transitive_pronoun_object",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.perfect_reporting_after_adverb(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.perfect_reporting_after_adverb",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.context_dependent_adjective(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.context_dependent_adjective",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.reporting_content(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.reporting_content",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.reporting_copular_content(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.reporting_copular_content",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.embedded_question_complement(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.embedded_question_complement",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.interrogative_complement(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.interrogative_complement",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if coordination_boundary.reported_subject_member(features):
+        risk += record_boundary_score(
+            "split.boundary.english.coordination.reported_subject_member",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if coordination_boundary.subject_predicate(features):
+        risk += record_boundary_score(
+            "split.boundary.english.coordination.subject_predicate",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if coordination_boundary.noun_subject_shared_predicate_simple(features):
+        risk += record_boundary_score(
+            "split.boundary.english.coordination.noun_subject_shared_predicate",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if coordination_boundary.noun_subject_shared_predicate_compound(features):
+        risk += record_boundary_score(
+            "split.boundary.english.coordination.noun_subject_shared_predicate",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if coordination_boundary.final_noun_progressive_predicate(features):
+        risk += record_boundary_score(
+            "split.boundary.english.coordination.final_noun_progressive_predicate",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if grammar_boundary.coordinated_noun_phrase_contextual(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.coordinated_noun_phrase_contextual",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if coordination_boundary.omitted_subject_predicate(features):
+        risk += record_boundary_score(
+            "split.boundary.english.coordination.omitted_subject_predicate",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if coordination_boundary.noun_list_progressive_predicate(features):
+        risk += record_boundary_score(
+            "split.boundary.english.coordination.noun_list_progressive_predicate",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.reported_subject(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.reported_subject",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.transitive_nominal_clause(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.transitive_nominal_clause",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if discourse_boundary.frame_following_clause(features):
+        risk += record_boundary_score(
+            "split.boundary.english.discourse.frame_following_clause",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.what_use_for_object(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.what_use_for_object",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    return risk
+
+
+def _score_english_boundary_dependencies(
+    features: EnglishBoundaryFeatures,
+    reasons: list[str],
+    contributions: list[BoundaryScoreContribution],
+) -> int:
+    left_tokens = list(features.left_tokens)
+    previous = features.previous
+    head = features.head
+    risk = 0
+
+    if grammar_boundary.dependent_phrase(
+        features,
+        head_is_dependent=head in _DEPENDENT_RIGHT_HEADS,
     ):
-        risk += 36
-        reasons.append("coordinated noun subject split before its shared predicate")
-    if re.match(
-        r"^and\s+(?!(?:i|you|he|she|it|we|they)\b)"
-        r"(?:[a-z][a-z'’-]*\s+){1,5}and\s+"
-        r"[a-z][a-z'’-]*\s+(?:as|are|were|become|became|becomes|have|has|had)\b",
-        semantic_right,
-        re.IGNORECASE,
-    ):
-        risk += 36
-        reasons.append("coordinated noun subject split before its shared predicate")
-    if re.match(
-        r"^and\s+[a-z][a-z'’-]*s\s+"
-        r"(?:becoming|entering|leaving|moving|spreading|turning)\b",
-        semantic_right,
-        re.IGNORECASE,
-    ) and re.search(r"\b[a-z][a-z'’-]*s$", semantic_left, re.IGNORECASE):
-        risk += 36
-        reasons.append("final coordinated noun separated with its progressive predicate")
-    if re.match(
-        r"^and\s+(?:a|an|the|our|your|their|his|her|its|this|that|these|those)\b",
-        semantic_right,
-        re.IGNORECASE,
-    ) and re.search(
-        r"\b(?:the|our|your|their|his|her|its|this|that|these|those)\s+"
-        r"[a-z][a-z'’-]*(?:\s+age)?$",
-        semantic_left,
-        re.IGNORECASE,
-    ):
-        risk += 32
-        reasons.append("coordinated noun phrase split at conjunction")
-    if re.match(
-        r"^and(?:,?\s+(?:you\s+know|i\s+mean))?\s+"
-        r"(?:wanted|decided|chose|hoped|tried|worked|wrote|said|thought)\b",
-        semantic_right,
-        re.IGNORECASE,
-    ):
-        risk += 34
-        reasons.append("omitted subject separated from its coordinated predicate")
-    if re.match(r"^[a-z][a-z'’-]*ing\b", semantic_right, re.IGNORECASE) and re.search(
-        r"\b[a-z][a-z'’-]*(?:,\s*|\s+and\s+)"
-        r"[a-z][a-z'’-]*(?:,\s*and\s+[a-z][a-z'’-]*)?[,]?$",
-        semantic_left,
-        re.IGNORECASE,
-    ):
-        risk += 34
-        reasons.append("coordinated noun list separated from its progressive predicate")
-    if re.match(
-        r"^and\s+(?:is|are|was|were|became|becomes?)\b", semantic_right, re.I
-    ) and re.search(
-        r"\b(?:think|believe|consider|say|said|thought)\s+that\b",
-        semantic_left,
-        re.IGNORECASE,
-    ):
-        risk += 34
-        reasons.append("reported subject separated from its predicate")
-    if head == "what" and re.search(
-        r"\b(?:access|choose|find|know|read|remember|see|select|understand|use|value)$",
-        semantic_left,
-        re.IGNORECASE,
-    ):
-        risk += 36
-        reasons.append("transitive predicate separated from its nominal clause")
-    if re.search(r"\bat\s+the\s+same\s+time,?$", left, re.IGNORECASE) and re.match(
-        r"^(?:i|you|he|she|it|we|they)(?:['’](?:m|re|s|ve|d|ll))?\b",
-        right,
-        flags=re.IGNORECASE,
-    ):
-        risk += 30
-        reasons.append("discourse frame separated from its following clause")
-    if re.search(
-        r"\bwhat\s+(?:i|you|we|they|he|she|it)(?:['’][a-z]+)?"
-        r"(?:\s+[a-z]+){0,6}\s+use$",
-        left,
-        flags=re.IGNORECASE,
-    ) and re.match(
-        r"^(?:a|an|the|this|that|these|those|it|them|him|her|us)\b"
-        r"(?:\s+\S+){0,4}\s+for\b",
-        right,
-        flags=re.IGNORECASE,
-    ):
-        risk += 36
-        reasons.append("object split inside 'what ... use ... for' construction")
-    if (
-        head in _DEPENDENT_RIGHT_HEADS
-        and right[:1].islower()
-        and not _CLAUSE_RE.search(left)
-        and not complete_fixed_phrase
-        and not complete_ease_of_use_phrase
-    ):
-        risk += 30
-        reasons.append(f"dependent phrase beginning with '{head}'")
-    if (
-        head == "of"
-        and re.match(r"^Of\s+(?!course\b)", right, re.IGNORECASE)
-        and not _CLAUSE_RE.search(right)
-    ):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.dependent_phrase",
+            reasons=reasons,
+            contributions=contributions,
+            reason_values={"token": head},
+        )
+    if grammar_boundary.standalone_of_phrase(features):
         # Punctuation restored by an ASR/LLM can capitalize a continuation and
         # make it look independent. An ``Of ...`` fragment without a finite
         # clause still belongs to an adjacent noun phrase.
-        risk += 32
-        reasons.append("standalone 'of' phrase separated from its governing noun")
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.standalone_of_phrase",
+            reasons=reasons,
+            contributions=contributions,
+        )
     that_starts_complement = head == "that" and any(
         len(left_tokens) >= len(phrase) and tuple(left_tokens[-len(phrase) :]) == phrase
         for phrase in _THAT_COMPLEMENT_TAILS
     )
-    if (
-        head in _RELATIVE_CLAUSE_HEADS
-        and not that_starts_complement
-        and not _CLAUSE_RE.search(left)
+    if grammar_boundary.relative_clause(
+        features,
+        head_is_relative=head in _RELATIVE_CLAUSE_HEADS,
+        that_starts_complement=that_starts_complement,
     ):
-        risk += 30
-        reasons.append(f"relative clause '{head}' separated from its antecedent")
-    if (
-        head in _TRANSLATION_SENSITIVE_HEADS
-        and not _TERMINAL_RE.search(left)
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.relative_clause",
+            reasons=reasons,
+            contributions=contributions,
+            reason_values={"token": head},
+        )
+    if grammar_boundary.dependent_adverbial_clause(
+        features,
+        head_is_translation_sensitive=head in _TRANSLATION_SENSITIVE_HEADS,
     ):
-        risk += 26
-        reasons.append(f"dependent adverbial clause beginning with '{head}'")
-    if re.search(r"\bthe\s+(?:19|20)?\d{2}$", semantic_left, re.IGNORECASE) and re.match(
-        r"^[A-Za-z]+-?\d+[A-Za-z0-9-]*\b",
-        right,
-    ):
-        risk += 42
-        reasons.append("model year separated from its vehicle name")
-    if (
-        head == "here"
-        and len(right_tokens) >= 2
-        and right_tokens[1] in {"in", "on", "with"}
-        and right[:1].islower()
-    ):
-        risk += 30
-        reasons.append("dependent locative phrase separated from its clause")
-    if head in {"is", "was"} and re.match(
-        r"^the\s+(?:easiest|best|only|main)\s+way\b",
-        left,
-        flags=re.IGNORECASE,
-    ):
-        risk += 32
-        reasons.append("way-clause subject separated from its predicate")
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.dependent_adverbial_clause",
+            reasons=reasons,
+            contributions=contributions,
+            reason_values={"token": head},
+        )
+    if numeric_boundary.model_year_vehicle_name(features):
+        risk += record_boundary_score(
+            "split.boundary.english.numeric.model_year_vehicle_name",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.dependent_locative_clause(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.dependent_locative_clause",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if predicate_boundary.way_clause_subject(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.way_clause_subject",
+            reasons=reasons,
+            contributions=contributions,
+        )
 
-    if (
-        head in {"is", "are", "was", "were"}
-        and re.search(r"\b[A-Z][A-Za-z0-9'’.+-]*,?$", left)
-        and (len(left_tokens) < 2 or left_tokens[-2] not in _DEPENDENT_RIGHT_HEADS)
+    if predicate_boundary.proper_name_subject(
+        features,
+        previous_is_dependent_head=previous in _DEPENDENT_RIGHT_HEADS,
     ):
-        risk += 34
-        reasons.append("proper-name subject separated from its predicate")
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.proper_name_subject",
+            reasons=reasons,
+            contributions=contributions,
+        )
 
     # A long cue can contain the end of one clause followed by the complete
     # subject of the next one (often after ASR misses sentence punctuation).
@@ -1899,140 +1639,138 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:  # noq
         "will",
         "would",
     }
-    trailing_subject = re.search(
-        r"\b(?:the|these|those|our|their|his|her|that)\s+"
-        r"[a-z][a-z'’-]*(?:\s+[a-z][a-z'’-]*){0,2}$",
-        semantic_left,
-        flags=re.IGNORECASE,
-    )
-    if trailing_subject and head in finite_predicate_heads:
-        risk += 38
-        reasons.append("trailing noun subject separated from its finite predicate")
-    if (
-        head in finite_predicate_heads
-        and tail.endswith("ing")
-        and (
-            len(left_tokens) <= 3
-            or re.search(
-                r"\bi\s+(?:think|guess)(?:\s+it(?:['’]s|\s+is))?\s+[a-z]+ing$",
-                semantic_left,
-                re.IGNORECASE,
-            )
+    if predicate_boundary.trailing_noun_subject(
+        features,
+        head_is_finite_predicate=head in finite_predicate_heads,
+    ):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.trailing_noun_subject",
+            reasons=reasons,
+            contributions=contributions,
         )
+    if grammar_boundary.clause_final_subject(
+        features,
+        head_is_finite_predicate=head in finite_predicate_heads,
     ):
-        risk += 38
-        reasons.append("gerund subject separated from its finite predicate")
-
-    # Preserve adjacent title-cased name tokens ("Donald Trump", "The
-    # Atlantic") as one atomic span. The left side must not end a sentence and
-    # both tokens must retain source casing, which avoids treating ordinary
-    # lowercase continuations as names.
-    left_name = re.search(r"(?:^|\s)([A-Z][A-Za-z'’-]{1,})$", left)
-    right_name = re.match(r"^([A-Z][A-Za-z'’-]{1,})\b", right)
-    if (
-        left_name
-        and right_name
-        and right_name.group(1).lower()
-        not in {
-            "all",
-            "and",
-            "but",
-            "hey",
-            "just",
-            "next",
-            "no",
-            "now",
-            "okay",
-            "so",
-            "then",
-            "well",
-            "yes",
-        }
-    ):
-        risk += 38
-        reasons.append("proper name split between adjacent tokens")
-
-    if head in {"is", "are", "was", "were"} and re.match(
-        r"^(?:(?:and|but)\s+)?what\b", left, flags=re.IGNORECASE
-    ):
-        risk += 36
-        reasons.append("what-clause subject separated from its predicate")
-
-    if (
-        head == "so"
-        and right[:1].islower()
-        and len(right_tokens) >= 2
-        and (
-            right_tokens[1].endswith("ly")
-            or right_tokens[1] in {"far", "long", "many", "much", "strong", "well", "widespread"}
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.clause_final_subject",
+            reasons=reasons,
+            contributions=contributions,
         )
+    if predicate_boundary.gerund_subject(
+        features,
+        head_is_finite_predicate=head in finite_predicate_heads,
     ):
-        risk += 30
-        reasons.append("degree complement separated from its predicate")
-
-    if (
-        tail == "already"
-        and head in {"is", "are", "was", "were"}
-        and re.search(r"\bthan\b[^.!?]*\balready$", left, re.IGNORECASE)
-    ):
-        risk += 38
-        reasons.append("comparison auxiliary separated after 'already'")
-
-    if re.search(r"\b(?:a|an|the)\s+(?:19|20)\d{2}$", left, re.IGNORECASE) and (
-        re.match(r"^[A-Z][A-Za-z0-9-]+\b", right)
-        or re.match(
-            r"^(?:acura|audi|bmw|cadillac|chevrolet|dodge|ford|gmc|honda|hyundai|"
-            r"jeep|kia|lexus|lincoln|mazda|mercedes|nissan|porsche|ram|subaru|"
-            r"tesla|toyota|volkswagen|volvo)\b",
-            right,
-            flags=re.IGNORECASE,
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.gerund_subject",
+            reasons=reasons,
+            contributions=contributions,
         )
-    ):
-        risk += 38
-        reasons.append("model year separated from vehicle name")
 
-    if (
-        re.match(r"^(?:and\s+)?what\b", left, re.IGNORECASE)
-        and head == "and"
-        and len(right_tokens) >= 2
-        and right_tokens[1] in {"makes", "sets", "keeps", "gives", "gets", "drives"}
-    ):
-        risk += 34
-        reasons.append("coordinated predicate separated inside a what-clause")
+    if entity_boundary.proper_name(features):
+        risk += record_boundary_score(
+            "split.boundary.english.entity.proper_name",
+            reasons=reasons,
+            contributions=contributions,
+        )
 
-    # Keep location names such as "Ypsilanti, Michigan" in one cue.  This is
-    # deliberately limited to a capitalized comma-separated left tail and a
-    # known single-token state name to avoid treating ordinary sentence starts
-    # as entities.
-    left_name = re.search(r"\b([A-Z][A-Za-z'’-]+),\s*$", left)
-    if left_name and head in _US_STATE_NAMES:
-        risk += 38
-        reasons.append("place name split between city and state")
+    if predicate_boundary.what_clause_subject(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.what_clause_subject",
+            reasons=reasons,
+            contributions=contributions,
+        )
 
-    # Automotive speech commonly puts a trim before the model name ("RT392
-    # Durango").  Moving this boundary is safe only for a compact alphanumeric
-    # trim token followed by a capitalized model token.
-    if re.fullmatch(r"(?:rt|srt|amg|rs|m)\d{1,3}", tail, flags=re.IGNORECASE) and re.match(
-        r"^[A-Z][A-Za-z0-9-]+\b", right
-    ):
-        risk += 34
-        reasons.append("vehicle trim separated from model name")
+    if predicate_boundary.degree_complement(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.degree_complement",
+            reasons=reasons,
+            contributions=contributions,
+        )
 
-    if (
-        head == "and"
-        and len(right_tokens) >= 2
-        and right_tokens[1] in {"go", "purchase", "buy"}
-        and re.search(r"\b(?:after|before)\b[^,;.!?]*$", left, flags=re.IGNORECASE)
-    ):
-        risk += 34
-        reasons.append("temporal phrase separated from its continuation")
+    if comparison_boundary.auxiliary_after_already(features):
+        risk += record_boundary_score(
+            "split.boundary.english.comparison.auxiliary_after_already",
+            reasons=reasons,
+            contributions=contributions,
+        )
 
+    if numeric_boundary.article_model_year_vehicle_name(features):
+        risk += record_boundary_score(
+            "split.boundary.english.numeric.article_model_year_vehicle_name",
+            reasons=reasons,
+            contributions=contributions,
+        )
+
+    if coordination_boundary.what_clause_predicate(features):
+        risk += record_boundary_score(
+            "split.boundary.english.coordination.what_clause_predicate",
+            reasons=reasons,
+            contributions=contributions,
+        )
+
+    if entity_boundary.city_state(features):
+        risk += record_boundary_score(
+            "split.boundary.english.entity.city_state",
+            reasons=reasons,
+            contributions=contributions,
+        )
+
+    if entity_boundary.vehicle_trim_model(features):
+        risk += record_boundary_score(
+            "split.boundary.english.entity.vehicle_trim_model",
+            reasons=reasons,
+            contributions=contributions,
+        )
+
+    if grammar_boundary.temporal_continuation(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.temporal_continuation",
+            reasons=reasons,
+            contributions=contributions,
+        )
+
+    return risk
+
+
+_ENGLISH_BOUNDARY_SCORE_STAGES = (
+    _score_english_boundary_foundation,
+    _score_english_boundary_relations,
+    _score_english_boundary_completions,
+    _score_english_boundary_discourse,
+    _score_english_boundary_clause_ownership,
+    _score_english_boundary_dependencies,
+)
+
+
+def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
+    """Assess whether an English cue boundary splits a dependent phrase."""
+    features = extract_english_boundary_features(left, right)
+    if not features.eligible:
+        return BoundaryAssessment(0, ())
+
+    right = features.right
+    risk = 0
+    reasons: list[str] = []
+    contributions: list[BoundaryScoreContribution] = []
+
+    for score_stage in _ENGLISH_BOUNDARY_SCORE_STAGES:
+        risk += score_stage(features, reasons, contributions)
     # A lowercase continuation makes a dangling tail more likely, but is not
     # sufficient by itself: natural subtitle clauses often continue lowercase.
     if risk and right[:1].islower():
-        risk += 4
+        risk += record_boundary_score(
+            "split.boundary.english.observation.lowercase_continuation_bonus",
+            reasons=reasons,
+            contributions=contributions,
+            append_reason=False,
+        )
 
-    return BoundaryAssessment(risk, tuple(dict.fromkeys(reasons)))
+    return BoundaryAssessment(
+        risk,
+        tuple(dict.fromkeys(reasons)),
+        tuple(contributions),
+    )
 
 
 def has_unstable_english_boundary(left: str, right: str) -> bool:
@@ -2438,6 +2176,7 @@ def _is_hard_boundary(left: ASRDataSeg, right: ASRDataSeg) -> bool:
                 "participle separated from its complement",
                 "scalar predicate separated from its comparative complement",
                 "determiner and adjective separated from their head noun",
+                "determiner and degree modifier separated from their head noun",
             }
         )
         trailing_adverb = (
@@ -2548,11 +2287,9 @@ def _redistribute_cross_speaker_completion(
         remainder_text = _join_words(remainder)
         repaired_assessment = assess_english_boundary(completed_text, remainder_text)
         completed_tail = (_tokens(completed_text) or [""])[-1]
-        object_pronoun_false_positive = (
-            completed_tail in {"her", "his"}
-            and set(repaired_assessment.reasons)
-            <= {f"dangling modifier '{completed_tail}'"}
-        )
+        object_pronoun_false_positive = completed_tail in {"her", "his"} and set(
+            repaired_assessment.reasons
+        ) <= {f"dangling modifier '{completed_tail}'"}
         if repaired_assessment.unstable and not object_pronoun_false_positive:
             continue
 

@@ -219,6 +219,7 @@ class SubtitleSplitter:
         update_callback: Optional[Callable[[List[ASRDataSeg]], None]] = None,
         llm_client: Any = None,
         target_language: str = "",
+        cache_namespace: str = "",
     ):
         """初始化分割器
 
@@ -240,6 +241,7 @@ class SubtitleSplitter:
         self.update_callback = update_callback
         self.llm_client = llm_client
         self.target_language = str(target_language or "").strip()
+        self.cache_namespace = str(cache_namespace or "").strip()
         self.is_running = True
         self.fallback_count = 0
         self._fallback_lock = threading.Lock()
@@ -491,6 +493,7 @@ class SubtitleSplitter:
             hard_max_word_count_english=self.hard_max_word_count_english,
             llm_client=self.llm_client,
             target_language=self.target_language,
+            cache_namespace=self.cache_namespace,
         )
 
         return self._merge_segments_based_on_sentences(segments, sentences)

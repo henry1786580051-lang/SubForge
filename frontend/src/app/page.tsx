@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { LlmLogsPanel } from "@/components/LlmLogsPanel";
+import { FreeModelsPanel } from "@/components/FreeModelsPanel";
 import { ToastContainer } from "@/components/Toast";
 import { WorkflowWorkspace } from "@/components/WorkflowWorkspace";
 import { useTaskMonitor } from "@/lib/useTaskMonitor";
@@ -177,6 +178,10 @@ export default function Home() {
         ) : activeView === "llm-logs" ? (
           <div className="flex-1 overflow-hidden">
             <LlmLogsPanel />
+          </div>
+        ) : activeView === "free-models" ? (
+          <div className="flex-1 overflow-hidden">
+            <FreeModelsPanel />
           </div>
         ) : (
           <WorkflowWorkspace {...taskControls} />

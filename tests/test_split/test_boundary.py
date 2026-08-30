@@ -5,6 +5,11 @@ from subforge.core.split.boundary import (
     assess_english_boundary,
     normalize_boundaries,
 )
+from subforge.core.split.boundary_registry import (
+    BOUNDARY_SCORE_RULES,
+    BoundaryScoreSeverity,
+    boundary_score_rule,
+)
 
 
 def _cues(texts: list[str], *, speakers: list[str] | None = None) -> list[ASRDataSeg]:
@@ -36,6 +41,57 @@ def _cues(texts: list[str], *, speakers: list[str] | None = None) -> list[ASRDat
             )
         )
     return result
+
+
+def test_numeric_boundary_registry_has_unique_stable_ids() -> None:
+    assert len({rule.rule_id for rule in BOUNDARY_SCORE_RULES}) == len(BOUNDARY_SCORE_RULES)
+    assert all(boundary_score_rule(rule.rule_id) is rule for rule in BOUNDARY_SCORE_RULES)
+    assert all(rule.explanation_template for rule in BOUNDARY_SCORE_RULES)
+    assert all(rule.source_languages == ("en",) for rule in BOUNDARY_SCORE_RULES)
+    assert boundary_score_rule(
+        "split.boundary.english.numeric.calendar_month_year"
+    ).severity == BoundaryScoreSeverity.ERROR
+    assert boundary_score_rule(
+        "split.boundary.english.grammar.attributive_or_comparative_modifier"
+    ).severity == BoundaryScoreSeverity.WARNING
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "rule_id", "weight"),
+    [
+        (
+            "The meeting is in March",
+            "2026 before the opening.",
+            "split.boundary.english.numeric.calendar_month_year",
+            42,
+        ),
+        (
+            "The tunnel is between five",
+            "and six kilometres long.",
+            "split.boundary.english.numeric.range_conjunction",
+            38,
+        ),
+        (
+            "The wheel is about",
+            "500 millimetres wide.",
+            "split.boundary.english.numeric.approximate_magnitude",
+            38,
+        ),
+    ],
+)
+def test_numeric_boundary_rules_emit_observable_legacy_equivalent_contributions(
+    left: str,
+    right: str,
+    rule_id: str,
+    weight: int,
+) -> None:
+    assessment = assess_english_boundary(left, right)
+    contribution = next(item for item in assessment.contributions if item.rule_id == rule_id)
+
+    assert contribution.weight == weight
+    assert contribution.reason in assessment.reasons
+    assert assessment.registered_risk >= weight
+    assert assessment.unregistered_risk == assessment.risk - assessment.registered_risk
 
 
 def test_assessment_rejects_user_reported_dangling_boundaries():
@@ -112,6 +168,38 @@ def test_assessment_catches_airport_sample_dependencies(left, right, reason):
 
     assert assessment.unstable
     assert reason in assessment.reasons
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        (
+            "the sphere could move from a one-off megaproject to a truly",
+            "global network of venues.",
+        ),
+        ("This is a very", "good car."),
+        ("That was an exceptionally", "difficult decision."),
+    ],
+)
+def test_assessment_keeps_attributive_degree_modifier_with_its_head(left, right):
+    assessment = assess_english_boundary(left, right)
+
+    assert assessment.unstable
+    assert "determiner and degree modifier separated from their head noun" in assessment.reasons
+
+
+def test_normalizer_repairs_attributive_degree_modifier_boundary_without_word_loss():
+    source = [
+        "In other words, the sphere could move from a one-off or even two-off megaproject to a truly",
+        "global network of venues.",
+        "That would change the economics.",
+    ]
+
+    repaired = normalize_boundaries(_cues(source))
+
+    assert " ".join(segment.text for segment in repaired).split() == " ".join(source).split()
+    assert "a truly | global network" not in " | ".join(segment.text for segment in repaired)
+    assert all(len(segment.text.split()) <= 22 for segment in repaired)
 
 
 def test_normalizer_repairs_airport_sample_dependencies_across_label_glitches():
@@ -1498,6 +1586,16 @@ def test_assessment_keeps_short_noun_subject_with_predicate():
     assert "short noun subject separated from its predicate" in assessment.reasons
 
 
+def test_assessment_keeps_connective_clause_subject_with_copular_predicate():
+    assessment = assess_english_boundary(
+        "Obviously we have four-corner air suspension, so ride quality",
+        "is good. The road here is smooth.",
+    )
+
+    assert assessment.unstable
+    assert "clause-final subject separated from its finite predicate" in assessment.reasons
+
+
 @pytest.mark.parametrize(
     ("left", "right", "reason"),
     [
@@ -1844,9 +1942,7 @@ def test_assessment_does_not_treat_sentence_initial_just_as_a_name():
 def test_normalizer_rejoins_sentence_suffix_across_short_speaker_flip():
     left_words = [
         ASRWord(token, index * 120, index * 120 + 100, speaker_id="S1")
-        for index, token in enumerate(
-            "But that's the beauty of the collection. You never".split()
-        )
+        for index, token in enumerate("But that's the beauty of the collection. You never".split())
     ]
     right_words = [
         ASRWord(
@@ -1983,9 +2079,7 @@ def test_assessment_rejects_capitalized_standalone_of_phrase():
 
 
 def test_normalizer_returns_noun_before_short_cross_speaker_reply():
-    normalized = normalize_boundaries(
-        _cues(["A little", "car, yeah."], speakers=["S2", "S1"])
-    )
+    normalized = normalize_boundaries(_cues(["A little", "car, yeah."], speakers=["S2", "S1"]))
 
     assert [(segment.speaker_id, segment.text) for segment in normalized] == [
         ("S2", "A little car,"),

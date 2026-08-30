@@ -46,6 +46,7 @@ class BingTranslator(BaseTranslator):
         timeout: float = 30,
         max_retries: int = 5,
         session: requests.Session | None = None,
+        cache_namespace: str = "",
     ):
         super().__init__(
             thread_num=thread_num,
@@ -53,6 +54,7 @@ class BingTranslator(BaseTranslator):
             target_language=target_language,
             update_callback=update_callback,
             use_cache=use_cache,
+            cache_namespace=cache_namespace,
         )
         self.api_key = api_key.strip() or os.environ.get("AZURE_TRANSLATOR_KEY", "").strip()
         self.region = region.strip() or os.environ.get("AZURE_TRANSLATOR_REGION", "").strip()

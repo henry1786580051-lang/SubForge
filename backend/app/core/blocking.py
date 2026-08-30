@@ -29,8 +29,15 @@ async def run_blocking(
                 on_cancel()
             except Exception:
                 logger.exception("Blocking task cancellation hook failed")
-        try:
-            await asyncio.shield(worker)
-        except Exception:
-            logger.debug("Cancelled blocking worker exited with an error", exc_info=True)
+        # Shutdown can cancel the caller a second time while it is draining.
+        # Each cancellation must leave ownership with the worker until it exits.
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if not worker.cancelled() and worker.exception() is not None:
+            logger.debug("Cancelled blocking worker exited with an error: %r", worker.exception())
         raise

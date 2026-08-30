@@ -108,6 +108,31 @@ def test_managed_dist_cleanup_removes_numbered_duplicates_only(monkeypatch, tmp_
     assert notes.is_dir()
 
 
+def test_clean_preserves_evaluation_artifacts(monkeypatch, tmp_path):
+    build_dir = tmp_path / "build"
+    dist_dir = tmp_path / "dist"
+    artifact_dir = tmp_path / "artifacts"
+    frontend_dir = tmp_path / "frontend"
+    for path in (build_dir, dist_dir, frontend_dir / ".next"):
+        path.mkdir(parents=True)
+    manifest = artifact_dir / "translation-quality" / "corpus.local.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(build_desktop, "ROOT", tmp_path)
+    monkeypatch.setattr(build_desktop, "BUILD_DIR", build_dir)
+    monkeypatch.setattr(build_desktop, "DIST_DIR", dist_dir)
+    monkeypatch.setattr(build_desktop, "ARTIFACT_DIR", artifact_dir)
+    monkeypatch.setattr(build_desktop, "FRONTEND_DIR", frontend_dir)
+
+    build_desktop.clean()
+
+    assert not build_dir.exists()
+    assert not dist_dir.exists()
+    assert not (frontend_dir / ".next").exists()
+    assert manifest.read_text(encoding="utf-8") == "{}"
+
+
 def test_macos_build_discards_intermediate_bundle_after_verification(monkeypatch, tmp_path):
     dist_dir = tmp_path / "dist"
     standalone = dist_dir / "SubForge"
@@ -326,6 +351,43 @@ def test_windows_bundle_requires_faster_whisper_vad_asset(tmp_path, monkeypatch)
         path.write_bytes(b"test")
     monkeypatch.setattr(build_desktop, "ROOT", tmp_path)
     monkeypatch.setattr(build_desktop.platform, "system", lambda: "Windows")
+
+    with pytest.raises(RuntimeError, match="silero_vad_v6.onnx"):
+        build_desktop._verify_data_root(data_root, "test bundle")
+
+    vad_asset = data_root / "faster_whisper" / "assets" / "silero_vad_v6.onnx"
+    vad_asset.parent.mkdir(parents=True)
+    vad_asset.write_bytes(b"onnx")
+    build_desktop._verify_data_root(data_root, "test bundle")
+
+
+@pytest.mark.parametrize("has_faster_whisper", [False, True])
+def test_macos_intel_vad_requirement_matches_optional_runtime(
+    tmp_path, monkeypatch, has_faster_whisper
+):
+    data_root = tmp_path / "bundle" / "Contents" / "Resources"
+    required = [
+        data_root / "frontend" / "out" / "index.html",
+        data_root / "frontend" / "out" / "_next" / "build.js",
+        data_root / "resource" / "assets" / "logo.png",
+        data_root / "resource" / "bin" / "ffmpeg",
+        data_root / "resource" / "bin" / "ffprobe",
+    ]
+    for path in required:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"test")
+    monkeypatch.setattr(build_desktop, "ROOT", tmp_path)
+    monkeypatch.setattr(build_desktop.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(build_desktop, "_requires_mlx_metallib", lambda: False)
+    monkeypatch.setattr(
+        build_desktop.importlib.util,
+        "find_spec",
+        lambda name: object() if has_faster_whisper and name == "faster_whisper" else None,
+    )
+
+    if not has_faster_whisper:
+        build_desktop._verify_data_root(data_root, "test bundle")
+        return
 
     with pytest.raises(RuntimeError, match="silero_vad_v6.onnx"):
         build_desktop._verify_data_root(data_root, "test bundle")

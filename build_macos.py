@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Build Subtitle Web App macOS DMG.
+"""Build the SubForge macOS app and drag-install DMG.
 
 Usage:
     python build_macos.py
 
 Output:
-    ~/Desktop/Subtitle.dmg
+    ~/Desktop/SubForge.dmg
 """
 
 import os

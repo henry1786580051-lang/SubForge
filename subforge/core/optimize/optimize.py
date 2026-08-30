@@ -226,6 +226,7 @@ class SubtitleOptimizer:
         update_callback: Optional[Callable] = None,
         use_cache: bool = True,
         llm_client: Any = None,
+        cache_namespace: str = "",
     ):
         """初始化优化器
 
@@ -243,6 +244,7 @@ class SubtitleOptimizer:
         self.custom_prompt = custom_prompt
         self.update_callback = update_callback
         self.use_cache = use_cache
+        self.cache_namespace = str(cache_namespace or "").strip()
         self.llm_client = llm_client
 
         self.is_running = True
@@ -428,6 +430,7 @@ class SubtitleOptimizer:
                 model=self.model,
                 temperature=0.2,
                 use_cache=self.use_cache,
+                cache_namespace=self.cache_namespace,
                 client=self.llm_client,
                 # This pass is a tightly constrained source-preserving edit. Internal
                 # reasoning frequently consumes DeepSeek's output budget before the

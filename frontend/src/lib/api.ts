@@ -192,6 +192,15 @@ export const configApi = {
   fetchWhisperModels: () => request<{ models: string[]; error?: string }>("/api/config/whisper-models"),
 };
 
+// Free hosted models
+export const freeModelsApi = {
+  nvidiaStatus: () => request<FreeModelProviderStatus>("/api/free-models/nvidia"),
+  scanNvidia: () =>
+    request<{ task_id: string; status: string }>("/api/free-models/nvidia/scan", {
+      method: "POST",
+    }),
+};
+
 // LLM Logs
 export const llmLogsApi = {
   list: (page = 1, search = "") =>
@@ -233,6 +242,42 @@ export interface TaskInfo {
         total: number;
       }
   ) | null;
+}
+
+export type FreeModelProbeStatus =
+  | "available"
+  | "busy"
+  | "restricted"
+  | "incompatible"
+  | "unavailable";
+
+export interface FreeModelProbeResult {
+  id: string;
+  status: FreeModelProbeStatus;
+  reason: string;
+  retryable: boolean;
+  http_status: number | null;
+  latency_ms: number;
+  message: string;
+}
+
+export interface FreeModelScanResult {
+  provider: "nvidia";
+  scanned_at: string;
+  catalog_count: number;
+  tested_count: number;
+  duration_ms: number;
+  counts: Record<FreeModelProbeStatus, number>;
+  results: FreeModelProbeResult[];
+}
+
+export interface FreeModelProviderStatus {
+  provider: "nvidia";
+  base_url: string;
+  model: string;
+  api_key_configured: boolean;
+  active_task_id: string | null;
+  last_scan: FreeModelScanResult | null;
 }
 
 export interface MissingAlignmentModel {

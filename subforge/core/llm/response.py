@@ -45,6 +45,31 @@ def get_response_text(response: Any) -> str:
     return cleaned
 
 
+def get_response_history_message(response: Any) -> dict[str, Any]:
+    """Return an assistant message suitable for preserved-thinking follow-ups."""
+    try:
+        message = response.choices[0].message
+    except (AttributeError, IndexError, TypeError) as error:
+        raise ValueError("Invalid LLM API response: missing assistant message") from error
+
+    if hasattr(message, "model_dump"):
+        dumped = message.model_dump(exclude_none=True)
+        if isinstance(dumped, dict):
+            payload = dict(dumped)
+        else:
+            payload = {}
+    else:
+        payload = {
+            key: value
+            for key in ("content", "reasoning_content", "reasoning", "tool_calls")
+            if (value := getattr(message, key, None)) is not None
+        }
+    payload["role"] = "assistant"
+    if "content" not in payload:
+        payload["content"] = ""
+    return payload
+
+
 def _strip_markdown_fence(content: str) -> str:
     cleaned = content.strip()
     cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
