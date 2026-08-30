@@ -161,4 +161,3 @@ def test_efficiency_aggregation_rejects_mixed_canonical_evidence_availability():
 
     with pytest.raises(ValueError, match="mix present and missing canonical evidence"):
         aggregate_efficiency_payloads((first, second))
-

@@ -249,4 +249,3 @@ def test_reasoning_metric_does_not_treat_normal_result_narration_as_private_reas
     )
 
     assert report.aggregate["reasoning_leaks"] == 0
-

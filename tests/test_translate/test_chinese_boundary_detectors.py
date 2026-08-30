@@ -863,4 +863,3 @@ def test_ordered_chinese_boundary_detector_registry_preserves_legacy_precedence(
         "detect_adverb_pronoun_attachment_boundary",
         "detect_terminal_token_boundary",
     )
-
