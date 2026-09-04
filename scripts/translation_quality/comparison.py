@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -297,8 +298,8 @@ def _efficiency_numeric(metrics: dict[str, Any], metric: str) -> int | float:
     value = metrics.get(metric, 0)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"Efficiency report metric {metric!r} is not numeric")
-    if value < 0:
-        raise ValueError(f"Efficiency report metric {metric!r} cannot be negative")
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(f"Efficiency report metric {metric!r} must be finite and non-negative")
     return value
 
 
@@ -329,6 +330,8 @@ def _numeric_metric(report: dict[str, Any], metric: str) -> int | float:
     value = report["aggregate"].get(metric)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"Evaluation report metric {metric!r} is not numeric")
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(f"Evaluation report metric {metric!r} must be finite and non-negative")
     return value
 
 
@@ -379,6 +382,30 @@ def _comparison_markdown(payload: dict[str, Any]) -> str:
         "| Metric | Legacy | Candidate | Delta | Gate |",
         "| --- | ---: | ---: | ---: | :---: |",
     ]
+    if admission := payload.get("admission"):
+        lines[2:2] = [
+            "## Track-Specific Screening (v2)",
+            "",
+            f"- Track: `{admission['track']}`",
+            f"- Decision: `{admission['decision']}`",
+            f"- Frozen policy SHA-256: `{admission['policy_sha256']}`",
+            "- Production adoption: NOT ASSESSED. Manual evidence review is mandatory.",
+            "- Blockers: " + (", ".join(admission["blockers"]) or "none"),
+            "- Observations: " + (", ".join(admission["observations"]) or "none"),
+            "- Required reviews: " + ", ".join(admission["required_review"]),
+            "",
+            "| Frozen budget | Legacy | Candidate | Ceiling | Status |",
+            "| --- | ---: | ---: | ---: | --- |",
+            *[
+                f"| {name} | {values.get('legacy', 'unknown')} | "
+                f"{values.get('candidate', 'unknown')} | {values.get('ceiling', 'unknown')} | "
+                f"{values['status']} |"
+                for name, values in admission["budgets"].items()
+            ],
+            "",
+            "## Historical v1 Gates (informational for v2)",
+            "",
+        ]
     gates = payload["gates"]
     for metric, values in payload["metrics"].items():
         gate = gates.get(metric)

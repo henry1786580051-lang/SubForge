@@ -25,6 +25,11 @@ from subforge.core.split.boundary_features import extract_english_boundary_featu
             "and retirees and women are reading less",
         ),
         (
+            "embedded_question_coordinated_subject",
+            "I do not know how lawmakers",
+            "and construction firms can modernise the industry",
+        ),
+        (
             "final_noun_progressive_predicate",
             "students and retirees",
             "and graduates becoming less engaged",
@@ -54,3 +59,12 @@ def test_coordination_detectors_preserve_sentence_and_pronoun_exclusions() -> No
 
     assert coordination.short_predicate_continuation(terminal) is False
     assert coordination.noun_subject_shared_predicate_simple(pronoun) is False
+    assert (
+        coordination.embedded_question_coordinated_subject(
+            extract_english_boundary_features(
+                "Lawmakers have already published an answer",
+                "and construction firms can now respond",
+            )
+        )
+        is False
+    )

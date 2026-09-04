@@ -91,6 +91,11 @@ from subforge.core.translate.quality.repair_planner import (
     ShadowRepairSummary,
     plan_repair,
 )
+from subforge.core.translate.quality.semantic_actions import (
+    SemanticRepairSignal,
+    detect_document_shortened_place,
+    detect_semantic_action_mismatch,
+)
 from subforge.core.translate.quality.session import (
     TranslationCue,
     TranslationSession,
@@ -130,6 +135,7 @@ __all__ = [
     "RepairHistory",
     "RepairPlan",
     "SegmentIntegritySnapshot",
+    "SemanticRepairSignal",
     "SessionMode",
     "ShadowRepairComparison",
     "ShadowRepairObservation",
@@ -153,6 +159,7 @@ __all__ = [
     "detect_adverb_pronoun_attachment_boundary",
     "detect_consequence_predicate_boundary",
     "detect_discourse_bridge_boundary",
+    "detect_document_shortened_place",
     "detect_foundation_boundary",
     "detect_governing_attachment_boundary",
     "detect_incomplete_nominal_frame_boundary",
@@ -162,6 +169,7 @@ __all__ = [
     "detect_predicate_completion_boundary",
     "detect_reason_construction_boundary",
     "detect_semantic_attachment_boundary",
+    "detect_semantic_action_mismatch",
     "detect_semantic_completion_boundary",
     "detect_subject_attachment_boundary",
     "detect_subject_nominal_completion_boundary",

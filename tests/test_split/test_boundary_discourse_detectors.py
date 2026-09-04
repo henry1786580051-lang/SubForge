@@ -26,6 +26,13 @@ from subforge.core.split.boundary_features import extract_english_boundary_featu
             "the issue",
         ),
         ("frame_following_clause", "At the same time,", "we can continue"),
+        ("frame_following_clause", "The estimate rose. Initially,", "Cost was lower"),
+        (
+            "frame_following_clause",
+            "It was cheaper. So, as you'll learn,",
+            "the final route changed",
+        ),
+        ("frame_following_clause", "Officials expected more. In 2018,", "Doug Ford became premier"),
     ],
 )
 def test_discourse_detector_activation(detector_name: str, left: str, right: str) -> None:

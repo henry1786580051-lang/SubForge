@@ -110,6 +110,7 @@ _HARD_DANGLING_TAILS = {
     "when",
     "while",
     "whereas",
+    "where",
     "how",
     "if",
     "as",
@@ -243,6 +244,7 @@ _MODIFIER_TAILS = {
     "big",
     "both",
     "closest",
+    "cocooned",
     "each",
     "electric",
     "exact",
@@ -252,6 +254,7 @@ _MODIFIER_TAILS = {
     "good",
     "great",
     "high",
+    "huge",
     "important",
     "interesting",
     "large",
@@ -300,6 +303,7 @@ _COMPARATIVE_MODIFIER_TAILS = {
     "better",
     "bigger",
     "broader",
+    "brighter",
     "cheaper",
     "closer",
     "closest",
@@ -347,7 +351,10 @@ _SENTENCE_ADVERB_TAILS = {
     "now",
     "overall",
     "technically",
+    "today",
+    "tonight",
     "ultimately",
+    "yesterday",
 }
 
 _ATTRIBUTIVE_DEGREE_ADVERBS = {
@@ -410,6 +417,7 @@ _DANGLING_PHRASES = {
     ("one", "of"),
     ("one", "of", "these"),
     ("one", "of", "those"),
+    ("over", "the", "last"),
     ("start", "generating"),
     ("tends", "to"),
     ("used", "to"),
@@ -419,6 +427,7 @@ _DANGLING_PHRASES = {
 _DEPENDENCY_PAIRS = {
     ("ago", "or"),
     ("american", "sedans"),
+    ("above", "ground"),
     ("bass", "sound"),
     ("bass", "systems"),
     ("better", "sound"),
@@ -501,6 +510,7 @@ _DEPENDENT_RIGHT_HEADS = {
     "into",
     "of",
     "on",
+    "outside",
     "over",
     "than",
     "through",
@@ -528,12 +538,14 @@ _PREFERRED_CLAUSE_HEADS = {
 }
 
 _RELATIVE_CLAUSE_HEADS = {"that", "which", "who", "whom", "whose"}
+_CONTRACTED_RELATIVE_CLAUSE_HEADS = {"that's", "who's"}
 _TRANSLATION_SENSITIVE_HEADS = {"after", "before", "until", "when", "where"}
 _HYPHENATED_ATTRIBUTIVE_TAILS = {
     "all-wheel",
     "day-to-day",
     "end-to-end",
     "four-wheel",
+    "three-legged",
     "front-wheel",
     "high-speed",
     "long-term",
@@ -922,6 +934,12 @@ def _score_english_boundary_relations(
             reasons=reasons,
             contributions=contributions,
         )
+    if grammar_boundary.postpositive_participle_modifier(features):
+        risk += record_boundary_score(
+            "split.boundary.english.grammar.postpositive_participle_modifier",
+            reasons=reasons,
+            contributions=contributions,
+        )
     if predicate_boundary.reporting_quoted_object(features):
         risk += record_boundary_score(
             "split.boundary.english.predicate.reporting_quoted_object",
@@ -1276,8 +1294,7 @@ def _score_english_boundary_discourse(
     if grammar_boundary.sentence_opening_time_adverb(
         features,
         tail_is_sentence_adverb=tail in _SENTENCE_ADVERB_TAILS,
-        head_is_subject_or_determiner=head
-        in (_SUBJECT_TAILS | {"our", "the", "a", "an"}),
+        head_is_subject_or_determiner=head in (_SUBJECT_TAILS | {"our", "the", "a", "an"}),
     ):
         risk += record_boundary_score(
             "split.boundary.english.grammar.sentence_opening_time_adverb",
@@ -1292,6 +1309,7 @@ def _score_english_boundary_discourse(
         )
     if grammar_boundary.lexical_unit(
         tail_head_is_dependency_pair=(tail, head) in _DEPENDENCY_PAIRS
+        or (tail == "heart" and features.right_tokens[:2] == ("and", "soul"))
     ):
         risk += record_boundary_score(
             "split.boundary.english.grammar.lexical_unit",
@@ -1474,6 +1492,12 @@ def _score_english_boundary_clause_ownership(
             reasons=reasons,
             contributions=contributions,
         )
+    if coordination_boundary.embedded_question_coordinated_subject(features):
+        risk += record_boundary_score(
+            "split.boundary.english.coordination.noun_subject_shared_predicate",
+            reasons=reasons,
+            contributions=contributions,
+        )
     if coordination_boundary.final_noun_progressive_predicate(features):
         risk += record_boundary_score(
             "split.boundary.english.coordination.final_noun_progressive_predicate",
@@ -1558,9 +1582,14 @@ def _score_english_boundary_dependencies(
         len(left_tokens) >= len(phrase) and tuple(left_tokens[-len(phrase) :]) == phrase
         for phrase in _THAT_COMPLEMENT_TAILS
     )
+    contracted_relative_head = bool(
+        head in _CONTRACTED_RELATIVE_CLAUSE_HEADS
+        and features.tail in {"anything", "everything", "nothing", "one", "something"}
+        and features.right[:1].islower()
+    )
     if grammar_boundary.relative_clause(
         features,
-        head_is_relative=head in _RELATIVE_CLAUSE_HEADS,
+        head_is_relative=head in _RELATIVE_CLAUSE_HEADS or contracted_relative_head,
         that_starts_complement=that_starts_complement,
     ):
         risk += record_boundary_score(
@@ -1648,6 +1677,12 @@ def _score_english_boundary_dependencies(
             reasons=reasons,
             contributions=contributions,
         )
+    if predicate_boundary.dependent_subject_adverbial_predicate(features):
+        risk += record_boundary_score(
+            "split.boundary.english.predicate.trailing_noun_subject",
+            reasons=reasons,
+            contributions=contributions,
+        )
     if grammar_boundary.clause_final_subject(
         features,
         head_is_finite_predicate=head in finite_predicate_heads,
@@ -1668,6 +1703,12 @@ def _score_english_boundary_dependencies(
         )
 
     if entity_boundary.proper_name(features):
+        risk += record_boundary_score(
+            "split.boundary.english.entity.proper_name",
+            reasons=reasons,
+            contributions=contributions,
+        )
+    if entity_boundary.attributive_proper_name(features):
         risk += record_boundary_score(
             "split.boundary.english.entity.proper_name",
             reasons=reasons,
@@ -2416,6 +2457,17 @@ def _boundary_cost(
     elif _CLAUSE_RE.search(tail):
         cost -= 5.0
     if head in _PREFERRED_CLAUSE_HEADS:
+        cost -= 10.0
+    if head in {"and", "because", "but", "for", "to", "when", "where", "while"} and re.search(
+        r"\b(?:at|in|to)\s+[A-Z][A-Za-z0-9'’.+-]*"
+        r"(?:\s+[A-Z][A-Za-z0-9'’.+-]*)*"
+        r"(?:,\s*[A-Z][A-Za-z0-9'’.+-]*)?$",
+        left,
+    ):
+        # When one long spoken sentence must span two cues, keep a complete
+        # destination such as ``in Pebble Beach, California`` together. This
+        # avoids choosing a slightly cheaper but unreadable break after the
+        # governing preposition.
         cost -= 10.0
     if head == "like" and re.search(r"\bso\s+much$", left, re.IGNORECASE):
         cost -= 12.0

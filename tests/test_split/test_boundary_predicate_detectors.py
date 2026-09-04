@@ -105,6 +105,7 @@ def test_subject_complement_uses_explicit_tail_classification() -> None:
         ("transitive_object_extended", "We could build", "a bridge"),
         ("perfect_reporting_content", "We've seen", "many changes"),
         ("transitive_pronoun_object", "We could tell", "them today"),
+        ("transitive_pronoun_object", "where today you join", "me in Pebble Beach"),
         ("perfect_reporting_after_adverb", "We've clearly seen", "many changes"),
         ("reporting_content", "We started to see", "many changes"),
         ("embedded_question_complement", "whether we know", "what happened"),
@@ -115,6 +116,7 @@ def test_subject_complement_uses_explicit_tail_classification() -> None:
         ("way_clause_subject", "the best way", "is clear"),
         ("what_clause_subject", "what this means", "is clear"),
         ("degree_complement", "It became", "so much better"),
+        ("degree_complement", "they're both far", "smaller in actual use"),
     ],
 )
 def test_predicate_detector_final_batch_activation(
@@ -152,3 +154,17 @@ def test_subject_shape_detectors_use_explicit_lexical_classification() -> None:
         gerund,
         head_is_finite_predicate=True,
     )
+
+
+def test_dependent_subject_keeps_adverb_led_predicate() -> None:
+    dependent = extract_english_boundary_features(
+        "a concrete deck that the rail tracks",
+        "then sit on top of",
+    )
+    independent = extract_english_boundary_features(
+        "We inspected the rail tracks",
+        "then sat down for lunch",
+    )
+
+    assert predicate.dependent_subject_adverbial_predicate(dependent)
+    assert not predicate.dependent_subject_adverbial_predicate(independent)

@@ -15,6 +15,10 @@ _BA_TAIL = re.compile(
     r"(?:会|将|要|需要|可以|能够|打算|准备))?把"
     r"(?P<object>[㐀-鿿A-Za-z0-9·一二两三四五六七八九十百千万]{1,32})$"
 )
+_BA_ANY_TAIL = re.compile(
+    r"(?<![一二两三四五六七八九十百千万几多])把"
+    r"(?P<object>[㐀-鿿A-Za-z0-9·一二两三四五六七八九十百千万]{1,32})$"
+)
 _BA_PREDICATE_IN_OBJECT = re.compile(
     r"(?:关上|打开|放下|拿走|带走|带回|开回|送回|调成|改成|变成|"
     r"装入|装进|装到|装在|安装|放入|放进|放到|放在|移到|送到|"
@@ -42,6 +46,9 @@ _PREDICATE_WITHOUT_COMPLEMENT = re.compile(
     r"(?:安装到|安装在|放到|放在|装到|装在|移到|移至|送到|带到|"
     r"连接到|贴到|推进到|延伸到|通向|进入|用于|承受)$"
 )
+_CAUSATIVE_OBJECT_TAIL = re.compile(
+    r"(?:让|使|令)(?:我|我们|你|你们|他|她|它|他们|她们|它们)$"
+)
 _COMPLETED_PASSIVE_BEARING = re.compile(r"^(?:将)?由.{1,12}(?:来)?(?:承受|承担)$")
 _LOCATIVE_PHRASE = re.compile(
     r"(?:在|沿着|沿|向|往|从|通过|借助|利用).{1,24}"
@@ -58,7 +65,9 @@ def detect_governing_attachment_boundary(
     features: ChineseBoundaryFeatures,
 ) -> BoundarySignalMatch | None:
     """Return the first disposal/governing signal in legacy precedence order."""
-    ba_tail = _BA_TAIL.search(features.compact_left)
+    ba_tail = _BA_TAIL.search(features.compact_left) or _BA_ANY_TAIL.search(
+        features.compact_left
+    )
     ba_has_predicate = bool(
         ba_tail and _BA_PREDICATE_IN_OBJECT.search(ba_tail.group("object"))
     )
@@ -75,6 +84,12 @@ def detect_governing_attachment_boundary(
     predicate_without_complement = _PREDICATE_WITHOUT_COMPLEMENT.search(features.left)
     completed_passive_bearing = _COMPLETED_PASSIVE_BEARING.search(features.left)
     if predicate_without_complement and not completed_passive_bearing:
+        return _match("predicate is separated from its required complement")
+
+    if (
+        _CAUSATIVE_OBJECT_TAIL.search(features.left)
+        and not features.left_has_terminal_punctuation
+    ):
         return _match("predicate is separated from its required complement")
 
     if _LOCATIVE_PHRASE.fullmatch(features.left) and _LOCATIVE_CONTINUATION.match(

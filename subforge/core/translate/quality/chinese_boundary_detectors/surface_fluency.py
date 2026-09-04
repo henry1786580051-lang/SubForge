@@ -23,6 +23,8 @@ _STACKED_CONNECTIVE = re.compile(
     r"^(?:所以|因此|不过|但是|但|而且|并且)[ \t]*"
     r"(?:但|但是|不过|所以|因此|而且|并且|是的)"
 )
+_ACCIDENTAL_DOUBLE_DE = re.compile(r"(?<!目)的的(?!确)")
+_MALFORMED_DEMONSTRATIVE_CLASSIFIER = re.compile(r"这在(?:款|台|辆)(?:车|车型)")
 _REPEATED_SHORT_UNITS = frozenset(
     {"不到", "做出", "进行", "采取", "选择", "获取", "使用", "开始", "继续", "变得"}
 )
@@ -61,6 +63,16 @@ def detect_surface_fluency_boundary(
         features.right
     ):
         return _match("stacked discourse connectives")
+
+    if _ACCIDENTAL_DOUBLE_DE.search(features.left) or _ACCIDENTAL_DOUBLE_DE.search(
+        features.right
+    ):
+        return _match("accidental duplicated Chinese particle")
+
+    if _MALFORMED_DEMONSTRATIVE_CLASSIFIER.search(
+        features.left
+    ) or _MALFORMED_DEMONSTRATIVE_CLASSIFIER.search(features.right):
+        return _match("malformed demonstrative classifier phrase")
 
     canonical_left = features.canonical_left
     canonical_right = features.canonical_right

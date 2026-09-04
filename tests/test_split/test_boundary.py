@@ -48,12 +48,16 @@ def test_numeric_boundary_registry_has_unique_stable_ids() -> None:
     assert all(boundary_score_rule(rule.rule_id) is rule for rule in BOUNDARY_SCORE_RULES)
     assert all(rule.explanation_template for rule in BOUNDARY_SCORE_RULES)
     assert all(rule.source_languages == ("en",) for rule in BOUNDARY_SCORE_RULES)
-    assert boundary_score_rule(
-        "split.boundary.english.numeric.calendar_month_year"
-    ).severity == BoundaryScoreSeverity.ERROR
-    assert boundary_score_rule(
-        "split.boundary.english.grammar.attributive_or_comparative_modifier"
-    ).severity == BoundaryScoreSeverity.WARNING
+    assert (
+        boundary_score_rule("split.boundary.english.numeric.calendar_month_year").severity
+        == BoundaryScoreSeverity.ERROR
+    )
+    assert (
+        boundary_score_rule(
+            "split.boundary.english.grammar.attributive_or_comparative_modifier"
+        ).severity
+        == BoundaryScoreSeverity.WARNING
+    )
 
 
 @pytest.mark.parametrize(
@@ -531,6 +535,77 @@ def test_assessment_keeps_ordinal_gear_term_together():
     ("left", "right", "reason"),
     [
         (
+            "Hey everyone, welcome back to Topher Drives where today you join",
+            "me in Pebble Beach, California for the first drive.",
+            "transitive predicate separated from its pronoun object",
+        ),
+        (
+            "to complement the brighter",
+            "color on the driver's side.",
+            "attributive or comparative modifier separated from its head",
+        ),
+        (
+            "because that small cocooned",
+            "cabin is the highlight color.",
+            "dangling modifier 'cocooned'",
+        ),
+        (
+            "it's not like a GT3 RS where you have a huge",
+            "spoiler on the back.",
+            "dangling modifier 'huge'",
+        ),
+        (
+            "which is a three-legged",
+            "chassis with a 1.5-liter engine.",
+            "hyphenated attributive 'three-legged' separated from its noun",
+        ),
+        (
+            "I have some comfort knowing that my home state of Michigan",
+            "is represented on the license plate.",
+            "proper-name subject separated from its predicate",
+        ),
+        (
+            "because I always say that the 8-speed ZF torque converter gearbox",
+            "is the benchmark.",
+            "trailing noun subject separated from its finite predicate",
+        ),
+        (
+            "I don't know that I'm missing anything",
+            "that's Supersports specific in this interior.",
+            "relative clause 'that's' separated from its antecedent",
+        ),
+    ],
+)
+def test_assessment_catches_bentley_sample_dependencies(left, right, reason):
+    assessment = assess_english_boundary(left, right)
+
+    assert assessment.unstable
+    assert reason in assessment.reasons
+
+
+def test_normalizer_keeps_bentley_destination_together():
+    source = [
+        "Hey everyone, welcome back to Topher Drives where today you join",
+        (
+            "me in Pebble Beach, California for some ultra-exclusive first street "
+            "driving impressions on the new 2027 Bentley Supersports."
+        ),
+        "I'm here with John, the product communications manager for Bentley.",
+    ]
+
+    repaired = normalize_boundaries(_cues(source))
+    combined = " | ".join(segment.text for segment in repaired)
+
+    assert "join | me" not in combined
+    assert "in | Pebble Beach" not in combined
+    assert "Pebble Beach, California | for" in combined
+    assert all(len(segment.text.split()) <= 22 for segment in repaired)
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "reason"),
+    [
+        (
             "predicted the rise of a figure like",
             "Donald Trump that would use populist messaging",
             "comparative marker separated from its example",
@@ -714,9 +789,20 @@ def test_assessment_rejects_degree_complement_split_from_predicate():
     boundaries = [
         ("And maybe part of the reason blue zones resonate", "so deeply in America"),
         ("And loneliness and isolation became", "so widespread that it was an epidemic"),
+        ("but they're both far", "smaller in terms of the space actually used"),
     ]
 
     assert all(assess_english_boundary(left, right).unstable for left, right in boundaries)
+
+
+def test_assessment_rejects_postpositive_participle_modifier_split_from_noun():
+    assessment = assess_english_boundary(
+        "workers had to climb up huge ladders",
+        "mounted on wheels to reach the upper sections during assembly.",
+    )
+
+    assert assessment.unstable
+    assert "postpositive participial modifier separated from its noun" in assessment.reasons
 
 
 def test_assessment_rejects_cross_language_sensitive_vehicle_boundaries():
@@ -1502,6 +1588,61 @@ def test_assessment_keeps_coordinated_complement_subject_with_have_predicate():
 
     assert assessment.unstable
     assert "coordinated subject separated from its predicate" in assessment.reasons
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "reason"),
+    [
+        ("Back above", "ground, the route features guideways.", "above ground"),
+        (
+            "a poured concrete deck that the rail tracks",
+            "then sit on top of",
+            "trailing noun subject separated from its finite predicate",
+        ),
+        ("proposed by a New York", "consulting firm in 1910", "proper name"),
+        (
+            "The window was eight years. Initially,",
+            "Cost projections sat around $6.8 billion.",
+            "discourse frame separated from its following clause",
+        ),
+        (
+            "It became more expensive. So, as you'll learn,",
+            "the old route was still cheaper.",
+            "discourse frame separated from its following clause",
+        ),
+        (
+            "Officials expected further increases. In 2018,",
+            "Doug Ford became premier.",
+            "discourse frame separated from its following clause",
+        ),
+        (
+            "projects that captured my imagination over the last",
+            "10 years of this journey",
+            "incomplete multi-word phrase",
+        ),
+        ("I put a lot of my heart", "and soul into this book", "heart and"),
+        (
+            "I apply it in my personal life",
+            "outside of these videos",
+            "dependent phrase beginning with 'outside'",
+        ),
+        (
+            "It takes all of the scattered information",
+            "built up across months and years",
+            "postpositive participial modifier separated from its noun",
+        ),
+        (
+            "I do not know how lawmakers",
+            "and construction firms can modernise infrastructure",
+            "coordinated noun subject split before its shared predicate",
+        ),
+    ],
+)
+def test_toronto_triplet_dependency_boundaries_are_unstable(left, right, reason):
+    assessment = assess_english_boundary(left, right)
+
+    assert assessment.unstable
+    assert any(reason in item for item in assessment.reasons)
 
 
 def test_assessment_keeps_case_studies_compound_together():

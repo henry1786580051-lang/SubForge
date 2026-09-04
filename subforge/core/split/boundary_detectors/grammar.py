@@ -29,10 +29,7 @@ def dangling_function_word_before_filler(
     *,
     semantic_tail_is_hard_dangling: bool,
 ) -> bool:
-    return bool(
-        features.semantic_tail != features.tail
-        and semantic_tail_is_hard_dangling
-    )
+    return bool(features.semantic_tail != features.tail and semantic_tail_is_hard_dangling)
 
 
 def dangling_subject(
@@ -108,8 +105,7 @@ def subject_auxiliary(
 def adverb_gerund(features: EnglishBoundaryFeatures) -> bool:
     return bool(
         features.previous in {"about", "by", "for", "of", "with", "without"}
-        and features.tail
-        in {"actually", "basically", "just", "literally", "really", "simply"}
+        and features.tail in {"actually", "basically", "just", "literally", "really", "simply"}
         and re.match(
             r"^[a-z][a-z'’-]*ing\b",
             features.semantic_right,
@@ -140,9 +136,7 @@ def dangling_attributive(
     tail_is_attributive: bool,
 ) -> bool:
     return bool(
-        tail_is_attributive
-        and features.right[:1].islower()
-        and not features.complete_own_idiom
+        tail_is_attributive and features.right[:1].islower() and not features.complete_own_idiom
     )
 
 
@@ -315,6 +309,21 @@ def participle_complement(features: EnglishBoundaryFeatures) -> bool:
             rf"{re.escape(features.tail)}$",
             features.semantic_left,
             flags=re.IGNORECASE,
+        )
+    )
+
+
+def postpositive_participle_modifier(features: EnglishBoundaryFeatures) -> bool:
+    """Keep a noun with a following reduced-relative participial phrase."""
+    return bool(
+        not TERMINAL_RE.search(features.left)
+        and features.right[:1].islower()
+        and re.match(
+            r"^(?:built|connected|constructed|covered|designed|equipped|fitted|"
+            r"installed|intended|located|made|mounted|placed|powered|used)\s+"
+            r"(?:at|by|for|from|in|inside|into|of|on|onto|to|under|up|with)\b",
+            features.semantic_right,
+            re.IGNORECASE,
         )
     )
 
@@ -585,9 +594,7 @@ def relative_clause(
     that_starts_complement: bool,
 ) -> bool:
     return bool(
-        head_is_relative
-        and not that_starts_complement
-        and not CLAUSE_RE.search(features.left)
+        head_is_relative and not that_starts_complement and not CLAUSE_RE.search(features.left)
     )
 
 

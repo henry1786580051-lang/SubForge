@@ -148,6 +148,11 @@ def _baseline(args: argparse.Namespace) -> int:
 
 
 def _compare(args: argparse.Namespace) -> int:
+    from scripts.translation_quality.admission import assess_admission, load_admission_policy
+
+    if bool(args.policy) != bool(args.policy_sha256):
+        raise ValueError("Supply --policy and its frozen --policy-sha256 together")
+    policy = load_admission_policy(args.policy, args.policy_sha256) if args.policy else None
     legacy_efficiency = (
         load_efficiency_payload(args.legacy_efficiency)
         if args.legacy_efficiency
@@ -158,15 +163,28 @@ def _compare(args: argparse.Namespace) -> int:
         if args.candidate_efficiency
         else None
     )
+    legacy = load_evaluation_report(args.legacy_report)
+    candidate = load_evaluation_report(args.candidate_report)
     payload = compare_evaluation_reports(
-        load_evaluation_report(args.legacy_report),
-        load_evaluation_report(args.candidate_report),
+        legacy,
+        candidate,
         legacy_efficiency=legacy_efficiency,
         candidate_efficiency=candidate_efficiency,
     )
+    if policy is not None:
+        payload["admission"] = assess_admission(
+            payload, legacy, candidate, policy,
+            legacy_efficiency=legacy_efficiency,
+            candidate_efficiency=candidate_efficiency,
+        )
+        payload["admission"]["policy_sha256"] = args.policy_sha256
     write_comparison_report(payload, args.output_dir)
     print(f"WROTE_COMPARISON={args.output_dir / 'comparison.md'}")
     print(json.dumps(payload["metrics"], ensure_ascii=False, sort_keys=True))
+    if policy is not None:
+        decision = payload["admission"]["decision"]
+        print(f"ADMISSION_SCREENING={decision}; PRODUCTION_ADOPTION=not_assessed")
+        return {"review": 0, "observe": 2, "blocked": 3}[decision] if args.fail_on_regression else 0
     return 2 if args.fail_on_regression and not payload["accepted"] else 0
 
 
@@ -299,6 +317,8 @@ def _parser() -> argparse.ArgumentParser:
     compare.add_argument("--candidate-report", type=Path, required=True)
     compare.add_argument("--legacy-efficiency", type=Path)
     compare.add_argument("--candidate-efficiency", type=Path)
+    compare.add_argument("--policy", type=Path, help="Prospectively frozen schema-2 admission policy")
+    compare.add_argument("--policy-sha256", help="Policy hash recorded before candidate testing")
     compare.add_argument("--output-dir", type=Path, required=True)
     compare.add_argument("--fail-on-regression", action="store_true")
     compare.set_defaults(handler=_compare)

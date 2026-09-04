@@ -265,6 +265,7 @@ class ASRData:
         self.timing_source: TimestampSource = timing_source
         self.timing_speech_segments: list[tuple[int, int]] = []
         self.media_duration_ms: Optional[int] = None
+        self.coverage_issues: list[dict] = []
         if timing_source == "unknown":
             if len(explicit_sources) == 1:
                 self.timing_source = next(iter(explicit_sources))

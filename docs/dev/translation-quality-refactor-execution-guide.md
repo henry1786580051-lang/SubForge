@@ -2,7 +2,44 @@
 
 Status: Phases 0-7 complete; Phase 8 experimentation and Phase 9 blind holdout complete; all behavioral candidates rejected for rollout and production remains legacy
 
-Last validated: 2026-08-30
+Last validated: 2026-09-03
+
+Prospective admission amendment: 2026-09-01. `优化指南.md` sections 10-12 are the
+current executable admission contract. They supersede blanket 5% caps and
+automatic candidate deletion for future experiments, not the historical trial
+records below. The three routes are bugfix, quality, and efficiency. Static
+screening uses a frozen schema-2 policy; its review/observe/blocked result is not
+semantic acceptance. No production behavior or historical rollout decision is
+changed by this amendment.
+
+Development bugfix checkpoint: 2026-09-03. Two newly supplied development
+triplets were frozen under
+`artifacts/translation-quality/runs/20260903-megastructure-airport-triplets/manifest.json`
+before inspection. The review admitted only source-anchored, reusable defects:
+
+- an English noun separated from a following postpositive participial modifier;
+- a scalar degree modifier separated from its comparative complement;
+- non-agentive natural-event causation mistranslated with an intentional attack verb;
+- Chinese causative frames and coordinating conjunctions stranded at cue endings;
+- equivalent discourse connectors duplicated across a boundary;
+- negative-auxiliary ellipsis rendered as an incomplete Chinese predicate.
+
+No sample title, project-specific proper-name map, or reference-only stylistic
+preference was added. The airport reference contained 13 source corrections and
+the Gemini reference included unsupported embellishments, so neither was treated
+as literal truth. Focused tests include terminal-punctuation, intentional-agent,
+completed-idiom, and unrelated-context exclusions.
+
+The authorized GLM-5.3-Flash development run used concurrency 20 and batch size
+20. Both full samples completed without empty targets, placeholders, reasoning
+leaks, untranslated targets, task failures, or rate-limit retries. English
+boundary risk fell to zero. A second full run of the affected multi-speaker
+sample reduced detected Chinese target-boundary signals from 16 to 11; the
+reference has 5 after the same false-positive cleanup. Selective native reasoning
+remained sparse (8 enabled requests out of 173 total requests). The remaining
+soft-boundary and stylistic differences were not converted into deterministic
+rules. This checkpoint follows the narrow bugfix route and does not reopen or
+reuse the completed blind holdout.
 
 Primary plan: `docs/dev/translation-quality-refactor-plan.md`
 
@@ -83,8 +120,10 @@ for tuning.
   path.
 - A new code path must be independently disableable.
 - No migration step may make fallback impossible.
-- A failed evaluation means the candidate is rejected, not that the acceptance
-  threshold is relaxed.
+- A confirmed harmful candidate is rejected. Insufficient evidence, non-activation,
+  suspected false positives, and marginal cost overruns remain isolated for
+  review. Do not relax a frozen threshold retrospectively or delete useful
+  regression tests just because a stochastic full run is inconclusive.
 
 ### 3.2 Separate structural and behavioral work
 
@@ -434,15 +473,21 @@ Cached and uncached runs must not be mixed in one performance comparison.
 
 ### 6.6 Scoring and acceptance
 
-Use a gate-first decision:
+Use safety-first, track-specific admission:
 
-1. reject any candidate that fails a hard invariant;
-2. reject any candidate with a new severe semantic regression;
-3. reject any candidate that worsens speaker ownership or mixed-language
-   preservation;
-4. compare general diagnostic counts only after hard gates pass;
-5. require pairwise human preference to be no worse before production cutover;
-6. require LLM calls, token use, and latency to stay within the approved budget.
+1. investigate observed hard signals and block rollout until integrity is verified;
+2. reject confirmed candidate-caused severe semantic or speaker/language regressions;
+3. separate inherited defects, actual repairs, heuristic false positives, and uncertain causality;
+4. review meaning and style alongside costs, even when a risk or budget signal rises;
+5. for bugfixes, require fixed-input proof, negative cases, and affected-path regression;
+6. for quality, require independent benefit; for efficiency, require quality non-inferiority;
+7. use prospectively frozen budgets and paired-repeat evidence, not a single noisy run;
+8. keep useful inconclusive candidates isolated; never auto-adopt from static gates.
+
+`compare --policy ... --policy-sha256 ...` adds schema-2 screening. Omitting the
+policy preserves historical v1 behavior for reproducibility only. The legacy
+`accepted` field is not the v2 verdict. See the main guide for the JSON contract,
+exit codes, manual reviews, and mode-scoped rollout requirements.
 
 Do not collapse all quality dimensions into one weighted score and allow a high
 fluency score to hide a factual failure.
@@ -1975,7 +2020,7 @@ Stop the current phase and investigate before further edits when:
 - holdout content has influenced rule design;
 - a provider test would use an unapproved paid API;
 - unrelated worktree changes make safe integration impossible;
-- token or latency growth exceeds 5% without a separately approved quality gain;
+- token or latency growth exceeds the prospectively approved track-specific budget;
 - a severe semantic regression appears in any holdout sample;
 - the new path cannot immediately fall back to the legacy path.
 

@@ -961,6 +961,58 @@ def test_kimi_k3_context_uses_compact_model_specific_prompt(monkeypatch):
     assert calls[0]["reasoning_mode"] == "disabled"
 
 
+def test_lmstudio_qwen_38_context_uses_bounded_model_specific_payload(monkeypatch):
+    calls = []
+    response_text = json.dumps(
+        {"summary": "Airport megaproject", "terminology": [], "style": "Documentary"}
+    )
+
+    def fake_call_llm(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=response_text))]
+        )
+
+    monkeypatch.setattr(context_module, "call_llm", fake_call_llm)
+    data = ASRData(
+        [
+            ASRDataSeg(
+                f"Section {index} discusses Al Maktoum International Airport and capacity.",
+                index * 1000,
+                (index + 1) * 1000,
+            )
+            for index in range(180)
+        ]
+    )
+    client = SimpleNamespace(_subforge_base_url="http://127.0.0.1:1234/v1")
+
+    result = build_translation_context(
+        data,
+        model="qwen/qwen3.8-27b",
+        target_language=TargetLanguage.SIMPLIFIED_CHINESE,
+        use_cache=False,
+        llm_client=client,
+    )
+
+    assert result.summary == "Airport megaproject"
+    assert calls[0]["messages"][0]["content"] == context_module.QWEN_LOCAL_CONTEXT_PROMPT
+    assert calls[0]["reasoning_mode"] == "disabled"
+    payload_text = calls[0]["messages"][1]["content"]
+    payload = json.loads(payload_text)
+    assert len(payload["transcript_excerpt"]) <= context_module.QWEN_LOCAL_CONTEXT_CHARS
+    assert len(payload_text) < 8_500
+    assert "document_entity_alias_groups" not in payload
+    assert set(payload) == {
+        "target_language",
+        "user_requirements",
+        "transcript_excerpt",
+        "document_entity_mentions",
+        "document_entity_contexts",
+        "document_entity_variant_candidates",
+        "document_numeric_contexts",
+    }
+
+
 def test_kimi_k2_context_keeps_shared_prompt(monkeypatch):
     calls = []
     response_text = json.dumps(

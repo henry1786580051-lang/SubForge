@@ -254,7 +254,7 @@ def test_transcribe_passes_fixed_speaker_count_to_diarization(monkeypatch):
     )
 
     def _diarize(_audio_path, **kwargs):
-        received["num_speakers"] = kwargs["num_speakers"]
+        received.update({key: kwargs[key] for key in ("num_speakers", "min_speakers", "max_speakers")})
         return [diarization.SpeakerTurn(0, 4_000, "Speaker 1")]
 
     monkeypatch.setattr(diarization, "diarize_audio", _diarize)
@@ -269,7 +269,7 @@ def test_transcribe_passes_fixed_speaker_count_to_diarization(monkeypatch):
 
     transcribe_module.transcribe("original.wav", config)
 
-    assert received["num_speakers"] == 5
+    assert received == {"num_speakers": 5, "min_speakers": None, "max_speakers": None}
 
 
 def test_transcribe_bounds_automatic_speaker_count(monkeypatch):
@@ -309,7 +309,69 @@ def test_transcribe_bounds_automatic_speaker_count(monkeypatch):
 
     transcribe_module.transcribe("original.wav", config)
 
-    assert received == {"num_speakers": None, "min_speakers": 2, "max_speakers": 10}
+    assert received == {"num_speakers": None, "min_speakers": 1, "max_speakers": 10}
+
+
+@pytest.mark.parametrize("detected_count", [1, 2, 5])
+def test_auto_speaker_count_preserves_words_and_real_speaker_boundaries(monkeypatch, detected_count):
+    diarization = importlib.import_module("subforge.core.asr.speaker_diarization")
+    speech_vad = importlib.import_module("subforge.core.asr.speech_vad")
+    from subforge.core.split.split import SubtitleSplitter
+
+    phrases = [
+        ["And", "having", "been", "there."],
+        ["I", "agree."],
+        ["Sounds", "good."],
+        ["Thank", "you."],
+        ["Absolutely."],
+    ][:detected_count]
+    words = []
+    turns = []
+    cursor = 1_000
+    for index, phrase in enumerate(phrases):
+        start = cursor
+        for word in phrase:
+            words.append(ASRDataSeg(word, cursor, cursor + 200))
+            cursor += 240
+        turns.append(diarization.SpeakerTurn(start, cursor, f"Speaker {index + 1}"))
+    data = ASRData(words)
+    original = [(word.text, word.start_time, word.end_time) for word in words]
+    monkeypatch.setattr(DummyWordTimestampASR, "run", lambda self, callback=None: data)
+    monkeypatch.setattr(
+        transcribe_module, "_create_asr_instance", lambda *_args, **_kwargs: DummyWordTimestampASR()
+    )
+    monkeypatch.setattr(
+        diarization, "require_local_diarization_model", lambda *_args, **_kwargs: "/tmp/model"
+    )
+
+    def _diarize(_audio_path, **kwargs):
+        assert kwargs["num_speakers"] is None
+        assert kwargs["min_speakers"] == 1
+        assert kwargs["max_speakers"] == 10
+        return turns
+
+    monkeypatch.setattr(diarization, "diarize_audio", _diarize)
+    monkeypatch.setattr(speech_vad, "is_available", lambda: False)
+    messages = []
+    config = TranscribeConfig(
+        transcribe_model=TranscribeModelEnum.WHISPERX,
+        need_word_time_stamp=True,
+        enable_audio_enhancement=False,
+        speaker_diarization="auto",
+        speaker_count=9,  # A previously saved fixed count must not affect auto mode.
+    )
+    result = transcribe_module.transcribe(
+        "original.wav", config, callback=lambda _progress, message: messages.append(message)
+    )
+    assert [(s.text, s.start_time, s.end_time) for s in result.segments] == original
+    assert {s.speaker_id for s in result.segments} == {
+        f"Speaker {index + 1}" for index in range(detected_count)
+    }
+    assert f"Detected {detected_count} speakers..." in messages
+
+    splitter = SubtitleSplitter(thread_num=1, model="test")
+    groups = splitter._group_by_time_gaps(result.segments, max_gap=1_500)
+    assert [[s.text for s in group] for group in groups] == phrases
 
 
 def test_transcribe_two_speaker_mode_allows_short_incidental_voices(monkeypatch):

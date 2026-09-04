@@ -9,7 +9,7 @@ from subforge.core.translate.quality.boundary_features import ChineseBoundaryFea
 from .visible_pause import BoundarySignalMatch, _match
 
 _CONNECTIVE_TAIL = re.compile(
-    r"(?:但|但是|不过|而且|并且|所以|因为|如果|尽管|除非|以及|或者|总之)$"
+    r"(?:但|但是|不过|而且|并且|所以|因为|如果|尽管|除非|和|与|及|以及|或者|总之)$"
 )
 _COPULAR_BRIDGE_TAIL = re.compile(r"在于$")
 _COPULAR_TOPIC_TAIL = re.compile(r"(?:重点|关键|原因|问题|事实|观点|想法)$")

@@ -3,7 +3,7 @@
 import { Icon } from "@iconify/react";
 import { useAppStore, WorkflowStep } from "@/store/appStore";
 
-const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || "1.2.0";
+const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || "1.2.1";
 
 const steps: { id: WorkflowStep; label: string; icon: string }[] = [
   { id: "import", label: "导入", icon: "M12 4v16m-8-8h16" },

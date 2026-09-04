@@ -86,7 +86,8 @@ def test_subtitle_output_and_recovery_remain_accessible(external_input, monkeypa
         security.validate_path(str(external_input.with_name("private.txt")))
 
 
-def test_transcription_output_can_be_loaded_from_external_drive(external_input, monkeypatch):
+@pytest.mark.parametrize("coverage_warning", [False, True])
+def test_transcription_output_can_be_loaded_from_external_drive(external_input, monkeypatch, coverage_warning):
     video = external_input.with_suffix(".mp4")
     video.touch()
     security.grant_path(video)
@@ -98,9 +99,11 @@ def test_transcription_output_can_be_loaded_from_external_drive(external_input, 
     video_utils = importlib.import_module("subforge.core.utils.video_utils")
     asr_module = importlib.import_module("subforge.core.asr.transcribe")
     monkeypatch.setattr(video_utils, "video2audio", lambda *args: True)
-    monkeypatch.setattr(
-        asr_module, "transcribe", lambda *args: ASRData([ASRDataSeg("New transcription.", 0, 1000)])
-    )
+    original_srt = external_input.read_bytes()
+    result = ASRData([ASRDataSeg("New transcription.", 0, 1000)])
+    if coverage_warning:
+        result.coverage_issues = [{"start": 10, "end": 14.2, "reason": "context_disagreement"}]
+    monkeypatch.setattr(asr_module, "transcribe", lambda *args: result)
     # The input SRT must not already be granted: the transcriber grants its own output.
     security.clear_granted_paths()
     security.grant_path(video)
@@ -111,8 +114,14 @@ def test_transcription_output_can_be_loaded_from_external_drive(external_input, 
         )
     )
     completed = task_manager.get_task(task.id)
-    assert completed.status == "completed", completed.error
-    output = completed.result["subtitle_file"]
+    assert completed.status == ("failed" if coverage_warning else "completed"), completed.error
+    output = completed.result["recovery_file" if coverage_warning else "subtitle_file"]
+    if coverage_warning:
+        assert external_input.read_bytes() == original_srt
+        assert completed.result["coverage_issues"] == result.coverage_issues
+        assert completed.preview_segments[0]["text"] == "New transcription."
+        assert "00:00:10.000 - 00:00:14.200" in completed.error
+        assert output.endswith("_recovery.srt")
     assert security.validate_path(output).is_file()
     assert (
         asyncio.run(subtitles.load_subtitle(output))["segments"][0]["text"] == "New transcription."

@@ -31,6 +31,7 @@ logger = setup_logger("llm_client")
 LLM_TIMEOUT = 120.0
 KIMI_K3_REQUEST_TIMEOUT = 300.0
 NEMOTRON_3_ULTRA_REQUEST_TIMEOUT = 300.0
+LMSTUDIO_LOCAL_REQUEST_TIMEOUT = 300.0
 NEMOTRON_3_ULTRA_TRANSIENT_MAX_ATTEMPTS = 12
 NEMOTRON_3_ULTRA_RETRY_SPACING = 1.5
 KIMI_K3_RATE_LIMIT_RETRY_SPACING = 2.0
@@ -254,6 +255,41 @@ def is_nemotron_3_ultra_model(model: str) -> bool:
     }
 
 
+def is_qwen_38_model(model: str) -> bool:
+    """Return whether a model ID selects the Qwen 3.8 family."""
+    return _normalized_model_leaf(model).startswith("qwen38")
+
+
+def is_lmstudio_client(client: Any = None) -> bool:
+    """Return whether a request targets a loopback LM Studio server."""
+    if client is None:
+        base_url = os.getenv("OPENAI_BASE_URL", "")
+    else:
+        base_url = getattr(client, "_subforge_base_url", "")
+        if not base_url:
+            base_url = getattr(client, "base_url", "")
+    hostname = (urlparse(str(base_url or "").strip()).hostname or "").lower()
+    return hostname in {"127.0.0.1", "::1", "localhost"}
+
+
+def is_lmstudio_qwen_38_request(model: str, client: Any = None) -> bool:
+    """Return whether Qwen 3.8 is served by the local LM Studio endpoint."""
+    return is_qwen_38_model(model) and is_lmstudio_client(client)
+
+
+def constrain_local_llm_workload(
+    model: str,
+    client: Any,
+    *,
+    concurrency: int,
+    batch_size: int,
+) -> tuple[int, int]:
+    """Keep memory-bound local models within a stable request envelope."""
+    if is_lmstudio_qwen_38_request(model, client):
+        return min(concurrency, 1), min(batch_size, 10)
+    return concurrency, batch_size
+
+
 def _is_zhipu_client(client: Any = None) -> bool:
     """Return whether this request uses Zhipu's official OpenAI endpoint."""
     if client is None:
@@ -379,6 +415,7 @@ def _call_llm_once(
     nvidia_kimi_k3_request = nvidia_request and is_kimi_k3_model(model)
     nvidia_nemotron_ultra_request = nvidia_request and is_nemotron_3_ultra_model(model)
     zhipu_glm_53_request = _is_zhipu_client(client) and is_glm_53_model(model)
+    lmstudio_qwen_38_request = is_lmstudio_qwen_38_request(model, client)
     if deepseek_request and reasoning_mode != "default":
         extra_body = dict(request_kwargs.pop("extra_body", {}) or {})
         extra_body["thinking"] = {"type": reasoning_mode}
@@ -462,6 +499,26 @@ def _call_llm_once(
         request_kwargs["temperature"] = 1.0
         request_kwargs.setdefault("top_p", 0.95)
 
+    if lmstudio_qwen_38_request:
+        # LM Studio's Qwen 3.8 template ignores enable_thinking=False and can
+        # place the entire answer in reasoning_content. Its OpenAI-compatible
+        # reasoning_effort control is reliable: routine work must use none,
+        # while confirmed semantic repairs use low. High effort is much slower
+        # on local Apple Silicon and did not improve the validated repair probe.
+        request_kwargs.pop("extra_body", None)
+        request_kwargs.pop("reasoning_effort", None)
+        request_kwargs["reasoning_effort"] = (
+            "low" if reasoning_mode == "enabled" else "none"
+        )
+        request_kwargs["temperature"] = 0.1 if reasoning_mode == "enabled" else 0.0
+        if max_output_tokens is not None:
+            local_budget = 1536 if reasoning_mode == "enabled" else 1024
+            request_kwargs["max_tokens"] = max(
+                256,
+                min(local_budget, int(max_output_tokens)),
+            )
+        request_kwargs.setdefault("timeout", LMSTUDIO_LOCAL_REQUEST_TIMEOUT)
+
     # DeepSeek ignores sampling parameters in thinking mode. Omitting them keeps
     # request logs honest and avoids relying on compatibility-only behavior.
     thinking_deepseek_request = (
@@ -471,6 +528,7 @@ def _call_llm_once(
         not zhipu_glm_53_request
         and not nvidia_kimi_k3_request
         and not nvidia_nemotron_ultra_request
+        and not lmstudio_qwen_38_request
         and not thinking_deepseek_request
     ):
         request_kwargs["temperature"] = temperature

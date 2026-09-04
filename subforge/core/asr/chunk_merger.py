@@ -96,7 +96,13 @@ class ChunkMerger:
             )
 
         logger.debug(f"合并完成，总片段数: {len(merged_segments)}")
-        return ASRData(merged_segments)
+        result = ASRData(merged_segments)
+        result.coverage_issues = [
+            {**issue, "start": issue["start"] + offset / 1000, "end": issue["end"] + offset / 1000}
+            for chunk, offset in zip(chunks, chunk_offsets)
+            for issue in chunk.coverage_issues
+        ]
+        return result
 
     def _merge_two_sequences(
         self,

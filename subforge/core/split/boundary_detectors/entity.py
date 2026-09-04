@@ -123,26 +123,38 @@ def vehicle_brand_model(features: EnglishBoundaryFeatures) -> bool:
 
 
 def alphanumeric_model_alternative(features: EnglishBoundaryFeatures) -> bool:
-    return features.head == "or" and bool(
-        re.fullmatch(r"[a-z]+\d+", features.tail)
-    )
+    return features.head == "or" and bool(re.fullmatch(r"[a-z]+\d+", features.tail))
 
 
 def proper_name(features: EnglishBoundaryFeatures) -> bool:
     left_name = re.search(r"(?:^|\s)([A-Z][A-Za-z'’-]{1,})$", features.left)
     right_name = re.match(r"^([A-Z][A-Za-z'’-]{1,})\b", features.right)
     return bool(
-        left_name
-        and right_name
-        and right_name.group(1).lower() not in _NON_NAME_CONTINUATIONS
+        left_name and right_name and right_name.group(1).lower() not in _NON_NAME_CONTINUATIONS
+    )
+
+
+def attributive_proper_name(features: EnglishBoundaryFeatures) -> bool:
+    """Keep an attributive place or organization name with its lowercase head noun."""
+    return bool(
+        features.right[:1].islower()
+        and re.search(
+            r"\b(?:a|an|the)\s+(?:[A-Z][A-Za-z'’-]*\s+){0,2}"
+            r"[A-Z][A-Za-z'’-]*$",
+            features.left,
+        )
+        and re.match(
+            r"^(?!(?:and|as|but|for|if|or|so|than|that|then|when|while|with)\b)"
+            r"[a-z][a-z'’-]*\b",
+            features.right,
+        )
     )
 
 
 def city_state(features: EnglishBoundaryFeatures) -> bool:
     """Match a capitalized city tail followed by a known single-token state."""
     return bool(
-        re.search(r"\b([A-Z][A-Za-z'’-]+),\s*$", features.left)
-        and features.head in _US_STATE_NAMES
+        re.search(r"\b([A-Z][A-Za-z'’-]+),\s*$", features.left) and features.head in _US_STATE_NAMES
     )
 
 

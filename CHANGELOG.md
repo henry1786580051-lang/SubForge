@@ -1,5 +1,34 @@
 # Changelog
 
+## v1.2.1 - 2026-09-04
+
+### Fixed
+
+- Closed the 3.5–6 second gap between short and long MLX speech-recovery checks. Strong speech evidence now triggers a bounded neighboring-utterance confirmation when ordinary context decodes disagree or the next subtitle starts too early. Added text requires matching words and audio positions from two local decodes; no new model is needed.
+- Preserved unresolved short-gap warnings through ASR caching, chunk merging, desktop previews, and CLI output. Partial transcripts are saved separately as `_recovery.srt` with the affected time ranges instead of silently reporting completion or overwriting a previous transcript. Existing long-gap adaptive retries remain in place.
+- Removed the two-speaker minimum from automatic diarization, so a single narrator is no longer forced into multiple clusters. Fixed-count and two-primary-speaker modes retain their separate policies.
+- Fixed semantic-repair requests losing the current subtitle's identity and contextual evidence, and unified grouped-number handling to avoid false rejections of equivalent quantities.
+- Expanded boundary checks for place names, coordination, incomplete predicates, connective ownership, pronoun objects, and comparative phrases. Chinese repair checks preserve subjects, semantic roles, and complete reading units without allowing cross-speaker or cross-language text movement.
+
+### Improved
+
+- Added evidence-backed semantic-action and recurring-place checks, including negative examples and preservation tests. Repairs remain selective; this does not enable full-document high-effort reasoning or replace the validated translation pipeline.
+- Added a scoped local Qwen 3.8 adapter for loopback OpenAI-compatible servers, tested with LM Studio: bounded context, one concurrent request, batches of at most ten, and model-specific output/reasoning controls. Cloud model workloads and adapters are unchanged; local-model quality is not claimed to match the cloud baselines.
+- Refined evaluation admission criteria, sample provenance, rule-level diagnostics, and single-speaker/dialogue safeguards in the optimization guide and benchmark tooling.
+
+### Validation And Limits
+
+- Local Python regression: `2591 passed, 35 deselected`; frontend tests: `26 passed`.
+- Two complete runs of the 19:46 Toronto sample recovered the same 24 missing words, producing 3351 words instead of 3327. Other text and timestamps outside the target region were unchanged; exports had zero overlaps, invalid durations, or unresolved speech-coverage warnings. Runs took 198.42 and 210.82 seconds on the development machine.
+- This is a measured omission repair, not a claim of zero recognition errors. The quoted speaker's opening five words still have a late diarization transition; that separate boundary issue is not presented as fixed.
+- Existing translation regression evidence and targeted tests are retained. Release packaging does not rerun paid translation APIs or establish a new universal translation-quality score.
+
+### Packaging
+
+- macOS Apple Silicon: `SubForge-1.2.1-macos-arm64.dmg`, built locally.
+- Windows x64: `SubForge-1.2.1-windows-x64-setup.exe`, built and installation-smoke-tested by GitHub Actions. No separate CUDA installer is produced.
+- Frontend, Python runtime, and bundle version are synchronized. Installers exclude user credentials, subtitle samples, and separately downloaded large model weights.
+
 ## v1.2.0 - 2026-08-31
 
 ### Added

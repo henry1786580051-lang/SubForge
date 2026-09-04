@@ -15,7 +15,7 @@ _SOFT_TAIL = re.compile(
 )
 _STRUCTURAL_TAIL = re.compile(
     r"(?:作为|没有|不会|不能|可以|应该|能够|正在|已经|只是|其实|确实|"
-    r"相当|非常|更|最|几乎|变得|如今|现在|目前|当时|后来|最终|实际上|像是|就像|就是|"
+    r"相当|非常|远远|更|最|几乎|变得|如今|现在|目前|当时|后来|最终|实际上|像是|就像|就是|"
     r"我是说|我的意思是|来说|例如|比如|唯一|投入|专注于|致力于|同时|"
     r"成为|变成|属于|包括)$"
 )
@@ -26,6 +26,7 @@ _COMPLETE_NOMINAL_SUPERLATIVE = re.compile(
     r"(?:世界|全球|全国|亚洲|欧洲|当地|行业)(?:上|范围内|业内)?之最$"
 )
 _STANDALONE_DANG = re.compile(r"(?:^|[\s，,])当$")
+_ELLIPSIS_END = re.compile(r"…+[）)】\]\"'’”]*$")
 
 
 def detect_structural_tail_boundary(
@@ -52,14 +53,19 @@ def detect_structural_tail_boundary(
 
     complete_perspective_frame = _COMPLETE_PERSPECTIVE_FRAME.search(features.left)
     complete_nominal_superlative = _COMPLETE_NOMINAL_SUPERLATIVE.search(features.left)
+    left_is_closed = bool(
+        features.left_has_terminal_punctuation
+        and not _ELLIPSIS_END.search(features.raw_left)
+    )
     if (
-        _STRUCTURAL_TAIL.search(features.left)
+        not left_is_closed
+        and _STRUCTURAL_TAIL.search(features.left)
         and not complete_perspective_frame
         and not complete_nominal_superlative
     ):
         return _match("unfinished Chinese grammatical structure")
 
-    if _STANDALONE_DANG.search(features.left):
+    if not left_is_closed and _STANDALONE_DANG.search(features.left):
         return _match("unfinished Chinese grammatical structure")
 
     return None

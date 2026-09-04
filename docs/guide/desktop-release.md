@@ -20,7 +20,7 @@ and WhisperX extras so the packaged app includes MLX, alignment, and diarization
 
 ```bash
 uv sync --frozen --extra denoise --extra whisperx
-SUBFORGE_BUILD_VERSION=1.2.0 uv run --no-sync python scripts/build_desktop.py --clean --no-archive
+SUBFORGE_BUILD_VERSION=1.2.1 uv run --no-sync python scripts/build_desktop.py --clean --no-archive
 uv run --no-sync python scripts/smoke_desktop.py dist/SubForge.app
 ```
 
@@ -32,7 +32,7 @@ or duplicate the output as `SubForge 2`.
 To build an app and the drag-install DMG together:
 
 ```bash
-SUBFORGE_BUILD_VERSION=1.2.0 uv run --no-sync python build_macos.py
+SUBFORGE_BUILD_VERSION=1.2.1 uv run --no-sync python build_macos.py
 ```
 
 That command writes `~/Desktop/SubForge.dmg`. Name the published asset

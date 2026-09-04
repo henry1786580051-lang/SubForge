@@ -14,6 +14,7 @@ from subforge.core.llm import (
     call_llm,
     get_response_text,
     is_kimi_k3_model,
+    is_lmstudio_qwen_38_request,
     parse_json_object,
 )
 from subforge.core.llm.client import ReasoningMode
@@ -38,6 +39,8 @@ MAX_LEXICAL_VARIANT_CANDIDATES = 24
 MAX_NUMERIC_CONTEXTS = 32
 MAX_CALL_TO_ACTION_ENTITY_CANDIDATES = 8
 FOOTBALL_FIELD_AREA_SQUARE_METRES = 5351.0
+QWEN_LOCAL_CONTEXT_CHARS = 4_200
+QWEN_LOCAL_EVIDENCE_CHARS = 2_400
 
 KIMI_K3_CONTEXT_PROMPT = (
     "Prepare compact global context for professional subtitle translation. "
@@ -53,6 +56,19 @@ KIMI_K3_CONTEXT_PROMPT = (
     "magnitudes. The style field must describe the source's actual register and the concise, "
     "native target-language tone it requires, without adding facts or decorative language. "
     "Anonymous speaker tokens are context metadata and must never become terminology."
+)
+
+QWEN_LOCAL_CONTEXT_PROMPT = (
+    "Prepare compact global context for faithful subtitle translation into the requested "
+    "target language. "
+    "Return pure JSON with exactly summary, terminology, and style. terminology must be a "
+    "list of {source, target, note}. Keep only recurring or high-risk names, products, "
+    "technical terms, units, domain senses, and uniquely supported ASR corrections. Candidate "
+    "evidence is not a correction. Never map pronouns or ordinary function words to names. "
+    "Preserve every number and magnitude. Describe the actual subject and register in compact "
+    "language so later batches can resolve references consistently. For Chinese, require "
+    "concise idiomatic wording without adding facts, decorative detail, or speaker labels. "
+    "Return the final JSON immediately without visible reasoning."
 )
 
 _GRAMMATICAL_TERM_TOKENS = frozenset(
@@ -204,6 +220,29 @@ def _compact_transcript(segments: Iterable[str], limit: int = MAX_CONTEXT_CHARS)
         if snippet and snippet not in windows:
             windows.append(snippet)
     return separator.join(windows)[:limit].strip()
+
+
+def _bounded_payload_items(
+    items: Iterable[Any],
+    *,
+    max_items: int,
+    max_chars: int,
+) -> list[Any]:
+    """Keep representative evidence inside a local model's context budget."""
+    selected: list[Any] = []
+    used_chars = 0
+    for item in items:
+        encoded = json.dumps(item, ensure_ascii=False, separators=(",", ":"))
+        additional = len(encoded) + (1 if selected else 0)
+        if selected and used_chars + additional > max_chars:
+            break
+        if additional > max_chars:
+            continue
+        selected.append(item)
+        used_chars += additional
+        if len(selected) >= max_items:
+            break
+    return selected
 
 
 def _canonical_name_from_asr_note(note: str) -> str:
@@ -1862,7 +1901,11 @@ def build_translation_context(
             transcript_segments.append(f"<{alias}> {source}")
         else:
             transcript_segments.append(source)
-    transcript = _compact_transcript(transcript_segments)
+    local_qwen = is_lmstudio_qwen_38_request(model, llm_client)
+    transcript = _compact_transcript(
+        transcript_segments,
+        limit=QWEN_LOCAL_CONTEXT_CHARS if local_qwen else MAX_CONTEXT_CHARS,
+    )
     entity_mentions = _document_entity_mentions(transcript_segments)
     entity_contexts = _document_entity_contexts(transcript_segments)
     branded_common_noun_terms = _document_branded_common_noun_terms(transcript_segments)
@@ -2010,6 +2053,8 @@ def build_translation_context(
     )
     if is_kimi_k3_model(model):
         system_prompt = KIMI_K3_CONTEXT_PROMPT
+    elif local_qwen:
+        system_prompt = QWEN_LOCAL_CONTEXT_PROMPT
     user_payload = {
         "target_language": target_language.value,
         "user_requirements": custom_prompt,
@@ -2023,6 +2068,36 @@ def build_translation_context(
         "document_lexical_variant_candidates": lexical_variant_candidates,
         "document_numeric_contexts": numeric_contexts,
     }
+    if local_qwen:
+        # The currently loaded LM Studio profile exposes a 4096-token context.
+        # Avoid an overflow-and-fail-open cycle by sending a representative,
+        # bounded evidence set while retaining deterministic document checks.
+        evidence_budget = QWEN_LOCAL_EVIDENCE_CHARS
+        user_payload = {
+            "target_language": target_language.value,
+            "user_requirements": custom_prompt,
+            "transcript_excerpt": transcript,
+            "document_entity_mentions": _bounded_payload_items(
+                entity_mentions,
+                max_items=24,
+                max_chars=evidence_budget // 3,
+            ),
+            "document_entity_contexts": _bounded_payload_items(
+                entity_contexts,
+                max_items=8,
+                max_chars=evidence_budget // 3,
+            ),
+            "document_entity_variant_candidates": _bounded_payload_items(
+                entity_variant_candidates,
+                max_items=8,
+                max_chars=evidence_budget // 6,
+            ),
+            "document_numeric_contexts": _bounded_payload_items(
+                numeric_contexts,
+                max_items=8,
+                max_chars=evidence_budget // 6,
+            ),
+        }
 
     try:
         messages = [

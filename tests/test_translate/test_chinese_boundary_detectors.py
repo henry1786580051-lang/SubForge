@@ -220,6 +220,11 @@ def test_nominal_attachment_detector_and_adapter_preserve_legacy_contract(
             "隧道内部",
             "predicate is separated from its required complement",
         ),
+        (
+            "这个平台能让你",
+            "快速整理并展示建筑图纸",
+            "predicate is separated from its required complement",
+        ),
         ("将由桥墩来承受", "全部荷载", None),
         ("项目已经完成", "随后正式开放", None),
     ],
@@ -235,6 +240,14 @@ def test_governing_attachment_detector_and_adapter_preserve_legacy_contract(
 
     assert (match.message if match is not None else None) == expected
     assert LLMTranslator._chinese_boundary_signal(left, right) == (expected or "")
+
+
+def test_governing_attachment_ignores_terminal_causative_pronoun() -> None:
+    match = detect_governing_attachment_boundary(
+        ChineseBoundaryFeatures.from_text("这个问题让你。", "我们继续讨论")
+    )
+
+    assert match is None
 
 
 @pytest.mark.parametrize(
@@ -257,6 +270,9 @@ def test_governing_attachment_detector_and_adapter_preserve_legacy_contract(
             "duplicated construction nominalization",
         ),
         ("所以但是我们仍要继续", "项目不会暂停", "stacked discourse connectives"),
+        ("所有细节构成精致的的整体", "看起来很协调", "accidental duplicated Chinese particle"),
+        ("这是有目的的行为", "并非偶然", None),
+        ("这在款车上是选装吗", "没错", "malformed demonstrative classifier phrase"),
         ("这项工程需要继续推进", "继续推进到下一阶段", "possible duplicated boundary phrase"),
         (
             "这个大型机场项目即将正式完工",
@@ -317,6 +333,11 @@ def test_subject_attachment_detector_and_adapter_preserve_legacy_contract(
         (
             "这个方案但是",
             "我们仍要继续",
+            "connective stranded at previous subtitle end",
+        ),
+        (
+            "始终引领着工程、电影制作与",
+            "水上娱乐等领域的前沿",
             "connective stranded at previous subtitle end",
         ),
         ("真正的关键在于", "执行方式", "possible copular bridge"),
@@ -693,6 +714,12 @@ def test_semantic_completion_detector_and_adapter_preserve_legacy_contract(
         ("阅读", "和写作都很重要", "coordinated subject may be stranded"),
         ("这项计划最终", "成为城市地标", "predicate fragment starts at next subtitle"),
         ("我们保存", "这些资料", "transitive predicate is split from its object"),
+        (
+            "今天我将带你们来到",
+            "加州圆石滩体验全新车型",
+            "motion predicate is separated from its destination",
+        ),
+        ("舒适完成旅程所需的一切应有尽有", "可惜已经太晚了", None),
         ("我们已经做出选择", "这些方案仍需测试", None),
         ("这套设备正在使用", "这些数据会被记录", None),
     ],
@@ -708,6 +735,54 @@ def test_clause_attachment_detector_and_adapter_preserve_legacy_contract(
 
     assert (match.message if match is not None else None) == expected
     assert LLMTranslator._chinese_boundary_signal(left, right) == (expected or "")
+
+
+def test_governing_attachment_detects_ba_frame_after_topic_prefix():
+    left = "二级则是把这些贴花"
+    right = "延伸到后翼子板"
+
+    assert LLMTranslator._chinese_boundary_signal(left, right) == (
+        "ba construction is separated from its predicate"
+    )
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "expected"),
+    [
+        (
+            "我们还有",
+            "电吸门 而这边还会递上安全带",
+            "existential predicate is separated from its object",
+        ),
+        (
+            "我觉得这台8速双离合的调校",
+            "是我体验过最舒服的",
+            "nominal subject is separated from its copular predicate",
+        ),
+        (
+            "这其实又回到了我们",
+            "开头聊过的那个话题",
+            "possessive pronoun is separated from its head phrase",
+        ),
+        (
+            "因为那个小小的包裹式",
+            "座舱用的是主色调",
+            "style modifier is separated from its head noun",
+        ),
+    ],
+)
+def test_bentley_residual_target_boundaries_are_hard_signals(left, right, expected):
+    assert LLMTranslator._chinese_boundary_signal(left, right) == expected
+
+
+def test_subject_attachment_allows_contextual_comparison_predicate():
+    assert (
+        LLMTranslator._chinese_boundary_signal(
+            "好 就是这样",
+            "和27比感觉稍微有点不一样",
+        )
+        == ""
+    )
 
 
 @pytest.mark.parametrize(
@@ -740,6 +815,7 @@ def test_subject_nominal_completion_detector_and_adapter_preserve_legacy_contrac
         ("这并不", "像以前一样", "negated comparison is split from its complement"),
         ("我们为了", "提高效率", "possible function-word split"),
         ("团队正在", "推进项目", "unfinished Chinese grammatical structure"),
+        ("两者的实际使用空间都远远", "更小", "unfinished Chinese grammatical structure"),
         ("在这种情况下 当", "项目开始运行", "unfinished Chinese grammatical structure"),
         ("从很多方面来说", "这个方案更合理", None),
         ("这是全球之最", "项目仍在运行", None),
@@ -756,6 +832,13 @@ def test_structural_tail_detector_and_adapter_preserve_legacy_contract(
 
     assert (match.message if match is not None else None) == expected
     assert LLMTranslator._chinese_boundary_signal(left, right) == (expected or "")
+
+
+def test_structural_tail_ignores_a_complete_terminal_sentence() -> None:
+    assert LLMTranslator._chinese_boundary_signal(
+        "我想问的是：为什么它们至今还在？",
+        "下一位专家继续解释",
+    ) == ""
 
 
 @pytest.mark.parametrize(

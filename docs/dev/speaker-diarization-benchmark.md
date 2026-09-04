@@ -54,12 +54,17 @@ uv run --extra whisperx python scripts/benchmark_diarization.py run audio.wav ou
   --report artifacts/diarization/run.json
 ```
 
-Automatic mode is bounded to 2-10 speakers:
+Automatic mode is bounded to 1-10 speakers so a solo narrator is not forced into
+multiple voice clusters. Explicit two-person mode still allows 2-4 speakers, and
+fixed-count mode still honors the specified count.
 
 ```bash
 uv run --extra whisperx python scripts/benchmark_diarization.py run audio.wav output.rttm \
-  --auto-speakers --min-speakers 2 --max-speakers 10 --model-dir /path/to/model
+  --auto-speakers --min-speakers 1 --max-speakers 10 --model-dir /path/to/model
 ```
+
+Historical baselines dated 2026-08-05 used a minimum of two; their recorded scores
+remain unchanged. Pass `--min-speakers 2` explicitly when reproducing those runs.
 
 Score production word ownership against AMI manual annotations:
 

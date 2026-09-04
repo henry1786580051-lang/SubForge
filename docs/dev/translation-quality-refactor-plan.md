@@ -2,6 +2,12 @@
 
 Status: Phases 0-7 complete; Phase 8 experimentation and Phase 9 blind holdout complete; all behavioral candidates rejected for rollout and production remains legacy
 
+Admission update (2026-09-01): future work follows the three-track protocol in
+`优化指南.md`, sections 10-12. Bug fixes, quality improvements, and efficiency
+changes have different evidence requirements and prospectively frozen budgets.
+The historical 5% trials below retain their original decisions; this update
+neither reinstates candidates nor changes production translation behavior.
+
 Last reviewed: 2026-08-30
 
 Execution guide: `docs/dev/translation-quality-refactor-execution-guide.md`
@@ -223,7 +229,8 @@ The new path may replace the legacy path only when all of the following hold:
 - severe semantic regressions on the holdout set: zero;
 - no measurable regression in speaker ownership or mixed-language preservation;
 - pairwise human preference is no worse than the legacy result;
-- LLM calls, token use, and latency do not increase by more than 5%;
+- costs and latency meet the prospectively frozen track-specific budget, with
+  baseline variability and observed quality benefit reviewed separately;
 - reasoning is restricted to demonstrably high-risk windows;
 - no production rule contains a complete fixed translation for one historical
   source passage;
@@ -232,16 +239,20 @@ The new path may replace the legacy path only when all of the following hold:
 
 ## Next Safe Step
 
-Keep production on the legacy behavior and retain canonical evidence as
-observation only. The sole development-admitted local-preservation revision was
-rejected by the first blind holdout because it produced no hard-quality gain and
-exceeded every frozen efficiency gate; its behavior code has been removed. Do
-not retry canonical ownership, numeric equivalence, missing-key repair,
-untranslated repair, or identifier-caption exemptions against the current
-corpus. A future candidate must begin with new repeatable development evidence,
-remain isolated behind a fresh revision, and pass development gates before any
-new blind evaluation. The completed holdout results must not be used to tune
-rules, prompts, thresholds, or provider behavior.
+Keep production on legacy until the relevant admission route is reviewed.
+Reproducible local validator defects may be isolated as bugfix revisions without
+bundling them with speculative LLM repair behavior. Quality candidates need
+independent, mode-scoped semantic review; efficiency candidates need quality
+non-inferiority and repeatable resource gains. Use the schema-2 policy screening
+in `scripts/translation_quality/admission.py` and record the policy hash before
+testing. Screening never authorizes rollout.
+
+Historical rejection is evidence, not a permanent ban on a problem category.
+Reconsideration needs a new mechanism or new causal evidence and a new frozen
+revision; do not silently restore old candidates or tune against the completed
+holdout. A budget overrun or non-activation can justify observation rather than
+deleting useful isolated code and regression tests. Full pipeline replacement
+still requires blind evaluation and gradual rollout.
 
 Phase 8 isolation plumbing now uses the default-off
 `SUBFORGE_QUALITY_PIPELINE_V2` flag and requires an explicit

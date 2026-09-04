@@ -57,7 +57,7 @@ def assess_english_boundary(left, right):
 def test_project_boundary_audit_has_closed_registered_references() -> None:
     payload = audit_boundary_file(Path("subforge/core/split/boundary.py"))
 
-    assert payload["registered_definition_count"] == 149
+    assert payload["registered_definition_count"] == 150
     assert payload["score_stage_count"] == 6
     assert payload["score_stage_functions"] == [
         "_score_english_boundary_foundation",
@@ -67,7 +67,7 @@ def test_project_boundary_audit_has_closed_registered_references() -> None:
         "_score_english_boundary_clause_ownership",
         "_score_english_boundary_dependencies",
     ]
-    assert payload["registered_call_count"] == 151
+    assert payload["registered_call_count"] == 155
     assert payload["unknown_registered_rule_ids"] == []
     assert payload["unscanned_registered_call_count"] == 0
     assert payload["unpaired_legacy_site_count"] == 0

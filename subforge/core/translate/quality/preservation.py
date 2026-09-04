@@ -11,6 +11,7 @@ from subforge.core.translate.quality.invariants import (
     PreservedTokenViolation,
     inspect_preserved_token_violations,
 )
+from subforge.core.translate.quality.numbers import normalize_grouped_numbers
 
 _LATIN_WORD = re.compile(r"(?<![A-Za-z0-9'’-])[A-Za-z]{2,}(?![A-Za-z0-9'’-])")
 
@@ -192,7 +193,7 @@ def inspect_preserved_tokens(  # noqa: C901
             "YEAH",
             "YES",
         }
-        collapsed_large_numbers = re.sub(r"(?<=\d),\s*(?=\d{3}\b)", "", text)
+        collapsed_large_numbers = normalize_grouped_numbers(text)
         pattern = (
             r"\b[A-Za-z]+\d+[A-Za-z0-9.-]*\b"
             r"|\b\d+(?:\.\d+)+[A-Za-z]+[A-Za-z0-9.-]*\b"
@@ -290,6 +291,46 @@ def inspect_preserved_tokens(  # noqa: C901
         return any(
             normalized_text(candidate) in translated_norm
             for candidate in _integer_chinese_forms(token)
+        )
+
+    def _clock_time_preserved(token: str, translated: str) -> bool:
+        """Accept natural Chinese renderings of compact times such as ``5am``."""
+        match = re.fullmatch(
+            r"(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?"
+            r"(?P<period>a\.?m\.?|p\.?m\.?)",
+            token,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return False
+        hour = int(match.group("hour"))
+        minute = match.group("minute")
+        if not 1 <= hour <= 12:
+            return False
+
+        period = match.group("period").lower().replace(".", "")
+        if period == "am":
+            period_pattern = r"(?:凌晨|清晨|早上|上午)"
+        elif hour == 12:
+            period_pattern = r"(?:中午|下午)"
+        elif hour <= 5:
+            period_pattern = r"(?:下午|傍晚)"
+        else:
+            period_pattern = r"(?:傍晚|晚上|夜间|夜里)"
+
+        hour_forms = {str(hour), *_integer_chinese_forms(str(hour))}
+        hour_pattern = "|".join(
+            map(re.escape, sorted(hour_forms, key=len, reverse=True))
+        )
+        minute_pattern = ""
+        if minute and minute != "00":
+            minute_forms = {minute.lstrip("0") or "0", *_integer_chinese_forms(str(int(minute)))}
+            minute_pattern = rf"(?:{'|'.join(map(re.escape, minute_forms))})(?:分)?"
+        return bool(
+            re.search(
+                rf"{period_pattern}\s*(?:{hour_pattern})(?:点|时|時){minute_pattern}",
+                translated,
+            )
         )
 
     def _absolute_number_candidates(value: Decimal) -> set[str]:
@@ -452,7 +493,9 @@ def inspect_preserved_tokens(  # noqa: C901
 
         value = Decimal(token)
         ten_thousands = value / Decimal(10000)
-        rendered = format(ten_thousands, "f").rstrip("0").rstrip(".")
+        rendered = format(ten_thousands, "f")
+        if "." in rendered:
+            rendered = rendered.rstrip("0").rstrip(".")
         coefficient_forms = {rendered}
         if ten_thousands == ten_thousands.to_integral_value():
             integer = str(int(ten_thousands))
@@ -912,7 +955,9 @@ def inspect_preserved_tokens(  # noqa: C901
         if discount == 100:
             return "免费" in translated
         payable = Decimal(100 - discount) / Decimal(10)
-        payable_text = format(payable, "f").rstrip("0").rstrip(".")
+        payable_text = format(payable, "f")
+        if "." in payable_text:
+            payable_text = payable_text.rstrip("0").rstrip(".")
         chinese_digits = str.maketrans("0123456789", "零一二三四五六七八九")
         candidates = {
             f"{payable_text}折",
@@ -997,6 +1042,8 @@ def inspect_preserved_tokens(  # noqa: C901
             if _ordinal_preserved(token, translated_norm):
                 continue
             if _large_integer_preserved(token, translated):
+                continue
+            if _clock_time_preserved(token, translated):
                 continue
             if _integer_preserved(token, translated_norm):
                 continue

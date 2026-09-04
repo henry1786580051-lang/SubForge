@@ -82,3 +82,26 @@ def test_context_scope_changes_only_context_generation(monkeypatch):
     assert "occurrence-specific" in calls[0]["messages"][0]["content"]
     assert calls[0]["reasoning_mode"] == "disabled"
     assert calls[1]["messages"][0]["content"] == "Translate"
+
+def test_context_role_contract_is_isolated_and_preserves_request_settings(monkeypatch):
+    from subforge.core.translate import context
+
+    calls = []
+    def original(**kw):
+        calls.append(kw)
+    monkeypatch.setattr(context, "call_llm", original)
+    prompt = [{"role": "system", "content": "You prepare context for professional subtitle translation."}]
+    frozen = deepcopy(prompt)
+    with translation_experiments(("context-role-contract",)):
+        context.call_llm(messages=prompt, model="glm-5.3-flash", reasoning_mode="disabled",
+                         max_output_tokens=4096)
+        context.call_llm(messages=[{"role": "system", "content": "Translate"}])
+    assert context.call_llm is original
+    assert prompt == frozen
+    assert len(calls) == 2
+    assert "SEPARATE row" in calls[0]["messages"][0]["content"]
+    assert "occurrence-specific" not in calls[0]["messages"][0]["content"]
+    assert calls[0]["reasoning_mode"] == "disabled"
+    assert calls[0]["model"] == "glm-5.3-flash"
+    assert calls[0]["max_output_tokens"] == 4096
+    assert calls[1]["messages"][0]["content"] == "Translate"

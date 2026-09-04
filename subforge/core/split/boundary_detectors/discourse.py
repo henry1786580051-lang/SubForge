@@ -152,11 +152,37 @@ def transitive_predicate_before_filler(features: EnglishBoundaryFeatures) -> boo
 
 
 def frame_following_clause(features: EnglishBoundaryFeatures) -> bool:
-    return bool(
-        re.search(r"\bat\s+the\s+same\s+time,?$", features.left, re.IGNORECASE)
-        and re.match(
-            r"^(?:i|you|he|she|it|we|they)(?:['’](?:m|re|s|ve|d|ll))?\b",
+    right_starts_clause = bool(
+        re.match(
+            r"^(?:(?:i|you|he|she|it|we|they)(?:['’](?:m|re|s|ve|d|ll))?|"
+            r"a|an|the|this|that|these|those|[A-Z][A-Za-z0-9'’-]*)\b",
             features.right,
             flags=re.IGNORECASE,
+        )
+    )
+    if not right_starts_clause:
+        return False
+
+    return bool(
+        re.search(r"\bat\s+the\s+same\s+time,?$", features.left, re.IGNORECASE)
+        or re.search(
+            r"(?:^|[.!?]\s+)(?:initially|eventually|later|meanwhile|subsequently),?$",
+            features.left,
+            re.IGNORECASE,
+        )
+        or re.search(
+            r"(?:^|[.!?]\s+)(?:and\s+|but\s+|so,?\s+)?as\s+"
+            r"(?:i|you|we|they)(?:['’]ll|\s+(?:can|could|may|might|shall|should|"
+            r"will|would))\s+(?:discover|find|learn|see),?$",
+            features.left,
+            re.IGNORECASE,
+        )
+        or re.search(
+            r"(?:^|[.!?]\s+)(?:and\s+|but\s+)?"
+            r"(?:after|before|by|during|from|in|since|through|until)\s+"
+            r"(?:(?:early|late|mid)[-\s])?(?:the\s+)?"
+            r"(?:19|20)\d{2},?$",
+            features.left,
+            re.IGNORECASE,
         )
     )

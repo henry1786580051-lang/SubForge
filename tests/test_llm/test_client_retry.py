@@ -525,6 +525,74 @@ def test_nvidia_deepseek_routine_translation_disables_thinking(monkeypatch):
     assert completions.kwargs["max_tokens"] == 4096
 
 
+@pytest.mark.parametrize("reasoning_mode", ["default", "disabled"])
+def test_lmstudio_qwen_38_routine_work_disables_reasoning(monkeypatch, reasoning_mode):
+    client, completions = _capturing_client("http://127.0.0.1:1234/v1")
+    monkeypatch.setattr(client_module, "log_llm_response", lambda _response: None)
+
+    client_module.call_llm(
+        [{"role": "user", "content": "translate"}],
+        "qwen/qwen3.8-27b",
+        temperature=0.8,
+        client=client,
+        reasoning_mode=reasoning_mode,
+        reasoning_effort="high",
+        max_output_tokens=4096,
+        extra_body={"chat_template_kwargs": {"enable_thinking": True}},
+    )
+
+    assert completions.kwargs["reasoning_effort"] == "none"
+    assert completions.kwargs["max_tokens"] == 1024
+    assert completions.kwargs["temperature"] == 0.0
+    assert completions.kwargs["timeout"] == client_module.LMSTUDIO_LOCAL_REQUEST_TIMEOUT
+    assert "extra_body" not in completions.kwargs
+
+
+def test_lmstudio_qwen_38_confirmed_repair_uses_low_reasoning(monkeypatch):
+    client, completions = _capturing_client("http://localhost:1234/v1")
+    monkeypatch.setattr(client_module, "log_llm_response", lambda _response: None)
+
+    client_module.call_llm(
+        [{"role": "user", "content": "repair confirmed semantic defect"}],
+        "qwen/qwen3.8-27b",
+        client=client,
+        reasoning_mode="enabled",
+        reasoning_effort="high",
+        max_output_tokens=8192,
+    )
+
+    assert completions.kwargs["reasoning_effort"] == "low"
+    assert completions.kwargs["max_tokens"] == 1536
+    assert completions.kwargs["temperature"] == 0.1
+    assert completions.kwargs["timeout"] == client_module.LMSTUDIO_LOCAL_REQUEST_TIMEOUT
+
+
+def test_lmstudio_qwen_38_workload_limits_are_endpoint_specific():
+    local_client = SimpleNamespace(_subforge_base_url="http://127.0.0.1:1234/v1")
+    cloud_client = SimpleNamespace(
+        _subforge_base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
+    )
+
+    assert client_module.constrain_local_llm_workload(
+        "qwen/qwen3.8-27b",
+        local_client,
+        concurrency=20,
+        batch_size=20,
+    ) == (1, 10)
+    assert client_module.constrain_local_llm_workload(
+        "qwen/qwen3.8-27b",
+        cloud_client,
+        concurrency=20,
+        batch_size=20,
+    ) == (20, 20)
+    assert client_module.constrain_local_llm_workload(
+        "google/gemma-4-26b-a4b-qat",
+        local_client,
+        concurrency=20,
+        batch_size=20,
+    ) == (20, 20)
+
+
 def test_nvidia_glm_53_keeps_family_budget_without_unsupported_controls(monkeypatch):
     client, completions = _capturing_client("https://integrate.api.nvidia.com/v1")
     monkeypatch.setattr(client_module, "log_llm_response", lambda _response: None)

@@ -18,12 +18,16 @@ _PRONOUN_TAIL = re.compile(r"(?:我|你|他|她|它|我们|你们|他们)$")
 _STANDALONE_SUBJECTS = frozenset(
     {"我", "你", "他", "她", "它", "我们", "你们", "他们", "她们", "它们"}
 )
+_ELLIPSIS_END = re.compile(r"…+[）)】\]\"'’”]*$")
 
 
 def detect_adverb_pronoun_attachment_boundary(
     features: ChineseBoundaryFeatures,
 ) -> BoundarySignalMatch | None:
     """Return adverb, comparison, and pronoun signals at legacy precedence."""
+    if features.left_has_terminal_punctuation and not _ELLIPSIS_END.search(features.raw_left):
+        return None
+
     if _INCOMPLETE_ZAI_TAIL.search(features.left):
         return _match("unfinished Chinese grammatical structure")
 

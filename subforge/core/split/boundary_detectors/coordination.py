@@ -124,6 +124,26 @@ def noun_subject_shared_predicate_compound(features: EnglishBoundaryFeatures) ->
     )
 
 
+def embedded_question_coordinated_subject(features: EnglishBoundaryFeatures) -> bool:
+    """Keep both subjects of an unfinished embedded question with its predicate."""
+    return bool(
+        re.search(
+            r"\b(?:how|whether)\s+(?:the\s+)?"
+            r"[a-z][a-z'’-]*(?:\s+[a-z][a-z'’-]*){0,3}$",
+            features.semantic_left,
+            re.IGNORECASE,
+        )
+        and re.match(
+            r"^and\s+(?:the\s+)?[a-z][a-z'’-]*"
+            r"(?:\s+[a-z][a-z'’-]*){0,3}\s+"
+            r"(?:am|are|can|could|did|do|does|had|has|have|is|may|might|must|"
+            r"shall|should|was|were|will|would)\b",
+            features.semantic_right,
+            re.IGNORECASE,
+        )
+    )
+
+
 def final_noun_progressive_predicate(features: EnglishBoundaryFeatures) -> bool:
     return bool(
         re.match(
@@ -172,7 +192,8 @@ def what_clause_predicate(features: EnglishBoundaryFeatures) -> bool:
         re.match(r"^(?:and\s+)?what\b", features.left, re.IGNORECASE)
         and features.head == "and"
         and len(features.right_tokens) >= 2
-        and features.right_tokens[1] in {
+        and features.right_tokens[1]
+        in {
             "makes",
             "sets",
             "keeps",

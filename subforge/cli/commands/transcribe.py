@@ -166,6 +166,17 @@ def run(args: Namespace, config: dict) -> int:
         asr_data = transcribe(audio_path, transcribe_config, callback=callback)
 
         # Save output
+        if asr_data.coverage_issues:
+            from subforge.core.asr.speech_gap_repair import coverage_issue_message
+
+            recovery_path = Path(output_path).with_stem(Path(output_path).stem + "_recovery")
+            asr_data.save(save_path=str(recovery_path))
+            message = coverage_issue_message(asr_data.coverage_issues) + f" {recovery_path}"
+            if progress:
+                progress.fail(message)
+            else:
+                output.error(message)
+            return EXIT.RUNTIME_ERROR
         asr_data.save(save_path=output_path)
 
         if progress:

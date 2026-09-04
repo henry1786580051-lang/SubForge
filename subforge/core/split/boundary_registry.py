@@ -402,6 +402,16 @@ _ENGLISH_GRAMMAR_RULES = (
         ("determiner_preceded_participle",),
     ),
     BoundaryScoreRule(
+        "split.boundary.english.grammar.postpositive_participle_modifier",
+        "postpositive participial modifier separated from its noun",
+        "grammar",
+        BoundaryScoreDirection.RISK,
+        36,
+        ("en",),
+        ("monologue", "dialogue"),
+        ("left_noun_phrase", "right_participial_modifier"),
+    ),
+    BoundaryScoreRule(
         "split.boundary.english.grammar.coordinated_noun_phrase",
         "coordinated noun phrase split at conjunction",
         "grammar",

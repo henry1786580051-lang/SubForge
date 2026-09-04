@@ -145,7 +145,7 @@ def main() -> int:
                 model=args.model,
                 model_dir=args.model_dir,
                 num_speakers=int(recording["speakers"]) if mode == "known" else None,
-                min_speakers=2,
+                min_speakers=1,
                 max_speakers=10,
                 no_cache=True,
                 representation="regular",

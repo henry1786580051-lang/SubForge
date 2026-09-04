@@ -56,6 +56,24 @@ def test_select_diarization_device_prefers_mps_on_apple_silicon(monkeypatch):
     assert _select_diarization_device(fake_torch) == "mps"
 
 
+def test_cache_key_isolates_automatic_and_explicit_speaker_counts(tmp_path):
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"same audio")
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "config.yaml").write_text("pipeline: {}", encoding="utf-8")
+    key = diarization_module._diarization_cache_key
+
+    automatic = key(str(audio), str(model), None, 1, 10)
+    assert automatic == key(str(audio), str(model), None, 1, 10)
+    assert len({
+        automatic,
+        key(str(audio), str(model), None, 2, 10),
+        key(str(audio), str(model), None, 2, 4),
+        key(str(audio), str(model), 5, None, None),
+    }) == 4
+
+
 def test_select_diarization_device_honors_cpu_override(monkeypatch):
     fake_torch = SimpleNamespace(backends=SimpleNamespace(mps=_MpsBackend()))
     monkeypatch.setenv("SUBFORGE_DIARIZATION_DEVICE", "cpu")

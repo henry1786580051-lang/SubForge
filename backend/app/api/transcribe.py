@@ -543,7 +543,9 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
                 else:
                     work_dir = source.parent
             work_dir.mkdir(parents=True, exist_ok=True)
-            subtitle_path = work_dir / f"{video_stem}.srt"
+            coverage_issues = getattr(result, "coverage_issues", [])
+            suffix = "_recovery" if coverage_issues else ""
+            subtitle_path = work_dir / f"{video_stem}{suffix}.srt"
             context.checkpoint()
             result.save(str(subtitle_path))
             grant_path(str(subtitle_path))
@@ -553,6 +555,22 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
                 getattr(result, "timing_speech_segments", []),
                 getattr(result, "media_duration_ms", None),
             )
+            if coverage_issues:
+                from subforge.core.asr.speech_gap_repair import coverage_issue_message
+
+                context.publish_preview(
+                    subtitle_preview_segments(result), subtitle_file=str(subtitle_path)
+                )
+                task_manager.fail_task(
+                    task_id,
+                    coverage_issue_message(coverage_issues),
+                    {
+                        "recovery_file": str(subtitle_path),
+                        "segments": subtitle_preview_segments(result),
+                        "coverage_issues": coverage_issues,
+                    },
+                )
+                return
             task_manager.complete_task(
                 task_id,
                 {

@@ -233,7 +233,7 @@ def main() -> int:
     count = run.add_mutually_exclusive_group()
     count.add_argument("--num-speakers", type=int)
     count.add_argument("--auto-speakers", action="store_true")
-    run.add_argument("--min-speakers", type=int, default=2)
+    run.add_argument("--min-speakers", type=int, default=1)
     run.add_argument("--max-speakers", type=int, default=10)
     run.add_argument("--report", type=Path)
     run.add_argument(

@@ -29,6 +29,21 @@ _COORDINATED_MODIFIER_START = re.compile(
     r"^[\u3400-\u9fffA-Za-z]{1,12}[、，,]"
     r"[\u3400-\u9fffA-Za-z]{1,16}(?:[、，,]|的信息|的内容|的表达|的语言)"
 )
+_COPULAR_NOUN_SUBJECT_TAIL = re.compile(
+    r"(?:的)?(?:调校|设计|布局|表现|体验|感觉|方式|方案|版本|结构|系统)$"
+)
+_COPULAR_PREDICATE_START = re.compile(
+    r"^是(?:我|你|他|她|它|我们|你们|他们|最|目前|迄今)"
+)
+_POSSESSIVE_PRONOUN_TAIL = re.compile(r"(?:我们|你们|他们|她们|它们)$")
+_POSSESSIVE_MODIFIER_START = re.compile(
+    r"^(?:开头|一开始|刚才|之前|此前|前面|过去|当时).{0,12}"
+    r"(?:的|那个|那些|话题|内容)"
+)
+_STYLE_MODIFIER_TAIL = re.compile(r"[\u3400-\u9fff]{1,8}式$")
+_STYLE_HEAD_START = re.compile(
+    r"^(?:座舱|设计|布局|结构|造型|内饰|外观|车身|座椅|方案|风格|图案)"
+)
 
 
 def detect_subject_attachment_boundary(
@@ -45,6 +60,19 @@ def detect_subject_attachment_boundary(
         features.right
     ):
         return _match("material subject may be stranded")
+
+    if _COPULAR_NOUN_SUBJECT_TAIL.search(features.left) and _COPULAR_PREDICATE_START.match(
+        features.right
+    ):
+        return _match("nominal subject is separated from its copular predicate")
+
+    if _POSSESSIVE_PRONOUN_TAIL.search(features.left) and _POSSESSIVE_MODIFIER_START.match(
+        features.right
+    ):
+        return _match("possessive pronoun is separated from its head phrase")
+
+    if _STYLE_MODIFIER_TAIL.search(features.left) and _STYLE_HEAD_START.match(features.right):
+        return _match("style modifier is separated from its head noun")
 
     if (
         not features.left_has_terminal_punctuation

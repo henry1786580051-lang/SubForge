@@ -487,6 +487,25 @@ async def _run_subtitle(
 
         thread_num = get_config_value("thread_num", 3)
         batch_size = get_config_value("batch_size", 10)
+        requested_workload = (thread_num, batch_size)
+        if llm_client is not None:
+            from subforge.core.llm import constrain_local_llm_workload
+
+            thread_num, batch_size = constrain_local_llm_workload(
+                llm_model,
+                llm_client,
+                concurrency=thread_num,
+                batch_size=batch_size,
+            )
+        if (thread_num, batch_size) != requested_workload:
+            logger.info(
+                "Applied local LLM workload limits: concurrency=%s batch_size=%s "
+                "(requested %s/%s)",
+                thread_num,
+                batch_size,
+                requested_workload[0],
+                requested_workload[1],
+            )
         max_word_count_cjk = get_config_value("max_word_count_cjk", 25)
         max_word_count_english = get_config_value("max_word_count_english", 18)
 

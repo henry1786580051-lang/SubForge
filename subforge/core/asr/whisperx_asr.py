@@ -62,7 +62,7 @@ MLX_GAP_RECOVERY_MIN_SPEECH_RATIO = 0.45
 MLX_GAP_RECOVERY_CONTEXT_SECONDS = 2.0
 MLX_GAP_RECOVERY_FALLBACK_CONTEXT_SECONDS = 15.0
 MLX_SHORT_GAP_MIN_SECONDS = 0.8
-MLX_SHORT_GAP_MAX_SECONDS = 3.5
+MLX_SHORT_GAP_MAX_SECONDS = MLX_GAP_RECOVERY_MIN_GAP_SECONDS
 MLX_SHORT_GAP_MIN_SPEECH_SECONDS = 0.55
 MLX_SHORT_GAP_MIN_SPEECH_RATIO = 0.40
 MLX_SHORT_GAP_CONTEXT_SECONDS = (2.0, 5.0)
@@ -74,6 +74,8 @@ MLX_SPARSE_RECOVERY_MIN_SPEECH_RATIO = 0.60
 MLX_SPARSE_RECOVERY_MAX_UNITS_PER_SPEECH_SECOND = 0.75
 MLX_SPARSE_RECOVERY_CONTEXT_SECONDS = 2.0
 MLX_SPARSE_RECOVERY_FALLBACK_CONTEXT_SECONDS = (15.0, 45.0)
+MLX_SHORT_GAP_REVIEW_MIN_SPEECH_SECONDS = 2.5
+MLX_SHORT_GAP_REVIEW_MIN_SPEECH_RATIO = 0.75
 MLX_FINAL_AUDIT_MIN_SPEECH_SECONDS = 5.0
 MLX_FINAL_AUDIT_MIN_SPEECH_RATIO = 0.70
 MLX_AUDIO_SAMPLE_RATE = 16_000
@@ -413,9 +415,11 @@ def _find_speech_backed_mlx_gaps(
     segments: list[dict[str, Any]],
     speech_segments_ms: list[tuple[int, int]],
     audio_duration: float,
+    *,
+    min_gap_seconds: float = MLX_GAP_RECOVERY_MIN_GAP_SECONDS,
 ) -> list[_SpeechBackedGap]:
     """Find long ASR holes that independent VAD confirms contain speech."""
-    uncovered = _find_uncovered_mlx_gaps(segments, audio_duration)
+    uncovered = _find_uncovered_mlx_gaps(segments, audio_duration, min_gap_seconds=min_gap_seconds)
 
     candidates: list[_SpeechBackedGap] = []
     for gap_start, gap_end in uncovered:
@@ -988,6 +992,14 @@ def _recover_short_mlx_speech_gaps(
     pause, so this pass requires independent high-confidence speech plus exact
     lexical agreement across two context windows.
     """
+    from .speech_gap_repair import (
+        anchored_candidate,
+        confirmation_window,
+        corroborates,
+        insert_anchored_gap,
+        timed_words,
+    )
+
     coverage = sorted(
         _alignment_word_coverage(result),
         key=lambda item: (float(item["start"]), float(item["end"])),
@@ -1043,6 +1055,20 @@ def _recover_short_mlx_speech_gaps(
             trimmed.pop()
         return trimmed
 
+    def _decode_words(
+        decode_start: float, decode_end: float, speech_ratio: float
+    ) -> list[dict[str, Any]]:
+        local = transcribe_clip(
+            audio[round(decode_start * sample_rate) : round(decode_end * sample_rate)]
+        )
+        return timed_words(
+            local,
+            decode_start,
+            lambda s: _usable_mlx_recovery_segment(s, speech_ratio=speech_ratio),
+        )
+
+    full_attempts: list[list[dict[str, Any]]] = []
+
     def _decode_gap(
         gap_start: float,
         gap_end: float,
@@ -1056,34 +1082,19 @@ def _recover_short_mlx_speech_gaps(
         if end_sample <= start_sample:
             return []
 
-        local_result = transcribe_clip(audio[start_sample:end_sample])
+        all_words = _decode_words(decode_start, decode_end, speech_ratio)
+        full_attempts.append(all_words)
         selected: list[dict[str, Any]] = []
-        for segment in local_result.get("segments") or []:
-            if not isinstance(segment, dict) or not _usable_mlx_recovery_segment(
-                segment,
-                speech_ratio=speech_ratio,
-            ):
+        for word in all_words:
+            absolute_start, absolute_end = word["start"], word["end"]
+            midpoint = (absolute_start + absolute_end) / 2
+            if not (gap_start + 0.03 <= midpoint <= gap_end - 0.03):
                 continue
-            words = segment.get("words")
-            if not isinstance(words, list):
-                continue
-            for word in words:
-                if not isinstance(word, dict):
-                    continue
-                start = _float_seconds(word.get("start"))
-                end = _float_seconds(word.get("end"))
-                if start is None or end is None or end <= start:
-                    continue
-                absolute_start = start + decode_start
-                absolute_end = end + decode_start
-                midpoint = (absolute_start + absolute_end) / 2
-                if not (gap_start + 0.03 <= midpoint <= gap_end - 0.03):
-                    continue
-                selected_word = dict(word)
-                selected_word["start"] = max(gap_start, absolute_start)
-                selected_word["end"] = min(gap_end, absolute_end)
-                if selected_word["end"] > selected_word["start"]:
-                    selected.append(selected_word)
+            selected_word = dict(word)
+            selected_word["start"] = max(gap_start, absolute_start)
+            selected_word["end"] = min(gap_end, absolute_end)
+            if selected_word["end"] > selected_word["start"]:
+                selected.append(selected_word)
 
         previous_text, following_text = _boundary_word(gap_start, gap_end)
         return _trim_boundary_echoes(selected, previous_text, following_text)
@@ -1104,6 +1115,7 @@ def _recover_short_mlx_speech_gaps(
         candidates.append((gap_start, gap_end, speech_seconds, speech_ratio))
 
     candidates.sort(key=lambda item: (item[3], item[2]), reverse=True)
+    deferred = candidates[max(0, int(max_candidates)) :]
     candidates = candidates[: max(0, int(max_candidates))]
     candidates.sort(key=lambda item: item[0])
 
@@ -1111,17 +1123,42 @@ def _recover_short_mlx_speech_gaps(
     recovered_ranges: list[dict[str, Any]] = []
     decoded_seconds = 0.0
     skipped_for_budget = 0
+    updated = result
+    issues = list(result.get("coverage_issues") or [])
+
+    def _mark_unresolved(candidate, reason):
+        start, end, speech_seconds, speech_ratio = candidate
+        if (
+            start > 0.05
+            and end < audio_duration - 0.05
+            and speech_seconds >= MLX_SHORT_GAP_REVIEW_MIN_SPEECH_SECONDS
+            and speech_ratio >= MLX_SHORT_GAP_REVIEW_MIN_SPEECH_RATIO
+        ):
+            issues.append(
+                {
+                    "start": start,
+                    "end": end,
+                    "speech_seconds": speech_seconds,
+                    "speech_ratio": speech_ratio,
+                    "reason": reason,
+                }
+            )
+
+    for candidate in deferred:
+        _mark_unresolved(candidate, "candidate_budget")
     for gap_start, gap_end, speech_seconds, speech_ratio in candidates:
+        candidate = (gap_start, gap_end, speech_seconds, speech_ratio)
         decode_cost = sum(
-            min(audio_duration, gap_end + context_seconds)
-            - max(0.0, gap_start - context_seconds)
+            min(audio_duration, gap_end + context_seconds) - max(0.0, gap_start - context_seconds)
             for context_seconds in MLX_SHORT_GAP_CONTEXT_SECONDS
         )
         if decoded_seconds + decode_cost > max(0.0, float(max_decode_seconds)):
             skipped_for_budget += 1
+            _mark_unresolved(candidate, "decode_budget")
             continue
         decoded_seconds += decode_cost
 
+        full_attempts.clear()
         attempts = [
             _decode_gap(gap_start, gap_end, speech_ratio, context_seconds)
             for context_seconds in MLX_SHORT_GAP_CONTEXT_SECONDS
@@ -1130,12 +1167,52 @@ def _recover_short_mlx_speech_gaps(
             _tokens("".join(str(word.get("word") or "") for word in attempt))
             for attempt in attempts
         ]
-        if (
+        agreed = not (
             len(attempts) != 2
             or not attempts[0]
             or token_attempts[0] != token_attempts[1]
             or len(token_attempts[0]) < 2
-        ):
+        )
+        # VAD nominates the gap but never supplies words. If the right neighbor
+        # starts too early, lexical anchors retain the omitted utterance's tail.
+        anchored = [anchored_candidate(w, coverage, gap_start, gap_end) for w in full_attempts]
+        needs_boundary_repair = any(w and w[-1]["end"] > gap_end + 0.05 for w in anchored)
+        if not agreed or needs_boundary_repair:
+            repaired = None
+            strong_speech = (
+                speech_seconds >= MLX_SHORT_GAP_REVIEW_MIN_SPEECH_SECONDS
+                and speech_ratio >= MLX_SHORT_GAP_REVIEW_MIN_SPEECH_RATIO
+            )
+            if strong_speech and any(anchored):
+                left, right = confirmation_window(result, gap_start, gap_end, audio_duration)
+                if decoded_seconds + right - left <= max_decode_seconds:
+                    decoded_seconds += right - left
+                    confirmation = anchored_candidate(
+                        _decode_words(left, right, speech_ratio),
+                        coverage,
+                        gap_start,
+                        gap_end,
+                    )
+                    for proposed in anchored:
+                        if corroborates(proposed, confirmation):
+                            repaired = insert_anchored_gap(updated, proposed, gap_start, gap_end)
+                            if repaired is not None:
+                                updated = repaired
+                                recovered_ranges.append(
+                                    {
+                                        "start": gap_start,
+                                        "end": gap_end,
+                                        "speech_seconds": speech_seconds,
+                                        "speech_ratio": speech_ratio,
+                                        "text": "".join(w["word"] for w in proposed).strip(),
+                                        "method": "anchored_context_consensus",
+                                    }
+                                )
+                                break
+                else:
+                    skipped_for_budget += 1
+            if repaired is None:
+                _mark_unresolved(candidate, "context_disagreement")
             continue
 
         words = attempts[0]
@@ -1161,15 +1238,15 @@ def _recover_short_mlx_speech_gaps(
             }
         )
 
-    if not recovered_segments:
+    if not recovered_segments and not recovered_ranges and not issues:
         return result
 
-    updated = dict(result)
+    updated = dict(updated)
     updated["segments"] = sorted(
         [
             *[
                 dict(segment)
-                for segment in result.get("segments") or []
+                for segment in updated.get("segments") or []
                 if isinstance(segment, dict)
             ],
             *recovered_segments,
@@ -1177,6 +1254,7 @@ def _recover_short_mlx_speech_gaps(
         key=lambda item: (float(item.get("start", 0.0)), float(item.get("end", 0.0))),
     )
     updated["short_speech_gap_recovery"] = recovered_ranges
+    updated["coverage_issues"] = issues
     updated["short_speech_gap_recovery_budget"] = {
         "candidates": len(candidates),
         "decoded_seconds": round(decoded_seconds, 3),
@@ -1200,11 +1278,38 @@ def _critical_aligned_speech_gaps(
             coverage,
             speech_segments_ms,
             audio_duration,
+            min_gap_seconds=MLX_SHORT_GAP_MIN_SECONDS,
         )
         if gap.is_internal
-        and gap.speech_seconds >= MLX_FINAL_AUDIT_MIN_SPEECH_SECONDS
-        and gap.speech_ratio >= MLX_FINAL_AUDIT_MIN_SPEECH_RATIO
+        and (
+            (
+                gap.speech_seconds >= MLX_FINAL_AUDIT_MIN_SPEECH_SECONDS
+                and gap.speech_ratio >= MLX_FINAL_AUDIT_MIN_SPEECH_RATIO
+            )
+            or (
+                gap.speech_seconds >= MLX_SHORT_GAP_REVIEW_MIN_SPEECH_SECONDS
+                and gap.speech_ratio >= MLX_SHORT_GAP_REVIEW_MIN_SPEECH_RATIO
+            )
+        )
     ]
+
+
+def _audit_aligned_speech_coverage(
+    aligned: dict, audio: Any, sample_rate: int
+) -> list[_SpeechBackedGap]:
+    duration = len(audio) / sample_rate
+    uncovered = _find_uncovered_mlx_gaps(
+        _alignment_word_coverage(aligned),
+        duration,
+        min_gap_seconds=MLX_SHORT_GAP_MIN_SECONDS,
+    )
+    # Preserve the existing long-gap sensitivity; require stricter VAD only for
+    # newly audited short holes, where music transients are more ambiguous.
+    long_ranges = [(a, b) for a, b in uncovered if b - a >= MLX_GAP_RECOVERY_MIN_GAP_SECONDS]
+    short_ranges = [(a, b) for a, b in uncovered if b - a < MLX_GAP_RECOVERY_MIN_GAP_SECONDS]
+    speech = _detect_speech_in_mlx_gaps(audio, sample_rate, long_ranges)
+    speech.extend(_detect_speech_in_mlx_gaps(audio, sample_rate, short_ranges, threshold=0.75))
+    return _critical_aligned_speech_gaps(aligned, speech, duration)
 
 
 def _classify_foreign_unresolved_ranges(
@@ -3971,18 +4076,8 @@ class WhisperXASR(BaseASR):
             )
             callback(92, "Verifying speech coverage...")
             try:
-                audio_duration = len(audio) / MLX_AUDIO_SAMPLE_RATE
-                word_coverage = _alignment_word_coverage(aligned)
-                uncovered = _find_uncovered_mlx_gaps(word_coverage, audio_duration)
-                uncovered_speech = _detect_speech_in_mlx_gaps(
-                    audio,
-                    MLX_AUDIO_SAMPLE_RATE,
-                    uncovered,
-                )
-                critical_gaps = _critical_aligned_speech_gaps(
-                    aligned,
-                    uncovered_speech,
-                    audio_duration,
+                critical_gaps = _audit_aligned_speech_coverage(
+                    aligned, audio, MLX_AUDIO_SAMPLE_RATE
                 )
             except Exception as exc:
                 raise RuntimeError("Final MLX speech-coverage audit failed") from exc
@@ -4052,20 +4147,8 @@ class WhisperXASR(BaseASR):
                                 whisperx_alignment,
                                 skip_alignment_languages,
                             )
-                            word_coverage = _alignment_word_coverage(aligned)
-                            uncovered = _find_uncovered_mlx_gaps(
-                                word_coverage,
-                                audio_duration,
-                            )
-                            uncovered_speech = _detect_speech_in_mlx_gaps(
-                                audio,
-                                MLX_AUDIO_SAMPLE_RATE,
-                                uncovered,
-                            )
-                            critical_gaps = _critical_aligned_speech_gaps(
-                                aligned,
-                                uncovered_speech,
-                                audio_duration,
+                            critical_gaps = _audit_aligned_speech_coverage(
+                                aligned, audio, MLX_AUDIO_SAMPLE_RATE
                             )
                     else:
                         ignored_foreign_gaps = [
@@ -4092,17 +4175,8 @@ class WhisperXASR(BaseASR):
                     critical_gaps,
                 )
                 if aligned.get("native_word_gap_recovery"):
-                    word_coverage = _alignment_word_coverage(aligned)
-                    uncovered = _find_uncovered_mlx_gaps(word_coverage, audio_duration)
-                    uncovered_speech = _detect_speech_in_mlx_gaps(
-                        audio,
-                        MLX_AUDIO_SAMPLE_RATE,
-                        uncovered,
-                    )
-                    critical_gaps = _critical_aligned_speech_gaps(
-                        aligned,
-                        uncovered_speech,
-                        audio_duration,
+                    critical_gaps = _audit_aligned_speech_coverage(
+                        aligned, audio, MLX_AUDIO_SAMPLE_RATE
                     )
                     if (
                         self.language is not None
@@ -4121,12 +4195,43 @@ class WhisperXASR(BaseASR):
                         "Recovered %d forced-alignment hole(s) with native MLX word timestamps",
                         int(aligned["native_word_gap_recovery"]),
                     )
-            if critical_gaps:
-                windows = ", ".join(f"{gap.start:.1f}-{gap.end:.1f}s" for gap in critical_gaps)
+            # Retain adaptive chunk retries for the pre-existing long-gap case.
+            # New short-gap warnings must preserve partial output instead of
+            # silently passing or discarding an otherwise complete transcript.
+            long_gaps = [g for g in critical_gaps if g.end - g.start >= 6 and g.speech_seconds >= 5]
+            if long_gaps:
+                windows = ", ".join(f"{gap.start:.1f}-{gap.end:.1f}s" for gap in long_gaps)
                 raise RuntimeError(
-                    "MLX Whisper left VAD-confirmed speech without aligned words: "
-                    f"{windows}. The incomplete transcript was not exported."
+                    "MLX Whisper left VAD-confirmed speech without aligned words: " + windows
                 )
+            issues = list(native_result.get("coverage_issues") or [])
+            for gap in critical_gaps:
+                if not any(i["start"] < gap.end and i["end"] > gap.start for i in issues):
+                    issues.append(
+                        {
+                            "start": gap.start,
+                            "end": gap.end,
+                            "speech_seconds": gap.speech_seconds,
+                            "speech_ratio": gap.speech_ratio,
+                            "reason": "final_alignment_gap",
+                        }
+                    )
+            if self.language is not None and not hybrid_language_mode:
+                issues = [
+                    i
+                    for i in issues
+                    if not _gap_is_covered_by_foreign_range(
+                        _SpeechBackedGap(
+                            start=i["start"],
+                            end=i["end"],
+                            speech_seconds=i["speech_seconds"],
+                            speech_ratio=i["speech_ratio"],
+                            is_internal=True,
+                        ),
+                        foreign_language_speech_ranges,
+                    )
+                ]
+            aligned["coverage_issues"] = issues
             aligned["asr_backend"] = "mlx-whisper"
             aligned["mlx_model"] = self.mlx_model
 
@@ -4143,7 +4248,12 @@ class WhisperXASR(BaseASR):
             except Exception:
                 pass
 
-            callback(*ASRStatus.COMPLETED.callback_tuple())
+            if issues:
+                from .speech_gap_repair import coverage_issue_message
+
+                callback(98, coverage_issue_message(issues))
+            else:
+                callback(*ASRStatus.COMPLETED.callback_tuple())
             return aligned
 
     def _make_segments(self, resp_data: dict) -> List[ASRDataSeg]:
@@ -4236,7 +4346,7 @@ class WhisperXASR(BaseASR):
             "model": self.mlx_model,
             "language": self.language or "auto",
             "mixed_language_revision": 5 if self.uses_mlx and self.language is None else 0,
-            "speech_coverage_revision": 4 if self.uses_mlx else 0,
+            "speech_coverage_revision": 5 if self.uses_mlx else 0,
             "align_device": self.align_device,
             "compute_type": self.compute_type,
             "align_model": self.align_model or "auto",

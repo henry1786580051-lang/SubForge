@@ -12,7 +12,27 @@ from unittest.mock import patch
 
 from subforge.core.translate.quality.preservation import exact_latin_spacing_spans
 
-EXPERIMENTS = ("exact-name-spacing", "scoped-terminology", "unowned-fact-feedback")
+EXPERIMENTS = (
+    "exact-name-spacing",
+    "scoped-terminology",
+    "unowned-fact-feedback",
+    "context-role-contract",
+)
+
+CONTEXT_ROLE_GUIDANCE = (
+    " Keep the two terminology roles separate. An ASR-correction row maps the complete "
+    "heard source phrase to ONLY its corrected spelling in the SAME source language; "
+    "its target cannot contain a translation, explanatory parentheses, or a bilingual gloss. "
+    "If a corrected name also needs translation, add a SEPARATE row mapping that canonical "
+    "source name to its concise target-language name, with note 'entity translation'. "
+    "Use one established localized name when certain; otherwise retain the exact source "
+    "name instead of inventing a transliteration or combining parts of similar entities. "
+    "For Chinese subtitles, avoid repeating the Latin name in parentheses after its Chinese "
+    "name unless the speaker explicitly introduces both. Keep official product identifiers "
+    "and untranslated brands unchanged where appropriate. Technical targets must name the "
+    "stated phenomenon or quantity itself, not a related cause, consequence, or component. "
+    "Keep definitions and disambiguation evidence in note, not inside the target rendering."
+)
 
 TERM_SCOPE_GUIDANCE = (
     " A terminology target must be the lexical meaning of its complete source phrase, "
@@ -23,7 +43,6 @@ TERM_SCOPE_GUIDANCE = (
     "shared meaning neutral instead of turning one use into a document-wide instruction. "
     "Do not create mappings for ordinary descriptive vocabulary."
 )
-
 
 def unowned_fact_feedback(message: str) -> str:
     marker = "Cross-key duplicates: "
@@ -75,7 +94,12 @@ def translation_experiments(names: tuple[str, ...] = ()) -> Iterator[None]:
             "You prepare context for professional subtitle translation."
         ):
             kwargs["messages"] = [
-                {**messages[0], "content": messages[0]["content"] + TERM_SCOPE_GUIDANCE},
+                {
+                    **messages[0],
+                    "content": messages[0]["content"]
+                    + (TERM_SCOPE_GUIDANCE if "scoped-terminology" in names else "")
+                    + (CONTEXT_ROLE_GUIDANCE if "context-role-contract" in names else ""),
+                },
                 *messages[1:],
             ]
         return context_call(*args, **kwargs)
@@ -87,7 +111,7 @@ def translation_experiments(names: tuple[str, ...] = ()) -> Iterator[None]:
     with ExitStack() as stack:
         if "exact-name-spacing" in names:
             stack.enter_context(patch.object(LLMTranslator, "_validate_no_unowned_latin_names", validate))
-        if "scoped-terminology" in names:
+        if {"scoped-terminology", "context-role-contract"} & set(names):
             stack.enter_context(patch.object(context, "call_llm", scoped_context))
         if "unowned-fact-feedback" in names:
             stack.enter_context(patch.object(LLMTranslator, "_validate_cross_key_boundaries", ownership_feedback))

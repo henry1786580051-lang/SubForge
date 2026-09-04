@@ -99,6 +99,18 @@ def test_grammar_detector_completion_exceptions_remain_active() -> None:
             {"tail_is_comparative_modifier": True},
         ),
         ("participle_complement", "We are serving", "the city", {}),
+        (
+            "postpositive_participle_modifier",
+            "Workers climbed huge ladders",
+            "mounted on wheels to reach the roof",
+            {},
+        ),
+        (
+            "postpositive_participle_modifier",
+            "It collects information",
+            "built up across months and years",
+            {},
+        ),
         ("coordinated_noun_phrase", "with cameras", "and sensors", {}),
         ("preposition_gerund", "after", "driving home", {}),
         ("open_complement", "getting", "better", {"tail_is_open_complement": True}),
@@ -143,6 +155,12 @@ def test_second_batch_completion_exceptions_remain_active() -> None:
 
     assert grammar.morphological_attributive_modifier(predicative) is False
     assert grammar.participle_complement(determiner_participle) is False
+
+    completed = extract_english_boundary_features(
+        "Workers climbed huge ladders.",
+        "mounted on wheels for storage",
+    )
+    assert grammar.postpositive_participle_modifier(completed) is False
 
 
 @pytest.mark.parametrize(

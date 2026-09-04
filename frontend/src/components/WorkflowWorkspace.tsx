@@ -670,6 +670,12 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                 ))}
               </div>
 
+              {config.speakerDiarization === "auto" && (
+                <p className="rounded-md bg-background px-3 py-2 text-[10px] leading-4 text-text-muted">
+                  自动识别 1–10 位说话人
+                </p>
+              )}
+
               {config.speakerDiarization === "two" && (
                 <p className="rounded-md bg-background px-3 py-2 text-[10px] leading-4 text-text-muted">
                   以两位主要对话者为基准，也允许广告或插播中出现短暂的第三声音。

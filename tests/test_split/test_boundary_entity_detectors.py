@@ -11,6 +11,7 @@ from subforge.core.split.boundary_features import extract_english_boundary_featu
         ("vehicle_brand_model", "It is a Toyota", "SUV"),
         ("alphanumeric_model_alternative", "Choose the qx65", "or qx80"),
         ("proper_name", "The president is Donald", "Trump"),
+        ("attributive_proper_name", "proposed by a New York", "consulting firm"),
         ("city_state", "We arrived in Ypsilanti,", "Michigan"),
         ("vehicle_trim_model", "This is the RT392", "Durango"),
     ],
@@ -29,3 +30,9 @@ def test_entity_detectors_preserve_case_and_continuation_exclusions() -> None:
     assert entity.proper_name(lowercase_name) is False
     assert entity.proper_name(discourse_start) is False
     assert entity.city_state(lowercase_city) is False
+    assert (
+        entity.attributive_proper_name(
+            extract_english_boundary_features("We arrived in New York", "and checked in")
+        )
+        is False
+    )

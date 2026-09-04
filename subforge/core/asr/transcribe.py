@@ -71,7 +71,8 @@ def transcribe(
             if diarization_mode == "two":
                 min_speakers, max_speakers = 2, 4
             elif num_speakers is None:
-                min_speakers, max_speakers = 2, 10
+                # A two-speaker floor forces a solo narrator into artificial clusters.
+                min_speakers, max_speakers = 1, 10
             else:
                 min_speakers = max_speakers = None
 

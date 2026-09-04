@@ -37,7 +37,8 @@ def negative_auxiliary_complement(features: EnglishBoundaryFeatures) -> bool:
 
 def linking_verb_complement(features: EnglishBoundaryFeatures) -> bool:
     return bool(
-        features.tail in {
+        features.tail
+        in {
             "become",
             "became",
             "becomes",
@@ -283,8 +284,7 @@ def up_and_running_subject(features: EnglishBoundaryFeatures) -> bool:
 def short_noun_subject(features: EnglishBoundaryFeatures) -> bool:
     return bool(
         len(features.left_tokens) <= 5
-        and features.left_tokens[0]
-        in {"a", "an", "the", "this", "that", "these", "those"}
+        and features.left_tokens[0] in {"a", "an", "the", "this", "that", "these", "those"}
         and features.head
         in {
             "became",
@@ -437,10 +437,23 @@ def perfect_reporting_content(features: EnglishBoundaryFeatures) -> bool:
 
 
 def transitive_pronoun_object(features: EnglishBoundaryFeatures) -> bool:
-    return features.head in {"her", "him", "it", "me", "them", "us", "you"} and bool(
+    if features.head not in {"her", "him", "it", "me", "them", "us", "you"}:
+        return False
+    return bool(
         re.search(
             r"\b(?:can|could|did|do|does|may|might|must|should|to|will|would)\s+"
             r"[a-z][a-z'’-]*$",
+            features.semantic_left,
+            re.IGNORECASE,
+        )
+        or re.search(
+            r"\b(?:i|you|he|she|it|we|they|this|that)\s+"
+            r"(?:(?:also|always|already|currently|just|never|now|often|really|"
+            r"still|today|usually)\s+)*"
+            r"(?:ask(?:ed|s)?|bring(?:s|ing)?|call(?:ed|s)?|follow(?:ed|s)?|"
+            r"help(?:ed|s)?|invite(?:d|s)?|join(?:ed|s)?|meet(?:s|ing)?|"
+            r"remind(?:ed|s)?|show(?:ed|n|s)?|teach(?:es|ing|t)?|tell(?:s|ing|t)?|"
+            r"watch(?:ed|es|ing)?)$",
             features.semantic_left,
             re.IGNORECASE,
         )
@@ -553,10 +566,22 @@ def proper_name_subject(
     *,
     previous_is_dependent_head: bool,
 ) -> bool:
+    explicit_named_subject = bool(
+        re.search(
+            r"\b(?:a|an|my|our|his|her|their|the|this|that)\s+"
+            r"(?:[a-z][a-z'’-]*\s+){0,5}(?:of|in|from)\s+"
+            r"[A-Z][A-Za-z0-9'’.+-]*,?$",
+            features.left,
+        )
+    )
     return bool(
         features.head in {"is", "are", "was", "were"}
         and re.search(r"\b[A-Z][A-Za-z0-9'’.+-]*,?$", features.left)
-        and (len(features.left_tokens) < 2 or not previous_is_dependent_head)
+        and (
+            explicit_named_subject
+            or len(features.left_tokens) < 2
+            or not previous_is_dependent_head
+        )
     )
 
 
@@ -565,12 +590,38 @@ def trailing_noun_subject(
     *,
     head_is_finite_predicate: bool,
 ) -> bool:
-    return head_is_finite_predicate and bool(
+    short_subject = re.search(
+        r"\b(?:the|these|those|our|their|his|her|that)\s+"
+        r"[a-z][a-z'’-]*(?:\s+[a-z][a-z'’-]*){0,2}$",
+        features.semantic_left,
+        flags=re.IGNORECASE,
+    )
+    reported_technical_subject = re.search(
+        r"\b(?:say|think|know)\s+that\s+"
+        r"(?:the|these|those|our|their|his|her|that)\s+"
+        r"[a-z0-9][a-z0-9'’-]*(?:\s+[a-z0-9][a-z0-9'’-]*){0,5}$",
+        features.semantic_left,
+        flags=re.IGNORECASE,
+    )
+    return head_is_finite_predicate and bool(short_subject or reported_technical_subject)
+
+
+def dependent_subject_adverbial_predicate(features: EnglishBoundaryFeatures) -> bool:
+    """Keep a dependent-clause subject with an adverb-led finite predicate."""
+    return bool(
         re.search(
-            r"\b(?:the|these|those|our|their|his|her|that)\s+"
-            r"[a-z][a-z'’-]*(?:\s+[a-z][a-z'’-]*){0,2}$",
+            r"\b(?:as|because|if|that|when|whereas|while)\s+"
+            r"(?:the|these|those|our|their|his|her|that)\s+"
+            r"[a-z][a-z'’-]*(?:\s+[a-z][a-z'’-]*){0,3}$",
             features.semantic_left,
-            flags=re.IGNORECASE,
+            re.IGNORECASE,
+        )
+        and re.match(
+            r"^(?:also|already|currently|eventually|just|now|still|then|usually)\s+"
+            r"(?!(?:a|an|the|this|that|these|those|of|to|with)\b)"
+            r"[a-z][a-z'’-]*\b",
+            features.semantic_right,
+            re.IGNORECASE,
         )
     )
 
@@ -605,6 +656,25 @@ def what_clause_subject(features: EnglishBoundaryFeatures) -> bool:
 
 
 def degree_complement(features: EnglishBoundaryFeatures) -> bool:
+    right_starts_comparative = bool(
+        re.match(
+            r"^(?:better|bigger|broader|cheaper|closer|faster|fewer|greater|higher|"
+            r"larger|less|longer|lower|more|narrower|older|shorter|slower|smaller|"
+            r"stronger|taller|thicker|thinner|wider|worse)\b",
+            features.semantic_right,
+            re.IGNORECASE,
+        )
+    )
+    scalar_modifier_tail = bool(
+        right_starts_comparative
+        and re.search(
+            r"\b(?:am|are|be|been|being|became|become|is|remain(?:ed|s)?|"
+            r"seem(?:ed|s)?|was|were|['’]re|['’]s)\s+"
+            r"(?:both\s+)?(?:considerably|even|far|much|significantly|substantially)$",
+            features.semantic_left,
+            re.IGNORECASE,
+        )
+    )
     return bool(
         features.head == "so"
         and features.right[:1].islower()
@@ -614,4 +684,5 @@ def degree_complement(features: EnglishBoundaryFeatures) -> bool:
             or features.right_tokens[1]
             in {"far", "long", "many", "much", "strong", "well", "widespread"}
         )
+        or scalar_modifier_tail
     )
