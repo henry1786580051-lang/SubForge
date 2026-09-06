@@ -1,0 +1,59 @@
+1
+00:00:00,000 --> 00:00:04,840
+从一份素材开始
+Start with a video, an audio file, or existing subtitles.
+
+2
+00:00:05,000 --> 00:00:09,840
+让字幕成为工作区的主角
+Keep your subtitles at the center of the workspace.
+
+3
+00:00:10,000 --> 00:00:14,840
+需要时展开处理选项
+Open processing options when you need them.
+
+4
+00:00:15,000 --> 00:00:19,840
+在同一处检查原文与译文
+Review the source and translation side by side.
+
+5
+00:00:20,000 --> 00:00:24,840
+保留语义，也照顾阅读节奏
+Preserve the meaning and keep a comfortable reading pace.
+
+6
+00:00:25,000 --> 00:00:29,840
+修改、合并与撤销都在手边
+Edit, merge, and undo without leaving the editor.
+
+7
+00:00:30,000 --> 00:00:34,840
+本地转录，按需选择翻译服务
+Transcribe locally and choose a translation service.
+
+8
+00:00:35,000 --> 00:00:39,840
+按语言与音频内容配置识别
+Configure recognition for your language and audio.
+
+9
+00:00:40,000 --> 00:00:44,840
+清楚了解每一步的处理状态
+See the status of each step in your workflow.
+
+10
+00:00:45,000 --> 00:00:49,840
+遇到问题，查看任务诊断
+Inspect task diagnostics when something needs attention.
+
+11
+00:00:50,000 --> 00:00:54,840
+检查完成后，导出所需格式
+Export the format you need after reviewing the result.
+
+12
+00:00:55,000 --> 00:00:59,840
+这些文字仅用于界面演示
+These subtitles are provided for interface demonstration.

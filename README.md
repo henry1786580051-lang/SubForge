@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>从本地语音识别到可发布双语字幕的一体化工作台</strong><br />
-  WhisperX 精准时间轴 · 混合语言识别 · 多人分离 · 对话感知翻译
+  本地语音识别 · 双语字幕编辑 · 对话感知翻译 · macOS Liquid Glass
 </p>
 
 <p align="center">
@@ -18,15 +18,18 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.17/SubForge-1.1.17-macos-arm64.dmg"><strong>下载 macOS Apple Silicon 版</strong></a>
-  · <a href="https://github.com/henry1786580051-lang/SubForge/releases">全部版本</a>
+  <a href="https://github.com/henry1786580051-lang/SubForge/releases/download/v1.3.0/SubForge-1.3.0-macos-arm64.dmg"><strong>macOS Apple Silicon · DMG</strong></a>
+  · <a href="https://github.com/henry1786580051-lang/SubForge/releases/download/v1.3.0/SubForge-1.3.0-windows-x64-setup.exe"><strong>Windows x64 · EXE</strong></a>
+  · <a href="https://github.com/henry1786580051-lang/SubForge/releases/latest">最新版本与更新日志</a>
   · <a href="https://henry1786580051-lang.github.io/SubForge/">使用文档</a>
   · <a href="https://github.com/henry1786580051-lang/SubForge/issues">问题反馈</a>
 </p>
 
-![SubForge 语音转录工作台](docs/screenshot.png)
+![SubForge v1.3.0 双语字幕工作区与 macOS 原生工具栏](docs/screenshots/v1.3.0-subtitles.png)
 
-SubForge 面向需要长期处理视频字幕的创作者和本地化工作流。它将媒体预检、本地 ASR、forced alignment、说话人分离、智能断句、上下文翻译、质量检查和多格式导出组织在同一个桌面与 Web 界面中。大模型只用于需要语义判断的环节；时间轴校验、格式检查和中文标点清理均在本地完成。
+*macOS 26 上的 v1.3.0 实际应用截图，使用[演示字幕](examples/subforge-ui-demo.srt)，只展示操作界面。*
+
+SubForge 将素材导入、语音转录、断句翻译、字幕编辑与导出放在同一个工作区，面向视频创作者和字幕本地化工作。选择本地语音识别时，音频处理在设备上完成；使用云端翻译服务时，所需字幕文本会发送给所选服务商。
 
 ## 为什么选择 SubForge
 
@@ -34,16 +37,26 @@ SubForge 面向需要长期处理视频字幕的创作者和本地化工作流�
 | --- | --- | --- |
 | Apple Silicon 使用 MLX，Windows 使用 CTranslate2；WhisperX forced alignment 与 TEN-VAD 保守校准词级边界 | 按上下文和说话人轮次翻译，校验漏译、错位、重复、占位语和思考内容泄漏 | 实时进度、中间结果增量保存、失败条目局部重试、恢复字幕和聚合 LLM 日志 |
 
-### v1.1.17 更新
+### v1.3.0 更新
 
-- **漏段恢复更严格**：以词级覆盖和高置信度语音活动共同检查转录空洞；短漏段只有在两个上下文窗口得到一致新内容时才写回，避免把音乐或环境声误补成字幕。
-- **时间轴尾部更完整**：保留转录阶段的语音边界，在断句与翻译完成后做有上限的句尾延长；重复词合并时保留更晚的声学结束点。
-- **数字与符号对齐更准确**：对金额、范围、百分比、年份和单位先按读音展开再 forced alignment，并以字符级映射恢复原始显示文本，个别未对齐词不再拖垮整段数字时间戳。
-- **跨条语义更连贯**：加强主语、谓语、补语、比较结构、时间状语和专名所有权审计，减少句子成分被提前、延后或重复到相邻字幕。
-- **桌面任务更可靠**：模型下载可随任务取消，音频文件句柄会及时释放；翻译预览按唯一字幕计数，字幕处理可复用对应媒体的声学边界。
-- **凭据存储更稳妥**：API Key 优先写入系统凭据库并按需读取，避免应用启动时逐项触发 macOS 钥匙串授权；不可用时仍回退到权限受限的本地配置文件。
+- **专业通透工作区**：macOS 26 使用 Liquid Glass 原生工具栏，字幕正文保留实色阅读背景；旧版 macOS 与 Windows 提供对应回退界面。
+- **更顺手的字幕编辑**：处理选项可以收起，编辑、删除与合并支持最多 30 步撤销，提供导入、保存、撤销和设置快捷键。
+- **设置与诊断更清楚**：分类设置、任务与详情双栏日志、搜索及错误重试；支持系统、浅色和深色外观，并适配辅助功能偏好。
+- **时间轴与断句修复**：改善复合轮胎规格的词级对齐，保护数字修饰语和明确的介词宾语，防止断句重建丢失已有译文。
+- **有边界的验证**：本地 Python 回归 2789 项通过、11 项跳过，前端 32 项通过；Windows EXE 经 GitHub Actions 构建并验证安装后的运行环境。检查通过不等于所有字幕零错译，也不代表固定 token 降幅。
 
-## 工作流
+详情见 [v1.3.0 发布说明](https://github.com/henry1786580051-lang/SubForge/releases/tag/v1.3.0) · [完整更新日志](CHANGELOG.md)。
+
+## 更多界面
+
+| 素材导入 | 分类设置 |
+| --- | --- |
+| ![v1.3.0 素材导入](docs/screenshots/v1.3.0-import.png) | ![v1.3.0 通用设置](docs/screenshots/v1.3.0-settings.png) |
+
+截图展示 macOS 26 的实际界面。Windows 使用网页工具栏；旧版 macOS 的原生回退样式尚未在旧版实机完成视觉验证。
+
+<details>
+<summary><strong>查看转录、对齐与翻译流程</strong></summary>
 
 ```mermaid
 flowchart LR
@@ -61,17 +74,20 @@ flowchart LR
     K --> L["质量检查与导出"]
 ```
 
-### 核心能力
+</details>
+
+## 核心功能
 
 | 能力 | 实现与边界 |
 | --- | --- |
 | 本地语音识别 | WhisperX：Apple Silicon 使用 MLX Whisper；Windows 使用 Faster-Whisper/CTranslate2，可选 CUDA 或 CPU |
 | 词级时间轴 | 对齐前展开数字、单位和符号；按语言选择 forced alignment 模型；TEN-VAD 只修正可疑边界 |
 | 混合语言 | 自动语言探测、高置信度外语区间局部复听、逐语言对齐与缺失模型提示；手动选择源语言时不改变原有固定语言流程 |
-| 多人语音 | pyannote Community-1，支持双人、自动人数或指定 2–10 人；标签只用于内部轮次，不写入最终字幕 |
+| 多人语音 | pyannote Community-1，支持双人、自动 1–10 人或指定 2–10 人；标签只用于内部轮次，不写入最终字幕 |
 | 智能断句 | 语义重组后校验原文覆盖、字幕长度、键完整性和时间轴，不允许吞词或自由改写 |
 | 对话感知翻译 | 将可靠的说话人标签匿名化为临时轮次，结合前后文处理指代、问答和省略；单人任务不增加该开销 |
 | 结果质量门 | 检查空译文、跨条错位、相邻重复、编辑占位语、思考内容、数字和专有名词异常，仅重试失败条目 |
+| 编辑与外观 | 字幕编辑、删除、合并与最多 30 步撤销；系统／浅色／深色外观，尊重减少动态效果等偏好 |
 | 导出 | SRT、VTT、ASS、TXT、JSON；中英双语默认中文在上、原文在下 |
 
 <details>
@@ -94,27 +110,32 @@ flowchart LR
 ```
 
 - MiniMax 使用官方 Anthropic 兼容协议，原生区分 `thinking` 与最终 `text`；M3 遇到 HTTP 429 时保持任务存活并等待恢复。
-- NVIDIA NIM、小米 MiMo、DeepSeek、OpenAI、通义千问及本地服务使用 OpenAI 兼容协议；Base URL、API Key 和模型按服务商独立保存。
-- NVIDIA 模型目录按开发公司折叠，并支持搜索，避免将大量聊天、推理、视觉和嵌入模型平铺在同一列表中。
+- 智谱 GLM、NVIDIA NIM、小米 MiMo、DeepSeek、OpenAI、通义千问及本地服务使用 OpenAI 兼容协议；Base URL、API Key 和模型按服务商独立保存。
+- NVIDIA 模型目录按开发公司折叠，并支持搜索；免费模型页面可以检查服务可用性，可用性不代表翻译质量或额度保证。
 - NVIDIA API 与 MiniMax M3 一样在 HTTP 429 后保持任务存活，优先遵循 `Retry-After`，并持续等待服务恢复；认证错误等非限流故障仍会立即返回。
 - 反思模式再次检查语气、称谓、指代和问答关系，但仍必须保持字幕键和内容所有权。
 - 中间结果持续写入恢复文件，最终质量检查失败不会清空已经完成的字幕。
 
 </details>
 
-## 界面
-
-| 导入与预检 | 字幕处理 |
-| --- | --- |
-| ![导入与预检](docs/screenshots/import-workspace.png) | ![智能断句与翻译](docs/screenshots/subtitle-workspace.png) |
-
 ## 快速开始
 
 ### 桌面版
 
-- **macOS**：当前 v1.1.17 提供 [Apple Silicon DMG](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.1.17/SubForge-1.1.17-macos-arm64.dmg)。Whisper、forced alignment 和 Community-1 模型按需下载，不会重复打包进应用。
-- **Windows**：项目支持 WhisperX CTranslate2/CUDA 或 CPU、forced alignment 与 Community-1。请在 [Releases](https://github.com/henry1786580051-lang/SubForge/releases) 查看带 Windows 安装包的版本，或按下方源码方式运行。
-- **Linux**：当前以 Web/CLI 源码运行和开发验证为主，尚未提供正式桌面安装包。
+当前发布版本为 **v1.3.0**。安装包已包含应用、前端、Python 运行时和媒体工具，不需要先安装 Python 或 Node.js。
+
+| 平台 | 下载 | 安装 |
+| --- | --- | --- |
+| macOS Apple Silicon | [SubForge-1.3.0-macos-arm64.dmg](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.3.0/SubForge-1.3.0-macos-arm64.dmg) | 打开 DMG，将 SubForge 拖入 Applications |
+| Windows x64 | [SubForge-1.3.0-windows-x64-setup.exe](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.3.0/SubForge-1.3.0-windows-x64-setup.exe) | 运行 EXE 安装程序，按向导完成安装 |
+
+- [SHA-256 校验文件](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.3.0/SHA256SUMS.txt) · [最新 Release](https://github.com/henry1786580051-lang/SubForge/releases/latest)。
+- Whisper、强制对齐和说话人模型按需单独下载；已有模型目录可继续使用。云端翻译需配置所选服务商和相应凭据。
+- macOS 安装包使用 **ad-hoc 签名，未经 Apple 公证**；当前未上架 App Store。原生 Liquid Glass 效果需要 macOS 26。
+- 当前公开安装包面向 Apple Silicon Mac 与 Windows x64；没有单独 CUDA 安装包。Linux 以 Web／CLI 源码运行和开发验证为主。
+
+<details>
+<summary><strong>从源码运行 Web 与 CLI</strong></summary>
 
 ### Web 版
 
@@ -148,7 +169,14 @@ uv run subforge subtitle input.srt
 
 更多命令请运行 `uv run subforge --help`。桌面应用入口为 `launcher.py`，界面采用 Next.js、FastAPI 与 pywebview。
 
-## 实测案例
+</details>
+
+## 历史实测案例
+
+以下为旧版开发阶段保存的样本结果，未在 v1.3.0 重新跑测。结构检查、原文相似度及 token 用量不代表完整语义准确率，也不是当前版本的成本承诺。
+
+<details>
+<summary><strong>展开 Audi Q3 与五人访谈案例、字幕和阶段用量</strong></summary>
 
 ### 单人英文试驾：Audi Q3
 
@@ -205,6 +233,8 @@ uv run subforge subtitle input.srt
 片中包含电影原片段。“指定 5 人”约束访谈参与者聚类数量，不代表人物身份识别；最终字幕不会输出说话人标签。
 </details>
 
+</details>
+
 ## 项目结构与开发
 
 ```text
@@ -221,7 +251,7 @@ SubForge/
 ```bash
 uv sync --group dev
 uv run pytest
-uv run ruff check .
+uv run ruff check subforge backend launcher.py scripts
 
 cd frontend
 npm ci
