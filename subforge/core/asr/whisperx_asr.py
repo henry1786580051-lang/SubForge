@@ -2998,6 +2998,7 @@ class WhisperXASR(BaseASR):
         candidates = _compound_timing_candidates(data)
         if not candidates:
             return 0
+        self._raise_if_cancelled("compound number alignment")
         import whisperx.alignment as alignment
         from whisperx.audio import load_audio
 

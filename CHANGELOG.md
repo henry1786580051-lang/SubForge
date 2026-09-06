@@ -14,6 +14,7 @@
 
 - Expanded compact and spaced tire specifications into their spoken form for English forced alignment, then restored the original display text. Restoration now requires evidence for both ends of expanded tokens.
 - Applied bounded timing budgets to recognized tire specifications. When enhanced-audio alignment ends a specification too early, a short original-audio alignment can extend its tail with confidence and neighboring-onset checks; it does not move the following word or run another Whisper decode.
+- Checked cancellation before loading optional alignment dependencies, so cancelling a local timing repair still works on a minimal installation without WhisperX.
 - Protected numeric compound modifiers such as `six-speed`, standalone quantities before capitalized plural population names, and ambiguous prepositions followed by explicit object pronouns. Complete clauses, meaningful pauses, and protected speaker boundaries retain their safeguards.
 - Prevented boundary normalization from rebuilding partially translated input and losing existing translations.
 - Made preservation diagnostics deterministic, accepted narrowly evidenced Chinese DCT/RPM equivalents, and retained exact gear-count/unit checks. Successful identical fidelity verdicts can be reused within a task; changed inputs, rejected verdicts, and cancellation remain protected.

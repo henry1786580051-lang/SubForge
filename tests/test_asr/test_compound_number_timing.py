@@ -195,9 +195,14 @@ def test_local_realign_ignores_ordinary_words_and_already_tight_sizes():
         assert _compound_timing_candidates(data) == []
 
 
-def test_local_realign_honors_cancellation_before_loading_audio():
+def test_local_realign_honors_cancellation_before_loading_audio(monkeypatch):
+    import sys
     import threading
 
+    # A cancelled operation must not require optional inference dependencies,
+    # including on a minimal CI install without the WhisperX extra.
+    monkeypatch.setitem(sys.modules, "whisperx.alignment", None)
+    monkeypatch.setitem(sys.modules, "whisperx.audio", None)
     asr = object.__new__(WhisperXASR)
     asr.cancel_event = threading.Event()
     asr.cancel_event.set()
