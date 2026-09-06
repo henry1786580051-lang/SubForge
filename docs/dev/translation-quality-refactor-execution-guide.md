@@ -1,8 +1,47 @@
 # Translation Quality Refactor Execution Guide
 
-Status: Phases 0-7 complete; Phase 8 experimentation and Phase 9 blind holdout complete; all behavioral candidates rejected for rollout and production remains legacy
+Status: Phases 0-7 complete; historical Phase 8/9 candidates rejected; legacy main pipeline with subsequent local fixes. Local app updated on 2026-09-05; full-pipeline quality and final-subset efficiency acceptance remain unproven.
 
-Last validated: 2026-09-03
+Last validated: 2026-09-05
+
+Development bugfix checkpoint (2026-09-05): see
+[`elantra-translation-validation-fix.md`](elantra-translation-validation-fix.md).
+The new development triplet led to narrow fixes for hyphenated numeric modifiers,
+suffix-based adjective false positives at explicit clauses, source-local DCT
+localization, and translated-input guard ordering. Four hash-validated development
+videos were replayed offline; the full suite passes 2,652 non-integration tests.
+The subsequent user-authorized GLM-5.3-Flash pair completed both full runs. The
+numeric-modifier split improved, but tokens rose 15.88% and the frozen bugfix
+screening returned `observe`. Full output review still found English residue,
+source/target ownership errors, and semantic mistakes. This is not an overall
+quality or efficiency acceptance. At that checkpoint no holdout inspection or
+packaged rollout had been performed; the later local app update is recorded below.
+See the checkpoint document for live evidence and limitations.
+
+Local validation efficiency follow-up (2026-09-05): see
+[`low-token-validation-fixes.md`](low-token-validation-fixes.md). Exact RPM
+equivalence, stable missing-token order, identical-success reuse, and narrow
+closed-boundary exclusions remain, with 2,690 non-integration tests passing.
+Two formal GLM v2 pairs reduced aggregate tokens by 2.39%, but semantic review
+failed and a new midpoint-price acceptance was withdrawn. That cost result does
+not certify the final reduced subset, which was rechecked offline. All five
+full runs (including one preserved pilot) completed. At experiment close there
+was no packaged rollout or whole-pipeline quality acceptance. The subsequent
+local build does not change the experiment's semantic rejection.
+
+Local delivery follow-up (2026-09-05): the user subsequently requested an app
+update. `dist/SubForge.app` 1.2.1 was rebuilt and opened; signing, matching all
+eight changed/new algorithm modules to source, and packaged backend/media/
+Apple Silicon runtime checks passed. The previous app is archived for rollback.
+Evidence: `artifacts/desktop-update-20260905/result.json`. This is a local
+installation, not a public release, new GLM evaluation, or quality acceptance.
+
+Documentation amendment (2026-09-05): `优化指南.md` version 2.2 is the current
+operating contract. Sections 8.1, Step 7/8.1, 10.2.1, and 12-15 add exact
+version/evidence binding, component and combination checks, two-sided evidence
+for validator relaxations, staged evaluation, and separate delivery records.
+These are prospective reporting and execution requirements, not a new automated
+admission schema; historical policies and decisions remain frozen.
 
 Prospective admission amendment: 2026-09-01. `优化指南.md` sections 10-12 are the
 current executable admission contract. They supersede blanket 5% caps and
@@ -104,9 +143,11 @@ Phase 7 is complete. English score migration and the complete Chinese source,
 target, and display-signal migration have closed static inventories, deterministic
 call-flow audits, and frozen machine/gold corpus snapshots. Phase 8 isolation,
 task-scoped efficiency telemetry, candidate experiments, and the first Phase 9
-blind holdout are also complete. Every behavioral candidate was rejected, its
-runtime behavior was removed, and production remains on the legacy path. Phase
-10 has not started. Any future candidate must return to development-only evidence
+blind holdout are also complete. Every historical Phase 8/9 behavioral candidate
+was rejected and its runtime behavior removed. The legacy main path now includes
+later local fixes; it is not identical to the historical baseline. Full-pipeline
+Phase 10 has not started. The local app delivery above is tracked separately.
+Any future candidate must return to development-only evidence
 collection under a new isolated revision; the completed holdout cannot be used
 for tuning.
 
@@ -149,6 +190,34 @@ A structural patch must not:
 A behavioral patch may change one explicitly named policy only after the
 structural baseline is stable. Its evaluation report must isolate that policy's
 effect.
+
+### 3.2.1 Bind evidence to components and final code
+
+- Freeze the working baseline and each component's file/hash manifest; Git HEAD
+  alone does not identify a dirty working tree. Record corpus and configuration
+  identities alongside every report.
+- Prove individual decisions with fixed inputs, relevant counterexamples and
+  call-path checks before a separately named combination experiment. Record the
+  combination's component revisions and interactions; do not require a paid
+  full-video run for every deterministic component.
+- Removing a component creates a new retained revision. Explain which earlier
+  evidence remains applicable and recheck affected paths. Old aggregate tokens,
+  latency, or quality conclusions cannot be inherited by the reduced subset.
+  Mark unmeasured outcomes explicitly instead of starting unplanned paid runs.
+- Record activation, correct repairs, cache hits, and demonstrably avoided
+  requests separately. A zero-hit cache has no measured saving in that run;
+  combination savings do not establish each component's benefit.
+- Validator relaxation requires both source-supported correct acceptance and
+  rejection of relevant near misses, including extra incorrect facts beside a
+  correct match. Deterministic implementation alone does not prove semantic
+  equivalence; probabilistic tolerance belongs on the quality track.
+
+Use fixed-input checks, offline replay, necessary bounded live probes, then
+prospectively planned full pairs. Reuse applicable evidence with its identity;
+do not mechanically repeat every stage. Each escalation needs a remaining
+question, evidence to proceed, and a stopping condition. Preserve pilot failures
+and cost, introduce fixes under a new identity, and do not exclude inconvenient
+runs after seeing their completed cost results.
 
 ### 3.3 Do not optimize against the holdout set
 
@@ -1772,7 +1841,9 @@ evaluated candidate did not satisfy this condition.
 
 ### Phase 10: Controlled product rollout
 
-**Current state: not entered because the Phase 9 exit gate failed.**
+**Full-pipeline state: not entered because the historical Phase 9 exit gate
+failed. The 2026-09-05 local app update includes later scoped fixes and does not
+constitute full-pipeline acceptance or public release.**
 
 **Objective**
 
@@ -1958,6 +2029,14 @@ Use the repository's supported desktop build and smoke-test scripts. Packaging i
 not required for purely internal evaluator changes, but it is mandatory before
 changing the product default.
 
+An explicit local app update also requires packaging checks. Record the installed
+path, version/build identity, source-to-package verification, signing, runtime
+checks, and actual rollback method. Keep local delivery and public release
+separate from algorithm adoption. Passing tests proves only their covered
+behavior; successful startup proves runtime availability, not translation quality.
+Documentation-only updates need consistency/link and diff checks, not another
+algorithm suite, model run, or app build when the implementation has not changed.
+
 ## 11. Review Checklist for Every Change
 
 ### 11.1 Scope
@@ -2058,6 +2137,8 @@ Every completed phase should produce a short engineering report with:
 Phase:
 Revision:
 Working-tree baseline:
+Component revisions / combination / final retained revision and code hashes:
+Evidence-to-version bindings / applicable and invalidated evidence after removal:
 Corpus manifest hash:
 Development samples:
 Holdout samples:
@@ -2074,9 +2155,12 @@ LLM calls:
 Prompt tokens:
 Completion/reasoning tokens:
 Cache state:
+Activation / confirmed repairs / cache hits / demonstrably avoided requests:
 Wall time:
 Rollback mechanism:
 Decision: accept | reject | continue in shadow mode
+Per-component retention / proven outcomes / unverified claims:
+Local app identity and delivery checks / public release status:
 Remaining risks:
 ```
 

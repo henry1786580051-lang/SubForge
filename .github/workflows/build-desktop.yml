@@ -95,7 +95,7 @@ jobs:
         working-directory: frontend
 
       - name: Build desktop bundle
-        run: uv run --no-sync ${{ matrix.uv-extra }} --with pyinstaller --with pywebview python scripts/build_desktop.py --clean
+        run: uv run --no-sync ${{ matrix.uv-extra }} --with pyinstaller==6.20.0 --with pywebview python scripts/build_desktop.py --clean
 
       - name: Smoke test packaged macOS app
         if: runner.os == 'macOS'

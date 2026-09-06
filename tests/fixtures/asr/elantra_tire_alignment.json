@@ -1,0 +1,143 @@
+{
+  "description": "Local Wav2Vec2 forced alignment of original Elantra audio, offset 102 s; see artifacts/timing-audit-20260905/report.md",
+  "words": [
+    {
+      "word": "And",
+      "start": 106.121,
+      "end": 106.221,
+      "score": 0.789
+    },
+    {
+      "word": "we",
+      "start": 106.261,
+      "end": 106.321,
+      "score": 0.952
+    },
+    {
+      "word": "have",
+      "start": 106.341,
+      "end": 106.441,
+      "score": 0.869
+    },
+    {
+      "word": "a",
+      "start": 106.481,
+      "end": 106.501,
+      "score": 0.997
+    },
+    {
+      "word": "squared",
+      "start": 106.541,
+      "end": 106.882,
+      "score": 0.886
+    },
+    {
+      "word": "tire",
+      "start": 106.922,
+      "end": 107.202,
+      "score": 0.797
+    },
+    {
+      "word": "setup,",
+      "start": 107.242,
+      "end": 107.483,
+      "score": 0.884
+    },
+    {
+      "word": "a",
+      "start": 107.523,
+      "end": 107.563,
+      "score": 0.5
+    },
+    {
+      "word": "two",
+      "start": 107.603,
+      "end": 107.743,
+      "score": 1.0
+    },
+    {
+      "word": "forty",
+      "start": 107.823,
+      "end": 108.104,
+      "score": 0.935
+    },
+    {
+      "word": "five",
+      "start": 108.164,
+      "end": 108.384,
+      "score": 0.846
+    },
+    {
+      "word": "thirty",
+      "start": 108.444,
+      "end": 108.685,
+      "score": 0.92
+    },
+    {
+      "word": "five",
+      "start": 108.725,
+      "end": 108.945,
+      "score": 0.875
+    },
+    {
+      "word": "Z",
+      "start": 109.025,
+      "end": 109.225,
+      "score": 0.913
+    },
+    {
+      "word": "R",
+      "start": 109.426,
+      "end": 109.466,
+      "score": 0.969
+    },
+    {
+      "word": "nineteen.",
+      "start": 109.546,
+      "end": 110.007,
+      "score": 0.897
+    },
+    {
+      "word": "I",
+      "start": 110.087,
+      "end": 110.147,
+      "score": 1.0
+    },
+    {
+      "word": "do",
+      "start": 110.207,
+      "end": 110.307,
+      "score": 0.842
+    },
+    {
+      "word": "think",
+      "start": 110.347,
+      "end": 110.507,
+      "score": 1.0
+    },
+    {
+      "word": "these",
+      "start": 110.548,
+      "end": 110.688,
+      "score": 1.0
+    },
+    {
+      "word": "wheels",
+      "start": 110.748,
+      "end": 110.988,
+      "score": 0.98
+    },
+    {
+      "word": "look",
+      "start": 111.409,
+      "end": 111.589,
+      "score": 0.796
+    },
+    {
+      "word": "excellent.",
+      "start": 111.87,
+      "end": 112.15,
+      "score": 0.596
+    }
+  ]
+}

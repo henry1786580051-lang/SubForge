@@ -1,9 +1,41 @@
 import hashlib
 import zipfile
+from types import SimpleNamespace
 
 import pytest
 
 from scripts import build_desktop
+
+
+def test_native_bootloader_leaves_older_sdks_on_standard_fallback(monkeypatch):
+    monkeypatch.setattr(build_desktop.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(
+        build_desktop, "_run", lambda *args, **kwargs: SimpleNamespace(stdout="15.5")
+    )
+    assert build_desktop.prepare_native_bootloader() is None
+
+
+def test_native_bootloader_reuses_matching_sdk_and_architecture(monkeypatch, tmp_path):
+    monkeypatch.setattr(build_desktop.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(build_desktop.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(build_desktop, "BUILD_DIR", tmp_path)
+    monkeypatch.setitem(
+        build_desktop.sys.modules, "PyInstaller", SimpleNamespace(__version__="6.20.0")
+    )
+    commands = []
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        return SimpleNamespace(stdout="26.5" if command[-1] == "--show-sdk-version" else "/SDK")
+
+    monkeypatch.setattr(build_desktop, "_run", fake_run)
+    cache = tmp_path / "native-bootloader"
+    binary = cache / "pyinstaller-6.20.0/PyInstaller/bootloader/Darwin-64bit/runw"
+    binary.parent.mkdir(parents=True)
+    binary.write_bytes(b"existing build")
+    (cache / "sdk-build.txt").write_text("26.5\n/SDK\narm64\n6.20.0\n")
+    assert build_desktop.prepare_native_bootloader() == binary
+    assert len(commands) == 2  # No download or compiler execution on a cache hit.
 
 
 def test_windows_installer_removes_previous_pyinstaller_runtime():
@@ -77,10 +109,12 @@ def test_pyinstaller_receives_release_version(monkeypatch, tmp_path):
 
     monkeypatch.setattr(build_desktop, "DIST_DIR", dist_dir)
     monkeypatch.setattr(build_desktop, "_run", fake_run)
+    monkeypatch.setattr(build_desktop, "prepare_native_bootloader", lambda: tmp_path / "runw")
 
     build_desktop.build_pyinstaller("9.8.7")
 
     assert captured["env"]["SUBFORGE_BUILD_VERSION"] == "9.8.7"
+    assert captured["env"]["SUBFORGE_NATIVE_BOOTLOADER"] == str(tmp_path / "runw")
     assert not stale_bundle.exists()
 
 

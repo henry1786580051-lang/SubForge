@@ -1,6 +1,12 @@
 # Translation Quality Refactor Plan
 
-Status: Phases 0-7 complete; Phase 8 experimentation and Phase 9 blind holdout complete; all behavioral candidates rejected for rollout and production remains legacy
+Status: Historical Phases 0-9 completed; historical Phase 8/9 behavioral candidates rejected. The legacy main pipeline has subsequent local fixes; current evidence and local delivery status are maintained in the execution guide.
+
+Documentation update (2026-09-05): `优化指南.md` 2.2 governs new work, including
+version-bound evidence and separate local delivery/adoption records. The local
+app was updated on 2026-09-05 without full-pipeline quality or final-subset
+efficiency acceptance. This notice does not change the historical trial results
+or approve full-pipeline Phase 10.
 
 Admission update (2026-09-01): future work follows the three-track protocol in
 `优化指南.md`, sections 10-12. Bug fixes, quality improvements, and efficiency

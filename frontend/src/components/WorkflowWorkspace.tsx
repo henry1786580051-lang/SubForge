@@ -1,7 +1,8 @@
 "use client";
 
+import { useUiStore } from "@/store/uiStore";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Icon } from "@iconify/react";
+import { Icon } from "@/components/Icon";
 import { useAppStore, type WorkflowStep } from "@/store/appStore";
 import {
   configApi,
@@ -42,7 +43,7 @@ export function WorkflowWorkspace({ startTask, cancelTask }: WorkflowWorkspacePr
   const { step } = useAppStore();
 
   return (
-    <main className="flex-1 min-h-0 bg-background">
+    <main className="flex-1 min-h-0">
       {step === "import" && <ImportWorkspace />}
       {step === "transcribe" && (
         <TranscribeWorkspace startTask={startTask} cancelTask={cancelTask} />
@@ -56,8 +57,6 @@ export function WorkflowWorkspace({ startTask, cancelTask }: WorkflowWorkspacePr
 
 function ImportWorkspace() {
   const {
-    backendOnline,
-    ffmpegOk,
     fileInfo,
     setFileInfo,
     setSubtitles,
@@ -119,14 +118,22 @@ function ImportWorkspace() {
     [setSubtitleFile, setSubtitles]
   );
 
-  const chooseMedia = useCallback(async () => {
+  const chooseMedia = useCallback(async (kind: "media" | "any" = "media") => {
     try {
-      const selected = await openNativeFile("media");
+      const selected = await openNativeFile(kind);
       if (!selected.available) {
         mediaInputRef.current?.click();
         return;
       }
       if (!selected.path) return;
+      if (/\.(srt|vtt|ass)$/i.test(selected.path)) {
+        setUploading("subtitle");
+        const loaded = await subtitlesApi.load(selected.path);
+        setSubtitleFile(loaded.file_path);
+        setSubtitles(loaded.segments);
+        useAppStore.getState().addToast("字幕已导入", "success");
+        return;
+      }
       setUploading("media");
       setVideoFile(selected.path);
       const info = await filesApi.info(selected.path);
@@ -139,7 +146,7 @@ function ImportWorkspace() {
     } finally {
       setUploading(null);
     }
-  }, [setFileInfo, setVideoFile]);
+  }, [setFileInfo, setVideoFile, setSubtitleFile, setSubtitles]);
 
   const chooseSubtitle = useCallback(async () => {
     try {
@@ -178,184 +185,37 @@ function ImportWorkspace() {
     [loadMedia, loadSubtitle]
   );
 
-  const checks = [
-    {
-      label: "后端服务",
-      value: backendOnline ? "在线" : "离线",
-      ok: backendOnline,
-      icon: "solar:server-square-bold-duotone",
-    },
-    {
-      label: "FFmpeg",
-      value: ffmpegOk ? "可用" : "未就绪",
-      ok: ffmpegOk,
-      icon: "solar:videocamera-record-bold-duotone",
-    },
-    {
-      label: "音轨",
-      value: fileInfo ? `${fileInfo.audio_tracks.length} 条` : "待检测",
-      ok: !!fileInfo && fileInfo.audio_tracks.length > 0,
-      icon: "solar:soundwave-bold-duotone",
-    },
-    {
-      label: "字幕",
-      value: subtitles.length > 0 ? `${subtitles.length} 条` : "可选",
-      ok: subtitles.length > 0,
-      neutral: subtitles.length === 0,
-      icon: "solar:document-text-bold-duotone",
-    },
-  ];
+  const openRequested = useUiStore((state) => state.openRequested);
+  useEffect(() => {
+    if (!openRequested) return;
+    useUiStore.getState().consumeOpen();
+    // This effect consumes an application command and opens the native file dialog.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void chooseMedia("any");
+  }, [openRequested, chooseMedia]);
 
   return (
     <WorkspaceFrame meta={STEP_META.import}>
-      <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_360px] gap-5 max-xl:grid-cols-1">
-        <section
-          onDragOver={(event) => {
-            event.preventDefault();
-            setDragType("media");
-          }}
-          onDragLeave={() => setDragType(null)}
-          onDrop={handleDrop}
-          className={`relative min-h-0 overflow-hidden rounded-2xl border bg-surface shadow-sm transition-all ${
-            dragType
-              ? "border-accent bg-accent-dim"
-              : "border-border hover:border-border-active"
-          }`}
-        >
-          <input
-            ref={mediaInputRef}
-            type="file"
-            accept="video/*,audio/*"
-            className="hidden"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) void loadMedia(file);
-            }}
-          />
-          <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-accent via-emerald-500 to-sky-500" />
-          <div className="flex h-full min-h-[330px] flex-col p-5">
-            <div className="flex items-start justify-between gap-6">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-accent">
-                  准备素材
-                </p>
-                <h2 className="mt-2 max-w-[620px] text-[27px] font-semibold leading-tight text-text-primary">
-                  选择要处理的视频或音频
-                </h2>
-              </div>
-              <button
-                onClick={() => void chooseMedia()}
-                className="inline-flex shrink-0 items-center gap-2 rounded-full bg-accent px-4 py-2 text-[13px] font-medium text-white shadow-md transition hover:bg-accent-hover disabled:opacity-50"
-                disabled={uploading === "media"}
-              >
-                <Icon icon={uploading === "media" ? "solar:refresh-bold" : "solar:upload-bold"} className={uploading === "media" ? "animate-spin" : ""} width={17} />
-                选择文件
-              </button>
-            </div>
-
-            <div className="mt-5 grid flex-1 grid-cols-[minmax(280px,0.78fr)_minmax(320px,1fr)] gap-5 max-lg:grid-cols-1">
-              <div className="flex min-h-[220px] flex-col justify-between rounded-2xl border border-dashed border-border bg-background/70 p-4">
-                <div>
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-surface text-accent shadow-sm">
-                    <Icon icon="solar:folder-with-files-bold-duotone" width={27} />
-                  </div>
-                  <h3 className="mt-4 text-[18px] font-semibold text-text-primary">
-                    {videoFile ? "当前素材" : "拖入视频或音频"}
-                  </h3>
-                  <p className="mt-2 text-[13px] leading-6 text-text-secondary">
-                    {videoFile
-                      ? videoFile.split("/").pop()
-                      : "支持 MP4、MOV、MKV、MP3 和 WAV。导入后将自动读取时长、画面和音轨信息。"}
-                  </p>
-                </div>
-                <div className="mt-5 grid grid-cols-2 gap-2.5">
-                  <MetricTile label="时长" value={fileInfo ? formatDuration(fileInfo.duration) : "--"} />
-                  <MetricTile label="大小" value={fileInfo ? formatSize(fileInfo.size) : "--"} />
-                  <MetricTile
-                    label="视频"
-                    value={fileInfo?.video ? `${fileInfo.video.width}x${fileInfo.video.height}` : "音频/未知"}
-                  />
-                  <MetricTile label="音轨" value={fileInfo ? `${fileInfo.audio_tracks.length}` : "--"} />
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-border bg-surface-raised p-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-[14px] font-semibold text-text-primary">文件检查</h3>
-                  <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[11px] text-text-muted">
-                    {fileInfo ? "文件已就绪" : "等待导入"}
-                  </span>
-                </div>
-                <div className="mt-4 space-y-2.5">
-                  {checks.map((check) => (
-                    <CheckRow key={check.label} {...check} />
-                  ))}
-                </div>
-                <div className="mt-4 rounded-xl bg-background p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-[13px] font-medium text-text-primary">已有字幕</p>
-                      <p className="mt-1 text-[12px] text-text-muted">
-                        {subtitleFile ? subtitleFile.split("/").pop() : "导入 SRT、VTT 或 ASS，可直接断句、翻译和审校"}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => void chooseSubtitle()}
-                      className="rounded-full border border-border bg-surface px-3 py-1.5 text-[12px] text-text-secondary transition hover:border-border-active hover:text-text-primary"
-                    >
-                      导入字幕
-                    </button>
-                  </div>
-                  <input
-                    ref={subtitleInputRef}
-                    type="file"
-                    accept=".srt,.vtt,.ass"
-                    className="hidden"
-                    onChange={(event) => {
-                      const file = event.target.files?.[0];
-                      if (file) void loadSubtitle(file);
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
+      <div className="import-workspace">
+        <section className={`import-drop ${dragType ? "is-dragging" : ""}`}
+          onDragOver={(event) => { event.preventDefault(); setDragType("media"); }}
+          onDragLeave={() => setDragType(null)} onDrop={handleDrop} aria-busy={!!uploading}>
+          <input ref={mediaInputRef} type="file" accept="video/*,audio/*" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void loadMedia(file); event.target.value = ""; }} />
+          <input ref={subtitleInputRef} type="file" accept=".srt,.vtt,.ass" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void loadSubtitle(file); event.target.value = ""; }} />
+          <span className="import-symbol"><Icon icon="solar:subtitles-linear" width={40} /></span>
+          <h2>{uploading ? "正在读取文件…" : videoFile || subtitleFile ? "素材已准备好" : "从一份素材开始"}</h2>
+          <p className="import-description">拖入视频、音频或字幕，开始转录、翻译与精校。</p>
+          <div className="flex flex-wrap justify-center gap-3 mt-7">
+            <button className="primary-button" disabled={!!uploading} onClick={() => void chooseMedia()}><Icon icon="solar:folder-open-linear" width={18} />选择视频或音频 <kbd>⌘O</kbd></button>
+            <button className="toolbar-button" disabled={!!uploading} onClick={() => void chooseSubtitle()}>导入已有字幕</button>
           </div>
+          <p className="mt-5 text-[12px] text-text-muted">MP4、MOV、MP3、WAV · SRT、VTT、ASS</p>
         </section>
-
-        <aside className="flex min-h-0 flex-col gap-5 overflow-auto pr-1">
-          <Panel title="处理流程" icon="solar:map-point-wave-bold-duotone">
-            <div className="space-y-4">
-              <FlowStep index="1" title="导入" active done={!!videoFile || !!subtitleFile} />
-              <FlowStep index="2" title="转录" active={!!videoFile} done={!!subtitleFile && subtitles.length > 0} />
-              <FlowStep index="3" title="断句与翻译" active={!!subtitleFile} done={subtitles.some((s) => s.translated)} />
-              <FlowStep index="4" title="导出" active={subtitles.length > 0} />
-            </div>
-          </Panel>
-
-          <Panel title="音轨信息" icon="solar:soundwave-square-bold-duotone">
-            {fileInfo?.audio_tracks.length ? (
-              <div className="space-y-2">
-                {fileInfo.audio_tracks.map((track) => (
-                  <div key={track.index} className="rounded-xl border border-border bg-background p-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[13px] font-medium text-text-primary">音轨 {track.index + 1}</span>
-                      <span className="rounded-full bg-surface px-2 py-0.5 text-[10px] text-text-muted">
-                        {track.language || "未标注"}
-                      </span>
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-text-muted">
-                      <span>{track.codec}</span>
-                      <span>{track.channels} ch</span>
-                      <span>{track.sample_rate} Hz</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <EmptyState icon="solar:soundwave-bold-duotone" title="导入文件后显示音轨信息" minHeight="min-h-[220px]" />
-            )}
-          </Panel>
-        </aside>
+        {(videoFile || subtitleFile) && <div className="import-files">
+          {videoFile && <div className="import-file-row"><Icon icon="solar:video-library-bold-duotone" width={24} className="text-accent shrink-0" /><div className="min-w-0 flex-1"><strong>{fileInfo?.filename || videoFile.split("/").pop()}</strong><p>{fileInfo ? `${formatDuration(fileInfo.duration)} · ${formatSize(fileInfo.size)} · ${fileInfo.audio_tracks.length} 条音轨` : "正在读取媒体信息"}</p></div><button className="toolbar-button" disabled={!fileInfo} onClick={() => useAppStore.getState().setStep("transcribe")}>前往转录<Icon icon="solar:arrow-right-linear" width={16} /></button></div>}
+          {subtitleFile && <div className="import-file-row"><Icon icon="solar:document-text-linear" width={24} className="text-accent shrink-0" /><div className="min-w-0 flex-1"><strong>{subtitleFile.split("/").pop()}</strong><p>{subtitles.length} 条字幕 · 可直接编辑与翻译</p></div><button className="toolbar-button" onClick={() => useAppStore.getState().setStep("subtitle")}>打开字幕<Icon icon="solar:arrow-right-linear" width={16} /></button></div>}
+        </div>}
+        <p className="import-footnote">从素材到成片，一处完成。导入 → 转录 → 字幕</p>
       </div>
     </WorkspaceFrame>
   );
@@ -586,8 +446,8 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
 
   return (
     <WorkspaceFrame meta={STEP_META.transcribe}>
-      <div className="grid h-full min-h-0 grid-cols-[minmax(480px,1fr)_minmax(360px,0.72fr)] gap-5 max-xl:grid-cols-1">
-        <section className="grid min-h-0 grid-rows-[minmax(420px,1fr)_auto] gap-5">
+      <div className="workspace-layout">
+        <section className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] gap-3">
           <Panel
             title={subtitles.length ? `转录结果 · ${subtitles.length} 条` : "实时转录结果"}
             icon="solar:playlist-bold-duotone"
@@ -596,11 +456,39 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
             <LiveSubtitleList subtitles={subtitles} isLive={taskStatus === "running"} />
           </Panel>
           <Panel title="时间轴质量" icon="solar:shield-warning-bold-duotone">
-            <QualitySummary quality={quality} compact />
+            <QualitySummary quality={quality} hasData={subtitles.length > 0} compact />
           </Panel>
         </section>
 
-        <aside className="flex min-h-0 flex-col gap-5 overflow-auto pr-1">
+        <Inspector>
+          <TaskActionCard
+            title="转录任务"
+            description={
+              !configLoaded
+                ? "正在加载识别配置"
+                : videoFile
+                  ? videoFile.split(/[\\/]/).pop() || videoFile
+                  : "请先导入视频或音频文件"
+            }
+            primaryLabel={taskStatus === "running" ? "转录中" : "开始转录"}
+            disabled={!videoFile || !configLoaded || !config.transcribeModel || isProcessing || !diarizationReady}
+            progress={taskProgress}
+            message={taskMessage}
+            running={isProcessing}
+            stages={TRANSCRIBE_STAGES}
+            currentStage={taskMessage}
+            onPrimary={startTranscribe}
+            onCancel={cancelTask}
+          />
+          <Panel title="识别设置" icon="solar:microphone-linear">
+            <label className="block space-y-2 text-[13px] text-text-secondary">源语言
+              <select value={config.sourceLanguage} className="input-field" onChange={(event) => void saveConfig("source_language", event.target.value)}>
+                {SOURCE_LANGUAGES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+              </select>
+            </label>
+            <p className="mt-3 text-[12px] leading-5 text-text-muted">{ASR_ENGINES.find((engine) => engine.id === config.transcribeModel)?.name || config.transcribeModel} · {config.whisperModelSize}</p>
+          </Panel>
+          <details className="inspector-disclosure"><summary>识别引擎</summary>
           <Panel title="识别引擎" icon="solar:tuning-square-2-bold-duotone">
             <div className="grid grid-cols-2 gap-2.5">
               {ASR_ENGINES.map((engine) => {
@@ -629,6 +517,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
               )})}
             </div>
           </Panel>
+          </details>
 
           <Panel title="说话人识别" icon="solar:users-group-rounded-bold-duotone">
             <div className="space-y-3">
@@ -752,6 +641,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
             </div>
           </Panel>
 
+          <details className="inspector-disclosure"><summary>识别模型</summary>
           <Panel title="识别模型" icon="solar:layers-bold-duotone">
             {config.transcribeModel === "whisper_api" ? (
               <EmptyState icon="solar:cloud-bold-duotone" title="云端模型在设置页配置" />
@@ -891,7 +781,9 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
               </div>
             )}
           </Panel>
+          </details>
 
+          <details className="inspector-disclosure"><summary>硬件状态</summary>
           <Panel title="硬件状态" icon="solar:cpu-bold-duotone">
             <div className="grid grid-cols-2 gap-3">
               <MetricTile label="芯片" value={hardware?.chip || "检测中"} wide />
@@ -900,6 +792,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
               <MetricTile label="计算" value={hardware?.compute_type || "--"} />
             </div>
           </Panel>
+          </details>
 
           {missingAlignmentModels.length > 0 && (
             <section
@@ -999,28 +892,10 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
             </section>
           )}
 
-          <TaskActionCard
-            title="转录任务"
-            description={
-              !configLoaded
-                ? "正在加载识别配置"
-                : videoFile
-                  ? videoFile.split(/[\\/]/).pop() || videoFile
-                  : "请先导入视频或音频文件"
-            }
-            primaryLabel={taskStatus === "running" ? "转录中" : "开始转录"}
-            disabled={!videoFile || !configLoaded || !config.transcribeModel || isProcessing || !diarizationReady}
-            progress={taskProgress}
-            message={taskMessage}
-            running={isProcessing}
-            stages={TRANSCRIBE_STAGES}
-            currentStage={taskMessage}
-            onPrimary={startTranscribe}
-            onCancel={cancelTask}
-          />
+
 
           {fileInfo && <MediaCompactInfo info={fileInfo} />}
-        </aside>
+        </Inspector>
       </div>
     </WorkspaceFrame>
   );
@@ -1135,7 +1010,7 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
 
   return (
     <WorkspaceFrame meta={STEP_META.subtitle}>
-      <div className="grid h-full min-h-0 grid-cols-[minmax(560px,1fr)_360px] gap-5 max-xl:grid-cols-1">
+      <div className="workspace-layout">
         <section className="min-h-0 overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
           <SubtitlePanel
             startTask={startTask}
@@ -1145,23 +1020,24 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
           />
         </section>
 
-        <aside className="flex min-h-0 flex-col gap-5 overflow-auto pr-1">
+        <Inspector>
+          <TaskActionCard
+            title="字幕处理任务"
+            description={subtitleFile ? subtitleFile.split("/").pop() || subtitleFile : "请先导入或生成字幕"}
+            primaryLabel={taskStatus === "running" ? "处理中" : config.needTranslate ? "开始翻译" : "开始断句"}
+            disabled={!subtitleFile || isProcessing}
+            progress={taskProgress}
+            message={taskMessage}
+            running={isProcessing}
+            stages={["读取字幕", "调整断句", "检查原文", "生成翻译", "质量复核", "保存结果"]}
+            currentStage={taskMessage}
+            onPrimary={startSubtitle}
+            onCancel={cancelTask}
+          />
           <Panel title="处理模式" icon="solar:magic-stick-3-bold-duotone">
-            <div className="grid grid-cols-2 gap-2">
-              <ToggleCard
-                title="优化断句"
-                desc="按语义调整分段和字幕长度"
-                checked={config.needOptimize}
-                icon="solar:scissors-bold-duotone"
-                onChange={(value) => void saveConfig("need_optimize", value)}
-              />
-              <ToggleCard
-                title="翻译"
-                desc="生成目标语言字幕"
-                checked={config.needTranslate}
-                icon="solar:translation-bold-duotone"
-                onChange={(value) => void saveConfig("need_translate", value)}
-              />
+            <div className="space-y-4">
+              <ToggleLine label="优化断句" description="按语义调整分段和字幕长度" checked={config.needOptimize} onChange={(value) => void saveConfig("need_optimize", value)} />
+              <ToggleLine label="翻译" description="生成目标语言字幕" checked={config.needTranslate} onChange={(value) => void saveConfig("need_translate", value)} />
             </div>
           </Panel>
 
@@ -1217,6 +1093,7 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
             </div>
           </Panel>
 
+          <details className="inspector-disclosure"><summary>翻译要求</summary>
           <Panel title="翻译要求" icon="solar:pen-new-square-bold-duotone">
             <textarea
               value={config.customPrompt}
@@ -1239,13 +1116,14 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
               }`}
             />
           </Panel>
+          </details>
 
-          <Panel title="字幕质量" icon="solar:chart-2-bold-duotone">
+          <Panel title="结构检查" icon="solar:chart-2-bold-duotone">
             <div className="space-y-4">
               <div>
                 <div className="mb-2 flex items-center justify-between text-[12px]">
-                  <span className="text-text-muted">翻译完成度</span>
-                  <span className="font-mono text-text-primary">{completion}%</span>
+                  <span className="text-text-muted">译文覆盖率</span>
+                  <span className="font-mono text-text-primary">{subtitles.length ? `${completion}%` : "未检查"}</span>
                 </div>
                 <div className="h-2 overflow-hidden rounded-full bg-background">
                   <div className="h-full rounded-full bg-accent" style={{ width: `${completion}%` }} />
@@ -1253,75 +1131,31 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
               </div>
               <QualitySummary
                 quality={quality}
+                hasData={subtitles.length > 0}
                 compact
                 onEmptyTranslationsClick={jumpToNextEmptyTranslation}
               />
             </div>
           </Panel>
 
-          <TaskActionCard
-            title="字幕处理任务"
-            description={subtitleFile ? subtitleFile.split("/").pop() || subtitleFile : "请先导入或生成字幕"}
-            primaryLabel={taskStatus === "running" ? "处理中" : config.needTranslate ? "开始翻译" : "开始断句"}
-            disabled={!subtitleFile || isProcessing}
-            progress={taskProgress}
-            message={taskMessage}
-            running={isProcessing}
-            stages={["读取字幕", "调整断句", "检查原文", "生成翻译", "质量复核", "保存结果"]}
-            currentStage={taskMessage}
-            onPrimary={startSubtitle}
-            onCancel={cancelTask}
-          />
-        </aside>
+
+        </Inspector>
       </div>
     </WorkspaceFrame>
   );
 }
 
-function WorkspaceFrame({
-  children,
-  meta,
-}: {
-  children: React.ReactNode;
-  meta: (typeof STEP_META)[WorkflowStep];
-}) {
-  return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden p-5">
-      <div className="mb-5 flex shrink-0 items-end justify-between gap-5">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-accent">
-            <Icon icon={meta.icon} width={17} />
-            {meta.eyebrow}
-          </div>
-          <h1 className="mt-2 text-[28px] font-semibold leading-tight text-text-primary">{meta.title}</h1>
-          <p className="mt-1 max-w-3xl text-[13px] leading-6 text-text-secondary">{meta.description}</p>
-        </div>
-        <TaskStatusPill />
-      </div>
-      <div className="min-h-0 flex-1">{children}</div>
-    </div>
-  );
+function Inspector({ children }: { children: React.ReactNode }) {
+  const open = useUiStore((state) => state.inspectorOpen);
+  return <aside className="workspace-inspector" inert={!open} aria-label="处理选项">{children}</aside>;
 }
 
-function TaskStatusPill() {
-  const { backendOnline, taskMessage, taskProgress, taskStatus } = useAppStore();
-  if (taskStatus === "running") {
-    return (
-      <div className="flex shrink-0 items-center gap-3 rounded-full border border-accent/20 bg-accent-dim px-3 py-2">
-        <span className="h-2 w-2 rounded-full bg-accent animate-pulse" />
-        <span className="max-w-[260px] truncate text-[12px] font-medium text-accent">
-          {taskMessage || "处理中"}
-        </span>
-        <span className="font-mono text-[11px] text-accent">{taskProgress}%</span>
-      </div>
-    );
-  }
-  return (
-    <div className="flex shrink-0 items-center gap-2 rounded-full border border-border bg-surface px-3 py-2 text-[12px] text-text-muted">
-      <span className={`h-2 w-2 rounded-full ${backendOnline ? "bg-emerald-500" : "bg-red-500"}`} />
-      {backendOnline ? "后端在线" : "后端离线"}
-    </div>
-  );
+function WorkspaceFrame({ children, meta }: { children: React.ReactNode; meta: (typeof STEP_META)[WorkflowStep] }) {
+  const inspectorOpen = useUiStore((state) => state.inspectorOpen);
+  return <div className={`workspace-frame ${inspectorOpen ? "" : "inspector-hidden"}`}>
+    <div className="workspace-heading"><h1>{meta.title}</h1><p>{meta.description}</p></div>
+    <div className="min-h-0 flex-1 workspace-content">{children}</div>
+  </div>;
 }
 
 function Panel({
@@ -1336,9 +1170,9 @@ function Panel({
   title: string;
 }) {
   return (
-    <section className={`rounded-2xl border border-border bg-surface p-4 shadow-sm ${fill ? "flex min-h-0 flex-1 flex-col overflow-hidden" : ""}`}>
+    <section className={`workspace-panel ${fill ? "flex min-h-0 flex-1 flex-col overflow-hidden" : ""}`}>
       <div className="mb-3.5 flex min-h-8 shrink-0 items-center gap-2.5">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent-dim text-accent">
+        <span className="flex shrink-0 items-center justify-center text-text-muted">
           <Icon icon={icon} width={18} />
         </span>
         <h2 className="text-[14px] font-semibold text-text-primary">{title}</h2>
@@ -1353,71 +1187,6 @@ function MetricTile({ label, value, wide }: { label: string; value: string; wide
     <div className={`rounded-xl border border-border bg-surface p-3 ${wide ? "col-span-2" : ""}`}>
       <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-text-muted">{label}</p>
       <p className="mt-1 truncate text-[13px] font-semibold text-text-primary">{value}</p>
-    </div>
-  );
-}
-
-function CheckRow({
-  icon,
-  label,
-  neutral,
-  ok,
-  value,
-}: {
-  icon: string;
-  label: string;
-  neutral?: boolean;
-  ok: boolean;
-  value: string;
-}) {
-  return (
-    <div className="flex items-center justify-between rounded-xl border border-border bg-background p-3">
-      <div className="flex items-center gap-3">
-        <Icon icon={icon} width={18} className={ok ? "text-emerald-600" : neutral ? "text-text-muted" : "text-red-500"} />
-        <span className="text-[13px] font-medium text-text-primary">{label}</span>
-      </div>
-      <span
-        className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${
-          ok
-            ? "bg-emerald-50 text-emerald-700"
-            : neutral
-            ? "bg-surface text-text-muted"
-            : "bg-red-50 text-red-600"
-        }`}
-      >
-        {value}
-      </span>
-    </div>
-  );
-}
-
-function FlowStep({
-  active,
-  done,
-  index,
-  title,
-}: {
-  active?: boolean;
-  done?: boolean;
-  index: string;
-  title: string;
-}) {
-  return (
-    <div className="flex items-center gap-3">
-      <div
-        className={`flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-semibold ${
-          done
-            ? "bg-emerald-500 text-white"
-            : active
-            ? "bg-accent text-white"
-            : "bg-background text-text-muted"
-        }`}
-      >
-        {done ? <Icon icon="solar:check-read-bold" width={14} /> : index}
-      </div>
-      <span className={`text-[13px] ${active || done ? "font-medium text-text-primary" : "text-text-muted"}`}>
-        {title}
-      </span>
     </div>
   );
 }
@@ -1545,53 +1314,26 @@ function ToggleLine({
 }) {
   return (
     <button
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className="flex w-full items-center justify-between gap-4 rounded-xl border border-border bg-background p-3 text-left transition hover:border-border-active disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-border"
+      className="toggle-line"
     >
       <span className="min-w-0">
         <span className="block text-[13px] font-medium text-text-primary">{label}</span>
         {description && (
-          <span className="mt-0.5 block text-[10px] leading-4 text-text-muted">{description}</span>
+          <span className="mt-0.5 block text-[12px] leading-5 text-text-muted">{description}</span>
         )}
       </span>
-      <span className={`relative h-[22px] w-10 rounded-full transition ${checked ? "bg-accent" : "bg-black/10"}`}>
+      <span className={`relative h-[22px] w-10 shrink-0 rounded-full transition ${checked ? "bg-accent" : "bg-black/10"}`}>
         <span
           className={`absolute top-[3px] h-4 w-4 rounded-full bg-white shadow-sm transition ${
             checked ? "left-[21px]" : "left-[3px]"
           }`}
         />
       </span>
-    </button>
-  );
-}
-
-function ToggleCard({
-  checked,
-  desc,
-  icon,
-  onChange,
-  title,
-}: {
-  checked: boolean;
-  desc: string;
-  icon: string;
-  onChange: (value: boolean) => void;
-  title: string;
-}) {
-  return (
-    <button
-      onClick={() => onChange(!checked)}
-      className={`rounded-xl border p-3 text-left transition ${
-        checked ? "border-accent bg-accent-dim" : "border-border bg-background hover:border-border-active"
-      }`}
-    >
-      <div className="flex items-center justify-between">
-        <Icon icon={icon} width={19} className={checked ? "text-accent" : "text-text-muted"} />
-        <span className={`h-2 w-2 rounded-full ${checked ? "bg-accent" : "bg-black/20"}`} />
-      </div>
-      <p className="mt-3 text-[13px] font-semibold text-text-primary">{title}</p>
-      <p className="mt-1 text-[10px] leading-4 text-text-muted">{desc}</p>
     </button>
   );
 }
@@ -1622,26 +1364,26 @@ function TaskActionCard({
   title: string;
 }) {
   return (
-    <section className="rounded-2xl border border-border bg-text-primary p-4 text-white shadow-md">
+    <section className="task-action">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="text-[15px] font-semibold">{title}</h2>
-          <p className="mt-1 max-w-[280px] truncate text-[12px] text-white/60">{description}</p>
+          <p className="mt-1 max-w-[280px] truncate text-[12px] text-text-muted">{description}</p>
         </div>
-        {running && <span className="rounded-full bg-white/10 px-2 py-1 font-mono text-[11px]">{progress}%</span>}
+        {running && <span className="rounded-full bg-background px-2 py-1 font-mono text-[11px]">{progress}%</span>}
       </div>
       {running && (
         <div className="mt-4">
-          <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+          <div className="h-1.5 overflow-hidden rounded-full bg-background">
             <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${progress}%` }} />
           </div>
-          <p className="mt-2 truncate text-[12px] text-white/70">{message || currentStage}</p>
+          <p className="mt-2 truncate text-[12px] text-text-secondary">{message || currentStage}</p>
           <div className="mt-3 grid grid-cols-3 gap-1.5">
             {stages.map((stage, index) => (
               <span
                 key={stage}
                 className={`rounded-full px-2 py-1 text-center text-[10px] ${
-                  progress >= (index / stages.length) * 100 ? "bg-white/14 text-white" : "bg-white/6 text-white/45"
+                  progress >= (index / stages.length) * 100 ? "bg-accent-dim text-accent" : "bg-background text-text-muted"
                 }`}
               >
                 {stage}
@@ -1654,7 +1396,7 @@ function TaskActionCard({
         {running ? (
           <button
             onClick={() => void onCancel()}
-            className="w-full rounded-full border border-white/20 px-4 py-2 text-[13px] font-medium text-white transition hover:bg-white/10"
+            className="w-full rounded-full border border-border px-4 py-2 text-[13px] font-medium text-text-primary transition hover:bg-surface-hover"
           >
             取消任务
           </button>
@@ -1759,13 +1501,16 @@ function LiveSubtitleList({
 
 function QualitySummary({
   compact,
+  hasData,
   onEmptyTranslationsClick,
   quality,
 }: {
   compact?: boolean;
+  hasData: boolean;
   onEmptyTranslationsClick?: () => void;
   quality: SubtitleQuality;
 }) {
+  if (!hasData) return <p className="text-[13px] leading-6 text-text-muted">未检查 · 导入或生成字幕后显示结构检查结果。</p>;
   const items = [
     { label: "重叠", value: quality.overlaps.length, tone: quality.overlaps.length ? "bad" : "good" },
     { label: "过长", value: quality.longDurations.length, tone: quality.longDurations.length ? "warn" : "good" },

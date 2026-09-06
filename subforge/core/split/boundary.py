@@ -2578,6 +2578,10 @@ def normalize_boundaries(
     hard_max_cjk_chars: int = HARD_MAX_CJK_CHARS,
 ) -> list[ASRDataSeg]:
     """Move only high-risk boundaries while retaining every atomic word timing."""
+    # Every pass below can rebuild cues without translated text. Check before
+    # the first pass, including when only part of the input is translated.
+    if any(segment.translated_text for segment in segments):
+        return list(segments)
     result = _remove_singular_corrections(segments)
     result = _split_internal_terminal_clauses(result)
     result = _repair_japanese_boundaries_until_stable(
@@ -2588,7 +2592,7 @@ def normalize_boundaries(
         result,
         hard_max_words=hard_max_words,
     )
-    if len(result) < 2 or any(segment.translated_text for segment in result):
+    if len(result) < 2:
         return result
 
     for _ in range(3):

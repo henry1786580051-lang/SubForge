@@ -47,6 +47,8 @@ def approximate_magnitude(features: EnglishBoundaryFeatures) -> bool:
 
 
 def value_unit_or_noun(features: EnglishBoundaryFeatures) -> bool:
+    if standalone_magnitude_named_population(features):
+        return True
     completed_calendar_year = bool(
         re.search(r"\b(?:19|20)\d{2},$", features.semantic_left)
     )
@@ -57,6 +59,29 @@ def value_unit_or_noun(features: EnglishBoundaryFeatures) -> bool:
     )
 
 
+def standalone_magnitude_named_population(features: EnglishBoundaryFeatures) -> bool:
+    """Keep a bare quantity with its capitalized plural population noun.
+
+    Restrict the left side to a quantity fragment: a completed clause such as
+    ``We raised a million`` can safely precede a new subject. Do not broadly
+    treat every occurrence of ``million`` as an unfinished noun phrase.
+    """
+    return bool(
+        features.tail in {"hundred", "thousand", "million", "billion", "trillion"}
+        and re.match(r"^[A-Z][a-z]{2,}s\b", features.right)
+        and features.head not in {"this", "thanks", "yours", "ours", "theirs", "hers"}
+        and features.eligible
+        and re.fullmatch(
+            r"(?:(?:almost|nearly|about|around|approximately|roughly|over|under|"
+            r"more than|less than|at least|at most)\s+)?"
+            r"(?:a|one|two|three|four|five|six|seven|eight|nine|ten|\d[\d,.]*)\s+"
+            r"(?:hundred|thousand|million|billion|trillion)",
+            features.left,
+            re.IGNORECASE,
+        )
+    )
+
+
 def calendar_month_year(features: EnglishBoundaryFeatures) -> bool:
     return features.tail in _MONTHS and bool(
         re.match(r"^(?:19|20)\d{2}\b", features.semantic_right)
@@ -64,9 +89,13 @@ def calendar_month_year(features: EnglishBoundaryFeatures) -> bool:
 
 
 def compound_modifier(features: EnglishBoundaryFeatures) -> bool:
+    # ASR and source optimization may spell the same modifier as ``six speed``
+    # or ``six-speed``. Keep both on the existing numeric dependency path;
+    # sentence dashes (en/em dash) are not compound-word separators.
     return bool(
         re.search(
-            r"\b(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+"
+            r"\b(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+)"
+            r"(?:\s+|[ \t]*[-‐‑][ \t]*)"
             r"(?:channel|cylinder|door|inch|liter|litre|seat|speaker|speed)$",
             features.semantic_left,
             re.IGNORECASE,

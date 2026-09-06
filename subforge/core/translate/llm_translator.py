@@ -23,6 +23,7 @@ from subforge.core.llm import (
     parse_json_object,
     prefers_native_reasoning,
 )
+from subforge.core.llm.client import LLMRequestCancelled
 from subforge.core.prompts import get_prompt
 from subforge.core.split.boundary import assess_english_boundary
 from subforge.core.translate.base import (
@@ -68,6 +69,7 @@ from subforge.core.translate.quality import (
     select_translation_mode_policy,
     translation_metadata_guidance,
 )
+from subforge.core.translate.quality.closed_boundary import is_closed_soft_boundary
 from subforge.core.translate.quality.numbers import normalize_grouped_numbers
 from subforge.core.translate.quality.preservation import (
     _CHINESE_ENTITY_ALIASES,
@@ -75,6 +77,7 @@ from subforge.core.translate.quality.preservation import (
     _SOURCE_TOKEN_EQUIVALENTS,
     inspect_preserved_tokens,
 )
+from subforge.core.translate.quality.verdict_cache import PositiveVerdictCache
 from subforge.core.translate.types import TargetLanguage
 from subforge.core.utils.cache import generate_cache_key
 
@@ -153,6 +156,7 @@ class LLMTranslator(BaseTranslator):
         self._reasoning_metrics = self._empty_reasoning_metrics()
         self._shadow_repair_recorder = ShadowRepairRecorder()
         self._shadow_repair_context = threading.local()
+        self._positive_fidelity_verdicts = PositiveVerdictCache()
 
     @classmethod
     def _empty_reasoning_metrics(cls) -> Dict[str, int]:
@@ -259,6 +263,7 @@ class LLMTranslator(BaseTranslator):
         self._fatal_provider_error.clear()
         self._fatal_provider_message = ""
         self._reset_reasoning_metrics()
+        self._positive_fidelity_verdicts.clear()
         self._shadow_repair_recorder = ShadowRepairRecorder()
         self._shadow_repair_context = threading.local()
         self._canonical_evidence_summary = CanonicalEvidenceSummary()
@@ -478,6 +483,15 @@ class LLMTranslator(BaseTranslator):
             # rendering ending in 的 has instead turned that object into an
             # attributive phrase without a head noun.
             message = "nominal modifier is stranded"
+        if (
+            getattr(getattr(self, "target_language", None), "value", None)
+            in {"简体中文", "繁体中文", "粤语"}
+            and self._gap_after_index.get(index, 0) < self.SEPARATED_DISPLAY_GAP_MS
+            and is_closed_soft_boundary(
+                source, self._all_source_by_index.get(index + 1, ""), left, right, message
+            )
+        ):
+            return None
         return boundary_diagnostic_from_legacy_message(
             message,
             cue_keys=(index, index + 1),
@@ -7613,6 +7627,8 @@ Rewrite only the provided translations. Keep every key, timestamp boundary, fact
         independent check verifies that the small same-speaker window still contains
         every source fact exactly once without introducing new meaning.
         """
+        if not self.is_running:
+            raise LLMRequestCancelled("Translation cancelled before fidelity validation")
         repaired_by_index = {item.index: item for item in repaired_items}
         combined_source = " ".join(
             self._source_for_translation(item.original_text) for item in source_items
@@ -7680,6 +7696,26 @@ Rewrite only the provided translations. Keep every key, timestamp boundary, fact
             },
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
         ]
+        key = generate_cache_key(
+            {
+                "messages": messages,
+                "model": self.model,
+                "client_identity": id(self.llm_client),
+                "target_language": self.target_language.value,
+                "context": self.translation_context.fingerprint(),
+                "custom_prompt": self.custom_prompt,
+                "sources": self._all_source_by_index,
+                "speakers": self._all_speaker_by_index,
+                "languages": self._all_language_by_index,
+                "gaps": self._gap_after_index,
+            }
+        )
+        self._positive_fidelity_verdicts.validate(
+            key, lambda: self._request_chinese_window_fidelity(messages)
+        )
+
+    def _request_chinese_window_fidelity(self, messages: List[Dict[str, str]]) -> None:
+        """Make the unchanged fidelity request; only a valid verdict is reusable."""
         response = call_llm(
             messages=messages,
             model=self.model,

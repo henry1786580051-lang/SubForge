@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
-import { Icon } from "@iconify/react";
+import { useState, useEffect, useMemo, useRef, useId } from "react";
+import { useUiStore } from "@/store/uiStore";
+import { Icon } from "@/components/Icon";
 import { useAppStore } from "@/store/appStore";
 import { configApi, openNativeLogsFolder, transcribeApi, tasksApi } from "@/lib/api";
 import type { AsrModelInfo, AsrModelStatus, AsrModelTestResult } from "@/lib/api";
@@ -17,6 +18,7 @@ import {
 } from "@/features/settings/catalog";
 
 export function SettingsPanel() {
+  const { appearance, setAppearance } = useUiStore();
   const { setActiveView } = useAppStore();
   const [settings, setSettings] = useState<Record<string, unknown>>({});
   const [hwInfo, setHwInfo] = useState<{
@@ -31,7 +33,7 @@ export function SettingsPanel() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState("deepseek");
-  const [activeSettingsView, setActiveSettingsView] = useState<SettingsView>("llm");
+  const [activeSettingsView, setActiveSettingsView] = useState<SettingsView>("general");
   const [downloadingModel, setDownloadingModel] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
   const [asrModels, setAsrModels] = useState<AsrModelInfo[]>([]);
@@ -332,57 +334,49 @@ export function SettingsPanel() {
   const activeViewMeta = SETTINGS_VIEWS.find((view) => view.id === activeSettingsView) || SETTINGS_VIEWS[0];
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-background">
-      <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-surface px-5">
-        <div className="flex items-center gap-2.5">
-          <Icon icon="solar:settings-linear" className="h-4 w-4 text-text-muted" />
-          <h2 className="text-[13px] font-semibold text-text-primary">设置</h2>
-          {saving && (
-            <span className="flex items-center gap-1.5 text-[10px] text-accent">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
-              正在保存
-            </span>
-          )}
+    <div className="utility-page settings-page">
+      <header className="utility-heading">
+        <div><h1>设置</h1><p>让工作区适应你的习惯与处理流程。</p></div>
+        <div className="utility-heading-actions">
+          <span className="settings-save-status" role="status">{saving ? "正在保存…" : "更改后自动保存"}</span>
+          <button aria-label="关闭设置" onClick={() => setActiveView("workflow")} className="utility-icon-button"><Icon icon="solar:close-circle-linear" width={21} /></button>
         </div>
-        <button onClick={() => setActiveView("workflow")} className="p-1.5 rounded-md text-text-muted hover:text-text-secondary hover:bg-surface-hover transition-all btn-press">
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6 18L18 6M6 6l12 12" /></svg>
-        </button>
       </header>
-
-      <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[210px_minmax(0,1fr)]">
-        <nav className="shrink-0 overflow-x-auto border-b border-border bg-surface px-3 py-2 md:overflow-y-auto md:border-b-0 md:border-r md:px-3 md:py-4" aria-label="设置分类">
-          <div className="flex min-w-max gap-1 md:min-w-0 md:flex-col">
-            {SETTINGS_VIEWS.map((view) => (
-              <button
-                key={view.id}
-                onClick={() => setActiveSettingsView(view.id)}
-                className={`flex min-h-11 items-center gap-3 rounded-md px-3 py-2 text-left transition-colors md:w-full ${
-                  activeSettingsView === view.id
-                    ? "bg-accent-dim text-accent"
-                    : "text-text-secondary hover:bg-surface-hover hover:text-text-primary"
-                }`}
-              >
-                <Icon icon={view.icon} className="h-[18px] w-[18px] shrink-0" />
-                <span className="min-w-0">
-                  <span className="block text-[12px] font-medium">{view.label}</span>
-                  <span className="hidden truncate text-[9px] text-text-muted md:block">{view.description}</span>
-                </span>
-              </button>
-            ))}
+      <nav className="settings-category-bar glass-surface" aria-label="设置分类">
+        {SETTINGS_VIEWS.map((view) => (
+          <button key={view.id} aria-current={activeSettingsView === view.id ? "page" : undefined}
+            onClick={() => setActiveSettingsView(view.id)}>
+            <Icon icon={view.icon} width={19} /><span>{view.label}</span>
+          </button>
+        ))}
+      </nav>
+      <main className="settings-scroll" key={activeSettingsView}>
+        <div className="settings-content">
+          <div className="settings-intro">
+            <span className="settings-category-symbol"><Icon icon={activeViewMeta.icon} width={25} /></span>
+            <div><h2>{activeViewMeta.label}</h2><p>{activeViewMeta.description}</p></div>
           </div>
-        </nav>
-
-        <main className="min-h-0 overflow-y-auto">
-          <div className="mx-auto w-full max-w-[880px] px-5 pb-20 pt-6 lg:px-8">
-            <div className="mb-6 border-b border-border pb-4">
-              <div className="flex items-center gap-2">
-                <Icon icon={activeViewMeta.icon} className="h-5 w-5 text-accent" />
-                <h1 className="text-[18px] font-semibold text-text-primary">{activeViewMeta.label}</h1>
-              </div>
-              <p className="mt-1 text-[11px] text-text-muted">{activeViewMeta.description}</p>
-            </div>
-
-            <div className="space-y-6">
+          <div className="settings-sections">
+            {activeSettingsView === "general" && <>
+              <SettingsSection title="外观" description="通透的操作层，清晰的字幕阅读区。">
+                <div className="appearance-options" role="group" aria-label="颜色模式">
+                  {([['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']] as const).map(([value, label]) => (
+                    <button key={value} aria-pressed={appearance === value} onClick={() => {
+                      setAppearance(value);
+                      try { localStorage.setItem("subforge.appearance", value); } catch { /* Apply for this session. */ }
+                    }}>
+                      <span className={`appearance-preview preview-${value}`} aria-hidden="true"><span className="preview-sidebar" /><span className="preview-document"><i /><i /><i /></span></span>
+                      <span className="appearance-option-label">{label}{appearance === value ? <Icon icon="solar:check-circle-bold" width={17} /> : <span className="appearance-unselected" aria-hidden="true" />}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="settings-footnote">透明度与动态效果跟随 macOS 辅助功能设置。</p>
+              </SettingsSection>
+              <SettingsSection title="使用与支持" description="查看任务记录，或回到字幕工作区。">
+                <SettingsField label="诊断日志" description="按任务查看请求、耗时和错误详情。"><button className="toolbar-button" onClick={() => setActiveView("llm-logs")}>查看诊断日志<Icon icon="solar:alt-arrow-right-linear" width={16} /></button></SettingsField>
+                <SettingsField label="键盘快捷键"><div className="settings-shortcuts"><span>导入素材 <kbd>⌘O</kbd></span><span>保存字幕 <kbd>⌘S</kbd></span><span>撤销编辑 <kbd>⌘Z</kbd></span></div></SettingsField>
+              </SettingsSection>
+            </>}
 
         {/* LLM Configuration */}
         {activeSettingsView === "llm" && (
@@ -400,7 +394,7 @@ export function SettingsPanel() {
                   <option key={provider.id} value={provider.id}>{provider.name}</option>
                 ))}
               </select>
-              <span className={`flex shrink-0 items-center gap-1.5 text-[10px] ${settings.llm_api_key || settings.llm_api_key_configured ? "text-emerald-600" : "text-amber-600"}`}>
+              <span className={`flex shrink-0 items-center gap-1.5 text-[12px] ${settings.llm_api_key || settings.llm_api_key_configured ? "text-emerald-600" : "text-amber-600"}`}>
                 <span className={`h-1.5 w-1.5 rounded-full ${settings.llm_api_key || settings.llm_api_key_configured ? "bg-emerald-500" : "bg-amber-500"}`} />
                 {settings.llm_api_key || settings.llm_api_key_configured ? "已配置" : "待配置"}
               </span>
@@ -441,7 +435,7 @@ export function SettingsPanel() {
               </button>
               {(detectedModels !== null || detectError) && (
                 <button onClick={() => { setDetectedModels(null); setDetectError(null); }}
-                  className="text-[10px] text-text-muted hover:text-text-secondary transition-colors">
+                  className="text-[12px] text-text-muted hover:text-text-secondary transition-colors">
                   清除
                 </button>
               )}
@@ -456,7 +450,7 @@ export function SettingsPanel() {
             {detectedModels !== null && detectedModels.length > 0 && currentProvider?.groupedModels && (
               <div className="mb-2 overflow-hidden rounded-lg border border-border bg-[rgba(0,0,0,0.01)]">
                 <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-                  <Icon icon="solar:magnifer-linear" className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                  <Icon icon="solar:magnifier-linear" className="h-3.5 w-3.5 shrink-0 text-text-muted" />
                   <input
                     type="search"
                     value={modelSearch}
@@ -464,7 +458,7 @@ export function SettingsPanel() {
                     placeholder={`搜索 ${detectedModels.length} 个模型`}
                     className="min-w-0 flex-1 bg-transparent text-[11px] text-text-primary outline-none placeholder:text-text-muted"
                   />
-                  <span className="shrink-0 text-[10px] text-text-muted">{nvidiaModelGroups.length} 家公司</span>
+                  <span className="shrink-0 text-[12px] text-text-muted">{nvidiaModelGroups.length} 家公司</span>
                 </div>
                 <div className="max-h-80 overflow-y-auto p-1.5">
                   {nvidiaModelGroups.length > 0 ? nvidiaModelGroups.map((group) => {
@@ -483,8 +477,8 @@ export function SettingsPanel() {
                             className={`h-3.5 w-3.5 shrink-0 text-text-muted transition-transform ${expanded ? "rotate-90" : ""}`}
                           />
                           <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-text-primary">{group.name}</span>
-                          {selectedInGroup && <span className="text-[9px] font-medium text-accent">当前</span>}
-                          <span className="min-w-6 text-right font-mono text-[9px] text-text-muted">{group.models.length}</span>
+                          {selectedInGroup && <span className="text-[11px] font-medium text-accent">当前</span>}
+                          <span className="min-w-6 text-right font-mono text-[11px] text-text-muted">{group.models.length}</span>
                         </button>
                         {expanded && (
                           <div className="space-y-1 pb-2 pl-8 pr-2">
@@ -495,7 +489,7 @@ export function SettingsPanel() {
                                   key={model}
                                   type="button"
                                   onClick={() => void handleSave("llm_model", model)}
-                                  className={`flex w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-left text-[10px] transition-colors ${
+                                  className={`flex w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-left text-[12px] transition-colors ${
                                     selected
                                       ? "border-accent bg-accent-dim font-medium text-accent"
                                       : "border-transparent text-text-secondary hover:border-border hover:bg-surface"
@@ -598,19 +592,19 @@ export function SettingsPanel() {
             <div className="rounded-lg border border-accent/20 bg-accent-dim/45 p-4">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2 text-[10px] font-semibold text-accent">
+                  <div className="flex items-center gap-2 text-[12px] font-semibold text-accent">
                     <span className={`h-1.5 w-1.5 rounded-full ${modelStatus.testable ? "bg-emerald-500" : "bg-amber-500"}`} />
                     当前方案
                   </div>
                   <p className="mt-1.5 text-[14px] font-semibold text-text-primary">
                     {modelStatus.engine_name} · {modelStatus.model_name}
                   </p>
-                  <p className="mt-1 text-[10px] leading-4 text-text-muted">
+                  <p className="mt-1 text-[12px] leading-4 text-text-muted">
                     {modelStatus.model_message}
                     {hwInfo && hwInfo.chip !== "Unknown" ? ` · ${hwInfo.chip} · ${hwInfo.gpu}` : ""}
                   </p>
                   {modelStatus.engine === "whisperx" && (
-                    <p className="mt-1 text-[10px] leading-4 text-text-secondary">
+                    <p className="mt-1 text-[12px] leading-4 text-text-secondary">
                       词级对齐：{modelStatus.alignment_strategy === "auto" ? "按源语言自动匹配" : "手动指定"}
                       {modelStatus.alignment_language_name ? ` · ${modelStatus.alignment_language_name}` : ""}
                       {modelStatus.alignment_language === "auto" ? " · 识别语言后加载" : ""}
@@ -672,27 +666,27 @@ export function SettingsPanel() {
                   <div className="flex items-center gap-2">
                     <span className="text-[12px] font-medium text-text-primary">{e.name}</span>
                     {(settings.transcribe_model as string) === e.id && (
-                      <span className="ml-auto inline-flex items-center gap-1 text-[9px] font-semibold text-accent">
+                      <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold text-accent">
                         <span className="h-1.5 w-1.5 rounded-full bg-accent" />当前
                       </span>
                     )}
                   </div>
-                  <span className="text-[10px] text-text-muted">{unsupported ? "当前平台不支持" : e.desc}</span>
+                  <span className="text-[12px] text-text-muted">{unsupported ? "当前平台不支持" : e.desc}</span>
                 </button>
               )})}
             </div>
             {(settings.transcribe_model as string) === "faster_whisper" && (
-              <p className="text-[10px] text-emerald-600 mt-1.5">内置 CTranslate2 运行时；Windows 自动使用可用的 NVIDIA CUDA，否则回退 CPU</p>
+              <p className="text-[12px] text-emerald-600 mt-1.5">内置 CTranslate2 运行时；Windows 自动使用可用的 NVIDIA CUDA，否则回退 CPU</p>
             )}
             {(settings.transcribe_model as string) === "whisperx" && (
-              <p className="text-[10px] text-emerald-600 mt-1.5">
+              <p className="text-[12px] text-emerald-600 mt-1.5">
                 {settings.whisperx_backend === "mlx"
                   ? "当前使用 Apple Silicon 优化的 MLX Whisper，并通过 forced alignment 生成词级时间轴"
                   : "当前使用 Windows CTranslate2/CUDA 或 CPU 路径，并通过 forced alignment 生成词级时间轴"}
               </p>
             )}
             {(settings.transcribe_model as string) === "whisper_cpp" && (
-              <p className="text-[10px] text-emerald-600 mt-1.5">Apple Silicon 原生 Metal 加速，NVIDIA GPU 上使用 CPU + int8 量化</p>
+              <p className="text-[12px] text-emerald-600 mt-1.5">Apple Silicon 原生 Metal 加速，NVIDIA GPU 上使用 CPU + int8 量化</p>
             )}
           </SettingsField>
 
@@ -740,7 +734,7 @@ export function SettingsPanel() {
               </div>
               {whisperModels && whisperModels.length > 0 && (
                 <div className="mt-2 p-2 rounded-lg border border-border bg-[rgba(0,0,0,0.01)] max-h-40 overflow-y-auto">
-                  <p className="text-[10px] text-text-muted mb-1.5">点击选择模型：</p>
+                  <p className="text-[12px] text-text-muted mb-1.5">点击选择模型：</p>
                   <div className="flex flex-wrap gap-1.5">
                     {whisperModels.map((m) => (
                       <button key={m} onClick={() => {
@@ -812,11 +806,11 @@ export function SettingsPanel() {
                     <span className="block truncate text-[12px] font-semibold text-text-primary">
                       {modelStatus?.model_name || "选择模型"}
                     </span>
-                    <span className="mt-0.5 block text-[10px] text-text-muted">
+                    <span className="mt-0.5 block text-[12px] text-text-muted">
                       {modelStatus?.model_ready ? "本地已就绪" : modelStatus?.model_state === "on_demand" ? "首次使用自动下载" : "检查模型状态"}
                     </span>
                   </span>
-                  <span className="shrink-0 text-[10px] font-medium text-accent">更换模型</span>
+                  <span className="shrink-0 text-[12px] font-medium text-accent">更换模型</span>
                 </summary>
                 <div className="space-y-2 border-t border-border p-3">
                 {(settings.transcribe_model === "whisper_cpp" ? WHISPER_CPP_MODELS : settings.transcribe_model === "whisperx" ? MLX_WHISPER_MODELS : FASTER_WHISPER_MODELS).map((m) => {
@@ -832,13 +826,13 @@ export function SettingsPanel() {
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
                         <span className="text-[12px] font-medium text-text-primary">{m.name}</span>
-                        <span className="text-[10px] text-text-muted font-mono">{m.size}</span>
-                        {isSelected && <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent text-white">当前使用</span>}
-                        {isReady && <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600">本地已就绪</span>}
-                        {!isReady && isOnDemand && <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">按需下载</span>}
+                        <span className="text-[12px] text-text-muted font-mono">{m.size}</span>
+                        {isSelected && <span className="text-[11px] px-1.5 py-0.5 rounded bg-accent text-white">当前使用</span>}
+                        {isReady && <span className="text-[11px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600">本地已就绪</span>}
+                        {!isReady && isOnDemand && <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">按需下载</span>}
                       </div>
-                      <span className="text-[10px] text-text-muted">{m.desc}</span>
-                      {apiModel?.path && <p className="mt-1 max-w-[360px] truncate font-mono text-[9px] text-text-muted" title={apiModel.path}>{apiModel.path}</p>}
+                      <span className="text-[12px] text-text-muted">{m.desc}</span>
+                      {apiModel?.path && <p className="mt-1 max-w-[360px] truncate font-mono text-[11px] text-text-muted" title={apiModel.path}>{apiModel.path}</p>}
                     </div>
                     <button
                       onClick={() => {
@@ -893,7 +887,7 @@ export function SettingsPanel() {
                           }`}
                         >
                           {label}
-                          <span className={`text-[9px] font-medium ${active ? "text-accent" : "text-text-muted"}`}>
+                          <span className={`text-[11px] font-medium ${active ? "text-accent" : "text-text-muted"}`}>
                             {hint}
                           </span>
                         </button>
@@ -915,12 +909,12 @@ export function SettingsPanel() {
                                 ? `${modelStatus.alignment_language_name}自动匹配`
                                 : "识别语言后自动匹配"}
                           </span>
-                          <span className="mt-0.5 block text-[10px] text-text-muted">
+                          <span className="mt-0.5 block text-[12px] text-text-muted">
                             已安装 {installedAlignmentCount} / {alignmentModels.length} 种语言
                           </span>
                         </span>
                       </span>
-                      <span className="flex shrink-0 items-center gap-2 text-[10px] font-medium text-accent">
+                      <span className="flex shrink-0 items-center gap-2 text-[12px] font-medium text-accent">
                         管理模型
                         <Icon icon="solar:alt-arrow-down-linear" className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
                       </span>
@@ -937,7 +931,7 @@ export function SettingsPanel() {
                             <button
                               key={value}
                               onClick={() => setAlignmentFilter(value)}
-                              className={`rounded px-2.5 py-1 text-[10px] font-medium transition-colors ${
+                              className={`rounded px-2.5 py-1 text-[12px] font-medium transition-colors ${
                                 alignmentFilter === value
                                   ? "bg-surface text-text-primary shadow-sm"
                                   : "text-text-muted hover:text-text-secondary"
@@ -948,12 +942,12 @@ export function SettingsPanel() {
                           ))}
                         </div>
                         <label className="flex min-w-0 items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5 focus-within:border-accent/50 sm:w-56">
-                          <Icon icon="solar:magnifer-linear" className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                          <Icon icon="solar:magnifier-linear" className="h-3.5 w-3.5 shrink-0 text-text-muted" />
                           <input
                             value={alignmentSearch}
                             onChange={(event) => setAlignmentSearch(event.target.value)}
                             placeholder="搜索语言或模型"
-                            className="min-w-0 flex-1 bg-transparent text-[10px] text-text-primary outline-none placeholder:text-text-muted"
+                            className="min-w-0 flex-1 bg-transparent text-[12px] text-text-primary outline-none placeholder:text-text-muted"
                           />
                         </label>
                       </div>
@@ -975,12 +969,12 @@ export function SettingsPanel() {
                                   <span className="text-[11px] font-semibold text-text-primary">
                                     {model.language_name || model.name}
                                   </span>
-                                  <span className="font-mono text-[9px] uppercase text-text-muted">{model.language}</span>
+                                  <span className="font-mono text-[11px] uppercase text-text-muted">{model.language}</span>
                                   {model.downloaded && (
-                                    <span className="text-[9px] font-medium text-emerald-600">本地可用</span>
+                                    <span className="text-[11px] font-medium text-emerald-600">本地可用</span>
                                   )}
                                 </div>
-                                <p className="mt-0.5 max-w-xl truncate text-[9px] text-text-muted" title={model.align_model}>
+                                <p className="mt-0.5 max-w-xl truncate text-[11px] text-text-muted" title={model.align_model}>
                                   {model.align_model} · {model.source === "torchaudio" ? "TorchAudio" : "Hugging Face"}
                                   {model.size ? ` · ${model.size}` : ""}
                                 </p>
@@ -992,7 +986,7 @@ export function SettingsPanel() {
                                   if (!model.downloaded) await handleDownloadModel(model.id);
                                 }}
                                 disabled={selected || downloading}
-                                className={`shrink-0 rounded-md px-2.5 py-1.5 text-[10px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 disabled:cursor-default ${
+                                className={`shrink-0 rounded-md px-2.5 py-1.5 text-[12px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 disabled:cursor-default ${
                                   selected
                                     ? "bg-accent text-white"
                                     : model.downloaded && manual
@@ -1014,7 +1008,7 @@ export function SettingsPanel() {
                           );
                         })}
                         {filteredAlignmentModels.length === 0 && (
-                          <div className="px-3 py-8 text-center text-[10px] text-text-muted">
+                          <div className="px-3 py-8 text-center text-[12px] text-text-muted">
                             {alignmentFilter === "installed" ? "尚未安装对齐模型" : "没有匹配的语言模型"}
                           </div>
                         )}
@@ -1022,7 +1016,7 @@ export function SettingsPanel() {
 
                       {(settings.whisperx_alignment_strategy || "auto") === "manual" && (
                         <div className="mt-3 border-t border-border pt-3">
-                          <label className="text-[10px] font-medium text-text-secondary">自定义模型 ID</label>
+                          <label className="text-[12px] font-medium text-text-secondary">自定义模型 ID</label>
                           <input
                             type="text"
                             value={(settings.whisperx_align_model as string) || ""}
@@ -1245,7 +1239,7 @@ export function SettingsPanel() {
                     className={`min-h-[58px] border px-3 py-2 text-left transition-colors ${selected ? "border-accent bg-accent/5" : "border-border bg-surface hover:border-text-muted"}`}
                   >
                     <span className={`block text-[12px] font-medium ${selected ? "text-accent" : "text-text-primary"}`}>{preset.label}</span>
-                    <span className="mt-1 block text-[10px] text-text-muted">{preset.description}</span>
+                    <span className="mt-1 block text-[12px] text-text-muted">{preset.description}</span>
                   </button>
                 );
               })}
@@ -1314,31 +1308,28 @@ export function SettingsPanel() {
         )}
 
             </div>
+            <p className="settings-credits">SubForge {process.env.NEXT_PUBLIC_APP_VERSION || "1.3.0"} · Solar / 480 Design · CC BY 4.0 · 图标已内置</p>
           </div>
         </main>
-      </div>
     </div>
   );
 }
 
 function SettingsSection({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
   return (
-    <section className="space-y-2.5">
-      <div>
-        <h3 className="text-[13px] font-semibold text-text-primary">{title}</h3>
-        {description && <p className="text-[11px] text-text-muted mt-0.5">{description}</p>}
-      </div>
-      <div className="space-y-4 rounded-lg border border-border bg-surface p-5">{children}</div>
+    <section className="settings-section">
+      <header><h3>{title}</h3>{description && <p>{description}</p>}</header>
+      <div className="settings-section-body">{children}</div>
     </section>
   );
 }
 
 function SettingsField({ label, description, children }: { label: string; description?: string; children: React.ReactNode }) {
+  const id = useId();
   return (
-    <div className="space-y-1.5">
-      <label className="text-[13px] text-text-secondary font-medium">{label}</label>
-      {description && <p className="text-[11px] text-text-muted">{description}</p>}
-      {children}
+    <div className="settings-field" role="group" aria-labelledby={id}>
+      <div className="settings-field-label"><span id={id}>{label}</span>{description && <p>{description}</p>}</div>
+      <div className="settings-field-control">{children}</div>
     </div>
   );
 }

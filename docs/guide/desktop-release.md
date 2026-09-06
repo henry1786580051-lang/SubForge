@@ -20,7 +20,7 @@ and WhisperX extras so the packaged app includes MLX, alignment, and diarization
 
 ```bash
 uv sync --frozen --extra denoise --extra whisperx
-SUBFORGE_BUILD_VERSION=1.2.1 uv run --no-sync python scripts/build_desktop.py --clean --no-archive
+SUBFORGE_BUILD_VERSION=1.3.0 uv run --no-sync --with pyinstaller==6.20.0 python scripts/build_desktop.py --clean --no-archive
 uv run --no-sync python scripts/smoke_desktop.py dist/SubForge.app
 ```
 
@@ -32,7 +32,7 @@ or duplicate the output as `SubForge 2`.
 To build an app and the drag-install DMG together:
 
 ```bash
-SUBFORGE_BUILD_VERSION=1.2.1 uv run --no-sync python build_macos.py
+SUBFORGE_BUILD_VERSION=1.3.0 uv run --no-sync --with pyinstaller==6.20.0 --with dmgbuild python build_macos.py
 ```
 
 That command writes `~/Desktop/SubForge.dmg`. Name the published asset
@@ -40,6 +40,11 @@ That command writes `~/Desktop/SubForge.dmg`. Name the published asset
 verifies the staged app signature, and verifies the sealed app inside the image.
 `SUBFORGE_CODESIGN_IDENTITY` selects an available signing identity; otherwise
 local signing is ad hoc, which is not Apple notarization.
+
+PyInstaller is pinned to 6.20.0 in CI and the build commands because SDK 26+
+builds compile a checksum-verified native bootloader from that exact version.
+This lets macOS 26 use system Liquid Glass controls. Older SDKs retain the
+standard bootloader; older systems and non-macOS platforms keep their fallback UI.
 
 The build downloads checksum-pinned FFmpeg 8.1.2 executables into the packaged
 runtime. These support media inspection and audio extraction; subtitle burn-in

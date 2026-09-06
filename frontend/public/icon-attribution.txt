@@ -1,0 +1,5 @@
+Solar icons by 480 Design, distributed via @iconify-json/solar.
+Author: https://www.figma.com/community/file/1166831539721848736
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+https://creativecommons.org/licenses/by/4.0/
+Only icons used by SubForge are bundled. SVG artwork is unmodified.

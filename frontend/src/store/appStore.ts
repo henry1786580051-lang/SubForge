@@ -30,6 +30,9 @@ interface AppState {
   setSubtitleFile: (path: string | null) => void;
   subtitles: SubtitleSegment[];
   setSubtitles: (segments: SubtitleSegment[]) => void;
+  subtitleHistory: SubtitleSegment[][];
+  commitSubtitles: (segments: SubtitleSegment[]) => void;
+  undoSubtitleEdit: () => void;
   updateSubtitle: (id: number, field: "text" | "translated", value: string) => void;
   selectedIds: Set<number>;
   toggleSelect: (id: number) => void;
@@ -115,13 +118,26 @@ export const useAppStore = create<AppState>((set) => ({
   subtitleFile: null,
   setSubtitleFile: (path) => set({ subtitleFile: path }),
   subtitles: [],
-  setSubtitles: (segments) => set({ subtitles: segments }),
+  subtitleHistory: [],
+  setSubtitles: (segments) => set({ subtitles: segments, subtitleHistory: [], selectedIds: new Set() }),
+  commitSubtitles: (segments) => set((state) => ({
+    subtitles: segments,
+    subtitleHistory: [...state.subtitleHistory.slice(-29), state.subtitles],
+    selectedIds: new Set(),
+  })),
+  undoSubtitleEdit: () => set((state) => state.subtitleHistory.length ? ({
+    subtitles: state.subtitleHistory[state.subtitleHistory.length - 1],
+    subtitleHistory: state.subtitleHistory.slice(0, -1),
+    selectedIds: new Set(),
+  }) : state),
   updateSubtitle: (id, field, value) =>
-    set((state) => ({
-      subtitles: state.subtitles.map((s) =>
-        s.id === id ? { ...s, [field]: value } : s
-      ),
-    })),
+    set((state) => {
+      if (!state.subtitles.some((s) => s.id === id && s[field] !== value)) return state;
+      return {
+        subtitleHistory: [...state.subtitleHistory.slice(-29), state.subtitles],
+        subtitles: state.subtitles.map((s) => s.id === id ? { ...s, [field]: value } : s),
+      };
+    }),
   selectedIds: new Set(),
   toggleSelect: (id) =>
     set((state) => {

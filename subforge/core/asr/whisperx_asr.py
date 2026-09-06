@@ -17,6 +17,7 @@ from ..utils.logger import setup_logger
 from .alignment_models import alignment_model_for_language, is_alignment_model_ready
 from .asr_data import ASRData, ASRDataSeg, ASRWord, TimestampSource
 from .base import BaseASR
+from .compound_numbers import parse_tire_size
 from .faster_whisper import find_faster_whisper_model_dir, resolve_faster_whisper_runtime
 from .model_cache import SingleEntryModelCache
 from .status import ASRStatus
@@ -2302,6 +2303,20 @@ def _spoken_token(token: str) -> str:
     def finish(text: str) -> str:
         return f"{text}{punctuation}" if punctuation else text
 
+    tire = parse_tire_size(core)
+    if tire:
+        hundreds, remainder = divmod(tire.width, 100)
+        if remainder == 0:
+            width = f"{_integer_to_english(hundreds)} hundred"
+        elif remainder < 10:
+            width = f"{_integer_to_english(hundreds)} oh {_integer_to_english(remainder)}"
+        else:
+            width = f"{_integer_to_english(hundreds)} {_integer_to_english(remainder)}"
+        return finish(
+            f"{width} {_integer_to_english(tire.aspect)} "
+            f"{' '.join(tire.construction)} {_integer_to_english(tire.rim)}"
+        )
+
     if core == "&":
         return finish("and")
     if core == "+":
@@ -2379,6 +2394,27 @@ def _spoken_token(token: str) -> str:
     return token
 
 
+def _compound_timing_candidates(data: ASRData) -> list[tuple[int, int]]:
+    """Find size endings followed by a suspicious gap, without filling pauses."""
+    if not data.is_word_timestamp():
+        return []
+    candidates = []
+    for index, segment in enumerate(data.segments[:-1]):
+        if segment.language_code not in {"", "en"}:
+            continue
+        last = index
+        tire = parse_tire_size(segment.text)
+        if tire is None:
+            tire = parse_tire_size(f"{segment.text} {data.segments[index + 1].text}")
+            last += 1
+        if tire is None or last + 1 >= len(data.segments):
+            continue
+        gap = data.segments[last + 1].start_time - data.segments[last].end_time
+        if 220 <= gap <= 3200:
+            candidates.append((index, last))
+    return candidates
+
+
 def _prepare_spoken_alignment(
     segments: list[dict], language_code: str
 ) -> tuple[list[dict], list[_AlignmentSegmentPlan] | None]:
@@ -2391,6 +2427,16 @@ def _prepare_spoken_alignment(
     for segment in segments:
         display_tokens = re.findall(r"\S+", segment["text"])
         spoken_tokens = [_spoken_token(token) for token in display_tokens]
+        # Keep the two display tokens separate when the transcription writes
+        # "245/35 ZR19", but align the size as speech rather than as a range.
+        for index in range(len(display_tokens) - 1):
+            left, right = display_tokens[index : index + 2]
+            tire = parse_tire_size(f"{left} {right}")
+            if tire is not None:
+                spoken = _spoken_token(f"{left}{right}").split()
+                suffix_count = len(_spoken_token(right).split())
+                spoken_tokens[index] = " ".join(spoken[:-suffix_count])
+                spoken_tokens[index + 1] = " ".join(spoken[-suffix_count:])
         changed |= spoken_tokens != display_tokens
         plan_tokens = tuple(
             _AlignmentToken(display, spoken, max(1, len(spoken.split())))
@@ -2474,7 +2520,23 @@ def _restore_segment_display_words(
             # A compact number may represent several spoken words. Require
             # broad character coverage so a partial match cannot shorten it.
             minimum_coverage = 0.75 if token.spoken_word_count > 1 else 0.5
-            if coverage >= minimum_coverage and valid_starts and valid_ends:
+            complete_edges = token.spoken_word_count == 1 or (
+                expected_start in expected_to_actual and expected_end - 1 in expected_to_actual
+            )
+            if complete_edges and token.spoken_word_count > 1:
+                # A matching suffix with no acoustic timing is still partial:
+                # do not silently use the preceding spoken word as its end.
+                for position, time_key in ((expected_start, "start"), (expected_end - 1, "end")):
+                    actual_position = expected_to_actual[position]
+                    edge_word = next(
+                        word
+                        for left, right, word in actual_ranges
+                        if left <= actual_position < right
+                    )
+                    if _float_seconds(edge_word.get(time_key)) is None:
+                        complete_edges = False
+                        break
+            if coverage >= minimum_coverage and complete_edges and valid_starts and valid_ends:
                 restored["start"] = min(valid_starts)
                 restored["end"] = max(valid_ends)
                 scores = [
@@ -2518,9 +2580,7 @@ def _restore_display_alignment(aligned: dict, plans: list[_AlignmentSegmentPlan]
             if segment_start is None or segment_end is None:
                 return (0.0, -float(index))
             overlap = max(0.0, min(segment_end, plan.end) - max(segment_start, plan.start))
-            midpoint_distance = abs(
-                (segment_start + segment_end) / 2 - (plan.start + plan.end) / 2
-            )
+            midpoint_distance = abs((segment_start + segment_end) / 2 - (plan.start + plan.end) / 2)
             return (overlap, -midpoint_distance)
 
         owner = max(range(len(plans)), key=plan_score)
@@ -2927,6 +2987,78 @@ class WhisperXASR(BaseASR):
         cancel_event = getattr(self, "cancel_event", None)
         if cancel_event is not None and cancel_event.is_set():
             raise RuntimeError(f"WhisperX transcription was cancelled during {stage}")
+
+    def realign_compound_word_gaps(self, data: ASRData, original_audio_path: str) -> int:
+        """Confirm compact size tails against original audio, even after denoising.
+
+        Only a bounded local context is aligned. Text and following word onsets
+        are immutable; timing can grow only with scored alignment and matching
+        neighboring anchors. A true pause therefore remains a pause.
+        """
+        candidates = _compound_timing_candidates(data)
+        if not candidates:
+            return 0
+        import whisperx.alignment as alignment
+        from whisperx.audio import load_audio
+
+        _install_offline_sentence_tokenizer(alignment)
+        self._raise_if_cancelled("compound number alignment")
+        audio = load_audio(original_audio_path)
+        repaired = 0
+        for first, last in candidates:
+            self._raise_if_cancelled("compound number alignment")
+            left, right = max(0, first - 2), min(len(data.segments), last + 4)
+            context = data.segments[left:right]
+            start_ms = max(0, context[0].start_time - 350)
+            end_ms = min(round(len(audio) / 16), context[-1].end_time + 350)
+            if end_ms <= start_ms or end_ms - start_ms > 12000:
+                continue
+            text = " ".join(segment.text for segment in context)
+            aligned = self._align_result(
+                {"segments": [{"text": text, "start": 0, "end": (end_ms - start_ms) / 1000}]},
+                audio[start_ms * 16 : end_ms * 16],
+                "en",
+                lambda *_: None,
+                alignment,
+            )
+            words = aligned.get("word_segments") or []
+            if [_word_text(word) for word in words] != [segment.text for segment in context]:
+                continue
+            target = words[last - left]
+            onset = _float_seconds(words[first - left].get("start"))
+            ending = _float_seconds(target.get("end"))
+            following = _float_seconds(words[last + 1 - left].get("start"))
+            score = target.get("score")
+            if (
+                onset is None
+                or ending is None
+                or following is None
+                or ending > following
+                or not isinstance(score, (int, float))
+                or score < 0.70
+            ):
+                continue
+            next_start = data.segments[last + 1].start_time
+            if (
+                abs(round(onset * 1000) + start_ms - data.segments[first].start_time) > 180
+                or abs(round(following * 1000) + start_ms - next_start) > 180
+            ):
+                continue
+            new_end = min(round(ending * 1000) + start_ms, next_start - 30)
+            target_segment = data.segments[last]
+            if not 120 <= new_end - target_segment.end_time <= 3200:
+                continue
+            logger.info(
+                "Re-aligned compound number end %s -> %s: %s",
+                target_segment.end_time,
+                new_end,
+                target_segment.text,
+            )
+            target_segment.end_time = new_end
+            if target_segment.words:
+                target_segment.words[-1].end_time = new_end
+            repaired += 1
+        return repaired
 
     def _transcribe_mlx_in_worker(
         self,
@@ -4352,5 +4484,6 @@ class WhisperXASR(BaseASR):
             "align_model": self.align_model or "auto",
             "batch_size": self.batch_size,
             "word": self.need_word_time_stamp,
+            "spoken_alignment_revision": 2,
         }
         return json.dumps(key, sort_keys=True)

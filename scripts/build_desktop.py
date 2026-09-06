@@ -14,6 +14,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import urllib.request
@@ -397,11 +398,52 @@ def prepare_whisper_cpp() -> None:
     print(f"Bundled whisper.cpp runtime: {cli.name} and required DLLs")
 
 
+def prepare_native_bootloader() -> Path | None:
+    """Build the AppKit host against the selected SDK, not a wheel's old SDK."""
+    if platform.system() != "Darwin":
+        return None
+    sdk = _run(["xcrun", "--show-sdk-version"], capture_output=True, text=True).stdout.strip()
+    if int(sdk.split(".")[0]) < 26:
+        return None
+    import PyInstaller
+
+    if PyInstaller.__version__ != "6.20.0":
+        raise RuntimeError(
+            "Update the pinned native bootloader source for this PyInstaller version"
+        )
+    cache = BUILD_DIR / "native-bootloader"
+    source = cache / "pyinstaller-6.20.0"
+    binary = source / "PyInstaller" / "bootloader" / "Darwin-64bit" / "runw"
+    stamp = cache / "sdk-build.txt"
+    sdk_path = _run(["xcrun", "--show-sdk-path"], capture_output=True, text=True).stdout.strip()
+    identity = f"{sdk}\n{sdk_path}\n{platform.machine()}\n{PyInstaller.__version__}\n"
+    if binary.exists() and stamp.exists() and stamp.read_text() == identity:
+        return binary
+    archive = _download_verified_archive(
+        "https://files.pythonhosted.org/packages/46/60/d03d52e6690d4e9caf333dcd14550cde634ce6c118b3bc8fa3112c3186fd/pyinstaller-6.20.0.tar.gz",
+        cache / "pyinstaller-6.20.0.tar.gz",
+        "95c5c7e03d5d61e9dfb8ef259c699cf492bb1041beb6dbe83696608cec07347a",
+    )
+    if not (source / "bootloader" / "waf").exists():
+        with tarfile.open(archive) as tar:
+            tar.extractall(cache, filter="data")
+    env = os.environ.copy()
+    env.update(SDKROOT=sdk_path, MACOSX_DEPLOYMENT_TARGET="11.0")
+    _run([sys.executable, "waf", "all", "--no-universal2"], cwd=str(source / "bootloader"), env=env)
+    if not binary.exists():
+        raise RuntimeError("Native AppKit bootloader build did not produce runw")
+    stamp.write_text(identity)
+    return binary
+
+
 def build_pyinstaller(version: str) -> None:
+    bootloader = prepare_native_bootloader()
     clean_managed_dist_outputs()
     env = os.environ.copy()
     env["VIDEOCAPTIONER_DESKTOP_RUNTIME_DIR"] = str(RUNTIME_DIR)
     env["SUBFORGE_BUILD_VERSION"] = version
+    if bootloader:
+        env["SUBFORGE_NATIVE_BOOTLOADER"] = str(bootloader)
     if platform.system() == "Darwin":
         env.setdefault("TORCH_USE_RTLD_GLOBAL", "1")
     _run(

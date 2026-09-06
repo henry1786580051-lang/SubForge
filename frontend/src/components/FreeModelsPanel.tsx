@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Icon } from "@iconify/react";
+import { Icon } from "@/components/Icon";
 
 import {
   freeModelsApi,
@@ -213,7 +213,7 @@ export function FreeModelsPanel() {
               <Icon icon="solar:radar-2-bold-duotone" width={16} />
               Free API Radar
             </div>
-            <h1 className="mt-2 text-[30px] font-semibold leading-tight text-text-primary">白嫖</h1>
+            <h1 className="mt-2 text-[30px] font-semibold leading-tight text-text-primary">免费模型</h1>
             <p className="mt-2 max-w-[680px] text-[13px] leading-6 text-text-secondary">
               检测免费 API 中当前可调用的聊天模型。扫描只发送一个最短探针，不会改变现有翻译配置。
             </p>
@@ -335,7 +335,7 @@ export function FreeModelsPanel() {
                   ))}
                 </div>
                 <label className="flex min-w-[240px] items-center gap-2 rounded-full border border-border bg-surface px-3.5 py-2 text-text-muted focus-within:border-accent">
-                  <Icon icon="solar:magnifer-linear" width={15} />
+                  <Icon icon="solar:magnifier-linear" width={15} />
                   <input
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}

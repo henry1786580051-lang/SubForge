@@ -20,7 +20,7 @@ export const STEP_META: Record<
     eyebrow: "03 / 字幕处理",
     title: "断句、翻译与审校",
     description: "优化字幕分段并生成目标语言译文，完成后可直接检查和导出。",
-    icon: "solar:subtitle-bold-duotone",
+    icon: "solar:subtitles-bold-duotone",
   },
 };
 

@@ -14,6 +14,7 @@ from ..utils.atomic_write import atomic_write_srt, atomic_write_text
 from ..utils.subtitle_parsing import parse_subtitle_text
 from ..utils.subtitle_text import finalize_chinese_translation_punctuation
 from ..utils.text_utils import is_mainly_cjk
+from .compound_numbers import parse_tire_size
 
 # 多语言分词模式(支持词级和字符级语言)
 _WORD_SPLIT_PATTERN = (
@@ -421,9 +422,7 @@ class ASRData:
         ASCII identifiers such as decimals, model names, and domain names.
         """
         for seg in self.segments:
-            seg.translated_text = finalize_chinese_translation_punctuation(
-                seg.translated_text
-            )
+            seg.translated_text = finalize_chinese_translation_punctuation(seg.translated_text)
         return self
 
     def save(
@@ -2112,16 +2111,30 @@ class ASRData:
 
         def _max_duration(text: str) -> int:
             stripped = text.strip().strip(".,;:!?()[]{}，。！？；：")
+            tire = parse_tire_size(stripped)
+            if tire is not None:
+                # One display token can contain several seconds of spoken
+                # numbers/letters. Keep a bounded speech-sized allowance.
+                return max(numeric_max_ms, min(4200, tire.spoken_units * 450 + 250))
             if re.search(r"\d", stripped):
                 return numeric_max_ms
             return max(default_max_ms, reasonable_word_duration_ms(stripped))
 
+        compound_limits: dict[int, int] = {}
+        for index, (left, right) in enumerate(zip(self.segments, self.segments[1:])):
+            tire = parse_tire_size(f"{left.text} {right.text}")
+            if tire:
+                for offset, units in enumerate(tire.part_units):
+                    compound_limits[index + offset] = max(
+                        numeric_max_ms, min(4200, units * 450 + 250)
+                    )
+
         capped = 0
-        for seg in self.segments:
+        for index, seg in enumerate(self.segments):
             duration = seg.end_time - seg.start_time
             if duration <= 0:
                 continue
-            max_duration = _max_duration(seg.text)
+            max_duration = max(_max_duration(seg.text), compound_limits.get(index, 0))
             if duration <= max_duration + min_trim_ms:
                 continue
             candidate_end = seg.start_time + max_duration
@@ -2506,7 +2519,6 @@ class ASRData:
         )
         blocks = re.split(r"\n\s*\n", srt_str.strip())
 
-
         # Process all blocks based on detected mode
         for block in blocks:
             lines = block.splitlines()
@@ -2619,7 +2631,9 @@ class ASRData:
 
             if cleaned_text and cleaned_text != " ":
                 original, translated, speaker = parse_subtitle_text(cleaned_text)
-                segments.append(ASRDataSeg(original, start_time, end_time, translated, speaker_id=speaker))
+                segments.append(
+                    ASRDataSeg(original, start_time, end_time, translated, speaker_id=speaker)
+                )
 
         return ASRData.from_imported_segments(segments)
 
@@ -2754,7 +2768,11 @@ class ASRData:
                             temp_segments[time_key] = segment
                     else:
                         original, translated, speaker = parse_subtitle_text(text)
-                        segments.append(ASRDataSeg(original, start_time, end_time, translated, speaker_id=speaker))
+                        segments.append(
+                            ASRDataSeg(
+                                original, start_time, end_time, translated, speaker_id=speaker
+                            )
+                        )
 
         for segment in temp_segments.values():
             segments.append(segment)

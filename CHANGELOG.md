@@ -1,5 +1,39 @@
 # Changelog
 
+## v1.3.0 - 2026-09-06
+
+### Desktop Experience
+
+- Redesigned the import, transcription, and subtitle workspace with a consistent sidebar, clearer task status, collapsible processing options, and a readable, opaque subtitle editor.
+- Added a native macOS toolbar for import, processing options, cancellation, and export. macOS 26 uses system Liquid Glass controls; older systems retain native fallback controls, and Windows retains the web toolbar.
+- Added system/light/dark appearance, short transitions, and support for reduced motion, reduced transparency, and increased contrast. Bundled Solar icons locally with attribution so the interface does not depend on an external icon service.
+- Reworked settings into grouped categories and diagnostic logs into a task/detail view. Added loading, empty, error, and retry states, deferred request-body rendering, and protection against stale detail responses.
+- Added up to 30 undo steps for subtitle editing, deletion, and merging, plus import/save/undo/settings shortcuts that preserve normal text-field editing behavior.
+
+### Subtitle And Transcription Fixes
+
+- Expanded compact and spaced tire specifications into their spoken form for English forced alignment, then restored the original display text. Restoration now requires evidence for both ends of expanded tokens.
+- Applied bounded timing budgets to recognized tire specifications. When enhanced-audio alignment ends a specification too early, a short original-audio alignment can extend its tail with confidence and neighboring-onset checks; it does not move the following word or run another Whisper decode.
+- Protected numeric compound modifiers such as `six-speed`, standalone quantities before capitalized plural population names, and ambiguous prepositions followed by explicit object pronouns. Complete clauses, meaningful pauses, and protected speaker boundaries retain their safeguards.
+- Prevented boundary normalization from rebuilding partially translated input and losing existing translations.
+- Made preservation diagnostics deterministic, accepted narrowly evidenced Chinese DCT/RPM equivalents, and retained exact gear-count/unit checks. Successful identical fidelity verdicts can be reused within a task; changed inputs, rejected verdicts, and cancellation remain protected.
+- Added narrowly scoped completed-phrase exclusions to Chinese boundary diagnostics. These local tests do not establish independent semantic non-inferiority of the full translation pipeline.
+
+### Guides And Validation
+
+- Updated the LLM-facing subtitle post-editing protocol and optimization guides to separate source corrections, stylistic edits, deterministic bug fixes, and quality/cost experiments.
+- Local Python regression: `2789 passed, 11 skipped`; frontend: `32 passed`. Release checks also cover static analysis, a production frontend build, and packaged runtime verification.
+- Real-audio tire-specification checks ended at 1:50.010 without enhancement and 1:49.993 with enhancement plus local correction, before the next word at 1:50.090 and 1:50.083 respectively. These are sample-specific timing results.
+- The latest airport replay preserves atomic word text, timestamps, and speaker ownership. Across five development videos and 3492 machine/reference boundary records, only its two targeted boundaries change.
+- No general translation-quality or token-saving claim is made. Earlier GLM experiments had mixed semantic results; a rejected price-equivalence extension is excluded. The final retained subset has offline regression evidence, but has not received a new paired full-pipeline live-cost validation. No paid translation API was called for this release build.
+
+### Packaging
+
+- macOS Apple Silicon: `SubForge-1.3.0-macos-arm64.dmg`, built locally with a verified sealed app inside the image.
+- Windows x64: `SubForge-1.3.0-windows-x64-setup.exe`, built and installation-smoke-tested by GitHub Actions. No separate CUDA installer is produced.
+- Pinned PyInstaller to 6.20.0 for CI and the SDK 26 native bootloader. Synchronized frontend, runtime, and bundle versions, including the settings credits.
+- Installers exclude user credentials, local subtitle files, and separately downloaded model weights. macOS signing remains ad hoc, not Apple notarization or App Store distribution. Older macOS appearance fallback is implemented but has not been visually tested on an older physical system.
+
 ## v1.2.1 - 2026-09-04
 
 ### Fixed

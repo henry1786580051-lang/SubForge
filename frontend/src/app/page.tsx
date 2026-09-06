@@ -1,5 +1,8 @@
 "use client";
 
+import { useDesktopChrome } from "@/lib/desktopChrome";
+import { Icon } from "@/components/Icon";
+import { useUiStore } from "@/store/uiStore";
 import { useEffect } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { SettingsPanel } from "@/components/SettingsPanel";
@@ -8,19 +11,14 @@ import { FreeModelsPanel } from "@/components/FreeModelsPanel";
 import { ToastContainer } from "@/components/Toast";
 import { WorkflowWorkspace } from "@/components/WorkflowWorkspace";
 import { useTaskMonitor } from "@/lib/useTaskMonitor";
-import { useAppStore, WorkflowStep } from "@/store/appStore";
+import { useAppStore } from "@/store/appStore";
 import { healthApi, configApi } from "@/lib/api";
-
-const WORKFLOW_STEPS: { id: WorkflowStep; label: string }[] = [
-  { id: "import", label: "导入素材" },
-  { id: "transcribe", label: "语音转录" },
-  { id: "subtitle", label: "字幕处理" },
-];
 
 export default function Home() {
   const {
     step,
-    setStep,
+    videoFile,
+    subtitleFile,
     activeView,
     backendOnline,
     setBackendOnline,
@@ -29,8 +27,37 @@ export default function Home() {
     taskMessage,
   } = useAppStore();
   const taskControls = useTaskMonitor();
+  useDesktopChrome(taskControls.cancelTask);
 
-  const currentIdx = WORKFLOW_STEPS.findIndex((s) => s.id === step);
+  const { inspectorOpen, toggleInspector, appearance, nativeToolbar } = useUiStore();
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("subforge.appearance");
+      if (saved === "light" || saved === "dark") useUiStore.getState().setAppearance(saved);
+    } catch { /* Appearance can still follow the system without storage access. */ }
+  }, []);
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => { document.documentElement.dataset.appearance = appearance === "system" ? (media.matches ? "dark" : "light") : appearance; };
+    apply();
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, [appearance]);
+  const filename = (subtitleFile || videoFile)?.split(/[\\/]/).pop();
+  useEffect(() => {
+    const keyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.key === ",") { event.preventDefault(); useAppStore.getState().setActiveView("settings"); }
+      if (event.key.toLowerCase() === "o") {
+        event.preventDefault();
+        useAppStore.getState().setActiveView("workflow");
+        useAppStore.getState().setStep("import");
+        useUiStore.getState().requestOpen();
+      }
+    };
+    window.addEventListener("keydown", keyDown);
+    return () => window.removeEventListener("keydown", keyDown);
+  }, []);
 
   useEffect(() => {
     const check = () => {
@@ -86,89 +113,27 @@ export default function Home() {
   }, [setConfigLoaded]);
 
   return (
-    <div className="flex h-dvh overflow-hidden">
+    <div className="app-shell flex h-dvh overflow-hidden">
       <Sidebar />
       <ToastContainer />
 
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Header */}
-        <header className="flex items-center justify-between px-5 py-3 border-b border-border bg-surface/95 shadow-sm">
-          <div className="flex items-center">
-            {WORKFLOW_STEPS.map((s, idx) => (
-              <div key={s.id} className="flex items-center">
-                <button
-                  onClick={() => { setStep(s.id); useAppStore.getState().setActiveView("workflow"); }}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-[12px] transition-all duration-300 btn-press ${
-                    step === s.id && activeView === "workflow"
-                      ? "bg-accent-dim text-accent font-medium"
-                      : idx < currentIdx
-                      ? "text-text-secondary"
-                      : "text-text-muted"
-                  }`}
-                >
-                  <div
-                    className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] transition-all duration-300 ${
-                      step === s.id && activeView === "workflow"
-                        ? "bg-accent text-white"
-                        : idx < currentIdx
-                        ? "bg-accent-dim text-accent"
-                        : "bg-[rgba(0,0,0,0.04)] text-text-muted border border-border"
-                    }`}
-                  >
-                    {idx < currentIdx ? (
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                      </svg>
-                    ) : (
-                      idx + 1
-                    )}
-                  </div>
-                  <span className="hidden sm:inline">{s.label}</span>
-                </button>
-                {idx < WORKFLOW_STEPS.length - 1 && (
-                  <div className="flex items-center px-1">
-                    <div
-                      className={`w-8 h-px transition-colors duration-300 ${
-                        idx < currentIdx ? "bg-accent/30" : "bg-border"
-                      }`}
-                    />
-                  </div>
-                )}
-              </div>
-            ))}
+      <div className="min-w-0 flex-1 flex flex-col overflow-hidden">
+        {!nativeToolbar && <header className="app-toolbar glass-surface">
+          <div className="flex min-w-0 items-center gap-3">
+            <Icon icon="solar:document-text-linear" width={19} className="shrink-0 text-text-muted" />
+            <span className="truncate text-[13px] font-medium" title={filename}>{filename || "未命名项目"}</span>
           </div>
-
-          <div className="flex items-center gap-3">
-            {taskStatus === "running" && (
-              <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-accent-dim">
-                <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
-                <span className="text-[11px] text-accent font-medium">
-                  {taskMessage || "处理中..."}
-                </span>
-              </div>
-            )}
-            {taskStatus === "completed" && (
-              <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200">
-                <svg className="w-3 h-3 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                </svg>
-                <span className="text-[11px] text-emerald-700 font-medium">完成</span>
-              </div>
-            )}
-            {taskStatus === "failed" && (
-              <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-red-50 border border-red-200">
-                <span className="text-[11px] text-red-600 font-medium">失败</span>
-              </div>
-            )}
-
-            <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-[rgba(0,0,0,0.03)]">
-              <span className={`w-1.5 h-1.5 rounded-full ${backendOnline ? "bg-emerald-500" : "bg-red-400"}`} />
-              <span className="text-[11px] text-text-muted">
-                {backendOnline ? "在线" : "离线"}
-              </span>
-            </div>
+          <div className="flex shrink-0 items-center gap-3">
+            <span className="toolbar-status" role="status">
+              <span className={`status-dot ${backendOnline ? "bg-emerald-500" : "bg-amber-500"}`} />
+              {taskStatus === "running" ? (taskMessage || "处理中") : taskStatus === "failed" ? "任务未完成" : taskStatus === "completed" ? "任务已完成" : backendOnline ? "就绪" : "正在连接服务"}
+            </span>
+            {taskStatus === "running" && <button className="subtle-button" onClick={() => void taskControls.cancelTask()}>取消任务</button>}
+            {activeView === "workflow" && step !== "import" && <button className="toolbar-button" onClick={toggleInspector} aria-pressed={inspectorOpen} title="显示或隐藏处理选项">
+              <Icon icon="solar:sidebar-minimalistic-linear" width={18} />处理选项
+            </button>}
           </div>
-        </header>
+        </header>}
 
         {/* Main content */}
         {activeView === "settings" ? (

@@ -1,0 +1,298 @@
+{
+  "provenance": "User-provided development triplet, 2026-09-05. Source word timestamps; reference is not authoritative.",
+  "source_sha256": "c6237182fcd516a753fb549308c08622d8fa526b49b51f747975c725c470e586",
+  "cases": [
+    {
+      "index": 27,
+      "protected_phrase": "million Berliners",
+      "cues": [
+        {
+          "source": "Almost a million",
+          "start_time": 108243,
+          "end_time": 109068,
+          "words": [
+            {
+              "text": "Almost",
+              "start_time": 108243,
+              "end_time": 108525,
+              "speaker_id": "3"
+            },
+            {
+              "text": "a",
+              "start_time": 108586,
+              "end_time": 108626,
+              "speaker_id": "3"
+            },
+            {
+              "text": "million",
+              "start_time": 108686,
+              "end_time": 109068,
+              "speaker_id": "3"
+            }
+          ]
+        },
+        {
+          "source": "Berliners voted to keep Tegel open.",
+          "start_time": 109109,
+          "end_time": 111454,
+          "words": [
+            {
+              "text": "Berliners",
+              "start_time": 109109,
+              "end_time": 109612,
+              "speaker_id": "1"
+            },
+            {
+              "text": "voted",
+              "start_time": 109672,
+              "end_time": 109954,
+              "speaker_id": "1"
+            },
+            {
+              "text": "to",
+              "start_time": 109974,
+              "end_time": 110054,
+              "speaker_id": "1"
+            },
+            {
+              "text": "keep",
+              "start_time": 110095,
+              "end_time": 110316,
+              "speaker_id": "1"
+            },
+            {
+              "text": "Tegel",
+              "start_time": 110397,
+              "end_time": 110739,
+              "speaker_id": "1"
+            },
+            {
+              "text": "open.",
+              "start_time": 110759,
+              "end_time": 111294,
+              "speaker_id": "1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "index": 83,
+      "protected_phrase": "around me",
+      "cues": [
+        {
+          "source": "you'll have realised there's a whole team of people that I've built around",
+          "start_time": 321601,
+          "end_time": 324298,
+          "words": [
+            {
+              "text": "you'll",
+              "start_time": 321601,
+              "end_time": 321762,
+              "speaker_id": "1"
+            },
+            {
+              "text": "have",
+              "start_time": 321782,
+              "end_time": 321863,
+              "speaker_id": "1"
+            },
+            {
+              "text": "realised",
+              "start_time": 321903,
+              "end_time": 322326,
+              "speaker_id": "1"
+            },
+            {
+              "text": "there's",
+              "start_time": 322346,
+              "end_time": 322527,
+              "speaker_id": "1"
+            },
+            {
+              "text": "a",
+              "start_time": 322547,
+              "end_time": 322587,
+              "speaker_id": "1"
+            },
+            {
+              "text": "whole",
+              "start_time": 322668,
+              "end_time": 322889,
+              "speaker_id": "1"
+            },
+            {
+              "text": "team",
+              "start_time": 322949,
+              "end_time": 323111,
+              "speaker_id": "1"
+            },
+            {
+              "text": "of",
+              "start_time": 323131,
+              "end_time": 323211,
+              "speaker_id": "1"
+            },
+            {
+              "text": "people",
+              "start_time": 323251,
+              "end_time": 323513,
+              "speaker_id": "1"
+            },
+            {
+              "text": "that",
+              "start_time": 323533,
+              "end_time": 323634,
+              "speaker_id": "1"
+            },
+            {
+              "text": "I've",
+              "start_time": 323654,
+              "end_time": 323775,
+              "speaker_id": "1"
+            },
+            {
+              "text": "built",
+              "start_time": 323815,
+              "end_time": 324016,
+              "speaker_id": "1"
+            },
+            {
+              "text": "around",
+              "start_time": 324036,
+              "end_time": 324298,
+              "speaker_id": "1"
+            }
+          ]
+        },
+        {
+          "source": "me who share the same passion for bringing you these stories, and that a lot goes into making these videos.",
+          "start_time": 324318,
+          "end_time": 329983,
+          "words": [
+            {
+              "text": "me",
+              "start_time": 324318,
+              "end_time": 324439,
+              "speaker_id": "1"
+            },
+            {
+              "text": "who",
+              "start_time": 324459,
+              "end_time": 324926,
+              "speaker_id": "1"
+            },
+            {
+              "text": "share",
+              "start_time": 325106,
+              "end_time": 325484,
+              "speaker_id": "1"
+            },
+            {
+              "text": "the",
+              "start_time": 325524,
+              "end_time": 325584,
+              "speaker_id": "1"
+            },
+            {
+              "text": "same",
+              "start_time": 325624,
+              "end_time": 325825,
+              "speaker_id": "1"
+            },
+            {
+              "text": "passion",
+              "start_time": 325885,
+              "end_time": 326287,
+              "speaker_id": "1"
+            },
+            {
+              "text": "for",
+              "start_time": 326347,
+              "end_time": 326448,
+              "speaker_id": "1"
+            },
+            {
+              "text": "bringing",
+              "start_time": 326508,
+              "end_time": 326769,
+              "speaker_id": "1"
+            },
+            {
+              "text": "you",
+              "start_time": 326789,
+              "end_time": 326890,
+              "speaker_id": "1"
+            },
+            {
+              "text": "these",
+              "start_time": 326930,
+              "end_time": 327090,
+              "speaker_id": "1"
+            },
+            {
+              "text": "stories",
+              "start_time": 327131,
+              "end_time": 327532,
+              "speaker_id": "1"
+            },
+            {
+              "text": "and",
+              "start_time": 327653,
+              "end_time": 327733,
+              "speaker_id": "1"
+            },
+            {
+              "text": "that",
+              "start_time": 327753,
+              "end_time": 327874,
+              "speaker_id": "1"
+            },
+            {
+              "text": "a",
+              "start_time": 327934,
+              "end_time": 327974,
+              "speaker_id": "1"
+            },
+            {
+              "text": "lot",
+              "start_time": 328054,
+              "end_time": 328235,
+              "speaker_id": "1"
+            },
+            {
+              "text": "goes",
+              "start_time": 328275,
+              "end_time": 328496,
+              "speaker_id": "1"
+            },
+            {
+              "text": "into",
+              "start_time": 328597,
+              "end_time": 328878,
+              "speaker_id": "1"
+            },
+            {
+              "text": "making",
+              "start_time": 328918,
+              "end_time": 329279,
+              "speaker_id": "1"
+            },
+            {
+              "text": "these",
+              "start_time": 329300,
+              "end_time": 329400,
+              "speaker_id": "1"
+            },
+            {
+              "text": "videos.",
+              "start_time": 329581,
+              "end_time": 329983,
+              "speaker_id": "1"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

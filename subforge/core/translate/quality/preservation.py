@@ -11,6 +11,9 @@ from subforge.core.translate.quality.invariants import (
     PreservedTokenViolation,
     inspect_preserved_token_violations,
 )
+from subforge.core.translate.quality.localized_quantities import (
+    bare_rotation_unit_preserved,
+)
 from subforge.core.translate.quality.numbers import normalize_grouped_numbers
 
 _LATIN_WORD = re.compile(r"(?<![A-Za-z0-9'’-])[A-Za-z]{2,}(?![A-Za-z0-9'’-])")
@@ -132,6 +135,23 @@ _SOURCE_TOKEN_EQUIVALENTS: Dict[str, Tuple[str, ...]] = {
     "WWII": ("world war ii", "second world war"),
 }
 
+
+def _contextual_token_equivalents(token: str, source: str) -> tuple[str, ...]:
+    """Localize ambiguous abbreviations only with evidence in the owning cue.
+
+    DCT also denotes a discrete cosine transform. Do not add an unconditional
+    glossary alias or let a vehicle mentioned elsewhere license this reading.
+    """
+    if token == "DCT" and re.search(
+        r"\b(?:(?:dual|wet|dry)[ -]+clutch\s+DCT|"
+        r"DCT\s+(?:cars?|models?|transmissions?|gearbox(?:es)?))\b",
+        source,
+        flags=re.IGNORECASE,
+    ):
+        return ("双离合", "雙離合")
+    return ()
+
+
 def inspect_preserved_tokens(  # noqa: C901
     response_dict: Dict[str, Any],
     subtitle_dict: Dict[str, str],
@@ -164,8 +184,8 @@ def inspect_preserved_tokens(  # noqa: C901
             )
         )
 
-    def important_tokens(text: str) -> set[str]:
-        tokens = set()
+    def important_tokens(text: str) -> tuple[str, ...]:
+        tokens: dict[str, None] = {}
         uppercase_stopwords = {
             "AM",
             "AS",
@@ -212,8 +232,8 @@ def inspect_preserved_tokens(  # noqa: C901
                 flags=re.IGNORECASE,
             ):
                 continue
-            tokens.add(token)
-        return tokens
+            tokens.setdefault(token, None)
+        return tuple(tokens)
 
     def normalized_text(text: str) -> str:
         return re.sub(r"[\s,，.。-]+", "", text).lower()
@@ -460,6 +480,12 @@ def inspect_preserved_tokens(  # noqa: C901
             return False
 
         unit = raw_unit.lower()
+        if (
+            target_language_value in {"简体中文", "繁体中文", "粤语"}
+            and unit == "rpm"
+            and bare_rotation_unit_preserved(original, token, translated)
+        ):
+            return True
         unit_patterns = {
             "km": r"(?:公里|千米)",
             "kmh": r"(?:公里|千米)(?:每小时|/小时)?|时速",
@@ -746,10 +772,27 @@ def inspect_preserved_tokens(  # noqa: C901
 
     def _equivalent_token_preserved(token: str, translated_norm: str) -> bool:
         normalized_token = token.strip(".,;:!?()[]{}").upper()
+        contextual_equivalent = target_language_value in {"简体中文", "繁体中文", "粤语"} and any(
+            normalized_text(equivalent) in translated_norm
+            for equivalent in _contextual_token_equivalents(normalized_token, original)
+        )
+        # The legacy general token extractor skips single-digit quantities.
+        # This new localization must not accept a missing/changed gear count
+        # merely because the acronym itself now has a valid Chinese rendering.
+        if contextual_equivalent and all(
+            re.search(
+                r"(?<![0-9零一二三四五六七八九十百千])(?:"
+                + "|".join(re.escape(form) for form in sorted({speed, *_integer_chinese_forms(speed)}))
+                + r")\s*(?:速|挡|檔)",
+                translated_norm,
+            )
+            for speed in re.findall(r"\b(\d+)[ -]+speed\b", original, flags=re.IGNORECASE)
+        ):
+            return True
         if (
-            normalized_token == "RPM"
-            and re.search(r"\b\d[\d,.]*\s*RPM\b", original, flags=re.IGNORECASE)
-            and re.search(r"(?<!\d)\d+(?:\.\d+)?转(?![\u3400-\u9fff])", translated_norm)
+            target_language_value in {"简体中文", "繁体中文", "粤语"}
+            and normalized_token == "RPM"
+            and bare_rotation_unit_preserved(original, token, translated)
         ):
             return True
         equivalents = _CHINESE_TOKEN_EQUIVALENTS.get(normalized_token)

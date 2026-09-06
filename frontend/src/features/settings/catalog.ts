@@ -21,7 +21,7 @@ export const LLM_PROVIDERS: ReadonlyArray<LlmProviderDefinition> = [
   { id: "custom", name: "自定义", baseUrl: "" },
 ];
 
-export type SettingsView = "llm" | "asr" | "subtitle" | "files";
+export type SettingsView = "general" | "llm" | "asr" | "subtitle" | "files";
 
 export const ENGLISH_LENGTH_PRESETS = [
   { label: "紧凑", value: 14, description: "目标 14 词 · 最多 18 词" },
@@ -35,6 +35,7 @@ export const SETTINGS_VIEWS: ReadonlyArray<{
   description: string;
   icon: string;
 }> = [
+  { id: "general", label: "通用", description: "外观、快捷键与使用支持", icon: "solar:settings-linear" },
   { id: "llm", label: "LLM 服务", description: "服务商、模型与性能", icon: "solar:server-square-cloud-linear" },
   { id: "asr", label: "语音识别", description: "引擎、模型与时间轴", icon: "solar:microphone-3-linear" },
   { id: "subtitle", label: "字幕处理", description: "翻译、断句与输出", icon: "solar:subtitles-linear" },

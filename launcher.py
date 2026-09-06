@@ -204,6 +204,16 @@ def check_backend_runtime(timeout_seconds: float = 30.0) -> None:
 class Api:
     """API exposed to the pywebview JavaScript context."""
 
+    def get_desktop_state(self):
+        from desktop_chrome import get_desktop_state
+
+        return get_desktop_state()
+
+    def sync_desktop_state(self, state):
+        from desktop_chrome import sync_desktop_state
+
+        return sync_desktop_state(state)
+
     def open_file(self, kind: str = "media"):
         """Select a local input without copying multi-gigabyte media through HTTP."""
         import traceback
@@ -221,6 +231,10 @@ class Api:
                     "All files (*.*)",
                 )
             )
+            if kind == "any":
+                file_types = (
+                    "Media and subtitles (*.mp4;*.mov;*.mkv;*.avi;*.webm;*.mp3;*.wav;*.m4a;*.flac;*.srt;*.vtt;*.ass)",
+                )
             result = webview.windows[0].create_file_dialog(
                 webview.OPEN_DIALOG,
                 allow_multiple=False,
@@ -317,7 +331,16 @@ def main():
     api = Api()
 
     def on_loaded():
-        """Signal that pywebview API is ready."""
+        """Install native chrome before handing the ready signal to the editor."""
+        try:
+            webview.windows[0].events.loaded.wait(15)
+            from desktop_chrome import install_native_toolbar
+
+            install_native_toolbar(webview.windows[0])
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception("Could not initialize native toolbar")
         webview.windows[0].evaluate_js(
             "window.__pywebview_ready = true; window.dispatchEvent(new Event('pywebviewready'));"
         )

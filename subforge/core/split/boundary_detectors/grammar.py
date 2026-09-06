@@ -21,7 +21,24 @@ def dangling_function_word(
     *,
     tail_is_hard_dangling: bool,
 ) -> bool:
-    return tail_is_hard_dangling and not features.complete_visibility_preposition
+    return (
+        tail_is_hard_dangling and not features.complete_visibility_preposition
+    ) or preposition_object_pronoun(features)
+
+
+def preposition_object_pronoun(features: EnglishBoundaryFeatures) -> bool:
+    """Disambiguate adverb/preposition tails using an explicit object pronoun.
+
+    ``Look around / and enjoy`` is complete; ``built around / me`` is not.
+    Subject/object-ambiguous pronouns (it, you) and possessive ``her`` are left
+    to other rules, as are punctuated topic restarts such as ``Me, I ...``.
+    """
+    return bool(
+        features.tail in {"around", "behind", "beside", "beneath", "beyond", "near", "alongside"}
+        and features.eligible
+        and not CLAUSE_RE.search(features.left)
+        and re.match(r"^(?:me|him|us|them)\b(?!\s*[,;:])", features.right, re.IGNORECASE)
+    )
 
 
 def dangling_function_word_before_filler(
@@ -202,6 +219,21 @@ def distance_location_noun(features: EnglishBoundaryFeatures) -> bool:
 
 
 def morphological_attributive_modifier(features: EnglishBoundaryFeatures) -> bool:
+    # A word ending in -al/-ic/etc. is not necessarily an adjective (manual,
+    # hospital, public). A punctuated new clause with its own subject and finite
+    # auxiliary cannot be that word's missing noun. Require all three signals;
+    # an interrupted modifier such as ``a flexible, / though fragile, panel``
+    # still needs its head and must retain the legacy risk.
+    explicit_following_clause = bool(
+        CLAUSE_RE.search(features.left)
+        and re.match(
+            r"^(?i:although|because|if|though|unless|when|whereas|while)\s+"
+            r"(?:(?i:i|you|he|she|it|we|they|this|that|these|those)|[A-Z][a-z]+)\s+"
+            r"(?i:am|is|are|was|were|has|have|had|can|could|will|would|shall|"
+            r"should|may|might|must|do|does|did)\b",
+            features.semantic_right,
+        )
+    )
     return bool(
         features.right[:1].islower()
         and features.tail != "other"
@@ -210,6 +242,7 @@ def morphological_attributive_modifier(features: EnglishBoundaryFeatures) -> boo
             features.tail,
         )
         and not features.complete_predicative_adjective
+        and not explicit_following_clause
     )
 
 

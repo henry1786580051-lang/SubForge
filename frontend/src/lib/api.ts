@@ -54,7 +54,7 @@ type NativeOpenResult = {
 };
 
 export async function openNativeFile(
-  kind: "media" | "subtitle"
+  kind: "media" | "subtitle" | "any"
 ): Promise<{ available: boolean; path: string | null }> {
   if (typeof window === "undefined" || !("pywebview" in window)) {
     return { available: false, path: null };

@@ -181,6 +181,47 @@ def test_transcribe_keeps_word_results_when_vad_refinement_fails(monkeypatch):
     assert result.segments[1].end_time == 1_700
 
 
+def test_enhanced_chunked_transcription_realigns_numbers_on_original_audio(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    enhancer = importlib.import_module("subforge.core.asr.audio_enhancer")
+    vad = importlib.import_module("subforge.core.asr.speech_vad")
+    original = str(tmp_path / "original.wav")
+    enhanced = str(tmp_path / "enhanced.wav")
+    data = ASRData([ASRDataSeg("245-35ZR19.", 1000, 2000), ASRDataSeg("I", 4000, 4200)])
+    decoded_paths, aligned_paths = [], []
+
+    def decoder(path, *_args, **_kwargs):
+        decoded_paths.append(path)
+        # Deliberately no realign method: this is the chunked decoding wrapper.
+        return SimpleNamespace(run=lambda **_: data)
+
+    class LocalAligner:
+        def __init__(self, path, **_):
+            assert path == original
+
+        def realign_compound_word_gaps(self, result, path):
+            aligned_paths.append(path)
+            result.segments[0].end_time = 3900
+
+    monkeypatch.setattr(enhancer, "is_available", lambda: True)
+    monkeypatch.setattr(enhancer, "enhance_audio", lambda *_args, **_kwargs: enhanced)
+    monkeypatch.setattr(vad, "is_available", lambda: False)
+    monkeypatch.setattr(transcribe_module, "_create_asr_instance", decoder)
+    monkeypatch.setattr(transcribe_module, "WhisperXASR", LocalAligner)
+    monkeypatch.setattr(ASRData, "filter_hallucinations", lambda self, **_: self)
+    config = TranscribeConfig(
+        transcribe_model=TranscribeModelEnum.WHISPERX,
+        transcribe_language="en",
+        enable_audio_enhancement=True,
+    )
+    result = transcribe_module.transcribe(original, config)
+    assert decoded_paths == [enhanced]
+    assert aligned_paths == [original]
+    assert result.segments[0].end_time == 3900
+    assert result.segments[1].start_time == 4000
+
+
 def test_transcribe_diarization_uses_original_audio_and_preserves_timing(monkeypatch):
     enhancer = importlib.import_module("subforge.core.asr.audio_enhancer")
     diarization = importlib.import_module("subforge.core.asr.speaker_diarization")
@@ -254,7 +295,9 @@ def test_transcribe_passes_fixed_speaker_count_to_diarization(monkeypatch):
     )
 
     def _diarize(_audio_path, **kwargs):
-        received.update({key: kwargs[key] for key in ("num_speakers", "min_speakers", "max_speakers")})
+        received.update(
+            {key: kwargs[key] for key in ("num_speakers", "min_speakers", "max_speakers")}
+        )
         return [diarization.SpeakerTurn(0, 4_000, "Speaker 1")]
 
     monkeypatch.setattr(diarization, "diarize_audio", _diarize)
@@ -313,7 +356,9 @@ def test_transcribe_bounds_automatic_speaker_count(monkeypatch):
 
 
 @pytest.mark.parametrize("detected_count", [1, 2, 5])
-def test_auto_speaker_count_preserves_words_and_real_speaker_boundaries(monkeypatch, detected_count):
+def test_auto_speaker_count_preserves_words_and_real_speaker_boundaries(
+    monkeypatch, detected_count
+):
     diarization = importlib.import_module("subforge.core.asr.speaker_diarization")
     speech_vad = importlib.import_module("subforge.core.asr.speech_vad")
     from subforge.core.split.split import SubtitleSplitter

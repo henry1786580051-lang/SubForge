@@ -6,7 +6,7 @@ from subforge.core.asr.chunked_asr import ChunkedASR
 from subforge.core.asr.faster_whisper import FasterWhisperASR
 from subforge.core.asr.whisper_api import WhisperAPI
 from subforge.core.asr.whisper_cpp import WhisperCppASR
-from subforge.core.asr.whisperx_asr import WhisperXASR
+from subforge.core.asr.whisperx_asr import WhisperXASR, _compound_timing_candidates
 from subforge.core.entities import TranscribeConfig, TranscribeModelEnum
 
 logger = logging.getLogger(__name__)
@@ -119,7 +119,9 @@ def transcribe(
         logger.info("Multi-speaker mode retains original audio and skips enhancement")
         callback(22, "Using original audio to preserve all speakers...")
     elif preserve_language_switches:
-        logger.info("WhisperX language-switch detection retains original audio and skips enhancement")
+        logger.info(
+            "WhisperX language-switch detection retains original audio and skips enhancement"
+        )
         callback(8, "Using original audio to preserve language switches...")
     elif config.enable_audio_enhancement:
         try:
@@ -194,6 +196,25 @@ def transcribe(
         # Remove obviously inflated alignment spans before VAD refinement.  A
         # later cap would undo a valid acoustic extension on a short final word.
         asr_data.cap_abnormal_word_durations()
+
+        if config.transcribe_model == TranscribeModelEnum.WHISPERX and _compound_timing_candidates(
+            asr_data
+        ):
+            callback(91, "Checking compact number timing against original audio...")
+            try:
+                # The normal factory returns a ChunkedASR wrapper. This check
+                # only aligns local contexts; it must not launch another decode.
+                timing_asr = WhisperXASR(
+                    audio_path, **_build_whisperx_kwargs(config, use_cache=False)
+                )
+                timing_asr.realign_compound_word_gaps(asr_data, audio_path)
+            except Exception:
+                if (
+                    getattr(config, "cancel_event", None) is not None
+                    and config.cancel_event.is_set()
+                ):
+                    raise
+                logger.warning("Original-audio compound timing check unavailable", exc_info=True)
 
         analysis_context = None
         word_speech_segments: list[tuple[int, int]] | None = None
@@ -506,9 +527,7 @@ def _build_whisperx_kwargs(
         "missing_alignment_model_callback": getattr(
             config, "missing_alignment_model_callback", None
         ),
-        "detect_additional_languages": getattr(
-            config, "detect_additional_languages", False
-        ),
+        "detect_additional_languages": getattr(config, "detect_additional_languages", False),
         "cancel_event": getattr(config, "cancel_event", None),
     }
 
