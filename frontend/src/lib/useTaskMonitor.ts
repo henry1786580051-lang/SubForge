@@ -1,8 +1,11 @@
 "use client";
 
+import { hasUnsavedSubtitles } from "./subtitleEdits";
+
 import { useEffect, useRef, useCallback } from "react";
 import { useAppStore } from "@/store/appStore";
 import {
+  configApi,
   tasksApi,
   transcribeApi,
   subtitleApi,
@@ -38,6 +41,7 @@ export function useTaskMonitor() {
     setTaskAttention,
     setSubtitleFile,
     setSubtitles,
+    setPreviewSubtitles,
     setError,
     setIsProcessing,
   } = useAppStore();
@@ -104,7 +108,7 @@ export function useTaskMonitor() {
       previewRevisionRef.current
     );
     if (previewUpdate) {
-      setSubtitles(previewUpdate.segments);
+      setPreviewSubtitles(previewUpdate.segments);
       previewRevisionRef.current = previewUpdate.revision;
     }
     expectedSubtitles = useAppStore.getState().subtitles;
@@ -117,7 +121,7 @@ export function useTaskMonitor() {
         .load(task.subtitle_file)
         .then((subFile) => {
           if (!isCurrentRead()) return;
-          if (!task.preview_segments) setSubtitles(subFile.segments);
+          if (!task.preview_segments) setPreviewSubtitles(subFile.segments);
         })
         .catch(() => {});
     }
@@ -295,6 +299,15 @@ export function useTaskMonitor() {
       const store = useAppStore.getState();
       if (pendingStartRef.current !== null
         || (store.currentTaskId && store.taskStatus === "running")) return;
+      if (type === "subtitle" && hasUnsavedSubtitles(store)) {
+        setIsProcessing(false);
+        setError("请先保存字幕修改，再开始处理，以确保使用当前编辑内容。");
+        return;
+      }
+      if (store.documentLoading || store.subtitleSaving) {
+        setError("请等待文件读取或保存完成后再开始任务。");
+        return;
+      }
       const generation = ++actionGenerationRef.current;
       pendingStartRef.current = generation;
       const isCurrentStart = () => aliveRef.current
@@ -312,11 +325,15 @@ export function useTaskMonitor() {
       previewRevisionRef.current = 0;
 
       try {
+        await configApi.flush();
+        if (!isCurrentStart()) return;
         let result: { task_id: string };
         if (type === "transcribe") {
-          result = await transcribeApi.start(
-            payload as { file_path: string; model?: string; language?: string }
-          );
+          const confirmed = useAppStore.getState().config;
+          result = await transcribeApi.start({
+            ...(payload as { file_path: string }),
+            model: confirmed.transcribeModel, language: confirmed.sourceLanguage,
+          });
         } else {
           result = await subtitleApi.start(
             payload as Parameters<typeof subtitleApi.start>[0]

@@ -9,12 +9,15 @@ const harness = vi.hoisted(() => ({
   store: {
     currentTaskId: "task-1" as string | null,
     subtitles: [] as SubtitleSegment[],
+    savedSubtitles: [] as SubtitleSegment[],
+    config: { transcribeModel: "whisper_cpp", sourceLanguage: "auto" },
+    documentLoading: false, subtitleSaving: false,
     status: "idle",
     taskStatus: "idle", isProcessing: false,
     setCurrentTaskId: vi.fn(), setTaskState: vi.fn(), setTaskAttention: vi.fn(),
-    setSubtitleFile: vi.fn(), setSubtitles: vi.fn(), setError: vi.fn(), setIsProcessing: vi.fn(),
+    setSubtitleFile: vi.fn(), setSubtitles: vi.fn(), setPreviewSubtitles: vi.fn(), setError: vi.fn(), setIsProcessing: vi.fn(),
   },
-  load: vi.fn(), getTask: vi.fn(), cancel: vi.fn(), start: vi.fn(),
+  flush: vi.fn(), load: vi.fn(), getTask: vi.fn(), cancel: vi.fn(), start: vi.fn(),
 }));
 
 vi.mock("react", () => ({
@@ -31,6 +34,7 @@ vi.mock("@/store/appStore", () => ({
 }));
 vi.mock("@/lib/api", () => ({
   API_BASE: "http://localhost:8000",
+  configApi: { flush: harness.flush },
   tasksApi: { get: harness.getTask, cancel: harness.cancel },
   subtitlesApi: { load: harness.load },
   transcribeApi: { start: harness.start }, subtitleApi: { start: harness.start },
@@ -38,6 +42,7 @@ vi.mock("@/lib/api", () => ({
 vi.mock("@/lib/taskPreview", async () => import("./taskPreview"));
 
 import { useTaskMonitor } from "./useTaskMonitor";
+import { hasUnsavedSubtitles } from "./subtitleEdits";
 
 const segment = (text: string): SubtitleSegment => ({
   id: 1, start: "00:00:00.000", end: "00:00:01.000", text, translated: "",
@@ -76,6 +81,11 @@ describe("useTaskMonitor ordering", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    harness.flush.mockReset();
+    harness.flush.mockResolvedValue(undefined);
+    harness.store.documentLoading = false;
+    harness.store.subtitleSaving = false;
+    harness.store.setPreviewSubtitles.mockImplementation((segments) => { harness.store.subtitles = segments; });
     harness.load.mockReset();
     harness.getTask.mockReset();
     harness.cancel.mockReset();
@@ -86,12 +96,13 @@ describe("useTaskMonitor ordering", () => {
     vi.stubGlobal("WebSocket", TestWebSocket);
     harness.store.currentTaskId = "task-1";
     harness.store.subtitles = [];
+    harness.store.savedSubtitles = [];
     harness.store.status = "idle";
     harness.store.taskStatus = "idle";
     harness.store.isProcessing = false;
     harness.store.setCurrentTaskId.mockImplementation((id) => { harness.store.currentTaskId = id; });
     harness.store.setIsProcessing.mockImplementation((value) => { harness.store.isProcessing = value; });
-    harness.store.setSubtitles.mockImplementation((segments) => { harness.store.subtitles = segments; });
+    harness.store.setSubtitles.mockImplementation((segments) => { harness.store.subtitles = segments; harness.store.savedSubtitles = segments; });
     harness.store.setTaskState.mockImplementation((_progress, _message, status) => {
       harness.store.status = status; harness.store.taskStatus = status;
     });
@@ -103,6 +114,55 @@ describe("useTaskMonitor ordering", () => {
     cleanup.forEach((effect) => effect());
     vi.unstubAllGlobals();
     vi.useRealTimers();
+  });
+
+  it("does not process the old file when the editor has unsaved changes", async () => {
+    harness.store.subtitles = [segment("unsaved correction")];
+    await controls.startTask("subtitle", { subtitle_file: "/tmp/file.srt" });
+    expect(harness.start).not.toHaveBeenCalled();
+    expect(harness.store.setError).toHaveBeenCalledWith(expect.stringContaining("请先保存"));
+    expect(harness.store.isProcessing).toBe(false);
+  });
+
+  it("keeps cancelled previews different from the persisted input", async () => {
+    harness.store.subtitles = [segment("original")];
+    harness.store.savedSubtitles = harness.store.subtitles;
+    dispatch(task({ preview_revision: 1, preview_segments: [segment("partial")] }));
+    await controls.cancelTask();
+    expect(hasUnsavedSubtitles(harness.store)).toBe(true);
+  });
+  it("blocks task start while a document is loading", async () => {
+    harness.store.documentLoading = true;
+    await controls.startTask("subtitle", {});
+    expect(harness.start).not.toHaveBeenCalled();
+  });
+  it("does not start when configuration persistence fails", async () => {
+    harness.flush.mockRejectedValue(new Error("configuration failed"));
+    await controls.startTask("subtitle", {});
+    expect(harness.start).not.toHaveBeenCalled();
+    expect(harness.store.isProcessing).toBe(false);
+  });
+
+  it("reads confirmed transcription choices after pending configuration writes", async () => {
+    const pending = deferred<void>();
+    harness.flush.mockReturnValue(pending.promise);
+    harness.start.mockResolvedValue({ task_id: "confirmed" });
+    const starting = controls.startTask("transcribe", { file_path: "audio.wav", model: "old", language: "old" });
+    expect(harness.start).not.toHaveBeenCalled();
+    harness.store.config = { transcribeModel: "whisperx", sourceLanguage: "en" };
+    pending.resolve();
+    await starting;
+    expect(harness.start).toHaveBeenCalledWith({ file_path: "audio.wav", model: "whisperx", language: "en" });
+  });
+  it("cancels safely while configuration writes are still pending", async () => {
+    const pending = deferred<void>();
+    harness.flush.mockReturnValue(pending.promise);
+    const starting = controls.startTask("subtitle", {});
+    await controls.cancelTask();
+    pending.resolve();
+    await starting;
+    expect(harness.start).not.toHaveBeenCalled();
+    expect(harness.store.isProcessing).toBe(false);
   });
 
   it("never replaces the final editor with a late partial file or running poll", async () => {
@@ -200,6 +260,8 @@ describe("useTaskMonitor ordering", () => {
     const pending = deferred<{ task_id: string }>();
     harness.start.mockReturnValue(pending.promise);
     const starting = controls.startTask("subtitle", {});
+    await Promise.resolve();
+    expect(harness.start).toHaveBeenCalled();
     await controls.cancelTask();
     pending.resolve({ task_id: "late-task" });
     await starting;

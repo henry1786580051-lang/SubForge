@@ -12,6 +12,8 @@ def test_bridge_state_is_bounded_and_does_not_trust_truthy_values():
             "running": True,
             "inspector_open": True,
             "script": "ignored",
+            "navigation": "navigate:execute",
+            "sidebar_collapsed": "true",
         }
     )
     assert len(state["title"]) == 180
@@ -21,6 +23,15 @@ def test_bridge_state_is_bounded_and_does_not_trust_truthy_values():
     assert state["can_inspect"] is False
     assert state["running"] is True
     assert "script" not in state
+    assert state["navigation"] == "import"
+    assert state["sidebar_collapsed"] is False
+
+
+def test_native_navigation_accepts_only_known_destinations():
+    for page in ("import", "transcribe", "subtitle", "free-models", "llm-logs", "settings"):
+        state = desktop_chrome.normalize_state({"navigation": page, "sidebar_collapsed": True})
+        assert state["navigation"] == page
+        assert state["sidebar_collapsed"] is True
 
 
 def test_bridge_fallback_needs_no_appkit(monkeypatch):

@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.3.1 - 2026-09-08
+
+### Desktop experience
+
+- Unified the native macOS window material and sidebar navigation, keeping subtitle content opaque and readable. Fixed dark toolbar appearance and replaced nested navigation bezels with a single animated selection surface.
+- Standardized inspector grouping, rounded hover surfaces, selector sizing, long engine names, and nested control padding. Current model names, precision variants and availability are visible; advanced options and model paths use progressive disclosure.
+- Consolidated shared controls and added a development-only inspection gallery excluded from production. Added keyboard subtitle editing, persistent save status, accessible error messages, actual backend progress messages and cancellation feedback.
+
+### Document and task safety
+
+- Promote uploaded subtitles to durable app-data storage on save so session cleanup cannot delete saved edits. Native-opened files retain save-in-place, and subsequent saves follow the returned persistent path.
+- Atomically import subtitle paths and contents; preserve the old document on read failure, block replacement during tasks or unsaved edits, and detach prior task updates.
+- Keep task previews separate from the saved baseline. Block processing stale files while edits are unsaved, and protect running previews from editing, structural changes and undo.
+- Keep the save lock across navigation and track saved snapshots without clearing newer edits.
+- Serialize configuration writes and wait for successful persistence before task startup; workspace controls reflect confirmed values.
+
+### Verification and distribution
+
+- Local regression: 2792 Python tests passed, 11 skipped; 54 frontend tests passed. Ruff, ESLint and production build passed. Pyright reported no errors and 29 warnings.
+- Packaged UI checks covered upload, edit, repeated save and persistence after application exit. Concurrency and failure cases use controlled regression tests; no paid transcription/translation calls were made for this release.
+- macOS Apple Silicon DMG and GitHub Actions Windows x64 EXE. No separate CUDA installer; local macOS signing is ad hoc, not notarization or App Store submission.
+
 ## v1.3.0 - 2026-09-06
 
 ### Desktop Experience

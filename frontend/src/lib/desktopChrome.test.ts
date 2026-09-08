@@ -42,3 +42,22 @@ it("routes import from settings and keeps the inspector disabled on import", () 
   handleDesktopCommand("inspector", vi.fn());
   expect(useUiStore.getState().inspectorOpen).toBe(true);
 });
+
+it("synchronizes native navigation without opening files or losing the document", () => {
+  useAppStore.setState({ subtitleFile: "/demo.srt", activeView: "settings" });
+  for (const step of ["import", "transcribe", "subtitle"] as const) {
+    handleDesktopCommand(`navigate:${step}`, vi.fn());
+    expect(useAppStore.getState().step).toBe(step);
+    expect(desktopState().navigation).toBe(step);
+  }
+  for (const view of ["settings", "llm-logs", "free-models"] as const) {
+    handleDesktopCommand(`navigate:${view}`, vi.fn());
+    expect(desktopState().navigation).toBe(view);
+  }
+  handleDesktopCommand("navigate:execute", vi.fn());
+  expect(desktopState().navigation).toBe("free-models");
+  expect(useAppStore.getState().subtitleFile).toBe("/demo.srt");
+  expect(useUiStore.getState().openRequested).toBe(false);
+  handleDesktopCommand("sidebar", vi.fn());
+  expect(desktopState().sidebar_collapsed).toBe(true);
+});

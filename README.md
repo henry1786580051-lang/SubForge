@@ -18,8 +18,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/henry1786580051-lang/SubForge/releases/download/v1.3.0/SubForge-1.3.0-macos-arm64.dmg"><strong>macOS Apple Silicon · DMG</strong></a>
-  · <a href="https://github.com/henry1786580051-lang/SubForge/releases/download/v1.3.0/SubForge-1.3.0-windows-x64-setup.exe"><strong>Windows x64 · EXE</strong></a>
+  <a href="https://github.com/henry1786580051-lang/SubForge/releases/download/v1.3.1/SubForge-1.3.1-macos-arm64.dmg"><strong>macOS Apple Silicon · DMG</strong></a>
+  · <a href="https://github.com/henry1786580051-lang/SubForge/releases/download/v1.3.1/SubForge-1.3.1-windows-x64-setup.exe"><strong>Windows x64 · EXE</strong></a>
   · <a href="https://github.com/henry1786580051-lang/SubForge/releases/latest">最新版本与更新日志</a>
   · <a href="https://henry1786580051-lang.github.io/SubForge/">使用文档</a>
   · <a href="https://github.com/henry1786580051-lang/SubForge/issues">问题反馈</a>
@@ -37,15 +37,15 @@ SubForge 将素材导入、语音转录、断句翻译、字幕编辑与导出�
 | --- | --- | --- |
 | Apple Silicon 使用 MLX，Windows 使用 CTranslate2；WhisperX forced alignment 与 TEN-VAD 保守校准词级边界 | 按上下文和说话人轮次翻译，校验漏译、错位、重复、占位语和思考内容泄漏 | 实时进度、中间结果增量保存、失败条目局部重试、恢复字幕和聚合 LLM 日志 |
 
-### v1.3.0 更新
+### v1.3.1 更新
 
-- **专业通透工作区**：macOS 26 使用 Liquid Glass 原生工具栏，字幕正文保留实色阅读背景；旧版 macOS 与 Windows 提供对应回退界面。
-- **更顺手的字幕编辑**：处理选项可以收起，编辑、删除与合并支持最多 30 步撤销，提供导入、保存、撤销和设置快捷键。
-- **设置与诊断更清楚**：分类设置、任务与详情双栏日志、搜索及错误重试；支持系统、浅色和深色外观，并适配辅助功能偏好。
-- **时间轴与断句修复**：改善复合轮胎规格的词级对齐，保护数字修饰语和明确的介词宾语，防止断句重建丢失已有译文。
-- **有边界的验证**：本地 Python 回归 2789 项通过、11 项跳过，前端 32 项通过；Windows EXE 经 GitHub Actions 构建并验证安装后的运行环境。检查通过不等于所有字幕零错译，也不代表固定 token 降幅。
+- **原生通透界面**：连续窗口材质、统一侧栏选中与悬停动效，修复深色工具栏和多层套框。
+- **更清晰的处理选项**：统一分组、圆角和尺寸；当前模型直接可见，源语言入口不再重复。
+- **保存与导入保护**：临时字幕保存后转为持久副本；导入原子替换，任务和未保存修改不会被新文件覆盖。
+- **任务状态更可靠**：预览与保存基线分离，配置成功保存后才开始处理，错误提示持续可见。
+- **验证范围明确**：本地 Python 回归 2792 项通过、11 项跳过，前端 54 项通过；本次未调用收费转录／翻译服务。
 
-详情见 [v1.3.0 发布说明](https://github.com/henry1786580051-lang/SubForge/releases/tag/v1.3.0) · [完整更新日志](CHANGELOG.md)。
+详情见 [v1.3.1 发布说明](https://github.com/henry1786580051-lang/SubForge/releases/tag/v1.3.1) · [完整更新日志](CHANGELOG.md)。
 
 ## 更多界面
 
@@ -122,14 +122,14 @@ flowchart LR
 
 ### 桌面版
 
-当前发布版本为 **v1.3.0**。安装包已包含应用、前端、Python 运行时和媒体工具，不需要先安装 Python 或 Node.js。
+当前发布版本为 **v1.3.1**。安装包已包含应用、前端、Python 运行时和媒体工具，不需要先安装 Python 或 Node.js。
 
 | 平台 | 下载 | 安装 |
 | --- | --- | --- |
-| macOS Apple Silicon | [SubForge-1.3.0-macos-arm64.dmg](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.3.0/SubForge-1.3.0-macos-arm64.dmg) | 打开 DMG，将 SubForge 拖入 Applications |
-| Windows x64 | [SubForge-1.3.0-windows-x64-setup.exe](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.3.0/SubForge-1.3.0-windows-x64-setup.exe) | 运行 EXE 安装程序，按向导完成安装 |
+| macOS Apple Silicon | [SubForge-1.3.1-macos-arm64.dmg](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.3.1/SubForge-1.3.1-macos-arm64.dmg) | 打开 DMG，将 SubForge 拖入 Applications |
+| Windows x64 | [SubForge-1.3.1-windows-x64-setup.exe](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.3.1/SubForge-1.3.1-windows-x64-setup.exe) | 运行 EXE 安装程序，按向导完成安装 |
 
-- [SHA-256 校验文件](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.3.0/SHA256SUMS.txt) · [最新 Release](https://github.com/henry1786580051-lang/SubForge/releases/latest)。
+- [SHA-256 校验文件](https://github.com/henry1786580051-lang/SubForge/releases/download/v1.3.1/SHA256SUMS.txt) · [最新 Release](https://github.com/henry1786580051-lang/SubForge/releases/latest)。
 - Whisper、强制对齐和说话人模型按需单独下载；已有模型目录可继续使用。云端翻译需配置所选服务商和相应凭据。
 - macOS 安装包使用 **ad-hoc 签名，未经 Apple 公证**；当前未上架 App Store。原生 Liquid Glass 效果需要 macOS 26。
 - 当前公开安装包面向 Apple Silicon Mac 与 Windows x64；没有单独 CUDA 安装包。Linux 以 Web／CLI 源码运行和开发验证为主。

@@ -12,6 +12,7 @@ export function ToastContainer() {
       {toasts.map((toast) => (
         <div
           key={toast.id}
+          role={toast.type === "error" ? "alert" : "status"}
           className={`flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-md text-[13px] font-medium animate-slide-in ${
             toast.type === "success"
               ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
@@ -31,7 +32,7 @@ export function ToastContainer() {
             </svg>
           )}
           <span className="flex-1">{toast.message}</span>
-          <button onClick={() => removeToast(toast.id)} className="p-0.5 rounded hover:bg-surface-hover transition-colors btn-press">
+          <button aria-label="关闭通知" onClick={() => removeToast(toast.id)} className="p-0.5 rounded hover:bg-surface-hover transition-colors btn-press">
             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>

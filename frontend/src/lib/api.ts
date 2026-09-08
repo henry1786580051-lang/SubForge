@@ -1,3 +1,5 @@
+import { createConfigWriter } from "./configWrites";
+
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ??
   (typeof window !== "undefined" && window.location.port === "3000"
@@ -159,13 +161,13 @@ export const subtitleApi = {
 };
 
 // Config
+const configWriter = createConfigWriter((key, value) => request("/api/config/", {
+  method: "POST", body: JSON.stringify({ key, value }),
+}));
 export const configApi = {
   get: () => request<Record<string, unknown>>("/api/config/"),
-  update: (key: string, value: unknown) =>
-    request("/api/config/", {
-      method: "POST",
-      body: JSON.stringify({ key, value }),
-    }),
+  update: configWriter.update,
+  flush: configWriter.flush,
   switchLlmProvider: (data: {
     provider: string;
     current_base_url: string;

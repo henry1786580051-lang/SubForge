@@ -345,6 +345,17 @@ async def save_subtitle(req: SaveRequest):
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported format: {suffix}")
 
+    # Uploaded sources belong to an ephemeral session; a successful save must
+    # survive session cleanup. Native-opened documents retain save-in-place.
+    from app.api.files import UPLOAD_ROOT
+    if file_path.is_relative_to(UPLOAD_ROOT.resolve()):
+        import uuid
+
+        from subforge.config import APPDATA_PATH
+        directory = APPDATA_PATH / "saved-subtitles" / uuid.uuid4().hex
+        directory.mkdir(parents=True, exist_ok=False)
+        file_path = directory / file_path.name
+
     if suffix == ".srt":
         atomic_write_srt(file_path, content)
     else:

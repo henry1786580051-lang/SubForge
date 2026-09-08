@@ -1,5 +1,9 @@
 "use client";
 
+import { Panel, ToggleLine, TaskActionCard } from "@/components/WorkspaceControls";
+import { importSubtitleDocument } from "@/lib/documentOperations";
+import { modelPresentation } from "@/lib/modelPresentation";
+import { InspectorDisclosure } from "@/components/InspectorDisclosure";
 import { useUiStore } from "@/store/uiStore";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/Icon";
@@ -23,7 +27,6 @@ import {
   SOURCE_LANGUAGES,
   STEP_META,
   TARGET_LANGUAGES,
-  TRANSCRIBE_STAGES,
   TRANSLATORS,
 } from "@/features/workflow/catalog";
 import {
@@ -59,8 +62,6 @@ function ImportWorkspace() {
   const {
     fileInfo,
     setFileInfo,
-    setSubtitles,
-    setSubtitleFile,
     setVideoFile,
     subtitleFile,
     subtitles,
@@ -102,10 +103,10 @@ function ImportWorkspace() {
     async (file: File) => {
       setUploading("subtitle");
       try {
-        const uploaded = await filesApi.upload(file);
-        const loaded = await subtitlesApi.load(uploaded.file_path);
-        setSubtitleFile(loaded.file_path);
-        setSubtitles(loaded.segments);
+        await importSubtitleDocument(async () => {
+          const uploaded = await filesApi.upload(file);
+          return subtitlesApi.load(uploaded.file_path);
+        });
         useAppStore.getState().addToast("字幕已导入", "success");
       } catch (err) {
         useAppStore
@@ -115,7 +116,7 @@ function ImportWorkspace() {
         setUploading(null);
       }
     },
-    [setSubtitleFile, setSubtitles]
+    []
   );
 
   const chooseMedia = useCallback(async (kind: "media" | "any" = "media") => {
@@ -128,9 +129,7 @@ function ImportWorkspace() {
       if (!selected.path) return;
       if (/\.(srt|vtt|ass)$/i.test(selected.path)) {
         setUploading("subtitle");
-        const loaded = await subtitlesApi.load(selected.path);
-        setSubtitleFile(loaded.file_path);
-        setSubtitles(loaded.segments);
+        await importSubtitleDocument(() => subtitlesApi.load(selected.path!));
         useAppStore.getState().addToast("字幕已导入", "success");
         return;
       }
@@ -146,7 +145,7 @@ function ImportWorkspace() {
     } finally {
       setUploading(null);
     }
-  }, [setFileInfo, setVideoFile, setSubtitleFile, setSubtitles]);
+  }, [setFileInfo, setVideoFile]);
 
   const chooseSubtitle = useCallback(async () => {
     try {
@@ -157,9 +156,7 @@ function ImportWorkspace() {
       }
       if (!selected.path) return;
       setUploading("subtitle");
-      const loaded = await subtitlesApi.load(selected.path);
-      setSubtitleFile(loaded.file_path);
-      setSubtitles(loaded.segments);
+      await importSubtitleDocument(() => subtitlesApi.load(selected.path!));
       useAppStore.getState().addToast("字幕已导入", "success");
     } catch (err) {
       useAppStore
@@ -168,7 +165,7 @@ function ImportWorkspace() {
     } finally {
       setUploading(null);
     }
-  }, [setSubtitleFile, setSubtitles]);
+  }, []);
 
   const handleDrop = useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
@@ -229,7 +226,6 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
     isProcessing,
     setConfig,
     setError,
-    setIsProcessing,
     setStep,
     subtitles,
     taskMessage,
@@ -283,9 +279,9 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
         speaker_count: "speakerCount",
       };
       const mapped = map[key];
-      if (mapped) setConfig({ [mapped]: value });
       try {
         await configApi.update(key, value);
+        if (mapped) setConfig({ [mapped]: value });
         return true;
       } catch (err) {
         setError(err instanceof Error ? err.message : "配置保存失败");
@@ -305,13 +301,12 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
       setStep("import");
       return;
     }
-    setIsProcessing(true);
     await startTask("transcribe", {
       file_path: videoFile,
       model: config.transcribeModel,
       language: config.sourceLanguage,
     });
-  }, [config.sourceLanguage, config.transcribeModel, configLoaded, setError, setIsProcessing, setStep, startTask, videoFile]);
+  }, [config.sourceLanguage, config.transcribeModel, configLoaded, setError, setStep, startTask, videoFile]);
 
   const currentModels = useMemo(() => {
     if (config.transcribeModel === "whisper_cpp") {
@@ -343,8 +338,8 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
     config.speakerDiarization === "off" ||
     diarizationModels.some((model) => model.downloaded);
   const selectedModel = currentModels.find(
-    (model) => (model.value || model.id) === config.whisperModelSize || model.selected
-  );
+    (model) => (model.value || model.id) === config.whisperModelSize
+  ) ?? currentModels.find((model) => model.selected);
   const alignmentLanguage = config.sourceLanguage === "nb" ? "no" : config.sourceLanguage;
   const selectedAlignModel = alignmentModels.find((model) =>
     config.whisperxAlignmentStrategy === "manual"
@@ -460,7 +455,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
           </Panel>
         </section>
 
-        <Inspector>
+        <Inspector title="转录配置" footer={
           <TaskActionCard
             title="转录任务"
             description={
@@ -475,22 +470,26 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
             progress={taskProgress}
             message={taskMessage}
             running={isProcessing}
-            stages={TRANSCRIBE_STAGES}
+
             currentStage={taskMessage}
             onPrimary={startTranscribe}
             onCancel={cancelTask}
           />
+        }>
           <Panel title="识别设置" icon="solar:microphone-linear">
-            <label className="block space-y-2 text-[13px] text-text-secondary">源语言
+            <label className="inspector-field">源语言
               <select value={config.sourceLanguage} className="input-field" onChange={(event) => void saveConfig("source_language", event.target.value)}>
                 {SOURCE_LANGUAGES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
               </select>
             </label>
-            <p className="mt-3 text-[12px] leading-5 text-text-muted">{ASR_ENGINES.find((engine) => engine.id === config.transcribeModel)?.name || config.transcribeModel} · {config.whisperModelSize}</p>
+            <div className="inspector-model" title={config.whisperModelSize}>
+              <span>{ASR_ENGINES.find((engine) => engine.id === config.transcribeModel)?.name || config.transcribeModel}</span>
+
+            </div>
           </Panel>
-          <details className="inspector-disclosure"><summary>识别引擎</summary>
+          <InspectorDisclosure title={<>识别引擎</>}>
           <Panel title="识别引擎" icon="solar:tuning-square-2-bold-duotone">
-            <div className="grid grid-cols-2 gap-2.5">
+            <div className="inspector-engines" role="group" aria-label="识别引擎">
               {ASR_ENGINES.map((engine) => {
                 const unsupported = engine.id === "whisperx" && !config.whisperxSupported;
                 return (
@@ -498,175 +497,42 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                   key={engine.id}
                   disabled={unsupported}
                   onClick={() => void saveConfig("transcribe_model", engine.id)}
-                  className={`flex min-h-[100px] flex-col rounded-lg border p-3.5 text-left transition-[border-color,background-color,transform] duration-200 active:translate-y-px ${
-                    config.transcribeModel === engine.id
-                      ? "border-accent bg-accent-dim text-accent"
-                      : unsupported
-                      ? "cursor-not-allowed border-border bg-background text-text-muted opacity-45"
-                      : "border-border bg-background text-text-secondary hover:border-border-active"
-                  }`}
+                  className="inspector-engine"
+                  aria-pressed={config.transcribeModel === engine.id}
                 >
-                  <div className="flex min-h-5 items-center gap-2.5">
-                    <span className="flex h-5 w-5 shrink-0 items-center justify-center">
-                      <Icon icon={engine.icon} width={18} />
-                    </span>
-                    <span className="text-[13px] font-semibold leading-5">{engine.name}</span>
-                  </div>
-                  <p className="mt-2 min-h-8 text-[10px] leading-4 text-text-muted">{unsupported ? "当前平台不支持" : engine.desc}</p>
+                  <span className="inspector-engine-icon"><Icon icon={engine.icon} width={18} /></span>
+                  <span className="inspector-engine-copy">
+                    <strong>{engine.name}</strong>
+                    <small>{unsupported ? "当前平台不支持" : engine.desc}</small>
+                  </span>
+                  <svg className="inspector-engine-check" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16"><path d="m3 8 3 3 7-7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
                 </button>
               )})}
             </div>
           </Panel>
-          </details>
+          </InspectorDisclosure>
 
-          <Panel title="说话人识别" icon="solar:users-group-rounded-bold-duotone">
-            <div className="space-y-3">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-[12px] font-semibold text-text-primary">说话人识别</p>
-                  <p className="mt-1 text-[10px] leading-4 text-text-muted">
-                    区分对话中的说话人，并使用原始音轨保护较弱声音与短促插话。
-                  </p>
-                </div>
-                <span className={`shrink-0 rounded-md px-2 py-1 text-[9px] font-semibold ${
-                  config.speakerDiarization === "off"
-                    ? "bg-background text-text-muted"
-                    : diarizationReady
-                    ? "bg-emerald-50 text-emerald-700"
-                    : "bg-amber-50 text-amber-700"
-                }`}>
-                  {config.speakerDiarization === "off"
-                    ? "未启用"
-                    : diarizationReady
-                    ? "已就绪"
-                    : "需要模型"}
-                </span>
-              </div>
-
-              <div className="grid grid-cols-4 gap-2" role="group" aria-label="多人语音识别模式">
-                {([["off", "关闭"], ["two", "双人"], ["auto", "自动"], ["fixed", "指定人数"]] as const).map(([value, label]) => (
-                  <button
-                    key={value}
-                    onClick={() => void saveConfig("speaker_diarization", value)}
-                    className={`h-9 rounded-md border text-[11px] font-medium transition-colors ${
-                      config.speakerDiarization === value
-                        ? "border-accent bg-accent-dim text-accent"
-                        : "border-border bg-background text-text-secondary hover:border-border-active"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-
-              {config.speakerDiarization === "auto" && (
-                <p className="rounded-md bg-background px-3 py-2 text-[10px] leading-4 text-text-muted">
-                  自动识别 1–10 位说话人
-                </p>
-              )}
-
-              {config.speakerDiarization === "two" && (
-                <p className="rounded-md bg-background px-3 py-2 text-[10px] leading-4 text-text-muted">
-                  以两位主要对话者为基准，也允许广告或插播中出现短暂的第三声音。
-                </p>
-              )}
-
-              {config.speakerDiarization === "fixed" && (
-                <label className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2">
-                  <span>
-                    <span className="block text-[11px] font-semibold text-text-primary">说话人数</span>
-                    <span className="mt-0.5 block text-[9px] text-text-muted">严格按指定人数聚类，适合人数确定且无插播的素材</span>
-                  </span>
-                  <input
-                    type="number"
-                    min={2}
-                    max={10}
-                    step={1}
-                    value={config.speakerCount}
-                    onChange={(event) => {
-                      const count = Math.max(2, Math.min(10, Number(event.target.value) || 2));
-                      void saveConfig("speaker_count", count);
-                    }}
-                    className="input-field h-9 w-20 text-center"
-                    aria-label="说话人数"
-                  />
-                </label>
-              )}
-
-              {config.speakerDiarization !== "off" && (
-                <div className="space-y-3 border-t border-border pt-3">
-                  {speakerModels.map((model) => (
-                    <ModelRow
-                      key={model.id}
-                      model={model}
-                      active={Boolean(model.downloaded)}
-                      downloading={downloadingModel === model.id}
-                      progress={downloadProgress[model.id]}
-                      onSelect={() => undefined}
-                      onDownload={() => void downloadModel(model.id)}
-                    />
-                  ))}
-                  {!speakerModels.length && (
-                    <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] leading-4 text-amber-800">
-                      未找到 Community-1 模型配置，请检查后端模型清单。
-                    </p>
-                  )}
-                  <label className="block space-y-1.5">
-                    <span className="text-[11px] font-medium text-text-muted">Hugging Face Token</span>
-                    <input
-                      type="password"
-                      value={huggingfaceToken}
-                      onChange={(event) => setHuggingfaceToken(event.target.value)}
-                      onBlur={(event) => {
-                        const token = event.target.value.trim();
-                        if (token) {
-                          void saveConfig("huggingface_token", token).then((saved) => {
-                            if (saved) {
-                              setHuggingfaceTokenConfigured(true);
-                              setHuggingfaceToken("");
-                            }
-                          });
-                        }
-                      }}
-                      placeholder={huggingfaceTokenConfigured ? "已保存，需要更换时重新填写" : "首次下载 Community-1 时填写 hf_..."}
-                      autoComplete="off"
-                      className="input-field"
-                    />
-                  </label>
-                  <p className="text-[10px] leading-4 text-text-muted">
-                    多人模式固定使用原始音轨，不执行 DeepFilterNet 候选比较或降噪。
-                  </p>
-                </div>
-              )}
-            </div>
-          </Panel>
-
-          <details className="inspector-disclosure"><summary>识别模型</summary>
           <Panel title="识别模型" icon="solar:layers-bold-duotone">
             {config.transcribeModel === "whisper_api" ? (
               <EmptyState icon="solar:cloud-bold-duotone" title="云端模型在设置页配置" />
             ) : (
               <div className="space-y-4">
                 <div>
-                  <FieldLabel
-                    label="当前转录模型"
-                    value={selectedModel?.downloaded ? "本地可用" : selectedModel?.state === "on_demand" ? "首次使用下载" : "未下载"}
-                  />
-                  <div className="mt-2 grid grid-cols-2 gap-2 max-md:grid-cols-1">
+                  <ModelSummary model={selectedModel} fallback={config.whisperModelSize} />
+                  <InspectorDisclosure title={<>更换模型<span className="inspector-summary-value">{currentModels.length} 个选项</span></>}>
+                    <div className="model-options">
                     {currentModels.map((model) => (
-                      <ModelChip
-                        key={model.id}
-                        model={model}
-                        active={config.whisperModelSize === (model.value || model.id) || Boolean(model.selected)}
-                        downloading={downloadingModel === model.id}
-                        progress={downloadProgress[model.id]}
+                      <ModelChip key={model.id} model={model} active={model.id === selectedModel?.id}
+                        downloading={downloadingModel === model.id} progress={downloadProgress[model.id]}
                         onSelect={() => void saveConfig("whisper_model_size", model.value || model.id)}
-                        onDownload={() => void downloadModel(model.id)}
-                      />
+                        onDownload={() => void downloadModel(model.id)} />
                     ))}
-                  </div>
+                    {!currentModels.length && <p className="model-option-meta">当前引擎暂无可切换模型。</p>}
+                    </div>
+                  </InspectorDisclosure>
                 </div>
 
+                <InspectorDisclosure title={<>高级识别选项</>}>
                 {config.transcribeModel === "whisperx" && (
                   <div>
                     <FieldLabel label="时间轴对齐" value="按源语言自动匹配" />
@@ -709,33 +575,14 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                   </div>
                 )}
 
-                <div className="grid grid-cols-2 gap-3">
-                  <label className="space-y-1.5">
-                    <span className="text-[11px] font-medium text-text-muted">源语言</span>
-                    <select
-                      value={config.sourceLanguage}
-                      onChange={(event) => void saveConfig("source_language", event.target.value)}
-                      className="input-field"
-                    >
-                      {SOURCE_LANGUAGES.map(([id, label]) => (
-                        <option key={id} value={id}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="space-y-1.5">
+                <div className="inspector-form-rows">
+                  <label className="inspector-field">
                     <span className="text-[11px] font-medium text-text-muted">批处理</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={16}
-                      value={config.whisperxBatchSize}
-                      onChange={(event) =>
-                        void saveConfig("whisperx_batch_size", Number(event.target.value) || 4)
-                      }
-                      className="input-field"
-                    />
+                    <select value={config.whisperxBatchSize}
+                      onChange={(event) => void saveConfig("whisperx_batch_size", Number(event.target.value))}
+                      className="input-field">
+                      {Array.from({ length: 16 }, (_, index) => index + 1).map((size) => <option key={size} value={size}>{size}</option>)}
+                    </select>
                   </label>
                 </div>
 
@@ -778,12 +625,132 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                   disabled={config.speakerDiarization !== "off"}
                   onChange={(value) => void saveConfig("enable_audio_enhancement", value)}
                 />
+                </InspectorDisclosure>
               </div>
             )}
           </Panel>
-          </details>
 
-          <details className="inspector-disclosure"><summary>硬件状态</summary>
+          <Panel title="说话人识别" icon="solar:users-group-rounded-bold-duotone">
+            <div className="space-y-3">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+
+                  <p className="mt-1 text-[10px] leading-4 text-text-muted">
+                    区分对话角色，保留短促插话。
+                  </p>
+                </div>
+                <span className={`shrink-0 rounded-md px-2 py-1 text-[9px] font-semibold ${
+                  config.speakerDiarization === "off"
+                    ? "bg-background text-text-muted"
+                    : diarizationReady
+                    ? "bg-emerald-50 text-emerald-700"
+                    : "bg-amber-50 text-amber-700"
+                }`}>
+                  {config.speakerDiarization === "off"
+                    ? "未启用"
+                    : diarizationReady
+                    ? "已就绪"
+                    : "需要模型"}
+                </span>
+              </div>
+
+              <div className="inspector-segments" role="group" aria-label="多人语音识别模式">
+                <span aria-hidden="true" className="inspector-segment-selection" style={{ transform: `translateX(${["off", "two", "auto", "fixed"].indexOf(config.speakerDiarization) * 100}%)` }} />
+                {([["off", "关闭"], ["two", "双人"], ["auto", "自动"], ["fixed", "指定人数"]] as const).map(([value, label]) => (
+                  <button
+                    key={value}
+                    onClick={() => void saveConfig("speaker_diarization", value)}
+                    aria-pressed={config.speakerDiarization === value}
+                    className="inspector-segment"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {config.speakerDiarization === "auto" && (
+                <p className="rounded-md bg-background px-3 py-2 text-[10px] leading-4 text-text-muted">
+                  自动识别 1–10 位说话人
+                </p>
+              )}
+
+              {config.speakerDiarization === "two" && (
+                <p className="rounded-md bg-background px-3 py-2 text-[10px] leading-4 text-text-muted">
+                  以两位主要对话者为基准，也允许广告或插播中出现短暂的第三声音。
+                </p>
+              )}
+
+              {config.speakerDiarization === "fixed" && (
+                <label className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2">
+                  <span>
+                    <span className="block text-[11px] font-semibold text-text-primary">说话人数</span>
+                    <span className="mt-0.5 block text-[9px] text-text-muted">严格按指定人数聚类，适合人数确定且无插播的素材</span>
+                  </span>
+                  <input
+                    type="number"
+                    min={2}
+                    max={10}
+                    step={1}
+                    value={config.speakerCount}
+                    onChange={(event) => {
+                      const count = Math.max(2, Math.min(10, Number(event.target.value) || 2));
+                      void saveConfig("speaker_count", count);
+                    }}
+                    className="input-field h-9 w-20 text-center"
+                    aria-label="说话人数"
+                  />
+                </label>
+              )}
+
+              {config.speakerDiarization !== "off" && (
+                <InspectorDisclosure open={!diarizationReady} title={<>{diarizationReady ? "模型与凭据 · 已就绪" : "配置说话人模型"}</>}><div className="space-y-3 pt-3">
+                  {speakerModels.map((model) => (
+                    <ModelRow
+                      key={model.id}
+                      model={model}
+                      active={Boolean(model.downloaded)}
+                      downloading={downloadingModel === model.id}
+                      progress={downloadProgress[model.id]}
+                      onSelect={() => undefined}
+                      onDownload={() => void downloadModel(model.id)}
+                    />
+                  ))}
+                  {!speakerModels.length && (
+                    <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] leading-4 text-amber-800">
+                      未找到 Community-1 模型配置，请检查后端模型清单。
+                    </p>
+                  )}
+                  <label className="block space-y-1.5">
+                    <span className="text-[11px] font-medium text-text-muted">Hugging Face Token</span>
+                    <input
+                      type="password"
+                      value={huggingfaceToken}
+                      onChange={(event) => setHuggingfaceToken(event.target.value)}
+                      onBlur={(event) => {
+                        const token = event.target.value.trim();
+                        if (token) {
+                          void saveConfig("huggingface_token", token).then((saved) => {
+                            if (saved) {
+                              setHuggingfaceTokenConfigured(true);
+                              setHuggingfaceToken("");
+                            }
+                          });
+                        }
+                      }}
+                      placeholder={huggingfaceTokenConfigured ? "已保存，需要更换时重新填写" : "首次下载 Community-1 时填写 hf_..."}
+                      autoComplete="off"
+                      className="input-field"
+                    />
+                  </label>
+                  <p className="text-[10px] leading-4 text-text-muted">
+                    多人模式使用原始音轨，以保护较弱声音。
+                  </p>
+                </div></InspectorDisclosure>
+              )}
+            </div>
+          </Panel>
+
+          <InspectorDisclosure title={<>硬件状态</>}>
           <Panel title="硬件状态" icon="solar:cpu-bold-duotone">
             <div className="grid grid-cols-2 gap-3">
               <MetricTile label="芯片" value={hardware?.chip || "检测中"} wide />
@@ -792,7 +759,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
               <MetricTile label="计算" value={hardware?.compute_type || "--"} />
             </div>
           </Panel>
-          </details>
+          </InspectorDisclosure>
 
           {missingAlignmentModels.length > 0 && (
             <section
@@ -907,14 +874,12 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
     isProcessing,
     setConfig,
     setError,
-    setIsProcessing,
     setStep,
     subtitleFile,
     subtitles,
     taskMessage,
     taskProgress,
     taskStatus,
-    videoFile,
   } = useAppStore();
   const [promptFocused, setPromptFocused] = useState(false);
   const [subtitleFocusRequest, setSubtitleFocusRequest] = useState<{
@@ -962,9 +927,9 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
         custom_prompt: "customPrompt",
       };
       const mapped = map[key];
-      if (mapped) setConfig({ [mapped]: value });
       try {
         await configApi.update(key, value);
+        if (mapped) setConfig({ [mapped]: value });
       } catch (err) {
         setError(err instanceof Error ? err.message : "配置保存失败");
       }
@@ -973,12 +938,14 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
   );
 
   const startSubtitle = useCallback(async () => {
+    try { await configApi.flush(); }
+    catch (err) { setError(err instanceof Error ? err.message : "配置保存失败"); return; }
+    const { config, subtitleFile, videoFile } = useAppStore.getState();
     if (!subtitleFile) {
       setError("请先导入或生成字幕文件");
       setStep("import");
       return;
     }
-    setIsProcessing(true);
     await startTask("subtitle", {
       subtitle_file: subtitleFile,
       media_file: videoFile || undefined,
@@ -991,22 +958,7 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
       need_reflect: config.needReflect,
       custom_prompt: config.customPrompt,
     });
-  }, [
-    config.customPrompt,
-    config.llmProvider,
-    config.llmModel,
-    config.needOptimize,
-    config.needReflect,
-    config.needTranslate,
-    config.targetLanguage,
-    config.translator,
-    setError,
-    setIsProcessing,
-    setStep,
-    startTask,
-    subtitleFile,
-    videoFile,
-  ]);
+  }, [setError, setStep, startTask]);
 
   return (
     <WorkspaceFrame meta={STEP_META.subtitle}>
@@ -1020,30 +972,42 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
           />
         </section>
 
-        <Inspector>
+        <Inspector title="字幕处理" footer={
           <TaskActionCard
             title="字幕处理任务"
             description={subtitleFile ? subtitleFile.split("/").pop() || subtitleFile : "请先导入或生成字幕"}
-            primaryLabel={taskStatus === "running" ? "处理中" : config.needTranslate ? "开始翻译" : "开始断句"}
-            disabled={!subtitleFile || isProcessing}
+            primaryLabel={taskStatus === "running" ? "处理中" : config.needTranslate ? (config.needOptimize ? "优化并翻译" : "开始翻译") : "优化断句"}
+            disabled={!subtitleFile || isProcessing || (!config.needOptimize && !config.needTranslate)}
             progress={taskProgress}
             message={taskMessage}
             running={isProcessing}
-            stages={["读取字幕", "调整断句", "检查原文", "生成翻译", "质量复核", "保存结果"]}
+
             currentStage={taskMessage}
             onPrimary={startSubtitle}
             onCancel={cancelTask}
           />
-          <Panel title="处理模式" icon="solar:magic-stick-3-bold-duotone">
-            <div className="space-y-4">
+        }>
+          <Panel title="处理步骤" icon="solar:magic-stick-3-bold-duotone">
+            <div className="inspector-rows">
               <ToggleLine label="优化断句" description="按语义调整分段和字幕长度" checked={config.needOptimize} onChange={(value) => void saveConfig("need_optimize", value)} />
               <ToggleLine label="翻译" description="生成目标语言字幕" checked={config.needTranslate} onChange={(value) => void saveConfig("need_translate", value)} />
+              <div>
+                <ToggleLine
+                  label="翻译复核"
+                  description="完成初译后再次检查完整性和表达"
+                  disabled={!config.needTranslate}
+                  checked={config.needReflect}
+                  onChange={(value) => void saveConfig("need_reflect", value)}
+                />
+              </div>
             </div>
           </Panel>
 
+          <div className={`inspector-reveal ${config.needTranslate ? "is-open" : ""}`} inert={!config.needTranslate} aria-hidden={!config.needTranslate}>
+            <div className="inspector-reveal-content">
           <Panel title="翻译配置" icon="solar:chat-round-like-bold-duotone">
-            <div className="space-y-3">
-              <label className="space-y-1.5">
+            <div className="inspector-rows">
+              <label className="inspector-field">
                 <span className="text-[11px] font-medium text-text-muted">目标语言</span>
                 <select
                   value={config.targetLanguage}
@@ -1057,7 +1021,7 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
                   ))}
                 </select>
               </label>
-              <label className="space-y-1.5">
+              <label className="inspector-field">
                 <span className="text-[11px] font-medium text-text-muted">翻译服务</span>
                 <select
                   value={config.translator}
@@ -1071,29 +1035,18 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
                   ))}
                 </select>
               </label>
-              <div className="space-y-1.5">
+              <div className="inspector-field">
                 <span className="text-[11px] font-medium text-text-muted">当前 LLM</span>
-                <div className="flex min-h-11 items-center gap-2 rounded-md border border-border bg-background px-3 py-2">
-                  <span className="shrink-0 rounded bg-accent-dim px-2 py-1 text-[10px] font-semibold text-accent">
-                    {llmProviderName}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-primary" title={config.llmModel}>
-                    {config.llmModel || "未选择模型"}
-                  </span>
+                <div className="inspector-current-model" title={config.llmModel}>
+                  <strong>{llmProviderName}</strong>
+                  <small>{config.llmModel || "未选择模型"}</small>
                 </div>
               </div>
-              <div className="pt-3">
-                <ToggleLine
-                  label="翻译复核"
-                  description="完成初译后再次检查完整性和表达"
-                  checked={config.needReflect}
-                  onChange={(value) => void saveConfig("need_reflect", value)}
-                />
-              </div>
+
             </div>
           </Panel>
 
-          <details className="inspector-disclosure"><summary>翻译要求</summary>
+          <InspectorDisclosure title={<>翻译要求<span className="inspector-summary-value">{config.customPrompt.trim() ? "已自定义" : "默认"}</span></>}>
           <Panel title="翻译要求" icon="solar:pen-new-square-bold-duotone">
             <textarea
               value={config.customPrompt}
@@ -1116,8 +1069,10 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
               }`}
             />
           </Panel>
-          </details>
+          </InspectorDisclosure>
 
+            </div>
+          </div>
           <Panel title="结构检查" icon="solar:chart-2-bold-duotone">
             <div className="space-y-4">
               <div>
@@ -1125,7 +1080,7 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
                   <span className="text-text-muted">译文覆盖率</span>
                   <span className="font-mono text-text-primary">{subtitles.length ? `${completion}%` : "未检查"}</span>
                 </div>
-                <div className="h-2 overflow-hidden rounded-full bg-background">
+                <div className={`h-2 overflow-hidden rounded-full bg-background ${subtitles.length ? "" : "hidden"}`}>
                   <div className="h-full rounded-full bg-accent" style={{ width: `${completion}%` }} />
                 </div>
               </div>
@@ -1145,41 +1100,24 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
   );
 }
 
-function Inspector({ children }: { children: React.ReactNode }) {
-  const open = useUiStore((state) => state.inspectorOpen);
-  return <aside className="workspace-inspector" inert={!open} aria-label="处理选项">{children}</aside>;
+function Inspector({ children, title, footer }: { children: React.ReactNode; title: string; footer: React.ReactNode }) {
+  const { inspectorOpen: open, toggleInspector } = useUiStore();
+  return <aside className="workspace-inspector" inert={!open} aria-label="处理选项">
+    <header className="inspector-header">
+      <div><h2>{title}</h2><p>修改后自动保存为后续任务默认值</p></div>
+      <button type="button" className="inspector-close" onClick={() => { toggleInspector(); document.querySelector<HTMLElement>(".workspace-heading h1")?.focus(); }} aria-label="收起处理选项" title="收起处理选项"><Icon icon="solar:alt-arrow-right-linear" width={16} /></button>
+    </header>
+    <div className="inspector-scroll">{children}</div>
+    <footer className="inspector-footer">{footer}</footer>
+  </aside>;
 }
 
 function WorkspaceFrame({ children, meta }: { children: React.ReactNode; meta: (typeof STEP_META)[WorkflowStep] }) {
   const inspectorOpen = useUiStore((state) => state.inspectorOpen);
   return <div className={`workspace-frame ${inspectorOpen ? "" : "inspector-hidden"}`}>
-    <div className="workspace-heading"><h1>{meta.title}</h1><p>{meta.description}</p></div>
+    <div className="workspace-heading"><h1 tabIndex={-1}>{meta.title}</h1><p>{meta.description}</p></div>
     <div className="min-h-0 flex-1 workspace-content">{children}</div>
   </div>;
-}
-
-function Panel({
-  children,
-  fill,
-  icon,
-  title,
-}: {
-  children: React.ReactNode;
-  fill?: boolean;
-  icon: string;
-  title: string;
-}) {
-  return (
-    <section className={`workspace-panel ${fill ? "flex min-h-0 flex-1 flex-col overflow-hidden" : ""}`}>
-      <div className="mb-3.5 flex min-h-8 shrink-0 items-center gap-2.5">
-        <span className="flex shrink-0 items-center justify-center text-text-muted">
-          <Icon icon={icon} width={18} />
-        </span>
-        <h2 className="text-[14px] font-semibold text-text-primary">{title}</h2>
-      </div>
-      <div className={fill ? "min-h-0 flex-1 overflow-hidden" : ""}>{children}</div>
-    </section>
-  );
 }
 
 function MetricTile({ label, value, wide }: { label: string; value: string; wide?: boolean }) {
@@ -1217,51 +1155,38 @@ function FieldLabel({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ModelChip({
-  active,
-  downloading,
-  model,
-  onDownload,
-  onSelect,
-  progress,
-}: {
-  active: boolean;
-  downloading: boolean;
-  model: AsrModelInfo;
-  onDownload: () => void;
-  onSelect: () => void;
-  progress?: number;
+function ModelSummary({ model, fallback }: { model?: AsrModelInfo; fallback: string }) {
+  const display = modelPresentation(model ?? { name: fallback.split(/[\\/]/).pop() || "未选择模型", id: fallback, downloaded: false });
+  return <div className="current-model-summary">
+    <span className="model-eyebrow">当前转录模型</span>
+    <strong>{display.title}</strong>
+    <p>{[display.variant, model ? display.status : "状态待确认"].filter(Boolean).join(" · ")}</p>
+    <small>{display.hint}</small>
+    <InspectorDisclosure title={<>模型详情</>}>
+      <dl className="model-details">
+        <dt>运行方式</dt><dd>{model?.type.toUpperCase() || "由当前引擎决定"}</dd>
+        <dt>资源大小</dt><dd>{model?.size || "未知"}</dd>
+        <dt>原始名称</dt><dd>{model?.name || fallback}</dd>
+        <dt>文件位置或标识</dt><dd>{model?.path || model?.value || model?.id || fallback}</dd>
+      </dl>
+    </InspectorDisclosure>
+  </div>;
+}
+
+function ModelChip({ active, downloading, model, onDownload, onSelect, progress }: {
+  active: boolean; downloading: boolean; model: AsrModelInfo;
+  onDownload: () => void; onSelect: () => void; progress?: number;
 }) {
-  const downloadable = model.downloadable !== false;
-  return (
-    <button
-      onClick={model.downloaded || !downloadable ? onSelect : onDownload}
-      className={`group flex min-h-10 min-w-0 items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left text-[11px] transition-[border-color,background-color,transform] duration-200 active:translate-y-px ${
-        active
-          ? "border-accent bg-accent-dim text-accent"
-          : "border-border bg-background text-text-secondary hover:border-border-active"
-      }`}
-    >
-      <span className="flex min-w-0 items-baseline gap-2">
-        <span className="truncate font-semibold">{model.name || model.id.split("/").pop() || model.id}</span>
-        <span className="shrink-0 text-[10px] text-text-muted">{model.size}</span>
-      </span>
-      <span className="flex shrink-0 items-center gap-1 text-[10px] font-medium">
-        {model.downloaded ? (
-          <>
-            <span className="text-emerald-700">可用</span>
-            <Icon icon="solar:check-circle-bold" width={14} className="text-emerald-600" />
-          </>
-        ) : downloading ? (
-          <span className="font-mono text-accent">{progress ?? 0}%</span>
-        ) : !downloadable ? (
-          <span className="text-text-muted">{model.state === "on_demand" ? "首次使用下载" : "不可下载"}</span>
-        ) : (
-          <span className="text-accent opacity-80 group-hover:opacity-100">下载</span>
-        )}
-      </span>
-    </button>
-  );
+  const display = modelPresentation(model);
+  const canSelect = model.downloaded || model.state === "on_demand";
+  const unavailable = !canSelect && model.downloadable === false;
+  return <button type="button" className="model-option" aria-pressed={active}
+    disabled={downloading || unavailable} onClick={canSelect ? onSelect : onDownload}>
+    <span className="model-option-heading"><strong>{display.title}</strong><span className="model-option-action">{downloading ? "下载中" : canSelect ? (active ? "✓ 当前" : "") : unavailable ? "不可下载" : "下载"}</span></span>
+    <span className="model-option-hint">{display.hint}</span>
+    <span className="model-option-meta">{[display.variant, model.size, downloading ? `正在下载 ${Math.round(progress ?? 0)}%` : display.status].filter(Boolean).join(" · ")}</span>
+    {downloading && <span className="model-download-track" role="progressbar" aria-label={`${display.title}下载进度`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress ?? 0}><span style={{ width: `${Math.max(0, Math.min(100, progress ?? 0))}%` }} /></span>}
+  </button>;
 }
 
 function ModelRow({
@@ -1296,121 +1221,6 @@ function ModelRow({
         </button>
       </div>
     </div>
-  );
-}
-
-function ToggleLine({
-  checked,
-  description,
-  disabled = false,
-  label,
-  onChange,
-}: {
-  checked: boolean;
-  description?: string;
-  disabled?: boolean;
-  label: string;
-  onChange: (value: boolean) => void;
-}) {
-  return (
-    <button
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      className="toggle-line"
-    >
-      <span className="min-w-0">
-        <span className="block text-[13px] font-medium text-text-primary">{label}</span>
-        {description && (
-          <span className="mt-0.5 block text-[12px] leading-5 text-text-muted">{description}</span>
-        )}
-      </span>
-      <span className={`relative h-[22px] w-10 shrink-0 rounded-full transition ${checked ? "bg-accent" : "bg-black/10"}`}>
-        <span
-          className={`absolute top-[3px] h-4 w-4 rounded-full bg-white shadow-sm transition ${
-            checked ? "left-[21px]" : "left-[3px]"
-          }`}
-        />
-      </span>
-    </button>
-  );
-}
-
-function TaskActionCard({
-  currentStage,
-  description,
-  disabled,
-  message,
-  onCancel,
-  onPrimary,
-  primaryLabel,
-  progress,
-  running,
-  stages,
-  title,
-}: {
-  currentStage: string;
-  description: string;
-  disabled: boolean;
-  message: string;
-  onCancel: () => Promise<void>;
-  onPrimary: () => void;
-  primaryLabel: string;
-  progress: number;
-  running: boolean;
-  stages: readonly string[];
-  title: string;
-}) {
-  return (
-    <section className="task-action">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="text-[15px] font-semibold">{title}</h2>
-          <p className="mt-1 max-w-[280px] truncate text-[12px] text-text-muted">{description}</p>
-        </div>
-        {running && <span className="rounded-full bg-background px-2 py-1 font-mono text-[11px]">{progress}%</span>}
-      </div>
-      {running && (
-        <div className="mt-4">
-          <div className="h-1.5 overflow-hidden rounded-full bg-background">
-            <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${progress}%` }} />
-          </div>
-          <p className="mt-2 truncate text-[12px] text-text-secondary">{message || currentStage}</p>
-          <div className="mt-3 grid grid-cols-3 gap-1.5">
-            {stages.map((stage, index) => (
-              <span
-                key={stage}
-                className={`rounded-full px-2 py-1 text-center text-[10px] ${
-                  progress >= (index / stages.length) * 100 ? "bg-accent-dim text-accent" : "bg-background text-text-muted"
-                }`}
-              >
-                {stage}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-      <div className="mt-4 flex items-center gap-2">
-        {running ? (
-          <button
-            onClick={() => void onCancel()}
-            className="w-full rounded-full border border-border px-4 py-2 text-[13px] font-medium text-text-primary transition hover:bg-surface-hover"
-          >
-            取消任务
-          </button>
-        ) : (
-          <button
-            onClick={onPrimary}
-            disabled={disabled}
-            className="w-full rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {primaryLabel}
-          </button>
-        )}
-      </div>
-    </section>
   );
 }
 

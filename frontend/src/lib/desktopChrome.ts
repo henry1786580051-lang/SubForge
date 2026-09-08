@@ -7,6 +7,7 @@ import { useUiStore } from "../store/uiStore";
 export type DesktopCapabilities = {
   toolbar: boolean;
   liquid_glass?: boolean;
+  native_sidebar?: boolean;
   reduce_transparency?: boolean;
   reduce_motion?: boolean;
   increase_contrast?: boolean;
@@ -25,12 +26,23 @@ export function desktopState(app = useAppStore.getState(), ui = useUiStore.getSt
     can_inspect: app.activeView === "workflow" && app.step !== "import",
     inspector_open: ui.inspectorOpen,
     running: app.taskStatus === "running",
+    sidebar_collapsed: app.sidebarCollapsed,
+    navigation: app.activeView === "workflow" ? app.step : app.activeView,
   };
 }
 
 export function handleDesktopCommand(command: unknown, cancelTask: () => Promise<void>) {
   const app = useAppStore.getState();
   const ui = useUiStore.getState();
+  if (command === "navigate:import" || command === "navigate:transcribe" || command === "navigate:subtitle") {
+    app.setStep(command.slice(9) as "import" | "transcribe" | "subtitle");
+    app.setActiveView("workflow");
+    return;
+  }
+  if (command === "navigate:settings" || command === "navigate:llm-logs" || command === "navigate:free-models") {
+    app.setActiveView(command.slice(9) as "settings" | "llm-logs" | "free-models");
+    return;
+  }
   switch (command) {
     case "sidebar": app.toggleSidebar(); break;
     case "import": app.setActiveView("workflow"); app.setStep("import"); ui.requestOpen(); break;
@@ -55,6 +67,7 @@ export function useDesktopChrome(cancelTask: () => Promise<void>) {
       useUiStore.getState().setNativeToolbar(caps.toolbar);
       const root = document.documentElement;
       root.dataset.nativeToolbar = String(caps.toolbar);
+      root.dataset.nativeSidebar = String(!!caps.native_sidebar && caps.toolbar);
       root.dataset.reduceTransparency = String(!!caps.reduce_transparency);
       root.dataset.reduceMotion = String(!!caps.reduce_motion);
       root.dataset.increaseContrast = String(!!caps.increase_contrast);

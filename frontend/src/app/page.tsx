@@ -1,5 +1,6 @@
 "use client";
 
+import { WorkspaceGallery } from "@/components/WorkspaceGallery";
 import { useDesktopChrome } from "@/lib/desktopChrome";
 import { Icon } from "@/components/Icon";
 import { useUiStore } from "@/store/uiStore";
@@ -25,6 +26,8 @@ export default function Home() {
     setConfigLoaded,
     taskStatus,
     taskMessage,
+    error,
+    setError,
   } = useAppStore();
   const taskControls = useTaskMonitor();
   useDesktopChrome(taskControls.cancelTask);
@@ -117,7 +120,7 @@ export default function Home() {
       <Sidebar />
       <ToastContainer />
 
-      <div className="min-w-0 flex-1 flex flex-col overflow-hidden">
+      <main className="app-main min-w-0 flex-1 flex flex-col overflow-hidden" aria-label="字幕工作室">
         {!nativeToolbar && <header className="app-toolbar glass-surface">
           <div className="flex min-w-0 items-center gap-3">
             <Icon icon="solar:document-text-linear" width={19} className="shrink-0 text-text-muted" />
@@ -135,6 +138,11 @@ export default function Home() {
           </div>
         </header>}
 
+        {process.env.NODE_ENV === "development" && <WorkspaceGallery />}
+        {error && <div className="workspace-error" role="alert">
+          <div><strong>操作未完成</strong><p>{error}</p></div>
+          <button type="button" aria-label="关闭错误提示" onClick={() => setError(null)}><Icon icon="solar:close-circle-linear" width={18} /></button>
+        </div>}
         {/* Main content */}
         {activeView === "settings" ? (
           <div className="flex-1 overflow-hidden">
@@ -151,7 +159,7 @@ export default function Home() {
         ) : (
           <WorkflowWorkspace {...taskControls} />
         )}
-      </div>
+      </main>
     </div>
   );
 }

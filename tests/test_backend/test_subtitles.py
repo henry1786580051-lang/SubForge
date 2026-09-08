@@ -135,3 +135,39 @@ def test_bilingual_format_roundtrip_preserves_columns(fmt, exporter, parser, cor
     assert len(core.segments) == 1
     assert (core.segments[0].text, core.segments[0].translated_text) == (source, target)
     assert (core.segments[0].start_time, core.segments[0].end_time) == (1000, 2000)
+
+
+def test_saved_upload_survives_session_cleanup(tmp_path, monkeypatch):
+    from app.api import files
+    from app.api.subtitles import SaveRequest, save_subtitle
+
+    import subforge.config as config
+
+    upload_root = tmp_path / "uploads"
+    session = upload_root / "session-test"
+    session.mkdir(parents=True)
+    source = session / "字幕.srt"
+    source.write_text("original", encoding="utf-8")
+    monkeypatch.setattr(files, "UPLOAD_ROOT", upload_root)
+    monkeypatch.setattr(files, "UPLOAD_DIR", session)
+    monkeypatch.setattr(config, "APPDATA_PATH", tmp_path / "appdata")
+    segments = [{"id": 1, "start": "00:00:00.000", "end": "00:00:02.000", "text": "Saved correction", "translated": ""}]
+    result = asyncio.run(save_subtitle(SaveRequest(file_path=str(source), segments=segments)))
+    saved = Path(result["file_path"])
+    assert saved != source
+    assert saved.name == "字幕.srt"
+    assert source.read_text() == "original"
+    files.cleanup_session_uploads()
+    assert not source.exists()
+    assert "Saved correction" in saved.read_text(encoding="utf-8-sig")
+    second = asyncio.run(save_subtitle(SaveRequest(file_path=str(saved), segments=segments)))
+    assert second["file_path"] == str(saved)
+
+
+def test_save_native_document_stays_at_selected_path(tmp_path):
+    from app.api.subtitles import SaveRequest, save_subtitle
+    source = tmp_path / "native.srt"
+    source.write_text("original", encoding="utf-8")
+    result = asyncio.run(save_subtitle(SaveRequest(file_path=str(source), segments=[])))
+    assert result["file_path"] == str(source)
+    assert source.read_text(encoding="utf-8-sig").strip() == ""
