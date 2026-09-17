@@ -460,3 +460,34 @@ def test_cancelled_running_task_keeps_resource_until_worker_unregisters():
         assert replacement.id != first.id
 
     asyncio.run(run())
+
+
+def test_download_progress_can_correct_estimate_and_clear_on_verification():
+    manager = TaskManager()
+    task = manager.create_task("download_model")
+    data = {"phase": "downloading", "progress": 80, "eta_seconds": 10}
+    manager.update_progress(task.id, 80, "download", download=data)
+    data["progress"] = 1
+    assert manager.get_task(task.id).download["progress"] == 80
+    manager.update_progress(task.id, 40, "retry", download={"progress": 40})
+    assert manager.get_task(task.id).progress == 40
+    manager.update_progress(task.id, 99, "正在校验")
+    assert manager.get_task(task.id).download is None
+    manager.complete_task(task.id)
+    assert manager.get_task(task.id).progress == 100
+
+
+@pytest.mark.parametrize("terminal", ["fail", "cancel", "complete"])
+def test_download_terminal_state_discards_stale_eta(terminal):
+    manager = TaskManager()
+    task = manager.create_task("download_model")
+    manager.update_progress(task.id, 20, download={"progress": 20, "eta_seconds": 100})
+    if terminal == "fail":
+        manager.fail_task(task.id, "connection lost")
+    elif terminal == "cancel":
+        manager.cancel_task(task.id)
+    else:
+        manager.complete_task(task.id)
+    assert manager.get_task(task.id).download is None
+    manager.update_progress(task.id, 30, download={"progress": 30, "eta_seconds": 80})
+    assert manager.get_task(task.id).download is None

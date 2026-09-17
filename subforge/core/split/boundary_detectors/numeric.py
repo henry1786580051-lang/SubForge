@@ -47,6 +47,8 @@ def approximate_magnitude(features: EnglishBoundaryFeatures) -> bool:
 
 
 def value_unit_or_noun(features: EnglishBoundaryFeatures) -> bool:
+    if spelled_quantity_unit(features):
+        return True
     if standalone_magnitude_named_population(features):
         return True
     completed_calendar_year = bool(
@@ -165,5 +167,25 @@ def article_model_year_vehicle_name(features: EnglishBoundaryFeatures) -> bool:
                 features.right,
                 flags=re.IGNORECASE,
             )
+        )
+    )
+
+
+def spelled_quantity_unit(features: EnglishBoundaryFeatures) -> bool:
+    """Protect spelled quantities only before unambiguous physical unit names."""
+    return bool(
+        re.search(
+            r"\b(?:a|one|two|three|four|five|six|seven|eight|nine|ten|"
+            r"several|a few|\d(?:[\d,.]*\d)?)"
+            r"(?:[ -]+(?:hundred|thousand|million|billion|trillion))*$",
+            features.semantic_left,
+            re.IGNORECASE,
+        )
+        and re.match(
+            r"^(?:(?:kilo|mega|giga|tera)?watts?|kilowatt-hours?|megawatt-hours?|"
+            r"kilograms?|grams?|tonnes?|litres?|liters?|kilometres?|kilometers?|"
+            r"metres?|meters?|miles?|inches|centimetres?|centimeters?)\b",
+            features.semantic_right,
+            re.IGNORECASE,
         )
     )

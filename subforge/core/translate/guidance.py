@@ -85,7 +85,7 @@ def target_language_style_rules(
             "not mechanically translate the surface 'how ...' structure.",
         ),
         (
-            r"\b\d{1,3}%\b|\bpercent\b|\buse cases?\b",
+            r"(?<![\w.])\d{1,3}(?:\.\d+)?%(?!\w)|\bpercent\b|\buse cases?\b",
             "For percentages and use cases, identify the actual evaluated feature and make "
             "it the Chinese subject; do not mistake an example for the use case itself.",
         ),
@@ -261,6 +261,13 @@ def target_language_style_rules(
             "effect as content being pushed or flooding into view, not as a literal ray.",
         ),
     )
+    if _contains(source, r"\b(?:by|at) the end of (?:\d{4}|(?:last|this|next) year)\b"):
+        rules.append(
+            "Keep each deadline with its own statistic and source key; never borrow a later "
+            "cue's year or 'last year' to complete an earlier cue. For a time-only source key, "
+            "use minimal backward reference such as '这是截至…的数据' when context proves it. "
+            "Preserve uncertainty and do not leave a redundant '也就是…年底' after anticipating its time."
+        )
     rules.extend(rule for pattern, rule in conditional_rules if _contains(source, pattern))
 
     return (

@@ -220,7 +220,18 @@ export const healthApi = {
 };
 
 // Types
+export interface DownloadProgress {
+  phase: "downloading" | "waiting" | "retrying";
+  downloaded_bytes: number;
+  total_bytes: number | null;
+  speed_bps: number | null;
+  eta_seconds: number | null;
+  eta_range_seconds?: [number, number] | null;
+  progress: number | null;
+}
+
 export interface TaskInfo {
+  download?: DownloadProgress | null;
   id: string;
   type: string;
   status: "pending" | "running" | "completed" | "failed" | "cancelled";

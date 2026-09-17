@@ -28,6 +28,61 @@ def detect_semantic_action_mismatch(
     if not source_text or not target_text:
         return None
 
+    context = " ".join((previous_source, source_text, next_source))
+    automotive_checks = (
+        (
+            bool(re.search(r"\blimited\s+(?:trim|Ioniq)\b", source_text, re.I)
+                 and not re.search(r"\blimited[- ]edition\b", source_text, re.I)
+                 and "限量" in target_text),
+            "trim_name",
+            "Limited is a trim identifier here, not limited production. Preserve the trim name; do not add rarity.",
+        ),
+        (
+            bool(re.search(r"\bnot placeful\b", source_text, re.I)
+                 and re.search(r"(?:不够|不太|不|没那么)宽敞", target_text)),
+            "vehicle_placement",
+            "The source's unusual 'not placeful' is ambiguous ASR. Check its vehicle-position meaning using supplied context; do not assert poor cabin space without evidence.",
+        ),
+        (
+            bool(re.search(r"\bget[- ]out[- ]of[- ]the[- ]way[- ]able\b", source_text, re.I)
+                 and re.search(r"让(?:别人|其他车|别的车).{0,4}让路", target_text)),
+            "movement_agent",
+            "The vehicle can get out of the way quickly. Do not reverse this into forcing other road users to yield.",
+        ),
+        (
+            bool(re.search(r"\bsaves? you from\b.*\bpeople\b", source_text, re.I)
+                 and re.search(r"(?:救的就是|救的是|拯救|救了)(?:那些|这些|那群)", target_text)),
+            "protection_roles",
+            "You are protected from the other people's behavior; those people are not the beneficiaries being rescued.",
+        ),
+        (
+            bool(re.search(r"(?:^|[.!])\s*No leak(?:age)?s?[.!]?\s*$", source_text, re.I)
+                 and re.search(r"(?:看看|是否|漏不漏|会不会漏)", target_text)
+                 and not re.search(r"(?:没(?:有)?|未)漏", target_text)),
+            "observed_no_leak",
+            "No leakages states an observed negative result. Preserve no leakage, rather than changing it into a question or a future inspection.",
+        ),
+        (
+            bool(re.search(r"\bmiles of range\b", previous_source, re.I)
+                 and re.search(r"\bhad\s+\d+\s+on it still\b", source_text, re.I)
+                 and not re.search(r"\b(?:fuel|gas|petrol|diesel|tank)\b", source_text, re.I)
+                 and re.search(r"(?:剩|还).{0,8}(?:油|汽油|燃油)", target_text)),
+            "remaining_range",
+            "The adjacent source establishes remaining driving range in miles. Resolve the omitted unit as range, without adding fuel or a tank to this cue.",
+        ),
+        (
+            bool(re.search(r"\blevel\s*2\s+charg", context, re.I)
+                 and re.search(r"\b(?:level\s*2|level\s*$)", source_text, re.I)
+                 and not re.search(r"\blevel\s*3\b", source_text, re.I)
+                 and re.search(r"(?:三级|Level\s*3)", target_text, re.I)),
+            "charging_level",
+            "The source establishes Level 2, not Level 3. Correct the invented level; respect each cue's ownership if the label spans two source keys.",
+        ),
+    )
+    for matches, name, hint in automotive_checks:
+        if matches:
+            return SemanticRepairSignal("translation.semantic.automotive." + name, hint)
+
     if (
         re.search(r"\b(?:parking|hand)\s*brake\b", source_text, re.IGNORECASE)
         and re.search(r"\b(?:down|off|released|disengaged)\b", source_text, re.IGNORECASE)

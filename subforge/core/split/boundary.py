@@ -1702,6 +1702,11 @@ def _score_english_boundary_dependencies(
             contributions=contributions,
         )
 
+    if entity_boundary.typed_technical_phrase(features):
+        risk += record_boundary_score(
+            "split.boundary.english.entity.typed_technical_phrase",
+            reasons=reasons, contributions=contributions,
+        )
     if entity_boundary.proper_name(features):
         risk += record_boundary_score(
             "split.boundary.english.entity.proper_name",
@@ -2205,6 +2210,10 @@ def _split_internal_terminal_clauses(
 
 
 def _is_hard_boundary(left: ASRDataSeg, right: ASRDataSeg) -> bool:
+    from subforge.core.split.temporal_attachment import is_temporal_clause_boundary
+
+    if is_temporal_clause_boundary(left.text, right.text):
+        return True
     if left.speaker_id and right.speaker_id and left.speaker_id != right.speaker_id:
         gap = max(0, right.start_time - left.end_time)
         assessment = assess_english_boundary(left.text, right.text)
@@ -2570,6 +2579,136 @@ def _region_metrics(
     return cost, risk
 
 
+def _repair_repeated_identifiers(
+    segments: Sequence[ASRDataSeg], *, hard_max_words: int,
+) -> list[ASRDataSeg]:
+    """Recover split model identifiers only when repeated intact in this document."""
+    from collections import Counter
+
+    pattern = re.compile(r"\b[A-Z][A-Za-z]{1,20} \d{1,2}(?: [A-Z]{2,4})?\b")
+    counts = Counter(
+        name
+        for cue in segments
+        for match in pattern.finditer(cue.text)
+        for name in {tuple(_tokens(match.group())), tuple(_tokens(match.group()))[:2]}
+    )
+    phrases = {name for name, count in counts.items() if count >= 2}
+    result = list(segments)
+    for index in range(len(result) - 1):
+        left, right = result[index:index + 2]
+        if not phrases or not left.words or not right.words or left.speaker_id != right.speaker_id:
+            continue
+        if _is_hard_boundary(left, right):
+            continue
+        words = [*left.words, *right.words]
+        if any(not _tokens(w.text) or w.end_time <= w.start_time for w in words):
+            continue
+        if any(a.end_time > b.start_time for a, b in zip(words, words[1:])):
+            continue
+        if any(_tokens(_join_words(c.words)) != _tokens(c.text) for c in (left, right)):
+            continue
+        tokens = [" ".join(_tokens(w.text)) for w in words]
+        old = len(left.words)
+        positions = set()
+        protected = []
+        for phrase in phrases:
+            for start in range(max(0, old - len(phrase) + 1), old):
+                end = start + len(phrase)
+                if tuple(tokens[start:end]) == phrase and start < old < end:
+                    protected.append((start, end))
+                    positions.update((start, end))
+        candidates = []
+        for position in positions:
+            if not 0 < position < len(words) or any(a < position < b for a, b in protected):
+                continue
+            if tokens[position - 1] in {"the", "a", "an", "my", "your", "our", "their"}:
+                continue
+            parts = (words[:position], words[position:])
+            if any(_word_count(part) > hard_max_words
+                   or not 600 <= part[-1].end_time - part[0].start_time <= 8000 for part in parts):
+                continue
+            cost = sum(_segment_cost(part, SOFT_MAX_WORDS, hard_max_words) for part in parts)
+            cost += _boundary_cost(words, position, old)[0]
+            # Prefer retaining the identifier with its existing left-hand modifiers.
+            candidates.append((position not in {end for _, end in protected}, cost, position))
+        if candidates:
+            position = min(candidates)[2]
+            result[index:index + 2] = [_make_cue(words[:position], left.speaker_id),
+                                     _make_cue(words[position:], right.speaker_id)]
+    return result
+
+
+def _repair_quantified_requirement_lists(
+    segments: Sequence[ASRDataSeg], *, hard_max_words: int,
+) -> list[ASRDataSeg]:
+    """Keep a quantified relative clause together in a coordinated requirement list."""
+    result = list(segments)
+    for index in range(1, len(result) - 1):
+        previous, left, right = result[index - 1:index + 2]
+        features = extract_english_boundary_features(left.text, right.text)
+        if not numeric_boundary.spelled_quantity_unit(features):
+            continue
+        if not previous.text.rstrip().endswith(",") or not re.match(
+            r"^[A-Za-z]+(?: [A-Za-z]+){0,3} and,? for (?:the|those|these)\b", left.text,
+            re.IGNORECASE,
+        ):
+            continue
+        if not re.search(r"\bthat\b", left.text, re.IGNORECASE):
+            continue
+        cues = [previous, left, right]
+        if len({cue.speaker_id for cue in cues}) != 1 or any(not cue.words for cue in cues):
+            continue
+        if any(_is_hard_boundary(a, b) for a, b in zip(cues, cues[1:])):
+            continue
+        if any(_join_words(cue.words) != cue.text for cue in cues):
+            continue
+        words = [word for cue in cues for word in cue.words]
+        if any(len(w.text.split()) != 1 or w.end_time <= w.start_time for w in words):
+            continue
+        if any(a.end_time > b.start_time for a, b in zip(words, words[1:])):
+            continue
+        conjunction = next((n for n, w in enumerate(left.words) if w.text.lower().strip(",") == "and"), None)
+        comma = next((n for n, w in enumerate(right.words) if w.text.endswith(",")), None)
+        if conjunction is None or comma is None or comma == len(right.words) - 1:
+            continue
+        parts = [previous.words + left.words[:conjunction],
+                 left.words[conjunction:] + right.words[:comma + 1], right.words[comma + 1:]]
+        if any(_word_count(part) > hard_max_words
+               or not 600 <= part[-1].end_time - part[0].start_time <= 8000 for part in parts):
+            continue
+        result[index - 1:index + 2] = [_make_cue(part, left.speaker_id) for part in parts]
+    return result
+
+
+def _repair_stranded_temporal_clauses(
+    segments: Sequence[ASRDataSeg], *, hard_max_words: int,
+) -> list[ASRDataSeg]:
+    from subforge.core.split.temporal_attachment import temporal_clause_split
+
+    result = list(segments)
+    for index in range(len(result) - 1):
+        left, right = result[index:index + 2]
+        position = temporal_clause_split(left.text, right.text)
+        if position is None or not left.words or not right.words:
+            continue
+        if left.speaker_id != right.speaker_id or _is_hard_boundary(left, right):
+            continue
+        words = [*left.words, *right.words]
+        # Never derive new times from sentence estimates or mismatched tokens.
+        if any(len(word.text.split()) != 1 or word.end_time <= word.start_time for word in words):
+            continue
+        if _join_words(left.words) != left.text or _join_words(right.words) != right.text:
+            continue
+        if any(a.end_time > b.start_time for a, b in zip(words, words[1:])):
+            continue
+        parts = [words[:position], words[position:]]
+        if any(not part or _word_count(part) > hard_max_words
+               or not 600 <= part[-1].end_time - part[0].start_time <= 8000 for part in parts):
+            continue
+        result[index:index + 2] = [_make_cue(part, left.speaker_id) for part in parts]
+    return result
+
+
 def normalize_boundaries(
     segments: Sequence[ASRDataSeg],
     *,
@@ -2582,7 +2721,10 @@ def normalize_boundaries(
     # the first pass, including when only part of the input is translated.
     if any(segment.translated_text for segment in segments):
         return list(segments)
-    result = _remove_singular_corrections(segments)
+    result = _repair_repeated_identifiers(segments, hard_max_words=hard_max_words)
+    result = _repair_quantified_requirement_lists(result, hard_max_words=hard_max_words)
+    result = _repair_stranded_temporal_clauses(result, hard_max_words=hard_max_words)
+    result = _remove_singular_corrections(result)
     result = _split_internal_terminal_clauses(result)
     result = _repair_japanese_boundaries_until_stable(
         result,
@@ -2713,7 +2855,8 @@ def normalize_boundaries(
         result,
         hard_max_words=hard_max_words,
     )
-    return _repair_japanese_boundaries_until_stable(
+    result = _repair_japanese_boundaries_until_stable(
         result,
         hard_max_chars=hard_max_cjk_chars,
     )
+    return _repair_repeated_identifiers(result, hard_max_words=hard_max_words)

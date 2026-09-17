@@ -36,3 +36,13 @@ def test_entity_detectors_preserve_case_and_continuation_exclusions() -> None:
         )
         is False
     )
+
+
+@pytest.mark.parametrize("left,right,expected", [
+    ("This is the last Mark", "V Toyota coupe", True),
+    ("An updated Mk", "I Camera", True),
+    ("Ask Mark", "I think he knows", False),
+    ("Make your mark", "V is the symbol", False),
+])
+def test_roman_generation_boundary(left, right, expected):
+    assert entity.proper_name(extract_english_boundary_features(left, right)) is expected

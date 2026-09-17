@@ -146,7 +146,8 @@ def extract_english_boundary_features(left: str, right: str) -> EnglishBoundaryF
     complete_own_idiom = bool(
         tail == "own"
         and re.search(
-            r"\bof\s+(?:his|her|its|my|our|their|your)\s+own[,;:]?$",
+            r"\b(?:of\s+(?:his|her|its|my|our|their|your)\s+own[,;:]?|"
+            r"on\s+(?:his|her|its|my|our|their|your)\s+own[,;:])$",
             semantic_left,
             flags=re.IGNORECASE,
         )

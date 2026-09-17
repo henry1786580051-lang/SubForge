@@ -7,6 +7,7 @@ class TaskResponse(BaseModel):
     status: str
     progress: int = 0
     message: str = ""
+    download: dict | None = None
     result: dict | None = None
     error: str | None = None
     subtitle_file: str | None = None

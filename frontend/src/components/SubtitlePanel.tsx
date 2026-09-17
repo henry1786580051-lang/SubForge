@@ -3,7 +3,7 @@
 import { importSubtitleDocument } from "@/lib/documentOperations";
 import { hasUnsavedSubtitles } from "@/lib/subtitleEdits";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useUiStore } from "@/store/uiStore";
 import { Icon } from "@/components/Icon";
@@ -14,15 +14,19 @@ import type { TaskStarter } from "@/lib/useTaskMonitor";
 export function SubtitlePanel({
   startTask,
   focusRequest = null,
+  checkFilter = null,
   showPrompt = true,
   showTranslateActions = true,
 }: {
   startTask: TaskStarter;
   focusRequest?: { id: number; token: number } | null;
+  checkFilter?: { label: string; ids: number[]; reasons: Record<number, string>; onPrevious: () => void; onNext: () => void; onClear: () => void } | null;
   showPrompt?: boolean;
   showTranslateActions?: boolean;
 }) {
   const { subtitles, commitSubtitles, subtitleHistory, undoSubtitleEdit, updateSubtitle, selectedIds, toggleSelect, selectAll, deselectAll, subtitleFile, videoFile, config, setError, isProcessing } = useAppStore();
+  const filterIds = checkFilter?.ids;
+  const visibleSubtitles = useMemo(() => { const ids = filterIds ? new Set(filterIds) : null; return ids ? subtitles.filter((sub) => ids.has(sub.id)) : subtitles; }, [subtitles, filterIds]);
   const { nativeToolbar, exportRequested, consumeExport } = useUiStore();
   const unsaved = useAppStore(hasUnsavedSubtitles);
   const saving = useAppStore((state) => state.subtitleSaving);
@@ -41,10 +45,10 @@ export function SubtitlePanel({
   // TanStack Virtual intentionally exposes mutable measurement helpers.
   // eslint-disable-next-line react-hooks/incompatible-library
   const rowVirtualizer = useVirtualizer({
-    count: subtitles.length,
+    count: visibleSubtitles.length,
     getScrollElement: () => tableScrollRef.current,
     estimateSize: () => 64,
-    getItemKey: (index) => subtitles[index]?.id ?? index,
+    getItemKey: (index) => visibleSubtitles[index]?.id ?? index,
     measureElement: (element) => element.getBoundingClientRect().height,
     overscan: 8,
   });
@@ -52,7 +56,7 @@ export function SubtitlePanel({
 
   useEffect(() => {
     if (!focusRequest) return;
-    const rowIndex = subtitles.findIndex((subtitle) => subtitle.id === focusRequest.id);
+    const rowIndex = visibleSubtitles.findIndex((subtitle) => subtitle.id === focusRequest.id);
     if (rowIndex < 0) return;
     rowVirtualizer.scrollToIndex(rowIndex, { align: "center" });
     setFocusedRowId(focusRequest.id);
@@ -73,7 +77,7 @@ export function SubtitlePanel({
       window.cancelAnimationFrame(focusFrame);
       window.clearTimeout(timer);
     };
-  }, [focusRequest, rowVirtualizer, subtitles]);
+  }, [focusRequest, rowVirtualizer, visibleSubtitles]);
 
   const startEdit = useCallback((id: number, field: "text" | "translated", value: string) => { if (useAppStore.getState().isProcessing || useAppStore.getState().documentLoading) return; setEditingCell({ id, field }); setEditValue(value); }, []);
   const commitEdit = useCallback(() => { if (!editingCell) return; updateSubtitle(editingCell.id, editingCell.field, editValue); setEditingCell(null); }, [editingCell, editValue, updateSubtitle]);
@@ -397,6 +401,11 @@ export function SubtitlePanel({
         </div>
       )}
 
+      {checkFilter && <div className="check-filter" aria-label="检查结果筛选">
+        <div><strong>{checkFilter.label} · {checkFilter.ids.length.toLocaleString()} 条</strong><p>{focusedRowId ? checkFilter.reasons[focusedRowId] || "此条已不在当前检查结果中" : "选择字幕查看原因"}</p></div>
+        <div className="check-filter-actions"><button disabled={!checkFilter.ids.length} onClick={checkFilter.onPrevious}>上一条</button><button disabled={!checkFilter.ids.length} onClick={checkFilter.onNext}>下一条</button><button onClick={checkFilter.onClear}>清除筛选</button></div>
+      </div>}
+      {checkFilter && !visibleSubtitles.length && <p className="check-note p-4">当前没有匹配项，可以清除筛选查看全部字幕。</p>}
       {/* Table */}
       <div ref={tableScrollRef} className="flex-1 overflow-auto">
         {subtitles.length === 0 ? (
@@ -411,7 +420,7 @@ export function SubtitlePanel({
           <table className="subtitle-table grid w-full text-[15px] leading-6">
             <thead className="sticky top-0 z-10 grid">
               <tr className="grid grid-cols-[32px_36px_132px_minmax(0,1fr)_minmax(0,1fr)] bg-surface border-b border-border">
-                <th className="text-left px-3 py-2 text-[11px] text-text-muted font-medium w-10"><input type="checkbox" checked={allSelected} onChange={allSelected ? deselectAll : selectAll} aria-label="选择字幕" className="accent-accent w-3.5 h-3.5" /></th>
+                <th className="text-left px-3 py-2 text-[11px] text-text-muted font-medium w-10"><input type="checkbox" checked={checkFilter ? visibleSubtitles.length > 0 && visibleSubtitles.every((sub) => selectedIds.has(sub.id)) : allSelected} onChange={() => { if (checkFilter) { const ids = visibleSubtitles.map((sub) => sub.id); const clear = ids.every((id) => selectedIds.has(id)); ids.forEach((id) => { if (selectedIds.has(id) === clear) toggleSelect(id); }); } else { (allSelected ? deselectAll : selectAll)(); } }} aria-label="选择字幕" className="accent-accent w-3.5 h-3.5" /></th>
                 <th className="text-left px-3 py-2 text-[11px] text-text-muted font-medium w-10">#</th>
                 <th className="text-left px-3 py-2 text-[11px] text-text-muted font-medium w-36">时间</th>
                 <th className="text-left px-3 py-2 text-[11px] text-text-muted font-medium">原文</th>
@@ -423,7 +432,7 @@ export function SubtitlePanel({
               style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
             >
               {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-                const sub = subtitles[virtualRow.index];
+                const sub = visibleSubtitles[virtualRow.index];
                 const idx = virtualRow.index;
                 return (
                 <tr

@@ -13,7 +13,8 @@ from subforge.core.translate.types import TargetLanguage
 _REASONING_LEAK_RE = re.compile(
     r"(?:<think>|</think>|<analysis>|</analysis>|<reasoning>|</reasoning>|"
     r"作为\s*(?:一个|一名)?\s*AI|推理过程\s*[:：]|"
-    r"(?:analysis|reasoning)\s*:|```(?:json|markdown)?)",
+    r"(?:analysis|reasoning)\s*:|```(?:json|markdown)?|"
+    r"[\"']\{\}[\"']\s+format\s*\()",
     flags=re.IGNORECASE,
 )
 

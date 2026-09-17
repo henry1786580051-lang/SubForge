@@ -17,6 +17,7 @@ EXPERIMENTS = (
     "scoped-terminology",
     "unowned-fact-feedback",
     "context-role-contract",
+    "domain-precision",
 )
 
 CONTEXT_ROLE_GUIDANCE = (
@@ -109,6 +110,11 @@ def translation_experiments(names: tuple[str, ...] = ()) -> Iterator[None]:
         return valid, unowned_fact_feedback(message)
 
     with ExitStack() as stack:
+        if "domain-precision" in names:
+            from scripts.translation_quality.domain_precision import domain_precision_rules
+            from subforge.core.translate import llm_translator
+
+            stack.enter_context(patch.object(llm_translator, "target_language_style_rules", domain_precision_rules))
         if "exact-name-spacing" in names:
             stack.enter_context(patch.object(LLMTranslator, "_validate_no_unowned_latin_names", validate))
         if {"scoped-terminology", "context-role-contract"} & set(names):

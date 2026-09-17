@@ -29,6 +29,7 @@ class TaskInfo(BaseModel):
     status: TaskStatus = TaskStatus.PENDING
     progress: int = 0
     message: str = ""
+    download: dict | None = None
     result: dict[str, Any] | None = None
     error: str | None = None
     subtitle_file: str | None = None  # partial results during processing
@@ -100,6 +101,7 @@ class TaskManager:
         message: str = "",
         subtitle_file: str | None = None,
         preview_segments: list[dict[str, Any]] | None = None,
+        download: dict | None = None,
     ):
         preview_delta = None
         with self._lock:
@@ -112,6 +114,11 @@ class TaskManager:
                 return
             task.progress = max(task.progress, min(100, max(0, int(progress))))
             task.message = message
+            if download is not None:
+                task.download = deepcopy(download)
+                task.progress = min(99, max(0, int(download.get("progress") or 0)))
+            elif task.download is not None:
+                task.download = None
             task.status = TaskStatus.RUNNING
             if subtitle_file is not None:
                 task.subtitle_file = subtitle_file
@@ -208,6 +215,7 @@ class TaskManager:
                 TaskStatus.CANCELLED,
             }:
                 return
+            task.download = None
             task.status = TaskStatus.COMPLETED
             task.progress = 100
             task.result = deepcopy(result)
@@ -235,6 +243,7 @@ class TaskManager:
                 TaskStatus.CANCELLED,
             }:
                 return
+            task.download = None
             task.status = TaskStatus.FAILED
             task.error = error
             task.result = deepcopy(result)
@@ -331,6 +340,7 @@ class TaskManager:
                 TaskStatus.CANCELLED,
             }:
                 return False
+            task.download = None
             task.status = TaskStatus.CANCELLED
             task.attention = None
             async_task = self._running_tasks.get(task_id)
@@ -386,6 +396,7 @@ class TaskManager:
             task = self._tasks.get(task_id)
             if task is None or task.status in {TaskStatus.COMPLETED, TaskStatus.FAILED}:
                 return
+            task.download = None
             task.status = TaskStatus.CANCELLED
             task.attention = None
             task.result = deepcopy(result)

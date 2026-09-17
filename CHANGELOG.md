@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.3.2 - 2026-09-17
+
+### Subtitle processing
+
+- Protect repeated model identifiers, charging levels and compact technical phrases at subtitle boundaries. Preserve word timing and speaker ownership; refuse reconstruction when cleaned text no longer matches its word alignment.
+- Repair stranded deadline clauses and quantity/unit requirement lists without importing the following cue's facts. Protect generation labels such as Mark V and restore percentage-triggered translation guidance.
+- Add source-scoped semantic review candidates for charging levels, trim names, remaining range, reversed action/protection roles and negative observations. Reject malformed formatting residue in translation output.
+
+### Workspace and model downloads
+
+- Replace overflowing quality tiles with a responsive subtitle-check list, translation coverage and selectable issue groups. Separate timeline/reading/missing-translation checks from advisory continuous/long cues; local checks are not semantic quality scores.
+- Show model-download bytes, measured speed and smoothed remaining-time ranges. Handle warm-up, cache/resume, unknown totals and stalled connections without stale estimates; keep verification separate from successful completion.
+- Clear download telemetry on task termination and retain cancellation support for multi-file model downloads.
+
+### Validation and known limitations
+
+- 2863 Python tests passed (35 integration tests deselected); 62 frontend tests passed. Ruff and frontend lint passed; Pyright reported no errors and 29 warnings.
+- Full GLM-5.3-flash paired development test: 732 new-rule cues versus 719 ablated-control cues, all translated and reviewed across 53 blinded windows. GLM flagged 21 versus 28 candidates; 14 windows favored the new rules, 11 the control, and 28 tied. These are model judgments, not confirmed error rates or holdout accuracy.
+- The new pipeline used 832170 tokens versus 847915 for the control in this single run. Neither general token savings nor semantic completeness is guaranteed: observation-to-requirement changes and cross-cue repetition still occur, and GLM also missed clear defects.
+- The domain-precision prompt experiment remains development-only and disabled by default. Source subtitles, credentials and evaluation logs are not distributed with installers.
+- Apple Silicon DMG and standard Windows x64 EXE; no separate CUDA installer. macOS signing remains ad hoc, without Apple notarization or App Store distribution.
+
 ## v1.3.1 - 2026-09-08
 
 ### Desktop experience

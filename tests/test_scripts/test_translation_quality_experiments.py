@@ -105,3 +105,25 @@ def test_context_role_contract_is_isolated_and_preserves_request_settings(monkey
     assert calls[0]["model"] == "glm-5.3-flash"
     assert calls[0]["max_output_tokens"] == 4096
     assert calls[1]["messages"][0]["content"] == "Translate"
+
+
+def test_domain_precision_is_scoped_and_restored(translator):
+    from subforge.core.translate.guidance import target_language_style_rules
+    generic = ["A quiet conversation about the weather."]
+    vehicle = ["The turning circle is small; compare fuel economy in mpg."]
+    baseline = translator._target_language_style_rules(vehicle)
+    with translation_experiments(("domain-precision",)):
+        assert translator._target_language_style_rules(generic) == target_language_style_rules("简体中文", generic)
+        candidate = translator._target_language_style_rules(vehicle)
+        assert "diameter from radius" in candidate
+        assert "distance per fuel" in candidate
+        assert "tendering roles" not in candidate
+    assert translator._target_language_style_rules(vehicle) == baseline
+
+
+def test_domain_precision_restores_after_failure(translator):
+    original = translator._target_language_style_rules(["A bridge tower."])
+    with pytest.raises(RuntimeError), translation_experiments(("domain-precision",)):
+        assert "stay cable" in translator._target_language_style_rules(["A bridge tower."])
+        raise RuntimeError("cancelled")
+    assert translator._target_language_style_rules(["A bridge tower."]) == original

@@ -59,3 +59,10 @@
 任务预览不再设置保存基线，取消后保留未保存提示。配置写入串行执行，失败保留已确认的工作区选项；任务等待写入屏障，未解决的写入错误阻止启动。
 
 验证：54 项前端、43 项后端/桌面测试通过，生产构建通过。打包预览实际经编辑器上传入口导入独立样本，两次编辑保存到同一个持久路径；源样本保持不变，退出后保存结果仍在。真实收费转录/翻译与网络故障的端到端演练未执行，相关时序使用受控回归测试验证。
+
+
+## Subtitle checks refresh
+
+The inspector now uses vertical check rows with dedicated numeric and chevron columns. Local checks distinguish invalid/overlapping timing, estimated reading burden, missing translations, continuous timing, and long display duration. Continuous timing and long duration are neutral reference items. Reading estimates use the displayed translation when present, otherwise source text (9 non-whitespace characters/s for majority CJK text, 20 otherwise); these are review heuristics, not quality verdicts. Results recompute after edits. Selecting a category filters the editor and offers previous/next navigation, reasons, and clear filter. No LLM requests are added. Backend speech/semantic reports are not yet bound to document revisions in this panel, so the panel explicitly marks them as unchecked.
+
+Validation: 58 frontend tests, lint and production build passed; installed macOS app signature verified; a 2,765-row local fixture verified numeric layout, filtering, next-item focus and clearing. Updated the single installed app in place; rollback frontend files are a ZIP in temporary storage, not another app bundle.

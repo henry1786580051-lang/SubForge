@@ -20,7 +20,7 @@ and WhisperX extras so the packaged app includes MLX, alignment, and diarization
 
 ```bash
 uv sync --frozen --extra denoise --extra whisperx
-SUBFORGE_BUILD_VERSION=1.3.1 uv run --no-sync --with pyinstaller==6.20.0 python scripts/build_desktop.py --clean --no-archive
+SUBFORGE_BUILD_VERSION=1.3.2 uv run --no-sync --with pyinstaller==6.20.0 python scripts/build_desktop.py --clean --no-archive
 uv run --no-sync python scripts/smoke_desktop.py dist/SubForge.app
 ```
 
@@ -29,10 +29,26 @@ under `artifacts/`. The verified app is `dist/SubForge.app`; a redundant standal
 `dist/SubForge` directory is removed after successful verification. Do not rename
 or duplicate the output as `SubForge 2`.
 
+### Local installation and cleanup
+
+On the maintainer's Mac, the sole installed copy is
+`~/Applications/SubForge.app`. Before updating, check both `/Applications` and
+`~/Applications` and the running executable path. Replace the existing app in
+place; never create a numbered copy or install into a second Applications folder.
+
+Keep rollback copies as DMG or ZIP archives, never as unpacked application
+bundles (renaming a bundle without an `.app` suffix is not sufficient). Use one
+temporary staging location for verification. After the installed version and
+release image pass verification, remove staging apps, preview apps, old unpacked
+backups, and redundant `.app` outputs under `dist/` and `artifacts/`. Preserve
+installers, checksums, verification evidence, user settings, and model data.
+Before declaring an update complete, verify that only the canonical installed
+copy remains in installation and staging locations, and detach test disk images.
+
 To build an app and the drag-install DMG together:
 
 ```bash
-SUBFORGE_BUILD_VERSION=1.3.1 uv run --no-sync --with pyinstaller==6.20.0 --with dmgbuild python build_macos.py
+SUBFORGE_BUILD_VERSION=1.3.2 uv run --no-sync --with pyinstaller==6.20.0 --with dmgbuild python build_macos.py
 ```
 
 That command writes `~/Desktop/SubForge.dmg`. Name the published asset

@@ -731,6 +731,12 @@ _ENGLISH_COORDINATION_RULES = (
 
 _ENGLISH_ENTITY_RULES = (
     BoundaryScoreRule(
+        "split.boundary.english.entity.typed_technical_phrase",
+        "typed technical label separated from its identifier or head",
+        "entity", BoundaryScoreDirection.RISK, 42, ("en",),
+        ("monologue", "dialogue"), ("left_tokens", "right_tokens"),
+    ),
+    BoundaryScoreRule(
         "split.boundary.english.entity.powertrain_vehicle_name",
         "powertrain modifier separated from its vehicle name",
         "entity",

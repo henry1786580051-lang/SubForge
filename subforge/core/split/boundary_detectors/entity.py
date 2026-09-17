@@ -127,6 +127,12 @@ def alphanumeric_model_alternative(features: EnglishBoundaryFeatures) -> bool:
 
 
 def proper_name(features: EnglishBoundaryFeatures) -> bool:
+    # Generation labels can end with a one-letter Roman numeral. Keep the
+    # prefix and numeral together without treating standalone "I" as a name.
+    if re.search(r"\b(?:Mark|Mk)\.?$", features.left) and re.match(
+        r"^(?:I|V|X)(?=\s+[A-Z][A-Za-z0-9]|[,.;:]|$)", features.right
+    ):
+        return True
     left_name = re.search(r"(?:^|\s)([A-Z][A-Za-z'’-]{1,})$", features.left)
     right_name = re.match(r"^([A-Z][A-Za-z'’-]{1,})\b", features.right)
     return bool(
@@ -166,4 +172,27 @@ def vehicle_trim_model(features: EnglishBoundaryFeatures) -> bool:
             flags=re.IGNORECASE,
         )
         and re.match(r"^[A-Z][A-Za-z0-9-]+\b", features.right)
+    )
+
+
+def typed_technical_phrase(features: EnglishBoundaryFeatures) -> bool:
+    """Protect explicit technical labels and compact compound names, not arbitrary nouns."""
+    left, right = features.semantic_left, features.semantic_right
+    return bool(
+        (re.search(r"\blevel$", left, re.I)
+         and re.match(r"^[123]\s+(?:chargers?|charging|adapters?)\b", right, re.I))
+        or (re.search(r"\blevel\s+[123]$", left, re.I)
+            and re.match(r"^(?:chargers?|charging|adapters?)\b", right, re.I))
+        or (re.search(r"\bparking$", left, re.I)
+            and re.match(r"^cameras?\b", right, re.I))
+        or (re.search(r"\bsound\s+system$", left, re.I)
+            and re.match(r"^test\s+(?:song|track)\b", right, re.I))
+        or (re.search(r"\bsound$", left, re.I)
+            and re.match(r"^system\s+test\s+(?:song|track)\b", right, re.I))
+        or (re.search(r"\b(?:like|about|around|roughly)\s+\d{2,4},$", left, re.I)
+            and re.match(r"^\d{2,4}\b", right))
+        or (re.search(r"\bsound\s+system\s+test$", left, re.I)
+            and re.match(r"^(?:song|track)\b", right, re.I))
+        or (re.search(r"\bBose$", left)
+            and re.match(r"^(?:systems?|speakers?)\b", right, re.I))
     )

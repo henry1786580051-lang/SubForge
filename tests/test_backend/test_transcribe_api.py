@@ -214,7 +214,8 @@ def test_huggingface_alignment_download_uses_whisperx_cache_layout(tmp_path, mon
         (snapshot / "pytorch_model.bin").write_bytes(b"weights")
         return str(snapshot)
 
-    def fake_cancellable_download(operation, kwargs, cancel_event):
+    def fake_cancellable_download(operation, kwargs, cancel_event, *, progress_callback):
+        assert callable(progress_callback)
         assert operation == "huggingface_snapshot"
         assert not cancel_event.is_set()
         return fake_snapshot_download(**kwargs)
@@ -254,7 +255,8 @@ def test_speaker_verification_download_is_pinned_and_public(tmp_path, monkeypatc
             model_file.truncate(20 * 1024 * 1024)
         return local_dir
 
-    def fake_cancellable_download(operation, kwargs, cancel_event):
+    def fake_cancellable_download(operation, kwargs, cancel_event, *, progress_callback):
+        assert callable(progress_callback)
         assert operation == "huggingface_snapshot"
         assert not cancel_event.is_set()
         return fake_snapshot_download(**kwargs)
@@ -389,3 +391,33 @@ def test_model_self_test_returns_real_transcript_metadata(tmp_path, monkeypatch)
     assert result["ok"] is True
     assert result["transcript"] == "model test passed"
     assert result["segment_count"] == 1
+
+
+def test_http_model_download_reports_bytes_then_clears_eta(tmp_path, monkeypatch):
+    import httpx
+    from app.core.task_manager import TaskManager
+
+    manager = TaskManager()
+    task = manager.create_task("download_model")
+    monkeypatch.setattr(transcribe_api, "task_manager", manager)
+    seen = []
+    manager.add_listener(lambda *_args: seen.append(manager.get_task(task.id)))
+
+    class Stream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b"x" * 65536
+            await asyncio.sleep(0.02)
+            yield b"y" * 65536
+
+    original_client = httpx.AsyncClient
+    transport = httpx.MockTransport(lambda request: httpx.Response(
+        200, headers={"content-length": str(131072)}, stream=Stream()
+    ))
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: original_client(transport=transport, **kwargs))
+    destination = tmp_path / "model.bin"
+    asyncio.run(transcribe_api._download_model(task.id, "tiny", destination))
+    assert destination.stat().st_size == 131072
+    assert any(item.download and item.download["downloaded_bytes"] == 65536 for item in seen)
+    assert any(item.message == "正在校验模型文件…" and item.download is None for item in seen)
+    assert manager.get_task(task.id).status == "completed"
+    assert not list(tmp_path.glob("*.part"))

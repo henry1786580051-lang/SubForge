@@ -1,5 +1,7 @@
 "use client";
 
+import { downloadLabel } from "@/lib/downloadProgress";
+import type { TaskInfo } from "@/lib/api";
 import { Panel, ToggleLine, TaskActionCard } from "@/components/WorkspaceControls";
 import { importSubtitleDocument } from "@/lib/documentOperations";
 import { modelPresentation } from "@/lib/modelPresentation";
@@ -21,6 +23,7 @@ import {
 } from "@/lib/api";
 import { formatDuration, formatSize } from "@/lib/format";
 import type { TaskStarter } from "@/lib/useTaskMonitor";
+import { SubtitleChecks } from "@/components/SubtitleChecks";
 import { SubtitlePanel } from "@/components/SubtitlePanel";
 import {
   ASR_ENGINES,
@@ -31,7 +34,8 @@ import {
 } from "@/features/workflow/catalog";
 import {
   analyzeSubtitleQuality,
-  type SubtitleQuality,
+  type QualityKey,
+  QUALITY_LABELS,
 } from "@/features/workflow/quality";
 import { LLM_PROVIDERS } from "@/features/settings/catalog";
 
@@ -247,7 +251,9 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
   } | null>(null);
   const [models, setModels] = useState<AsrModelInfo[]>([]);
   const [downloadingModel, setDownloadingModel] = useState<string | null>(null);
-  const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
+  const downloadActive = useRef(false);
+  const [downloadTask, setDownloadTask] = useState<TaskInfo | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState<Record<string, number | undefined>>({});
   const [huggingfaceToken, setHuggingfaceToken] = useState("");
   const [huggingfaceTokenConfigured, setHuggingfaceTokenConfigured] = useState(false);
   const [resolvingAlignment, setResolvingAlignment] = useState(false);
@@ -349,8 +355,11 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
   const quality = useMemo(() => analyzeSubtitleQuality(subtitles), [subtitles]);
 
   const downloadModel = useCallback(async (modelId: string): Promise<boolean> => {
+    if (downloadActive.current) return false;
+    downloadActive.current = true;
     setDownloadingModel(modelId);
-    setDownloadProgress((prev) => ({ ...prev, [modelId]: 0 }));
+    setDownloadTask(null);
+    setDownloadProgress((prev) => ({ ...prev, [modelId]: undefined }));
     try {
       const requestedModel = models.find((model) => model.id === modelId);
       if (requestedModel?.type === "diarization" && huggingfaceToken.trim()) {
@@ -368,7 +377,8 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
         while (true) {
           await new Promise((resolve) => setTimeout(resolve, 1000));
           const task = await tasksApi.get(downloadTaskId);
-          setDownloadProgress((prev) => ({ ...prev, [modelId]: task.progress }));
+          setDownloadTask(task);
+          setDownloadProgress((prev) => ({ ...prev, [modelId]: task.download?.progress ?? undefined }));
           if (task.status === "completed") {
             setModels((prev) => prev.map((m) => (m.id === modelId ? { ...m, downloaded: true } : m)));
             return true;
@@ -383,6 +393,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
       setError(err instanceof Error ? err.message : "模型下载失败");
       return false;
     } finally {
+      downloadActive.current = false;
       setDownloadingModel(null);
     }
   }, [huggingfaceToken, models, setError]);
@@ -451,7 +462,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
             <LiveSubtitleList subtitles={subtitles} isLive={taskStatus === "running"} />
           </Panel>
           <Panel title="时间轴质量" icon="solar:shield-warning-bold-duotone">
-            <QualitySummary quality={quality} hasData={subtitles.length > 0} compact />
+            <SubtitleChecks quality={quality} processing={isProcessing} />
           </Panel>
         </section>
 
@@ -476,6 +487,9 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
             onCancel={cancelTask}
           />
         }>
+      {downloadingModel && <div className="download-status" role="status">
+        <strong>模型下载</strong><span>{downloadLabel(downloadTask)}</span>
+      </div>}
           <Panel title="识别设置" icon="solar:microphone-linear">
             <label className="inspector-field">源语言
               <select value={config.sourceLanguage} className="input-field" onChange={(event) => void saveConfig("source_language", event.target.value)}>
@@ -567,7 +581,7 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                           className="shrink-0 rounded-md bg-accent px-2.5 py-1.5 text-[10px] font-semibold text-white transition-colors hover:bg-accent-hover disabled:opacity-60"
                         >
                           {downloadingModel === selectedAlignModel.id
-                            ? `${downloadProgress[selectedAlignModel.id] ?? 0}%`
+                            ? (downloadProgress[selectedAlignModel.id] == null ? "下载中" : `${downloadProgress[selectedAlignModel.id]}%`)
                             : "下载"}
                         </button>
                       )}
@@ -816,11 +830,9 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
                           : "主要语言的完整时间轴对齐"}
                       </p>
                       {downloadingModel === model.model_id && (
-                        <div className="mt-2 h-1 overflow-hidden rounded-full bg-amber-100">
-                          <div
-                            className="h-full bg-amber-500 transition-[width]"
-                            style={{ width: `${downloadProgress[model.model_id] || 0}%` }}
-                          />
+                        <div className={`model-download-track${downloadProgress[model.model_id] == null ? " is-indeterminate" : ""}`}
+                          role="progressbar" aria-label="对齐模型下载进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={downloadProgress[model.model_id]}>
+                          <span style={{ width: downloadProgress[model.model_id] == null ? "35%" : `${downloadProgress[model.model_id]}%` }} />
                         </div>
                       )}
                     </div>
@@ -895,19 +907,22 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
       config.llmProvider,
     [config.llmProvider]
   );
-  const translatedCount = subtitles.filter((sub) => sub.translated.trim()).length;
-  const completion = subtitles.length ? Math.round((translatedCount / subtitles.length) * 100) : 0;
-
-  const jumpToNextEmptyTranslation = useCallback(() => {
-    const ids = quality.emptyTranslationIds;
-    if (!ids.length) return;
-    const currentIndex = subtitleFocusRequest
-      ? ids.indexOf(subtitleFocusRequest.id)
-      : -1;
-    const nextId = ids[(currentIndex + 1) % ids.length];
-    focusTokenRef.current += 1;
-    setSubtitleFocusRequest({ id: nextId, token: focusTokenRef.current });
-  }, [quality.emptyTranslationIds, subtitleFocusRequest]);
+  const [checkSelection, setCheckSelection] = useState<{ key: QualityKey; file: string | null } | null>(null);
+  const activeCheck = checkSelection?.file === subtitleFile ? checkSelection?.key : null;
+  const checkIds = activeCheck ? quality.ids[activeCheck] : null;
+  const navigateCheck = (direction: number, key = activeCheck) => {
+    if (!key || !quality.ids[key].length) return;
+    const ids = quality.ids[key];
+    const current = subtitleFocusRequest ? ids.indexOf(subtitleFocusRequest.id) : -1;
+    const index = current < 0 ? 0 : (current + direction + ids.length) % ids.length;
+    setSubtitleFocusRequest({ id: ids[index], token: ++focusTokenRef.current });
+  };
+  const selectCheck = (key: QualityKey) => {
+    useAppStore.getState().deselectAll();
+    setCheckSelection({ key, file: subtitleFile });
+    const id = quality.ids[key][0];
+    if (id !== undefined) setSubtitleFocusRequest({ id, token: ++focusTokenRef.current });
+  };
 
   useEffect(
     () => () => {
@@ -967,6 +982,12 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
           <SubtitlePanel
             startTask={startTask}
             focusRequest={subtitleFocusRequest}
+            checkFilter={activeCheck && !isProcessing ? {
+              label: QUALITY_LABELS[activeCheck], ids: checkIds || [],
+              reasons: quality.reasons[activeCheck],
+              onPrevious: () => navigateCheck(-1), onNext: () => navigateCheck(1),
+              onClear: () => { setCheckSelection(null); setSubtitleFocusRequest(null); },
+            } : null}
             showPrompt={false}
             showTranslateActions={false}
           />
@@ -1073,24 +1094,8 @@ function SubtitleWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) {
 
             </div>
           </div>
-          <Panel title="结构检查" icon="solar:chart-2-bold-duotone">
-            <div className="space-y-4">
-              <div>
-                <div className="mb-2 flex items-center justify-between text-[12px]">
-                  <span className="text-text-muted">译文覆盖率</span>
-                  <span className="font-mono text-text-primary">{subtitles.length ? `${completion}%` : "未检查"}</span>
-                </div>
-                <div className={`h-2 overflow-hidden rounded-full bg-background ${subtitles.length ? "" : "hidden"}`}>
-                  <div className="h-full rounded-full bg-accent" style={{ width: `${completion}%` }} />
-                </div>
-              </div>
-              <QualitySummary
-                quality={quality}
-                hasData={subtitles.length > 0}
-                compact
-                onEmptyTranslationsClick={jumpToNextEmptyTranslation}
-              />
-            </div>
+          <Panel title="字幕检查" icon="solar:chart-2-bold-duotone">
+            <SubtitleChecks quality={quality} active={activeCheck} onSelect={selectCheck} processing={isProcessing} />
           </Panel>
 
 
@@ -1184,8 +1189,8 @@ function ModelChip({ active, downloading, model, onDownload, onSelect, progress 
     disabled={downloading || unavailable} onClick={canSelect ? onSelect : onDownload}>
     <span className="model-option-heading"><strong>{display.title}</strong><span className="model-option-action">{downloading ? "下载中" : canSelect ? (active ? "✓ 当前" : "") : unavailable ? "不可下载" : "下载"}</span></span>
     <span className="model-option-hint">{display.hint}</span>
-    <span className="model-option-meta">{[display.variant, model.size, downloading ? `正在下载 ${Math.round(progress ?? 0)}%` : display.status].filter(Boolean).join(" · ")}</span>
-    {downloading && <span className="model-download-track" role="progressbar" aria-label={`${display.title}下载进度`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress ?? 0}><span style={{ width: `${Math.max(0, Math.min(100, progress ?? 0))}%` }} /></span>}
+    <span className="model-option-meta">{[display.variant, model.size, downloading ? (progress == null ? "正在下载" : `正在下载 ${Math.round(progress)}%`) : display.status].filter(Boolean).join(" · ")}</span>
+    {downloading && <span className={`model-download-track${progress == null ? " is-indeterminate" : ""}`} role="progressbar" aria-label={`${display.title}下载进度`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style={{ width: progress == null ? "35%" : `${Math.max(0, Math.min(100, progress))}%` }} /></span>}
   </button>;
 }
 
@@ -1217,7 +1222,7 @@ function ModelRow({
             model.downloaded ? "bg-emerald-50 text-emerald-700" : "bg-accent text-white"
           }`}
         >
-          {model.downloaded ? "可用" : downloading ? `${progress ?? 0}%` : "下载"}
+          {model.downloaded ? "可用" : downloading ? (progress == null ? "下载中" : `${progress}%`) : "下载"}
         </button>
       </div>
     </div>
@@ -1305,84 +1310,6 @@ function LiveSubtitleList({
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-function QualitySummary({
-  compact,
-  hasData,
-  onEmptyTranslationsClick,
-  quality,
-}: {
-  compact?: boolean;
-  hasData: boolean;
-  onEmptyTranslationsClick?: () => void;
-  quality: SubtitleQuality;
-}) {
-  if (!hasData) return <p className="text-[13px] leading-6 text-text-muted">未检查 · 导入或生成字幕后显示结构检查结果。</p>;
-  const items = [
-    { label: "重叠", value: quality.overlaps.length, tone: quality.overlaps.length ? "bad" : "good" },
-    { label: "过长", value: quality.longDurations.length, tone: quality.longDurations.length ? "warn" : "good" },
-    { label: "紧贴", value: quality.tightGaps.length, tone: quality.tightGaps.length ? "warn" : "good" },
-    {
-      label: "空译文",
-      value: quality.emptyTranslations,
-      tone: quality.emptyTranslations ? "warn" : "good",
-      onClick: onEmptyTranslationsClick,
-    },
-  ];
-  return (
-    <div className="space-y-3">
-      <div className={`grid ${compact ? "grid-cols-4 max-sm:grid-cols-2" : "grid-cols-2"} gap-2`}>
-        {items.map((item) => {
-          const interactive = Boolean(item.onClick && item.value > 0);
-          return (
-            <button
-              key={item.label}
-              type="button"
-              disabled={!interactive}
-              onClick={interactive ? item.onClick : undefined}
-              aria-label={interactive ? `定位空译文，共 ${item.value} 条` : undefined}
-              title={interactive ? `定位空译文，共 ${item.value} 条；再次点击查看下一条` : undefined}
-              className={`relative rounded-xl border border-border bg-background p-3 text-left transition-[border-color,background-color,transform] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 ${
-                interactive
-                  ? "cursor-pointer hover:border-amber-300 hover:bg-amber-50/60 active:translate-y-px"
-                  : "cursor-default"
-              }`}
-            >
-              <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-text-muted">
-                {item.label}
-              </p>
-              {interactive && (
-                <Icon
-                  icon="solar:map-arrow-right-bold"
-                  width={14}
-                  className="absolute right-3 top-3 text-amber-600"
-                />
-              )}
-              <p
-                className={`mt-1 font-mono text-[20px] font-semibold ${
-                  item.tone === "bad"
-                    ? "text-red-600"
-                    : item.tone === "warn"
-                      ? "text-amber-600"
-                      : "text-emerald-600"
-                }`}
-              >
-                {item.value}
-              </p>
-            </button>
-          );
-        })}
-      </div>
-      {!compact && (
-        <div className="rounded-xl bg-background p-3">
-          <p className="text-[12px] leading-5 text-text-muted">
-            当前检测基于 SRT 时间轴和文本结构。无语音覆盖仍需要结合音频 VAD，但重叠、异常长段和过密间隔会优先暴露。
-          </p>
-        </div>
-      )}
     </div>
   );
 }

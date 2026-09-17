@@ -1,0 +1,193 @@
+[
+  {
+    "text": "AI systems were responsible for about 20% of total data center electricity consumption",
+    "start": 285161,
+    "end": 292298,
+    "words": [
+      {
+        "text": "AI",
+        "start": 285161,
+        "end": 285562
+      },
+      {
+        "text": "systems",
+        "start": 285642,
+        "end": 286350
+      },
+      {
+        "text": "were",
+        "start": 286745,
+        "end": 287045
+      },
+      {
+        "text": "responsible",
+        "start": 287146,
+        "end": 287807
+      },
+      {
+        "text": "for",
+        "start": 287867,
+        "end": 288028
+      },
+      {
+        "text": "about",
+        "start": 288108,
+        "end": 288409
+      },
+      {
+        "text": "20%",
+        "start": 288469,
+        "end": 289271
+      },
+      {
+        "text": "of",
+        "start": 289431,
+        "end": 289552
+      },
+      {
+        "text": "total",
+        "start": 290033,
+        "end": 290394
+      },
+      {
+        "text": "data",
+        "start": 290454,
+        "end": 290734
+      },
+      {
+        "text": "center",
+        "start": 290775,
+        "end": 291095
+      },
+      {
+        "text": "electricity",
+        "start": 291196,
+        "end": 291737
+      },
+      {
+        "text": "consumption",
+        "start": 291777,
+        "end": 292298
+      }
+    ]
+  },
+  {
+    "text": "by the end of 2024 and that number could have increased to about half",
+    "start": 292338,
+    "end": 299835,
+    "words": [
+      {
+        "text": "by",
+        "start": 292338,
+        "end": 292499
+      },
+      {
+        "text": "the",
+        "start": 292519,
+        "end": 292619
+      },
+      {
+        "text": "end",
+        "start": 292759,
+        "end": 292900
+      },
+      {
+        "text": "of",
+        "start": 292960,
+        "end": 293262
+      },
+      {
+        "text": "2024",
+        "start": 293521,
+        "end": 294718
+      },
+      {
+        "text": "and",
+        "start": 295218,
+        "end": 295927
+      },
+      {
+        "text": "that",
+        "start": 295967,
+        "end": 296147
+      },
+      {
+        "text": "number",
+        "start": 296247,
+        "end": 296548
+      },
+      {
+        "text": "could",
+        "start": 296668,
+        "end": 296869
+      },
+      {
+        "text": "have",
+        "start": 296949,
+        "end": 297422
+      },
+      {
+        "text": "increased",
+        "start": 297911,
+        "end": 298332
+      },
+      {
+        "text": "to",
+        "start": 298412,
+        "end": 298573
+      },
+      {
+        "text": "about",
+        "start": 298713,
+        "end": 299174
+      },
+      {
+        "text": "half",
+        "start": 299435,
+        "end": 299835
+      }
+    ]
+  },
+  {
+    "text": "by the end of last year 2025.",
+    "start": 300036,
+    "end": 302750,
+    "words": [
+      {
+        "text": "by",
+        "start": 300036,
+        "end": 300176
+      },
+      {
+        "text": "the",
+        "start": 300196,
+        "end": 300296
+      },
+      {
+        "text": "end",
+        "start": 300377,
+        "end": 300517
+      },
+      {
+        "text": "of",
+        "start": 300737,
+        "end": 300818
+      },
+      {
+        "text": "last",
+        "start": 300838,
+        "end": 300918
+      },
+      {
+        "text": "year",
+        "start": 301038,
+        "end": 301299
+      },
+      {
+        "text": "2025.",
+        "start": 301319,
+        "end": 302590
+      }
+    ]
+  }
+]
