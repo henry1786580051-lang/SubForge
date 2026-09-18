@@ -586,9 +586,19 @@ async def _run_subtitle(
                 use_cache=False,
                 cache_namespace=pipeline_identity.cache_namespace,
                 llm_client=llm_client,
+                max_word_count_english=max_word_count_english,
             )
             asr_data = await _run_stage(optimizer, optimizer.optimize_subtitle, asr_data)
             context.checkpoint()
+            unresolved_boundaries = sum(
+                item.get("reason") == "unresolved dependency"
+                for item in getattr(optimizer, "boundary_diagnostics", [])
+            )
+            if unresolved_boundaries:
+                pipeline_warnings.append(
+                    f"{unresolved_boundaries} source boundary dependency(s) require review; "
+                    "word alignment, speaker, or timing/length constraints prevented automatic repair."
+                )
             optimize_failure_count = int(getattr(optimizer, "failed_batch_count", 0) or 0)
             if optimize_failure_count:
                 pipeline_warnings.append(

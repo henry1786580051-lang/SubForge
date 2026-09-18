@@ -1,0 +1,6013 @@
+[
+  {
+    "id": 5,
+    "text": "The Topher and his wife started out their same term that we did with the Alpina in this Ioniq 5 XRT,",
+    "start": 17000,
+    "end": 23700,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "The",
+        "start_time": 17000,
+        "end_time": 17080,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "Topher",
+        "start_time": 17121,
+        "end_time": 17462,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "and",
+        "start_time": 17502,
+        "end_time": 17582,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "his",
+        "start_time": 17642,
+        "end_time": 17783,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "wife",
+        "start_time": 17843,
+        "end_time": 18174,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "started",
+        "start_time": 18525,
+        "end_time": 18826,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "out",
+        "start_time": 18906,
+        "end_time": 19006,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "their",
+        "start_time": 19107,
+        "end_time": 19367,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "same",
+        "start_time": 19468,
+        "end_time": 19749,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "term",
+        "start_time": 19789,
+        "end_time": 20049,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "that",
+        "start_time": 20090,
+        "end_time": 20190,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "we",
+        "start_time": 20230,
+        "end_time": 20330,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "did",
+        "start_time": 20370,
+        "end_time": 20511,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "with",
+        "start_time": 20531,
+        "end_time": 20651,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "the",
+        "start_time": 20671,
+        "end_time": 20752,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "Alpina",
+        "start_time": 20812,
+        "end_time": 21406,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "in",
+        "start_time": 21775,
+        "end_time": 21855,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "this",
+        "start_time": 21895,
+        "end_time": 22096,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "Ioniq",
+        "start_time": 22276,
+        "end_time": 22617,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "5",
+        "start_time": 22677,
+        "end_time": 22958,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "XRT,",
+        "start_time": 23199,
+        "end_time": 23520,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 19,
+    "text": "And the whole idea behind having this IONIQ 5 XRT as a long-termer",
+    "start": 64200,
+    "end": 68908,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "And",
+        "start_time": 64200,
+        "end_time": 64260,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "the",
+        "start_time": 64280,
+        "end_time": 64360,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "whole",
+        "start_time": 64421,
+        "end_time": 64641,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "idea",
+        "start_time": 64801,
+        "end_time": 65222,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "behind",
+        "start_time": 65382,
+        "end_time": 66126,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "having",
+        "start_time": 66384,
+        "end_time": 66684,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "this",
+        "start_time": 66704,
+        "end_time": 66845,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "IONIQ",
+        "start_time": 66965,
+        "end_time": 67225,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "5",
+        "start_time": 67245,
+        "end_time": 67466,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "XRT",
+        "start_time": 67586,
+        "end_time": 68047,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "as",
+        "start_time": 68147,
+        "end_time": 68227,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "a",
+        "start_time": 68267,
+        "end_time": 68307,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "long-termer",
+        "start_time": 68367,
+        "end_time": 68908,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 27,
+    "text": "but the real sort of meat and potatoes of the content on the Scionic 5 XRT is over on the Topher.",
+    "start": 95782,
+    "end": 101702,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "but",
+        "start_time": 95782,
+        "end_time": 95903,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "the",
+        "start_time": 95943,
+        "end_time": 96043,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "real",
+        "start_time": 96123,
+        "end_time": 96424,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "sort",
+        "start_time": 96545,
+        "end_time": 96725,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "of",
+        "start_time": 96786,
+        "end_time": 96846,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "meat",
+        "start_time": 97187,
+        "end_time": 97347,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "and",
+        "start_time": 97388,
+        "end_time": 97468,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "potatoes",
+        "start_time": 97488,
+        "end_time": 97969,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "of",
+        "start_time": 98030,
+        "end_time": 98090,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "the",
+        "start_time": 98110,
+        "end_time": 98190,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "content",
+        "start_time": 98230,
+        "end_time": 98832,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "on",
+        "start_time": 99133,
+        "end_time": 99234,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "the",
+        "start_time": 99274,
+        "end_time": 99434,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "Scionic",
+        "start_time": 99454,
+        "end_time": 99735,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "5",
+        "start_time": 99755,
+        "end_time": 99916,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "XRT",
+        "start_time": 99996,
+        "end_time": 100438,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "is",
+        "start_time": 100518,
+        "end_time": 100578,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "over",
+        "start_time": 100779,
+        "end_time": 100960,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "on",
+        "start_time": 100980,
+        "end_time": 101020,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "the",
+        "start_time": 101040,
+        "end_time": 101100,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "Topher.",
+        "start_time": 101180,
+        "end_time": 101542,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 29,
+    "text": "but it was really just to show that this sort of very unassuming",
+    "start": 104515,
+    "end": 108347,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "but",
+        "start_time": 104515,
+        "end_time": 104595,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "it",
+        "start_time": 104635,
+        "end_time": 104675,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "was",
+        "start_time": 104736,
+        "end_time": 104896,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "really",
+        "start_time": 105017,
+        "end_time": 105238,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "just",
+        "start_time": 105278,
+        "end_time": 105459,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "to",
+        "start_time": 105479,
+        "end_time": 105559,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "show",
+        "start_time": 105620,
+        "end_time": 105720,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "that",
+        "start_time": 105901,
+        "end_time": 106021,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "this",
+        "start_time": 106041,
+        "end_time": 106181,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "sort",
+        "start_time": 106241,
+        "end_time": 106402,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "of",
+        "start_time": 106442,
+        "end_time": 106638,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "very",
+        "start_time": 107004,
+        "end_time": 107345,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "unassuming",
+        "start_time": 107545,
+        "end_time": 108347,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 30,
+    "text": "electric crossover absolutely rips in rallycross,",
+    "start": 108528,
+    "end": 112679,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "electric",
+        "start_time": 108528,
+        "end_time": 109009,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "crossover",
+        "start_time": 109069,
+        "end_time": 109934,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "absolutely",
+        "start_time": 110114,
+        "end_time": 110754,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "rips",
+        "start_time": 110894,
+        "end_time": 111374,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "in",
+        "start_time": 111538,
+        "end_time": 111797,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "rallycross,",
+        "start_time": 111998,
+        "end_time": 112679,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 35,
+    "text": "but we've been seeing like 305, 310 when we've pulled this off of our Level",
+    "start": 130261,
+    "end": 135138,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "but",
+        "start_time": 130261,
+        "end_time": 130382,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "we've",
+        "start_time": 130422,
+        "end_time": 130604,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "been",
+        "start_time": 130624,
+        "end_time": 130765,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "seeing",
+        "start_time": 130846,
+        "end_time": 131189,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "like",
+        "start_time": 131249,
+        "end_time": 131411,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "305,",
+        "start_time": 131471,
+        "end_time": 131935,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "310",
+        "start_time": 132076,
+        "end_time": 133038,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "when",
+        "start_time": 133306,
+        "end_time": 133446,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "we've",
+        "start_time": 133467,
+        "end_time": 133608,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "pulled",
+        "start_time": 133648,
+        "end_time": 133869,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "this",
+        "start_time": 133890,
+        "end_time": 134030,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "off",
+        "start_time": 134212,
+        "end_time": 134353,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "of",
+        "start_time": 134453,
+        "end_time": 134514,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "our",
+        "start_time": 134614,
+        "end_time": 134735,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "Level",
+        "start_time": 134896,
+        "end_time": 135138,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 36,
+    "text": "2 charger that we have in our pole barn at the new house.",
+    "start": 135158,
+    "end": 138280,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "2",
+        "start_time": 135158,
+        "end_time": 135259,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "charger",
+        "start_time": 135279,
+        "end_time": 135420,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "that",
+        "start_time": 135702,
+        "end_time": 135803,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "we",
+        "start_time": 135823,
+        "end_time": 135944,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "have",
+        "start_time": 135984,
+        "end_time": 136246,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "in",
+        "start_time": 136528,
+        "end_time": 136628,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "our",
+        "start_time": 136790,
+        "end_time": 137022,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "pole",
+        "start_time": 137092,
+        "end_time": 137354,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "barn",
+        "start_time": 137374,
+        "end_time": 137615,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "at",
+        "start_time": 137696,
+        "end_time": 137776,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "the",
+        "start_time": 137797,
+        "end_time": 137897,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "new",
+        "start_time": 137958,
+        "end_time": 138099,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "house.",
+        "start_time": 138139,
+        "end_time": 138280,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 39,
+    "text": "But apart from this being based on the long-range IONIQ",
+    "start": 145621,
+    "end": 148539,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "But",
+        "start_time": 145621,
+        "end_time": 145721,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "apart",
+        "start_time": 145741,
+        "end_time": 145983,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "from",
+        "start_time": 146043,
+        "end_time": 146164,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "this",
+        "start_time": 146184,
+        "end_time": 146325,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "being",
+        "start_time": 146385,
+        "end_time": 146587,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "based",
+        "start_time": 146687,
+        "end_time": 147009,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "on",
+        "start_time": 147298,
+        "end_time": 147533,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "the",
+        "start_time": 147553,
+        "end_time": 147654,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "long-range",
+        "start_time": 147734,
+        "end_time": 148197,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "IONIQ",
+        "start_time": 148258,
+        "end_time": 148539,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 40,
+    "text": "5, this has a couple of special XRT bits that set it aside.",
+    "start": 148559,
+    "end": 152980,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "5,",
+        "start_time": 148559,
+        "end_time": 148640,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "this",
+        "start_time": 148941,
+        "end_time": 149101,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "has",
+        "start_time": 149162,
+        "end_time": 149423,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "a",
+        "start_time": 149503,
+        "end_time": 149544,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "couple",
+        "start_time": 149604,
+        "end_time": 149865,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "of",
+        "start_time": 149926,
+        "end_time": 149986,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "special",
+        "start_time": 150167,
+        "end_time": 150569,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "XRT",
+        "start_time": 150750,
+        "end_time": 151272,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "bits",
+        "start_time": 151393,
+        "end_time": 151674,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "that",
+        "start_time": 152016,
+        "end_time": 152177,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "set",
+        "start_time": 152257,
+        "end_time": 152458,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "it",
+        "start_time": 152498,
+        "end_time": 152579,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "aside.",
+        "start_time": 152659,
+        "end_time": 152820,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 47,
+    "text": "The front bumpers are finished in this like urban camo",
+    "start": 171361,
+    "end": 174270,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "The",
+        "start_time": 171361,
+        "end_time": 171441,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "front",
+        "start_time": 171482,
+        "end_time": 171662,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "bumpers",
+        "start_time": 171722,
+        "end_time": 172043,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "are",
+        "start_time": 172083,
+        "end_time": 172164,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "finished",
+        "start_time": 172244,
+        "end_time": 172545,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "in",
+        "start_time": 172605,
+        "end_time": 172685,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "this",
+        "start_time": 172745,
+        "end_time": 172906,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "like",
+        "start_time": 172946,
+        "end_time": 173086,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "urban",
+        "start_time": 173287,
+        "end_time": 173568,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "camo",
+        "start_time": 173648,
+        "end_time": 174270,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 48,
+    "text": "sort of thing, and we have these red tow hooks out front as well.",
+    "start": 174350,
+    "end": 177900,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "sort",
+        "start_time": 174350,
+        "end_time": 174510,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "of",
+        "start_time": 174550,
+        "end_time": 174611,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "thing",
+        "start_time": 174651,
+        "end_time": 174831,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "and",
+        "start_time": 175152,
+        "end_time": 175212,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "we",
+        "start_time": 175252,
+        "end_time": 175353,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "have",
+        "start_time": 175393,
+        "end_time": 175513,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "these",
+        "start_time": 175553,
+        "end_time": 175854,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "red",
+        "start_time": 176135,
+        "end_time": 176510,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "tow",
+        "start_time": 176576,
+        "end_time": 176857,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "hooks",
+        "start_time": 176897,
+        "end_time": 177138,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "out",
+        "start_time": 177278,
+        "end_time": 177399,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "front",
+        "start_time": 177479,
+        "end_time": 177659,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "as",
+        "start_time": 177719,
+        "end_time": 177780,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "well",
+        "start_time": 177800,
+        "end_time": 177900,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 177,
+    "text": "This car, I cannot for the life of me, after two and a half months,",
+    "start": 586064,
+    "end": 589502,
+    "speaker": "2",
+    "words": [
+      {
+        "text": "This",
+        "start_time": 586064,
+        "end_time": 586245,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "car,",
+        "start_time": 586305,
+        "end_time": 586647,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "I",
+        "start_time": 587048,
+        "end_time": 587149,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "cannot",
+        "start_time": 587169,
+        "end_time": 587510,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "for",
+        "start_time": 587551,
+        "end_time": 587711,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "the",
+        "start_time": 587731,
+        "end_time": 587812,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "life",
+        "start_time": 587852,
+        "end_time": 588053,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "of",
+        "start_time": 588093,
+        "end_time": 588173,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "me,",
+        "start_time": 588213,
+        "end_time": 588334,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "after",
+        "start_time": 588374,
+        "end_time": 588595,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "two",
+        "start_time": 588635,
+        "end_time": 588736,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "and",
+        "start_time": 588776,
+        "end_time": 588856,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "a",
+        "start_time": 588876,
+        "end_time": 588896,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "half",
+        "start_time": 588937,
+        "end_time": 589077,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "months,",
+        "start_time": 589117,
+        "end_time": 589502,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 178,
+    "text": "figure out how to pull it into a parking spot.",
+    "start": 589559,
+    "end": 591484,
+    "speaker": "2",
+    "words": [
+      {
+        "text": "figure",
+        "start_time": 589559,
+        "end_time": 589720,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "out",
+        "start_time": 589820,
+        "end_time": 589900,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "how",
+        "start_time": 589941,
+        "end_time": 590101,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "to",
+        "start_time": 590121,
+        "end_time": 590281,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "pull",
+        "start_time": 590301,
+        "end_time": 590522,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "it",
+        "start_time": 590542,
+        "end_time": 590582,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "into",
+        "start_time": 590602,
+        "end_time": 590723,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "a",
+        "start_time": 590743,
+        "end_time": 590803,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "parking",
+        "start_time": 590823,
+        "end_time": 591144,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "spot.",
+        "start_time": 591164,
+        "end_time": 591324,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 179,
+    "text": "Forward.",
+    "start": 591865,
+    "end": 592266,
+    "speaker": "2",
+    "words": [
+      {
+        "text": "Forward.",
+        "start_time": 591865,
+        "end_time": 592266,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 188,
+    "text": "You're more sort of in the car than on it and I think",
+    "start": 615449,
+    "end": 620025,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "you're",
+        "start_time": 615449,
+        "end_time": 615630,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "more",
+        "start_time": 615670,
+        "end_time": 615810,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "sort",
+        "start_time": 615851,
+        "end_time": 615991,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "of",
+        "start_time": 616011,
+        "end_time": 616051,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "in",
+        "start_time": 616212,
+        "end_time": 616292,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "the",
+        "start_time": 616333,
+        "end_time": 616413,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "car",
+        "start_time": 616453,
+        "end_time": 616654,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "than",
+        "start_time": 616694,
+        "end_time": 616815,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "on",
+        "start_time": 617116,
+        "end_time": 617196,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "it",
+        "start_time": 617256,
+        "end_time": 617337,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "and",
+        "start_time": 617357,
+        "end_time": 618060,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "I",
+        "start_time": 619269,
+        "end_time": 619291,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "Think",
+        "start_time": 619904,
+        "end_time": 620025,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 189,
+    "text": "That that could be part of your part of your problem.",
+    "start": 620045,
+    "end": 623534,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "that",
+        "start_time": 620045,
+        "end_time": 620186,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "that",
+        "start_time": 620247,
+        "end_time": 620388,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "could",
+        "start_time": 620408,
+        "end_time": 620550,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "be",
+        "start_time": 620570,
+        "end_time": 620651,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "part",
+        "start_time": 620691,
+        "end_time": 620873,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "of",
+        "start_time": 620913,
+        "end_time": 620973,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "your",
+        "start_time": 621014,
+        "end_time": 621155,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "part",
+        "start_time": 621175,
+        "end_time": 621337,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "of",
+        "start_time": 621357,
+        "end_time": 621397,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "your",
+        "start_time": 621438,
+        "end_time": 621518,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "problem",
+        "start_time": 621538,
+        "end_time": 623374,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 190,
+    "text": "The one good thing about this though is you do have the physical button here for the parking",
+    "start": 628412,
+    "end": 631618,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "The",
+        "start_time": 628412,
+        "end_time": 628532,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "one",
+        "start_time": 628653,
+        "end_time": 628733,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "good",
+        "start_time": 628793,
+        "end_time": 628933,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "thing",
+        "start_time": 628973,
+        "end_time": 629093,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "about",
+        "start_time": 629133,
+        "end_time": 629314,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "this",
+        "start_time": 629354,
+        "end_time": 629454,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "though",
+        "start_time": 629514,
+        "end_time": 629654,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "is",
+        "start_time": 629674,
+        "end_time": 629735,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "you",
+        "start_time": 629755,
+        "end_time": 629855,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "do",
+        "start_time": 629875,
+        "end_time": 629975,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "have",
+        "start_time": 629995,
+        "end_time": 630095,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "the",
+        "start_time": 630115,
+        "end_time": 630195,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "physical",
+        "start_time": 630215,
+        "end_time": 630496,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "button",
+        "start_time": 630516,
+        "end_time": 630736,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "here",
+        "start_time": 630756,
+        "end_time": 630917,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "for",
+        "start_time": 630977,
+        "end_time": 631177,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "the",
+        "start_time": 631217,
+        "end_time": 631277,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "parking",
+        "start_time": 631317,
+        "end_time": 631618,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 191,
+    "text": "Cameras to pull those up like at a moment's notice,",
+    "start": 631638,
+    "end": 634126,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "cameras",
+        "start_time": 631638,
+        "end_time": 631959,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "to",
+        "start_time": 631999,
+        "end_time": 632079,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "pull",
+        "start_time": 632099,
+        "end_time": 632279,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "those",
+        "start_time": 632299,
+        "end_time": 632459,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "up",
+        "start_time": 632540,
+        "end_time": 632600,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "like",
+        "start_time": 632620,
+        "end_time": 632740,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "at",
+        "start_time": 632921,
+        "end_time": 632981,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "a",
+        "start_time": 633021,
+        "end_time": 633041,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "moment's",
+        "start_time": 633102,
+        "end_time": 633423,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "notice",
+        "start_time": 633524,
+        "end_time": 634126,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 237,
+    "text": "And what I really enjoyed",
+    "start": 768222,
+    "end": 770265,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "And",
+        "start_time": 768222,
+        "end_time": 769323,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "what",
+        "start_time": 769564,
+        "end_time": 769664,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "I",
+        "start_time": 769684,
+        "end_time": 769804,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "really",
+        "start_time": 769824,
+        "end_time": 770005,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "enjoyed",
+        "start_time": 770045,
+        "end_time": 770265,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 238,
+    "text": "about these couple of long-term loans that we've had is that I'm able to get your perspective,",
+    "start": 770305,
+    "end": 776295,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "about",
+        "start_time": 770305,
+        "end_time": 770465,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "these",
+        "start_time": 770686,
+        "end_time": 770826,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "couple",
+        "start_time": 770866,
+        "end_time": 771066,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "of",
+        "start_time": 771086,
+        "end_time": 771127,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "long-term",
+        "start_time": 771167,
+        "end_time": 771886,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "loans",
+        "start_time": 772402,
+        "end_time": 772870,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "that",
+        "start_time": 772890,
+        "end_time": 772990,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "we've",
+        "start_time": 773010,
+        "end_time": 773150,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "had",
+        "start_time": 773190,
+        "end_time": 773330,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "is",
+        "start_time": 773390,
+        "end_time": 773451,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "that",
+        "start_time": 773491,
+        "end_time": 773822,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "I'm",
+        "start_time": 774272,
+        "end_time": 774372,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "able",
+        "start_time": 774452,
+        "end_time": 774613,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "to",
+        "start_time": 774653,
+        "end_time": 774733,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "get",
+        "start_time": 774773,
+        "end_time": 775086,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "your",
+        "start_time": 775534,
+        "end_time": 775694,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "perspective,",
+        "start_time": 775734,
+        "end_time": 776295,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 241,
+    "text": "Charlotte",
+    "start": 785543,
+    "end": 785870,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "Charlotte",
+        "start_time": 785543,
+        "end_time": 785870,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 242,
+    "text": "loves this car.",
+    "start": 785890,
+    "end": 786458,
+    "speaker": "2",
+    "words": [
+      {
+        "text": "loves",
+        "start_time": 785890,
+        "end_time": 786053,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "this",
+        "start_time": 786074,
+        "end_time": 786155,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "car.",
+        "start_time": 786176,
+        "end_time": 786298,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 386,
+    "text": "It was like",
+    "start": 1210564,
+    "end": 1210851,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "It",
+        "start_time": 1210564,
+        "end_time": 1210646,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "was",
+        "start_time": 1210666,
+        "end_time": 1210748,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "like",
+        "start_time": 1210769,
+        "end_time": 1210851,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 387,
+    "text": "$40.",
+    "start": 1210872,
+    "end": 1211200,
+    "speaker": "2",
+    "words": [
+      {
+        "text": "$40.",
+        "start_time": 1210872,
+        "end_time": 1211200,
+        "speaker_id": "2",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 451,
+    "text": "That's kind of where they're the most useful, because you want to make sure no one's",
+    "start": 1392962,
+    "end": 1396648,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "That's",
+        "start_time": 1392962,
+        "end_time": 1393184,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "kind",
+        "start_time": 1393244,
+        "end_time": 1394353,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "of",
+        "start_time": 1394373,
+        "end_time": 1394413,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "where",
+        "start_time": 1394454,
+        "end_time": 1394595,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "they're",
+        "start_time": 1394615,
+        "end_time": 1394776,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "the",
+        "start_time": 1394796,
+        "end_time": 1394857,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "most",
+        "start_time": 1394877,
+        "end_time": 1395038,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "useful,",
+        "start_time": 1395139,
+        "end_time": 1395280,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "because",
+        "start_time": 1395542,
+        "end_time": 1395703,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "you",
+        "start_time": 1395723,
+        "end_time": 1395783,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "want",
+        "start_time": 1395804,
+        "end_time": 1395884,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "to",
+        "start_time": 1395904,
+        "end_time": 1395945,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "make",
+        "start_time": 1395965,
+        "end_time": 1396086,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "sure",
+        "start_time": 1396106,
+        "end_time": 1396206,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "no",
+        "start_time": 1396227,
+        "end_time": 1396267,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "one's",
+        "start_time": 1396307,
+        "end_time": 1396488,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 452,
+    "text": "hauling up the left, you know, after you check your shoulder.",
+    "start": 1396931,
+    "end": 1401102,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "hauling",
+        "start_time": 1396931,
+        "end_time": 1397354,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "up",
+        "start_time": 1397435,
+        "end_time": 1397536,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "the",
+        "start_time": 1397596,
+        "end_time": 1397697,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "left,",
+        "start_time": 1397737,
+        "end_time": 1397958,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "you",
+        "start_time": 1397979,
+        "end_time": 1398039,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "know,",
+        "start_time": 1398059,
+        "end_time": 1398446,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "after",
+        "start_time": 1398785,
+        "end_time": 1398987,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "you",
+        "start_time": 1399007,
+        "end_time": 1399149,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "check",
+        "start_time": 1399189,
+        "end_time": 1399391,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "your",
+        "start_time": 1399411,
+        "end_time": 1399573,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "shoulder.",
+        "start_time": 1399593,
+        "end_time": 1400942,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 518,
+    "text": "Okay. Sport's nice because it,",
+    "start": 1586311,
+    "end": 1588492,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "Okay.",
+        "start_time": 1586311,
+        "end_time": 1586910,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "Sport's",
+        "start_time": 1587382,
+        "end_time": 1587664,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "nice",
+        "start_time": 1587705,
+        "end_time": 1587906,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "because",
+        "start_time": 1587927,
+        "end_time": 1588088,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "it,",
+        "start_time": 1588108,
+        "end_time": 1588229,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "you",
+        "start_time": 1588250,
+        "end_time": 1588310,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "know,",
+        "start_time": 1588350,
+        "end_time": 1588492,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 519,
+    "text": "it sharpens up the throttle response.",
+    "start": 1588512,
+    "end": 1589582,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "it",
+        "start_time": 1588512,
+        "end_time": 1588552,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "sharpens",
+        "start_time": 1588572,
+        "end_time": 1588855,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "up",
+        "start_time": 1588895,
+        "end_time": 1588956,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "the",
+        "start_time": 1588976,
+        "end_time": 1589037,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "throttle",
+        "start_time": 1589057,
+        "end_time": 1589218,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "response.",
+        "start_time": 1589238,
+        "end_time": 1589420,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 596,
+    "text": "But really, I think what's cool about the IONIQ",
+    "start": 1833449,
+    "end": 1835356,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "But",
+        "start_time": 1833449,
+        "end_time": 1833570,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "really,",
+        "start_time": 1833610,
+        "end_time": 1833831,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "I",
+        "start_time": 1833891,
+        "end_time": 1833931,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "think",
+        "start_time": 1833971,
+        "end_time": 1834152,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "what's",
+        "start_time": 1834312,
+        "end_time": 1834493,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "cool",
+        "start_time": 1834533,
+        "end_time": 1834754,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "about",
+        "start_time": 1834774,
+        "end_time": 1834935,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "the",
+        "start_time": 1834955,
+        "end_time": 1835035,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "IONIQ",
+        "start_time": 1835095,
+        "end_time": 1835356,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 597,
+    "text": "5 in general is it's a car that people might look twice at.",
+    "start": 1835376,
+    "end": 1840380,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "5",
+        "start_time": 1835376,
+        "end_time": 1835577,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "in",
+        "start_time": 1835617,
+        "end_time": 1835677,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "general",
+        "start_time": 1835718,
+        "end_time": 1836099,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "is",
+        "start_time": 1836320,
+        "end_time": 1836380,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "is",
+        "start_time": 1836521,
+        "end_time": 1837214,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "it's",
+        "start_time": 1837505,
+        "end_time": 1837626,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "a",
+        "start_time": 1837646,
+        "end_time": 1837686,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "car",
+        "start_time": 1837727,
+        "end_time": 1837948,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "that,",
+        "start_time": 1838008,
+        "end_time": 1838270,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "you",
+        "start_time": 1838792,
+        "end_time": 1838872,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "know,",
+        "start_time": 1838892,
+        "end_time": 1839013,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "people",
+        "start_time": 1839053,
+        "end_time": 1839375,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "might",
+        "start_time": 1839556,
+        "end_time": 1839737,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "look",
+        "start_time": 1839777,
+        "end_time": 1839938,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "twice",
+        "start_time": 1839998,
+        "end_time": 1840299,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "at.",
+        "start_time": 1840320,
+        "end_time": 1840380,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 609,
+    "text": "But when I really want to be bombing down dirt roads in a limited that has, like,",
+    "start": 1886181,
+    "end": 1889750,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "But",
+        "start_time": 1886181,
+        "end_time": 1886301,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "when",
+        "start_time": 1886382,
+        "end_time": 1886502,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "I",
+        "start_time": 1886542,
+        "end_time": 1886622,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "really",
+        "start_time": 1886642,
+        "end_time": 1886843,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "want",
+        "start_time": 1886863,
+        "end_time": 1886983,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "to",
+        "start_time": 1887003,
+        "end_time": 1887063,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "be",
+        "start_time": 1887083,
+        "end_time": 1887184,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "bombing",
+        "start_time": 1887284,
+        "end_time": 1887645,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "down",
+        "start_time": 1887685,
+        "end_time": 1887925,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "dirt",
+        "start_time": 1887966,
+        "end_time": 1888166,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "roads",
+        "start_time": 1888246,
+        "end_time": 1888547,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "in",
+        "start_time": 1888587,
+        "end_time": 1888667,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "a",
+        "start_time": 1888707,
+        "end_time": 1888728,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "limited",
+        "start_time": 1888768,
+        "end_time": 1889149,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "that",
+        "start_time": 1889169,
+        "end_time": 1889289,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "has,",
+        "start_time": 1889329,
+        "end_time": 1889530,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "like,",
+        "start_time": 1889570,
+        "end_time": 1889750,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 610,
+    "text": "a little bit of a bigger wheel,",
+    "start": 1889770,
+    "end": 1891174,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "you",
+        "start_time": 1889770,
+        "end_time": 1889850,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "know,",
+        "start_time": 1889870,
+        "end_time": 1890031,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "a",
+        "start_time": 1890051,
+        "end_time": 1890071,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "little",
+        "start_time": 1890111,
+        "end_time": 1890251,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "bit",
+        "start_time": 1890271,
+        "end_time": 1890352,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "of",
+        "start_time": 1890372,
+        "end_time": 1890432,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "a",
+        "start_time": 1890472,
+        "end_time": 1890492,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "bigger",
+        "start_time": 1890552,
+        "end_time": 1890813,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "wheel,",
+        "start_time": 1890873,
+        "end_time": 1891174,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 611,
+    "text": "a little bit less sidewall, less plastic cladding,",
+    "start": 1891194,
+    "end": 1893700,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "a",
+        "start_time": 1891194,
+        "end_time": 1891214,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "little",
+        "start_time": 1891254,
+        "end_time": 1891394,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "bit",
+        "start_time": 1891414,
+        "end_time": 1891535,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "less",
+        "start_time": 1891575,
+        "end_time": 1891735,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "sidewall,",
+        "start_time": 1891835,
+        "end_time": 1892557,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "less",
+        "start_time": 1892617,
+        "end_time": 1892798,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "plastic",
+        "start_time": 1892858,
+        "end_time": 1893299,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "cladding,",
+        "start_time": 1893339,
+        "end_time": 1893700,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 612,
+    "text": "I don't really know that I would be as excited about doing that.",
+    "start": 1893821,
+    "end": 1897454,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "I",
+        "start_time": 1893821,
+        "end_time": 1893861,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "don't",
+        "start_time": 1893901,
+        "end_time": 1894042,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "really",
+        "start_time": 1894082,
+        "end_time": 1894263,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "know",
+        "start_time": 1894344,
+        "end_time": 1894545,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "that",
+        "start_time": 1894606,
+        "end_time": 1894726,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "I",
+        "start_time": 1894807,
+        "end_time": 1894847,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "would",
+        "start_time": 1894887,
+        "end_time": 1895048,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "be",
+        "start_time": 1895089,
+        "end_time": 1895270,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "as",
+        "start_time": 1895411,
+        "end_time": 1895491,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "excited",
+        "start_time": 1895572,
+        "end_time": 1896075,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "about",
+        "start_time": 1896135,
+        "end_time": 1896397,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "doing",
+        "start_time": 1896538,
+        "end_time": 1896819,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "that.",
+        "start_time": 1896839,
+        "end_time": 1897294,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 675,
+    "text": "Let's go ahead and get the song queued up, my new sound system test",
+    "start": 2218861,
+    "end": 2223098,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "Let's",
+        "start_time": 2218861,
+        "end_time": 2219022,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "go",
+        "start_time": 2219042,
+        "end_time": 2219082,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "ahead",
+        "start_time": 2219102,
+        "end_time": 2219202,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "and",
+        "start_time": 2219223,
+        "end_time": 2219283,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "get",
+        "start_time": 2219303,
+        "end_time": 2219443,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "the",
+        "start_time": 2219544,
+        "end_time": 2219644,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "song",
+        "start_time": 2219725,
+        "end_time": 2220086,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "queued",
+        "start_time": 2220146,
+        "end_time": 2220508,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "up,",
+        "start_time": 2220829,
+        "end_time": 2221150,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "my",
+        "start_time": 2222074,
+        "end_time": 2222174,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "new",
+        "start_time": 2222235,
+        "end_time": 2222375,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "sound",
+        "start_time": 2222415,
+        "end_time": 2222616,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "system",
+        "start_time": 2222636,
+        "end_time": 2222877,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "test",
+        "start_time": 2222897,
+        "end_time": 2223098,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 676,
+    "text": "song that hopefully is not banned from YouTube by the time I put this video out.",
+    "start": 2223118,
+    "end": 2226814,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "song",
+        "start_time": 2223118,
+        "end_time": 2223279,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "that",
+        "start_time": 2223299,
+        "end_time": 2223379,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "hopefully",
+        "start_time": 2223399,
+        "end_time": 2223580,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "is",
+        "start_time": 2223822,
+        "end_time": 2223902,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "not",
+        "start_time": 2223942,
+        "end_time": 2224083,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "banned",
+        "start_time": 2224245,
+        "end_time": 2224587,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "from",
+        "start_time": 2224627,
+        "end_time": 2224768,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "YouTube",
+        "start_time": 2224828,
+        "end_time": 2225191,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "by",
+        "start_time": 2225251,
+        "end_time": 2225372,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "the",
+        "start_time": 2225392,
+        "end_time": 2225473,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "time",
+        "start_time": 2225513,
+        "end_time": 2225775,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "I",
+        "start_time": 2225835,
+        "end_time": 2225896,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "put",
+        "start_time": 2225916,
+        "end_time": 2226037,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "this",
+        "start_time": 2226057,
+        "end_time": 2226158,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "video",
+        "start_time": 2226178,
+        "end_time": 2226379,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "out.",
+        "start_time": 2226399,
+        "end_time": 2226654,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 681,
+    "text": "And if anything, Hyundai's just been kind of tweaking these Bose",
+    "start": 2285970,
+    "end": 2288273,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "And",
+        "start_time": 2285970,
+        "end_time": 2286263,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "if",
+        "start_time": 2286303,
+        "end_time": 2286363,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "anything,",
+        "start_time": 2286403,
+        "end_time": 2286625,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "Hyundai's",
+        "start_time": 2286645,
+        "end_time": 2286946,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "just",
+        "start_time": 2286966,
+        "end_time": 2287087,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "been",
+        "start_time": 2287127,
+        "end_time": 2287248,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "kind",
+        "start_time": 2287268,
+        "end_time": 2287368,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "of",
+        "start_time": 2287409,
+        "end_time": 2287469,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "tweaking",
+        "start_time": 2287489,
+        "end_time": 2287851,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "these",
+        "start_time": 2287871,
+        "end_time": 2288012,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "Bose",
+        "start_time": 2288072,
+        "end_time": 2288273,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 682,
+    "text": "systems to get them a little bit better.",
+    "start": 2288313,
+    "end": 2289640,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "systems",
+        "start_time": 2288313,
+        "end_time": 2288635,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "to",
+        "start_time": 2288675,
+        "end_time": 2288755,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "get",
+        "start_time": 2288776,
+        "end_time": 2288896,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "them",
+        "start_time": 2288916,
+        "end_time": 2289037,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "a",
+        "start_time": 2289077,
+        "end_time": 2289097,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "little",
+        "start_time": 2289137,
+        "end_time": 2289318,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "bit",
+        "start_time": 2289338,
+        "end_time": 2289459,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "better.",
+        "start_time": 2289499,
+        "end_time": 2289640,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 684,
+    "text": "And I'm sure this is all just part of like software updates",
+    "start": 2292306,
+    "end": 2295416,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "um",
+        "start_time": 2292306,
+        "end_time": 2292862,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "and",
+        "start_time": 2293287,
+        "end_time": 2293347,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "i'm",
+        "start_time": 2293367,
+        "end_time": 2293468,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "sure",
+        "start_time": 2293488,
+        "end_time": 2293608,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "this",
+        "start_time": 2293649,
+        "end_time": 2293769,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "is",
+        "start_time": 2293829,
+        "end_time": 2293890,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "all",
+        "start_time": 2293950,
+        "end_time": 2294090,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "just",
+        "start_time": 2294131,
+        "end_time": 2294271,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "part",
+        "start_time": 2294311,
+        "end_time": 2294452,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "of",
+        "start_time": 2294472,
+        "end_time": 2294512,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "like",
+        "start_time": 2294573,
+        "end_time": 2294713,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "software",
+        "start_time": 2294733,
+        "end_time": 2295115,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "updates",
+        "start_time": 2295135,
+        "end_time": 2295416,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 685,
+    "text": "and things that they do. In fact, I think there was a software update somewhere where we got different looking gauges.",
+    "start": 2295456,
+    "end": 2299790,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "and",
+        "start_time": 2295456,
+        "end_time": 2295537,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "things",
+        "start_time": 2295557,
+        "end_time": 2295698,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "that",
+        "start_time": 2295718,
+        "end_time": 2295818,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "they",
+        "start_time": 2295838,
+        "end_time": 2295939,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "do",
+        "start_time": 2295959,
+        "end_time": 2296079,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "in",
+        "start_time": 2296099,
+        "end_time": 2296160,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "fact",
+        "start_time": 2296180,
+        "end_time": 2296260,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "i",
+        "start_time": 2296360,
+        "end_time": 2296401,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "think",
+        "start_time": 2296421,
+        "end_time": 2296521,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "there",
+        "start_time": 2296541,
+        "end_time": 2296642,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "was",
+        "start_time": 2296662,
+        "end_time": 2296742,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "a",
+        "start_time": 2296782,
+        "end_time": 2296822,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "software",
+        "start_time": 2296883,
+        "end_time": 2297244,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "update",
+        "start_time": 2297285,
+        "end_time": 2297586,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "somewhere",
+        "start_time": 2297646,
+        "end_time": 2297947,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "where",
+        "start_time": 2297968,
+        "end_time": 2298088,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "we",
+        "start_time": 2298108,
+        "end_time": 2298209,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "got",
+        "start_time": 2298229,
+        "end_time": 2298389,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "different",
+        "start_time": 2298450,
+        "end_time": 2298691,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "looking",
+        "start_time": 2298731,
+        "end_time": 2299012,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "gauges",
+        "start_time": 2299072,
+        "end_time": 2299630,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 686,
+    "text": "There have been a couple over the air updates in our almost six months that we've had this car. So",
+    "start": 2300082,
+    "end": 2305806,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "um",
+        "start_time": 2300082,
+        "end_time": 2300358,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "there",
+        "start_time": 2300378,
+        "end_time": 2300479,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "have",
+        "start_time": 2300881,
+        "end_time": 2300981,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "been",
+        "start_time": 2301001,
+        "end_time": 2301122,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "a",
+        "start_time": 2301142,
+        "end_time": 2301162,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "couple",
+        "start_time": 2301202,
+        "end_time": 2301423,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "over",
+        "start_time": 2301483,
+        "end_time": 2301624,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "the",
+        "start_time": 2301644,
+        "end_time": 2301724,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "air",
+        "start_time": 2301785,
+        "end_time": 2301885,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "updates",
+        "start_time": 2301966,
+        "end_time": 2302307,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "in",
+        "start_time": 2302528,
+        "end_time": 2302629,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "our",
+        "start_time": 2302830,
+        "end_time": 2302990,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "almost",
+        "start_time": 2303171,
+        "end_time": 2303432,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "six",
+        "start_time": 2303473,
+        "end_time": 2303673,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "months",
+        "start_time": 2303714,
+        "end_time": 2303935,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "that",
+        "start_time": 2303975,
+        "end_time": 2304075,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "we've",
+        "start_time": 2304095,
+        "end_time": 2304236,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "had",
+        "start_time": 2304276,
+        "end_time": 2304397,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "this",
+        "start_time": 2304437,
+        "end_time": 2304578,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "car",
+        "start_time": 2304638,
+        "end_time": 2304919,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "so",
+        "start_time": 2304939,
+        "end_time": 2305646,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 687,
+    "text": "I'm gonna be sad to see it go.",
+    "start": 2306641,
+    "end": 2307987,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "i'm",
+        "start_time": 2306641,
+        "end_time": 2306722,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "gonna",
+        "start_time": 2306742,
+        "end_time": 2306902,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "be",
+        "start_time": 2306923,
+        "end_time": 2307003,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "sad",
+        "start_time": 2307043,
+        "end_time": 2307244,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "to",
+        "start_time": 2307264,
+        "end_time": 2307324,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "see",
+        "start_time": 2307364,
+        "end_time": 2307485,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "it",
+        "start_time": 2307525,
+        "end_time": 2307585,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "go",
+        "start_time": 2307626,
+        "end_time": 2307826,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 688,
+    "text": "I don't know what lies as far as like future long-termers, to be completely honest with you guys.",
+    "start": 2308067,
+    "end": 2312006,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "i",
+        "start_time": 2308067,
+        "end_time": 2308128,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "don't",
+        "start_time": 2308148,
+        "end_time": 2308288,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "know",
+        "start_time": 2308329,
+        "end_time": 2308449,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "what",
+        "start_time": 2308509,
+        "end_time": 2308650,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "lies",
+        "start_time": 2308730,
+        "end_time": 2309112,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "as",
+        "start_time": 2309232,
+        "end_time": 2309293,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "far",
+        "start_time": 2309353,
+        "end_time": 2309534,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "as",
+        "start_time": 2309574,
+        "end_time": 2309654,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "like",
+        "start_time": 2309674,
+        "end_time": 2309755,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "future",
+        "start_time": 2309855,
+        "end_time": 2310176,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "long-termers",
+        "start_time": 2310237,
+        "end_time": 2310879,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "to",
+        "start_time": 2310900,
+        "end_time": 2310940,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "be",
+        "start_time": 2310960,
+        "end_time": 2311000,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "completely",
+        "start_time": 2311141,
+        "end_time": 2311443,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "honest",
+        "start_time": 2311463,
+        "end_time": 2311624,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "with",
+        "start_time": 2311644,
+        "end_time": 2311724,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "you",
+        "start_time": 2311745,
+        "end_time": 2311805,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "guys",
+        "start_time": 2311825,
+        "end_time": 2312006,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 689,
+    "text": "We don't have anything lined up.",
+    "start": 2312026,
+    "end": 2313254,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "we",
+        "start_time": 2312026,
+        "end_time": 2312107,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "don't",
+        "start_time": 2312127,
+        "end_time": 2312248,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "have",
+        "start_time": 2312288,
+        "end_time": 2312389,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "anything",
+        "start_time": 2312469,
+        "end_time": 2312791,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "lined",
+        "start_time": 2312851,
+        "end_time": 2313093,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "up",
+        "start_time": 2313153,
+        "end_time": 2313254,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 690,
+    "text": "So the tofer and I are kind of",
+    "start": 2313294,
+    "end": 2315162,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "so",
+        "start_time": 2313294,
+        "end_time": 2313395,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "the",
+        "start_time": 2313415,
+        "end_time": 2313475,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "tofer",
+        "start_time": 2313495,
+        "end_time": 2313737,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "and",
+        "start_time": 2313777,
+        "end_time": 2313838,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "i",
+        "start_time": 2313858,
+        "end_time": 2313918,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "are",
+        "start_time": 2313958,
+        "end_time": 2314039,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "kind",
+        "start_time": 2314059,
+        "end_time": 2314180,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "of",
+        "start_time": 2314200,
+        "end_time": 2314590,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "uh",
+        "start_time": 2315082,
+        "end_time": 2315162,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 691,
+    "text": "figuring out what we're doing for the wives right now",
+    "start": 2315242,
+    "end": 2317532,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "figuring",
+        "start_time": 2315242,
+        "end_time": 2315544,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "out",
+        "start_time": 2315584,
+        "end_time": 2315684,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "what",
+        "start_time": 2315704,
+        "end_time": 2315805,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "we're",
+        "start_time": 2315845,
+        "end_time": 2315985,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "doing",
+        "start_time": 2316026,
+        "end_time": 2316226,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "for",
+        "start_time": 2316266,
+        "end_time": 2316407,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "the",
+        "start_time": 2316427,
+        "end_time": 2316528,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "wives",
+        "start_time": 2316568,
+        "end_time": 2316949,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "right",
+        "start_time": 2317130,
+        "end_time": 2317311,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "now",
+        "start_time": 2317371,
+        "end_time": 2317532,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 692,
+    "text": "because uh come like end of September, they're not going to have cars. So",
+    "start": 2317592,
+    "end": 2322798,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "because",
+        "start_time": 2317592,
+        "end_time": 2318034,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "uh",
+        "start_time": 2318355,
+        "end_time": 2318455,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "come",
+        "start_time": 2318556,
+        "end_time": 2318797,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "like",
+        "start_time": 2318817,
+        "end_time": 2318977,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "end",
+        "start_time": 2319038,
+        "end_time": 2319158,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "of",
+        "start_time": 2319198,
+        "end_time": 2319259,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "september",
+        "start_time": 2319319,
+        "end_time": 2319620,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "they're",
+        "start_time": 2319800,
+        "end_time": 2320001,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "not",
+        "start_time": 2320041,
+        "end_time": 2320161,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "going",
+        "start_time": 2320201,
+        "end_time": 2320342,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "to",
+        "start_time": 2320362,
+        "end_time": 2320442,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "have",
+        "start_time": 2320462,
+        "end_time": 2321086,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "cars.",
+        "start_time": 2321424,
+        "end_time": 2321902,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "So",
+        "start_time": 2322106,
+        "end_time": 2322638,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 700,
+    "text": "but this is going to be everything you guys see on the IONIQ 5.",
+    "start": 2343222,
+    "end": 2345333,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "but",
+        "start_time": 2343222,
+        "end_time": 2343303,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "this",
+        "start_time": 2343323,
+        "end_time": 2343423,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "is",
+        "start_time": 2343443,
+        "end_time": 2343484,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "going",
+        "start_time": 2343504,
+        "end_time": 2343604,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "to",
+        "start_time": 2343624,
+        "end_time": 2343685,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "be",
+        "start_time": 2343705,
+        "end_time": 2343785,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "everything",
+        "start_time": 2343825,
+        "end_time": 2344066,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "you",
+        "start_time": 2344087,
+        "end_time": 2344207,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "guys",
+        "start_time": 2344227,
+        "end_time": 2344388,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "see",
+        "start_time": 2344428,
+        "end_time": 2344609,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "on",
+        "start_time": 2344629,
+        "end_time": 2344710,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "the",
+        "start_time": 2344730,
+        "end_time": 2344790,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "IONIQ",
+        "start_time": 2344850,
+        "end_time": 2345111,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "5",
+        "start_time": 2345132,
+        "end_time": 2345333,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  },
+  {
+    "id": 701,
+    "text": "XRT here on Topher Drives.",
+    "start": 2345433,
+    "end": 2346739,
+    "speaker": "1",
+    "words": [
+      {
+        "text": "XRT",
+        "start_time": 2345433,
+        "end_time": 2345875,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "here",
+        "start_time": 2345956,
+        "end_time": 2346116,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "on",
+        "start_time": 2346177,
+        "end_time": 2346237,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "Topher",
+        "start_time": 2346257,
+        "end_time": 2346518,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      },
+      {
+        "text": "Drives.",
+        "start_time": 2346538,
+        "end_time": 2346739,
+        "speaker_id": "1",
+        "confidence": null,
+        "alignment_score": null,
+        "timing_source": "imported",
+        "language_code": ""
+      }
+    ]
+  }
+]

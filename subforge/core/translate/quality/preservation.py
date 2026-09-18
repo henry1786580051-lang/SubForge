@@ -149,6 +149,12 @@ def _contextual_token_equivalents(token: str, source: str) -> tuple[str, ...]:
         flags=re.IGNORECASE,
     ):
         return ("双离合", "雙離合")
+    if token == "EV" and re.search(
+        r"\b(?:miles?|kilometers?|kilometres?) of range\b|\bEV (?:cars?|chargers?|charging)\b",
+        source,
+        flags=re.IGNORECASE,
+    ):
+        return ("电动车", "电动汽车", "電動車", "電動汽車")
     return ()
 
 
@@ -236,7 +242,7 @@ def inspect_preserved_tokens(  # noqa: C901
         return tuple(tokens)
 
     def normalized_text(text: str) -> str:
-        return re.sub(r"[\s,，.。-]+", "", text).lower()
+        return re.sub(r"[\s,，、.。-]+", "", text).lower()
 
     def _world_war_roman_preserved(
         original: str,

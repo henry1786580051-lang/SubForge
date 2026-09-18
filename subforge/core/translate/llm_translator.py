@@ -6912,6 +6912,7 @@ Return exactly one JSON object with all and only the current_subtitles keys:
                 "numeric compound modifier separated from its head noun",
                 "attributive or comparative modifier separated from its head",
                 "participle separated from its complement",
+                "source-backed syntactic dependency crosses the boundary",
             }
             strong_dependency = bool(reasons & strong_dependency_reasons)
             separated_display = (

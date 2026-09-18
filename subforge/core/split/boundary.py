@@ -31,6 +31,7 @@ from subforge.core.split.boundary_registry import (
     BoundaryScoreContribution,
     record_boundary_score,
 )
+from subforge.core.split.structural import structural_dependency
 from subforge.core.utils.logger import setup_logger
 
 logger = setup_logger("subtitle_boundary")
@@ -582,6 +583,11 @@ class BoundaryAssessment:
     contributions: tuple[BoundaryScoreContribution, ...] = ()
 
     @property
+    def dependency_status(self) -> str:
+        # Zero is an absence of detected evidence, never a completeness proof.
+        return "dependency" if self.risk >= 20 else "uncertain" if self.risk else "unclassified"
+
+    @property
     def unstable(self) -> bool:
         return self.risk >= 20
 
@@ -605,6 +611,12 @@ def _score_english_boundary_foundation(
     semantic_tail = features.semantic_tail
     risk = 0
 
+    if structural_dependency(features.left, features.right):
+        risk += record_boundary_score(
+            "split.boundary.english.entity.structural_dependency",
+            reasons=reasons,
+            contributions=contributions,
+        )
     if grammar_boundary.incomplete_multiword(
         left_ends_with_dangling_phrase=_ends_with_phrase(left_tokens)
     ):
@@ -2212,6 +2224,11 @@ def _split_internal_terminal_clauses(
 def _is_hard_boundary(left: ASRDataSeg, right: ASRDataSeg) -> bool:
     from subforge.core.split.temporal_attachment import is_temporal_clause_boundary
 
+    if structural_dependency(left.text, right.text):
+        speakers = {w.speaker_id for c in (left, right) for w in c.words if w.speaker_id}
+        speakers.update(c.speaker_id for c in (left, right) if c.speaker_id)
+        if len(speakers) > 1:
+            return True
     if is_temporal_clause_boundary(left.text, right.text):
         return True
     if left.speaker_id and right.speaker_id and left.speaker_id != right.speaker_id:
@@ -2398,7 +2415,8 @@ def _merge_compact_unstable_pairs(
             and right.words
             and _word_count(words) <= hard_max_words
             and words[-1].end_time - words[0].start_time <= 8000
-            and not re.search(r"[.!?][\"')\]]*\s+\S", combined_text)
+            and (not re.search(r"[.!?][\"')\]]*\s+\S", combined_text)
+                 or structural_dependency(left.text, right.text))
             and not _is_short_cross_speaker_reply(left, right)
         ):
             merged = _make_cue(words, left.speaker_id or right.speaker_id)
@@ -2517,6 +2535,7 @@ def _best_region_breaks(
     *,
     soft_max: int,
     hard_max: int,
+    require_clause_seams: bool = False,
 ) -> tuple[list[int], float, int] | None:
     """Return same-count local breaks using dynamic programming."""
     candidates: list[list[int]] = []
@@ -2524,7 +2543,14 @@ def _best_region_breaks(
     for original in original_positions:
         start = max(1, original - MAX_BOUNDARY_SHIFT_WORDS)
         end = min(total - 1, original + MAX_BOUNDARY_SHIFT_WORDS)
-        candidates.append(list(range(start, end + 1)))
+        positions = list(range(start, end + 1))
+        if require_clause_seams:
+            positions = [p for p in positions if (
+                re.search(r"[,;:.!?]$", words[p-1].text)
+                or re.match(r"^(?:and|but|so|because) (?:i|we|you|they|he|she|it)\b",
+                            _join_words(words[p:]), re.I)
+            ) and not assess_english_boundary(_join_words(words[:p]), _join_words(words[p:])).risk]
+        candidates.append(positions)
 
     states: dict[int, tuple[float, list[int], int]] = {0: (0.0, [], 0)}
     for boundary_index, positions in enumerate(candidates):
@@ -2533,6 +2559,8 @@ def _best_region_breaks(
         for position in positions:
             for previous, (cost, path, risk) in states.items():
                 if position <= previous:
+                    continue
+                if require_clause_seams and not 600 <= words[position-1].end_time-words[previous].start_time <= 8000:
                     continue
                 segment_cost = _segment_cost(words[previous:position], soft_max, hard_max)
                 if segment_cost == float("inf"):
@@ -2552,6 +2580,8 @@ def _best_region_breaks(
 
     best: tuple[float, list[int], int] | None = None
     for previous, (cost, path, risk) in states.items():
+        if require_clause_seams and not 600 <= words[-1].end_time-words[previous].start_time <= 8000:
+            continue
         final_cost = _segment_cost(words[previous:], soft_max, hard_max)
         if final_cost == float("inf"):
             continue
@@ -2579,10 +2609,8 @@ def _region_metrics(
     return cost, risk
 
 
-def _repair_repeated_identifiers(
-    segments: Sequence[ASRDataSeg], *, hard_max_words: int,
-) -> list[ASRDataSeg]:
-    """Recover split model identifiers only when repeated intact in this document."""
+def repeated_identifier_phrases(segments: Sequence[ASRDataSeg]) -> set[tuple[str, ...]]:
+    """Collect document evidence without allowing movement across timing gaps."""
     from collections import Counter
 
     pattern = re.compile(r"\b[A-Z][A-Za-z]{1,20} \d{1,2}(?: [A-Z]{2,4})?\b")
@@ -2592,7 +2620,15 @@ def _repair_repeated_identifiers(
         for match in pattern.finditer(cue.text)
         for name in {tuple(_tokens(match.group())), tuple(_tokens(match.group()))[:2]}
     )
-    phrases = {name for name, count in counts.items() if count >= 2}
+    return {name for name, count in counts.items() if count >= 2}
+
+
+def _repair_repeated_identifiers(
+    segments: Sequence[ASRDataSeg], *, hard_max_words: int,
+    document_phrases: set[tuple[str, ...]] | None = None,
+) -> list[ASRDataSeg]:
+    """Recover split model identifiers only when repeated intact in this document."""
+    phrases = repeated_identifier_phrases(segments) | (document_phrases or set())
     result = list(segments)
     for index in range(len(result) - 1):
         left, right = result[index:index + 2]
@@ -2715,13 +2751,14 @@ def normalize_boundaries(
     soft_max_words: int = SOFT_MAX_WORDS,
     hard_max_words: int = HARD_MAX_WORDS,
     hard_max_cjk_chars: int = HARD_MAX_CJK_CHARS,
+    document_phrases: set[tuple[str, ...]] | None = None,
 ) -> list[ASRDataSeg]:
     """Move only high-risk boundaries while retaining every atomic word timing."""
     # Every pass below can rebuild cues without translated text. Check before
     # the first pass, including when only part of the input is translated.
     if any(segment.translated_text for segment in segments):
         return list(segments)
-    result = _repair_repeated_identifiers(segments, hard_max_words=hard_max_words)
+    result = _repair_repeated_identifiers(segments, hard_max_words=hard_max_words, document_phrases=document_phrases)
     result = _repair_quantified_requirement_lists(result, hard_max_words=hard_max_words)
     result = _repair_stranded_temporal_clauses(result, hard_max_words=hard_max_words)
     result = _remove_singular_corrections(result)
@@ -2794,6 +2831,8 @@ def normalize_boundaries(
                 original_positions,
                 soft_max=soft_max_words,
                 hard_max=hard_max_words,
+                require_clause_seams=any(structural_dependency(a.text, b.text)
+                                         for a, b in zip(cues, cues[1:])),
             )
             if best is None:
                 continue
@@ -2859,4 +2898,4 @@ def normalize_boundaries(
         result,
         hard_max_chars=hard_max_cjk_chars,
     )
-    return _repair_repeated_identifiers(result, hard_max_words=hard_max_words)
+    return _repair_repeated_identifiers(result, hard_max_words=hard_max_words, document_phrases=document_phrases)

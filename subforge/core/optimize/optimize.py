@@ -227,6 +227,7 @@ class SubtitleOptimizer:
         use_cache: bool = True,
         llm_client: Any = None,
         cache_namespace: str = "",
+        max_word_count_english: int = 18,
     ):
         """初始化优化器
 
@@ -238,6 +239,9 @@ class SubtitleOptimizer:
             temperature: LLM温度参数
             update_callback: 进度更新回调函数
         """
+        from ..split.length_policy import resolve_length_policy
+
+        self.length_policy = resolve_length_policy(max_word_count_english=max_word_count_english)
         self.thread_num = thread_num
         self.batch_num = batch_num
         self.model = model
@@ -298,6 +302,19 @@ class SubtitleOptimizer:
             # 创建新segments
             new_segments = self._create_segments(asr_data.segments, optimized_dict)
 
+            from subforge.core.split.mapped_boundary import normalize_mapped_boundaries
+
+            # Cleaned tokens retain their original timing evidence through a
+            # reversible projection; bilingual imports are never rebuilt here.
+            diagnostics: list[dict] = []
+            new_segments = normalize_mapped_boundaries(
+                new_segments, diagnostics=diagnostics,
+                soft_max_words=self.length_policy.english_soft_limit,
+                hard_max_words=self.length_policy.english_hard_limit,
+            )
+            self.boundary_diagnostics = diagnostics
+            for diagnostic in diagnostics:
+                logger.debug("Skipped mapped boundary repair: %s", diagnostic)
             return ASRData(new_segments)
 
         except Exception as e:

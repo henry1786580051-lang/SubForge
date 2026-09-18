@@ -159,6 +159,8 @@ def test_lexical_guard_still_rejects_semantic_multiword_replacement():
 
 def test_global_ownership_check_repairs_copy_across_batch_boundary(monkeypatch):
     optimizer = SubtitleOptimizer.__new__(SubtitleOptimizer)
+    from subforge.core.split.length_policy import resolve_length_policy
+    optimizer.length_policy = resolve_length_policy()
     optimizer.batch_num = 1
     optimizer.is_running = False
     optimizer.executor = None

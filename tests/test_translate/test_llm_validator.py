@@ -33,6 +33,27 @@ def _make_translator(is_reflect=False):
     )
 
 
+@pytest.mark.parametrize("target,expected", [
+    ("实测续航约为305、310英里", True),
+    ("实测续航约为305、320英里", False),
+    ("实测续航约为305英里", False),
+])
+def test_spoken_numeric_list_preserves_chinese_enumeration(target, expected):
+    valid, _ = _make_translator()._validate_llm_response(
+        {"1": target}, {"1": "We have seen 305, 310 miles of range."}, require_reflect=False)
+    assert valid is expected
+
+
+@pytest.mark.parametrize("source,target,expected", [
+    ("300 miles of range is fine by 2027 EV standards.", "300英里的续航按2027年的电动车标准也够用", True),
+    ("The camera has an EV range of 12.", "这相机的电动车范围是12", False),
+])
+def test_ev_localization_requires_vehicle_evidence_in_same_cue(source, target, expected):
+    valid, _ = _make_translator()._validate_llm_response(
+        {"1": target}, {"1": source}, require_reflect=False)
+    assert valid is expected
+
+
 def _make_minimax_reflect_translator():
     translator = _make_translator(is_reflect=True)
     translator.model = "MiniMax-M3"

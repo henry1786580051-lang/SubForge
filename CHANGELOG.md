@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.3.3 - 2026-09-18
+
+- Repair source-backed structural dependencies before translation, including cleaned text mapped conservatively to unchanged word timing. Preserve raw words and speaker evidence, honor configured length limits, and report dependencies that cannot be repaired safely.
+- Add atomic historical bilingual boundary repair with bounded windows, contextual translation, semantic validation and per-window rollback. Include an opt-in GLM whole-file review tool that writes separate artifacts.
+- Accept Chinese enumeration punctuation in preserved numeric lists and source-supported Chinese localization of EV, while retaining checks for altered numbers and omitted model identifiers.
+
+### Validation and limitations
+
+- 2913 local Python tests and 62 frontend tests passed. Repository-wide Ruff and frontend lint passed; Pyright reported 0 errors and 30 warnings.
+- GLM development validation accepted 17 historical repair windows and rolled back 3, producing 706 cues from 713. All resulting cues were reviewed in 30 overlapping windows. This is historical repair and whole-file review, not an ASR or end-to-end production rerun.
+- Complex dependencies remain unresolved and model audits can miss errors. Local detection consumes no LLM tokens; total pipeline token savings are not established.
+
 ## v1.3.2 - 2026-09-17
 
 ### Subtitle processing

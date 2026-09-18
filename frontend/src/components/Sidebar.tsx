@@ -29,7 +29,7 @@ export function Sidebar() {
       {item("诊断日志", "solar:code-square-linear", activeView === "llm-logs", () => setActiveView("llm-logs"))}
       {item("设置", "solar:settings-linear", activeView === "settings", () => setActiveView("settings"))}
       {item(sidebarCollapsed ? "展开侧边栏" : "收起侧边栏", "solar:sidebar-minimalistic-linear", false, toggleSidebar)}
-      {!sidebarCollapsed && <p className="px-3 pt-2 text-[11px] text-text-muted">SubForge {process.env.NEXT_PUBLIC_APP_VERSION || "1.3.2"}</p>}
+      {!sidebarCollapsed && <p className="px-3 pt-2 text-[11px] text-text-muted">SubForge {process.env.NEXT_PUBLIC_APP_VERSION || "1.3.3"}</p>}
     </div>
   </aside>;
 }
