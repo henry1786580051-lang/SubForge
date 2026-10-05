@@ -295,6 +295,7 @@ def transcribe(
             ),
             corroborating_speech_segments=corroborating_speech,
             media_duration_ms=source_duration_ms,
+            defer_short_groups=config.transcribe_model == TranscribeModelEnum.WHISPERX,
         )
 
         # Remove duplicate text emitted around VAD/chunk boundaries before the
@@ -319,6 +320,29 @@ def transcribe(
         asr_data.fix_boundary_overlaps()
         asr_data.timing_speech_segments = high_confidence_speech
         asr_data.media_duration_ms = source_duration_ms
+
+        if config.transcribe_model == TranscribeModelEnum.WHISPERX:
+            from subforge.core.asr.final_coverage import repair_final_coverage
+            from subforge.core.asr.non_speech_review import review_non_speech
+
+            asr_data = review_non_speech(
+                asr_data,
+                audio_path,
+                config,
+                callback,
+                _create_single_asr,
+                analysis_context=analysis_context,
+            )
+
+            callback(94, "Checking final subtitles against original speech...")
+            asr_data = repair_final_coverage(
+                asr_data,
+                audio_path,
+                config,
+                callback,
+                _create_single_asr,
+                analysis_context=analysis_context,
+            )
 
         if diarization_turns:
             from subforge.core.asr.speaker_diarization import (

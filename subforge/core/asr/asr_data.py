@@ -267,6 +267,8 @@ class ASRData:
         self.timing_speech_segments: list[tuple[int, int]] = []
         self.media_duration_ms: Optional[int] = None
         self.coverage_issues: list[dict] = []
+        self.excluded_speech_ranges: list[dict] = []
+        self.confirmed_non_speech_ranges: list[dict] = []
         if timing_source == "unknown":
             if len(explicit_sources) == 1:
                 self.timing_source = next(iter(explicit_sources))
@@ -844,6 +846,7 @@ class ASRData:
         strict_speech_segments: Optional[list[tuple[int, int]]] = None,
         corroborating_speech_segments: Optional[list[tuple[int, int]]] = None,
         media_duration_ms: Optional[int] = None,
+        defer_short_groups: bool = False,
     ) -> "ASRData":
         """Remove segments likely caused by ASR hallucination.
 
@@ -874,6 +877,7 @@ class ASRData:
                 strict_speech_segments,
                 corroborating_speech_segments,
                 media_duration_ms=media_duration_ms,
+                defer_short_groups=defer_short_groups,
             )
             return self
 
@@ -892,6 +896,7 @@ class ASRData:
         corroborating_speech_segments: Optional[list[tuple[int, int]]],
         *,
         media_duration_ms: Optional[int],
+        defer_short_groups: bool = False,
         group_gap_ms: int = 1200,
         isolation_ms: int = 3000,
         short_group_isolation_ms: int = 10_000,
@@ -995,6 +1000,10 @@ class ASRData:
             if lexical_units < 1:
                 continue
             is_short_group = lexical_units <= 2
+            if is_short_group and defer_short_groups:
+                # Production WhisperX uses bounded acoustic review after all
+                # timeline edits; VAD disagreement alone cannot delete a reply.
+                continue
             required_isolation_ms = short_group_isolation_ms if is_short_group else isolation_ms
 
             previous_end = (

@@ -545,7 +545,14 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
                     work_dir = source.parent
             work_dir.mkdir(parents=True, exist_ok=True)
             coverage_issues = getattr(result, "coverage_issues", [])
-            suffix = "_recovery" if coverage_issues else ""
+            # Uncertain isolated words are retained in a complete transcript.
+            # They need review, but do not represent missing speech or an ASR
+            # failure. Actual coverage gaps still use the recovery/error path.
+            blocking_issues = [
+                issue for issue in coverage_issues
+                if issue.get("reason") != "suspected_non_speech_text"
+            ]
+            suffix = "_recovery" if blocking_issues else ""
             subtitle_path = work_dir / f"{video_stem}{suffix}.srt"
             context.checkpoint()
             result.save(str(subtitle_path))
@@ -556,7 +563,7 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
                 getattr(result, "timing_speech_segments", []),
                 getattr(result, "media_duration_ms", None),
             )
-            if coverage_issues:
+            if blocking_issues:
                 from subforge.core.asr.speech_gap_repair import coverage_issue_message
 
                 context.publish_preview(
@@ -572,13 +579,20 @@ async def _run_transcription(task_id: str, req: TranscribeRequest):
                     },
                 )
                 return
-            task_manager.complete_task(
-                task_id,
-                {
-                    "subtitle_file": str(subtitle_path),
-                    "segments": subtitle_preview_segments(result),
-                },
-            )
+            completion_result = {
+                "subtitle_file": str(subtitle_path),
+                "segments": subtitle_preview_segments(result),
+            }
+            if coverage_issues:
+                from subforge.core.asr.speech_gap_repair import coverage_review_ranges
+
+                completion_result["coverage_issues"] = coverage_issues
+                completion_result["warning"] = (
+                    f"转录已完成；{len(coverage_issues)} 处短字幕的音频证据不确定，"
+                    f"请复核：{coverage_review_ranges(coverage_issues)}。"
+                    "字幕已保留并保存，可继续翻译。"
+                )
+            task_manager.complete_task(task_id, completion_result)
         else:
             raise RuntimeError(
                 "Transcription produced no subtitle segments. Check the selected "

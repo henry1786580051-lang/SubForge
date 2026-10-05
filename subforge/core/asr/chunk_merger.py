@@ -102,6 +102,11 @@ class ChunkMerger:
             for chunk, offset in zip(chunks, chunk_offsets)
             for issue in chunk.coverage_issues
         ]
+        result.excluded_speech_ranges = [
+            {**item, "start": item["start"] + offset / 1000, "end": item["end"] + offset / 1000}
+            for chunk, offset in zip(chunks, chunk_offsets)
+            for item in chunk.excluded_speech_ranges
+        ]
         return result
 
     def _merge_two_sequences(

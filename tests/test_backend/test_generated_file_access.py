@@ -86,8 +86,8 @@ def test_subtitle_output_and_recovery_remain_accessible(external_input, monkeypa
         security.validate_path(str(external_input.with_name("private.txt")))
 
 
-@pytest.mark.parametrize("coverage_warning", [False, True])
-def test_transcription_output_can_be_loaded_from_external_drive(external_input, monkeypatch, coverage_warning):
+@pytest.mark.parametrize("issue_reason", [None, "context_disagreement", "suspected_non_speech_text", "mixed"])
+def test_transcription_output_can_be_loaded_from_external_drive(external_input, monkeypatch, issue_reason):
     video = external_input.with_suffix(".mp4")
     video.touch()
     security.grant_path(video)
@@ -101,8 +101,10 @@ def test_transcription_output_can_be_loaded_from_external_drive(external_input, 
     monkeypatch.setattr(video_utils, "video2audio", lambda *args: True)
     original_srt = external_input.read_bytes()
     result = ASRData([ASRDataSeg("New transcription.", 0, 1000)])
-    if coverage_warning:
-        result.coverage_issues = [{"start": 10, "end": 14.2, "reason": "context_disagreement"}]
+    if issue_reason:
+        result.coverage_issues = [{"start": 10, "end": 14.2, "reason": "context_disagreement" if issue_reason == "mixed" else issue_reason}]
+    if issue_reason == "mixed":
+        result.coverage_issues.append({"start": 20, "end": 21, "reason": "suspected_non_speech_text"})
     monkeypatch.setattr(asr_module, "transcribe", lambda *args: result)
     # The input SRT must not already be granted: the transcriber grants its own output.
     security.clear_granted_paths()
@@ -114,6 +116,7 @@ def test_transcription_output_can_be_loaded_from_external_drive(external_input, 
         )
     )
     completed = task_manager.get_task(task.id)
+    coverage_warning = issue_reason in {"context_disagreement", "mixed"}
     assert completed.status == ("failed" if coverage_warning else "completed"), completed.error
     output = completed.result["recovery_file" if coverage_warning else "subtitle_file"]
     if coverage_warning:
@@ -122,9 +125,34 @@ def test_transcription_output_can_be_loaded_from_external_drive(external_input, 
         assert completed.preview_segments[0]["text"] == "New transcription."
         assert "00:00:10.000 - 00:00:14.200" in completed.error
         assert output.endswith("_recovery.srt")
+    if issue_reason == "suspected_non_speech_text":
+        assert completed.error is None
+        assert completed.result["coverage_issues"] == result.coverage_issues
+        assert "00:00:10.000 - 00:00:14.200" in completed.result["warning"]
+        assert "可继续翻译" in completed.result["warning"]
     assert security.validate_path(output).is_file()
     assert (
         asyncio.run(subtitles.load_subtitle(output))["segments"][0]["text"] == "New transcription."
     )
+    # Exercise the handoff with the persisted ASR output, without external API
+    # calls: both complete transcripts and reviewed recovery files are usable.
+    class Translator:
+        def translate_subtitle(self, data):
+            data.segments[0].translated_text = "新的转录。"
+            return data
+
+    monkeypatch.setattr(TranslatorFactory, "create_translator", lambda **kwargs: Translator())
+    translation = task_manager.create_task("subtitle")
+    asyncio.run(subtitle._run_subtitle(
+        translation.id,
+        subtitle.SubtitleRequest(
+            subtitle_file=output, need_optimize=False, need_translate=True, translator="bing",
+        ),
+    ))
+    translated = task_manager.get_task(translation.id)
+    assert translated.status == "completed", translated.error
+    loaded_translation = asyncio.run(subtitles.load_subtitle(translated.result["subtitle_file"]))
+    assert loaded_translation["segments"][0]["text"] == "New transcription."
+    assert loaded_translation["segments"][0]["translated"] == "新的转录"
     with pytest.raises(ValueError):
         security.validate_path(str(video.with_name("private.txt")))

@@ -131,6 +131,52 @@ describe("useTaskMonitor ordering", () => {
     await controls.cancelTask();
     expect(hasUnsavedSubtitles(harness.store)).toBe(true);
   });
+
+  it.each(["transcribe", "subtitle"] as const)("can translate saved %s recovery delivered with its preview", async (type) => {
+    dispatch(task({ type, preview_revision: 1, preview_segments: [segment("partial")] }));
+    dispatch(task({ type, status: "failed", preview_revision: 2,
+      preview_segments: [segment("saved recovery")], error: "needs review",
+      result: { recovery_file: "/tmp/recovery.srt", segments: [segment("saved recovery")] },
+    }));
+    expect(harness.store.subtitles).toEqual([segment("saved recovery")]);
+    expect(hasUnsavedSubtitles(harness.store)).toBe(false);
+    harness.start.mockResolvedValue({ task_id: "translation" });
+    await controls.startTask("subtitle", { subtitle_file: "/tmp/recovery.srt" });
+    expect(harness.start).toHaveBeenCalledWith({ subtitle_file: "/tmp/recovery.srt" });
+  });
+
+  it("establishes the saved baseline from a recovery snapshot without result segments", () => {
+    dispatch(task({ status: "failed", preview_revision: 2, preview_segments: [segment("recovery")],
+      result: { recovery_file: "/tmp/recovery.srt" },
+    }));
+    expect(harness.store.subtitles).toEqual([segment("recovery")]);
+    expect(hasUnsavedSubtitles(harness.store)).toBe(false);
+    expect(harness.load).not.toHaveBeenCalled();
+  });
+
+  it("keeps a failed preview unsaved when no recovery file was written", () => {
+    dispatch(task({ status: "failed", preview_revision: 2, preview_segments: [segment("unsaved partial")] }));
+    expect(hasUnsavedSubtitles(harness.store)).toBe(true);
+  });
+
+  it("shows an advisory after successful transcription without blocking translation", async () => {
+    dispatch(task({ type: "transcribe", status: "completed", result: {
+      subtitle_file: "/tmp/final.srt", segments: [segment("final")], warning: "请复核 00:34:24，可继续翻译。",
+    } }));
+    expect(harness.store.setTaskState).toHaveBeenLastCalledWith(100, "请复核 00:34:24，可继续翻译。", "completed");
+    expect(harness.store.setError).not.toHaveBeenCalled();
+    harness.start.mockResolvedValue({ task_id: "translation" });
+    await controls.startTask("subtitle", { subtitle_file: "/tmp/final.srt" });
+    expect(harness.start).toHaveBeenCalled();
+  });
+
+  it("marks a persisted final preview clean when completion contains only its revision", () => {
+    dispatch(task({ preview_revision: 3, preview_segments: [segment("final preview")] }));
+    dispatch(task({ status: "completed", result: { subtitle_file: "/tmp/final.srt", preview_revision: 3 } }));
+    expect(harness.store.subtitles).toEqual([segment("final preview")]);
+    expect(hasUnsavedSubtitles(harness.store)).toBe(false);
+    expect(harness.load).not.toHaveBeenCalled();
+  });
   it("blocks task start while a document is loading", async () => {
     harness.store.documentLoading = true;
     await controls.startTask("subtitle", {});

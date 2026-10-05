@@ -1393,6 +1393,9 @@ def _recover_aligned_gaps_from_native_words(
     if not gaps:
         return aligned
 
+    from .speech_gap_repair import word_key
+
+    aligned_words = _alignment_word_coverage(aligned)
     recovered_segments: list[dict[str, Any]] = []
     recovered_words: list[dict[str, Any]] = []
     for segment in native_result.get("segments") or []:
@@ -1409,13 +1412,29 @@ def _recover_aligned_gaps_from_native_words(
             end = _float_seconds(word.get("end"))
             if start is None or end is None or end <= start:
                 continue
-            midpoint = (start + end) / 2
-            if not any(gap.start <= midpoint <= gap.end for gap in gaps):
+            # A word spanning the missing utterance is the defect, not a repair.
+            # Midpoint-only selection used to copy stretched words across edges.
+            if not any(gap.start <= start and end <= gap.end for gap in gaps):
                 continue
             selected_word = dict(word)
             selected_word["timing_source"] = "native"
             selected.append(selected_word)
         if not selected:
+            continue
+        nearby = [
+            word for word in aligned_words
+            if float(selected[0]["start"]) - 10 <= word["start"]
+            and word["end"] <= float(selected[-1]["end"]) + 10
+        ]
+        existing_keys = [word_key(word) for word in nearby]
+        selected_keys = [word_key(word) for word in selected]
+        if any(
+            selected_keys[i : i + 3] == existing_keys[j : j + 3]
+            for i in range(len(selected_keys) - 2)
+            for j in range(len(existing_keys) - 2)
+        ):
+            # Competing placements of the same phrase require re-decoding the
+            # neighborhood. Inserting another copy falsely closes the hole.
             continue
         text = "".join(str(word.get("word") or "") for word in selected).strip()
         if not text:
@@ -4301,6 +4320,10 @@ class WhisperXASR(BaseASR):
                         critical_gaps = [
                             gap for gap in critical_gaps if gap not in ignored_foreign_gaps
                         ]
+            if self.need_word_time_stamp:
+                from .final_coverage import record_alignment_evidence
+
+                record_alignment_evidence(native_result, aligned, critical_gaps, self.mlx_model)
             if critical_gaps and self.need_word_time_stamp:
                 aligned = _recover_aligned_gaps_from_native_words(
                     aligned,
@@ -4365,6 +4388,11 @@ class WhisperXASR(BaseASR):
                     )
                 ]
             aligned["coverage_issues"] = issues
+            aligned["excluded_speech_ranges"] = (
+                foreign_language_speech_ranges
+                if self.language is not None and not hybrid_language_mode
+                else []
+            )
             aligned["asr_backend"] = "mlx-whisper"
             aligned["mlx_model"] = self.mlx_model
 

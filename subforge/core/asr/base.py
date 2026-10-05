@@ -110,6 +110,7 @@ class BaseASR:
                 data = ASRData(segments)
                 if isinstance(cached_result, dict):
                     data.coverage_issues = list(cached_result.get("coverage_issues") or [])
+                    data.excluded_speech_ranges = list(cached_result.get("excluded_speech_ranges") or [])
                 return data
 
         # Run ASR
@@ -125,6 +126,7 @@ class BaseASR:
         data = ASRData(segments)
         if isinstance(resp_data, dict):
             data.coverage_issues = list(resp_data.get("coverage_issues") or [])
+            data.excluded_speech_ranges = list(resp_data.get("excluded_speech_ranges") or [])
         return data
 
     def _get_key(self) -> str:

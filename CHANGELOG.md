@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.3.4 - 2026-10-05
+
+### Transcription and translation recovery
+
+- Complete transcription with an advisory when isolated short words need acoustic review. Keep the words and timestamped review notice, and allow translation to continue; actual unresolved speech gaps retain recovery/error handling.
+- Establish the saved editor baseline from persisted recovery snapshots and revision-only completion events. Generated subtitles no longer appear as unsaved user edits and block the next processing task.
+- Preserve protection against processing genuinely unsaved edits, stale task updates, and late file loads. Added regression coverage for transcription-to-translation handoff through saved output and recovery files.
+
+### Speech coverage and isolated short replies
+
+- Audit WhisperX word coverage against original audio after final timing, filtering and deduplication. Detect speech hidden by stretched lexical timestamps without mutating the exported timeline.
+- Attempt bounded context recovery with matching surrounding anchors and independent decode agreement. Reject native timestamp fallback that crosses a gap boundary or repeats a nearby phrase.
+- Choose shared splice-safe anchors and accept equivalent kilometre number/unit spellings while preserving values, signs, decimal points, pronouns and negation.
+- Review isolated one- or two-word subtitles using independent speech detectors, native no-speech probability and forced alignment. Repeated decoded text alone does not clear a candidate; missing or conflicting evidence preserves it for review.
+- Keep intentionally excluded foreign-language ranges and confirmed non-speech evidence through chunk merging and final gap checks. Reject repairs that reinsert words into confirmed non-speech intervals.
+- Bound isolated-short-speech review to three local windows of up to 30 seconds each. Automatic deletion currently requires the local MLX backend; other backends retain uncertain candidates. Keep at most 20 lightweight diagnostic reports without audio copies or LLM calls.
+
+### Validation and limitations
+
+- 2969 local Python tests passed with 35 integration tests deselected, using the checksum-pinned bundled FFmpeg runtime. All 68 frontend tests, frontend lint and production build passed. Repository Ruff passed; Pyright reported 0 errors and 30 warnings.
+- Regression tests cover advisory completion, saved recovery baselines, genuine unsaved edits, actual coverage failures, and persisted transcription output continuing through translation without external API calls.
+- The installed Apple Silicon app passed backend HTTP startup checks; the reported 6735-segment subtitle file was preserved unchanged and restored with a clean saved state. This check did not run a paid translation or repeat the complete transcription.
+- Earlier local audio development cases exercised missing-speech recovery and music/short-reply controls. Uncertain or conflicting evidence remains a review item; these cases do not establish universal ASR accuracy or recovery success.
+
 ## v1.3.3 - 2026-09-18
 
 - Repair source-backed structural dependencies before translation, including cleaned text mapped conservatively to unchanged word timing. Preserve raw words and speaker evidence, honor configured length limits, and report dependencies that cannot be repaired safely.

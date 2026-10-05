@@ -132,6 +132,9 @@ export function useTaskMonitor() {
       setTaskAttention(null);
 
       const result = task.result;
+      if (typeof result?.warning === "string" && result.warning) {
+        setTaskState(100, result.warning, "completed");
+      }
       if (task.type === "transcribe" && result?.subtitle_file) {
         setSubtitleFile(result.subtitle_file as string);
         if (Array.isArray(result.segments)) {
@@ -162,6 +165,7 @@ export function useTaskMonitor() {
         }
         const completedRevision = Number(result.preview_revision || 0);
         if (completedRevision > 0 && completedRevision <= previewRevisionRef.current) {
+          setSubtitles(useAppStore.getState().subtitles);
           return;
         }
         subtitlesApi
@@ -185,7 +189,13 @@ export function useTaskMonitor() {
       const recoveryFile = task.result?.recovery_file;
       if (typeof recoveryFile === "string" && recoveryFile) {
         setSubtitleFile(recoveryFile);
-        if (!task.preview_segments) {
+        // Recovery snapshots have already been persisted by the worker. They
+        // must establish the editor's saved baseline, just like completion.
+        if (Array.isArray(task.result?.segments)) {
+          setSubtitles(task.result.segments as import("@/lib/api").SubtitleSegment[]);
+        } else if (Array.isArray(task.preview_segments)) {
+          setSubtitles(task.preview_segments);
+        } else {
           subtitlesApi
             .load(recoveryFile)
             .then((subFile) => {

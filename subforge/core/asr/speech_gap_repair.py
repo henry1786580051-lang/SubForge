@@ -154,10 +154,22 @@ def insert_anchored_gap(result: dict, words: list[Word], start: float, end: floa
     return updated
 
 
-def coverage_issue_message(issues: list[dict]) -> str:
+def coverage_review_ranges(issues: list[dict]) -> str:
     def timestamp(seconds: float) -> str:
         value = max(0, round(seconds * 1000))
         return f"{value // 3600000:02}:{value // 60000 % 60:02}:{value // 1000 % 60:02}.{value % 1000:03}"
 
-    ranges = ", ".join(f"{timestamp(i['start'])} - {timestamp(i['end'])}" for i in issues[:10])
-    return f"Speech coverage needs review ({len(issues)} region(s)): {ranges}. Partial subtitles have been preserved."
+    return ", ".join(f"{timestamp(i['start'])} - {timestamp(i['end'])}" for i in issues[:10])
+
+
+def coverage_issue_message(issues: list[dict]) -> str:
+    if any(i.get("reason") == "final_audit_unavailable" for i in issues):
+        return "Final speech coverage verification was unavailable. Partial subtitles have been preserved and need review."
+
+    ranges = coverage_review_ranges(issues)
+    label = (
+        "Subtitle audio evidence"
+        if any(i.get("reason") == "suspected_non_speech_text" for i in issues)
+        else "Speech coverage"
+    )
+    return f"{label} needs review ({len(issues)} region(s)): {ranges}. Partial subtitles have been preserved."

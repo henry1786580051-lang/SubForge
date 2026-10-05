@@ -2006,3 +2006,40 @@ def test_whisperx_runtime_diarization_stub_exposes_vad_segment(monkeypatch):
 
     segment = sys.modules["whisperx.diarize"].Segment(1, 2, "speaker")
     assert (segment.start, segment.end, segment.speaker) == (1, 2, "speaker")
+
+
+def test_native_fallback_does_not_copy_a_word_across_gap_boundaries():
+    from subforge.core.asr.whisperx_asr import _SpeechBackedGap
+
+    aligned = {"segments": []}
+    native = {"segments": [{"words": [{"word": " is", "start": 713.72, "end": 720.86}]}]}
+    gap = _SpeechBackedGap(715, 720.5, 4, 0.72, True)
+    assert _recover_aligned_gaps_from_native_words(aligned, native, [gap]) is aligned
+
+
+def test_native_fallback_does_not_duplicate_misplaced_neighbor_phrase():
+    from subforge.core.asr.whisperx_asr import _SpeechBackedGap
+
+    phrase = ["now", "widely", "regarded", "as", "the", "global", "benchmark"]
+    aligned = {
+        "segments": [
+            {
+                "words": [
+                    {"word": text, "start": 713 + i * 0.3, "end": 713.2 + i * 0.3}
+                    for i, text in enumerate(phrase)
+                ]
+            }
+        ]
+    }
+    native = {
+        "segments": [
+            {
+                "words": [
+                    {"word": " " + text, "start": 720 + i * 0.3, "end": 720.2 + i * 0.3}
+                    for i, text in enumerate(phrase)
+                ]
+            }
+        ]
+    }
+    gap = _SpeechBackedGap(715, 723, 6, 0.75, True)
+    assert _recover_aligned_gaps_from_native_words(aligned, native, [gap]) is aligned

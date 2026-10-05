@@ -985,7 +985,7 @@ class TestAudioEnergyPauseRestore:
             "sentence",
         ]
 
-    def test_filter_hallucinations_keeps_short_isolated_real_utterance(self):
+    def test_legacy_filter_keeps_short_group_with_single_vad_support(self):
         asr_data = ASRData(
             [
                 ASRDataSeg("Previous", 0, 400),
