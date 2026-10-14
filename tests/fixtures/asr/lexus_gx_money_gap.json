@@ -1,0 +1,1502 @@
+{
+  "gap": {
+    "start": 14.686,
+    "end": 16.78,
+    "speech_seconds": 1.4080000000000013,
+    "speech_ratio": 0.6723973256924548,
+    "is_internal": true
+  },
+  "before": [
+    {
+      "word": "this",
+      "start": 4.701,
+      "end": 4.822
+    },
+    {
+      "word": "bass",
+      "start": 4.922,
+      "end": 5.222
+    },
+    {
+      "word": "as",
+      "start": 5.282,
+      "end": 5.362
+    },
+    {
+      "word": "well",
+      "start": 5.422,
+      "end": 5.683
+    },
+    {
+      "word": "from",
+      "start": 5.723,
+      "end": 5.843
+    },
+    {
+      "word": "the",
+      "start": 5.863,
+      "end": 5.943
+    },
+    {
+      "word": "subwoofer.",
+      "start": 5.983,
+      "end": 6.524
+    },
+    {
+      "word": "So",
+      "start": 10.891,
+      "end": 11.534
+    },
+    {
+      "word": "no",
+      "start": 11.682,
+      "end": 11.912
+    },
+    {
+      "word": "real",
+      "start": 11.972,
+      "end": 12.152
+    },
+    {
+      "word": "complaints",
+      "start": 12.172,
+      "end": 12.613
+    },
+    {
+      "word": "with",
+      "start": 12.673,
+      "end": 12.813
+    },
+    {
+      "word": "the",
+      "start": 12.833,
+      "end": 12.894
+    },
+    {
+      "word": "sound",
+      "start": 12.934,
+      "end": 13.154
+    },
+    {
+      "word": "system.",
+      "start": 13.194,
+      "end": 13.474
+    },
+    {
+      "word": "I",
+      "start": 13.595,
+      "end": 14.686
+    },
+    {
+      "word": "I",
+      "start": 16.78,
+      "end": 17.26
+    },
+    {
+      "word": "And,",
+      "start": 17.34,
+      "end": 17.461
+    },
+    {
+      "word": "you",
+      "start": 17.481,
+      "end": 17.542
+    },
+    {
+      "word": "know,",
+      "start": 17.562,
+      "end": 17.662
+    },
+    {
+      "word": "anything",
+      "start": 17.683,
+      "end": 17.884
+    },
+    {
+      "word": "that",
+      "start": 17.904,
+      "end": 18.004
+    },
+    {
+      "word": "says",
+      "start": 18.045,
+      "end": 18.226
+    },
+    {
+      "word": "Mark",
+      "start": 18.266,
+      "end": 18.447
+    },
+    {
+      "word": "Levinson,",
+      "start": 18.487,
+      "end": 18.829
+    },
+    {
+      "word": "I'm",
+      "start": 18.85,
+      "end": 18.91
+    },
+    {
+      "word": "always",
+      "start": 18.95,
+      "end": 19.111
+    },
+    {
+      "word": "going",
+      "start": 19.131,
+      "end": 19.232
+    },
+    {
+      "word": "to",
+      "start": 19.252,
+      "end": 19.312
+    },
+    {
+      "word": "trust",
+      "start": 19.353,
+      "end": 19.634
+    },
+    {
+      "word": "that",
+      "start": 19.695,
+      "end": 19.815
+    },
+    {
+      "word": "it's",
+      "start": 19.856,
+      "end": 19.956
+    },
+    {
+      "word": "pretty",
+      "start": 20.017,
+      "end": 20.198
+    },
+    {
+      "word": "nice",
+      "start": 20.238,
+      "end": 20.399
+    },
+    {
+      "word": "quality.",
+      "start": 20.439,
+      "end": 20.6
+    },
+    {
+      "word": "But",
+      "start": 20.86,
+      "end": 20.981
+    },
+    {
+      "word": "I",
+      "start": 21.503,
+      "end": 21.543
+    },
+    {
+      "word": "suppose",
+      "start": 21.583,
+      "end": 21.864
+    },
+    {
+      "word": "as",
+      "start": 21.905,
+      "end": 21.965
+    },
+    {
+      "word": "we",
+      "start": 22.005,
+      "end": 22.085
+    },
+    {
+      "word": "get",
+      "start": 22.125,
+      "end": 22.266
+    },
+    {
+      "word": "into",
+      "start": 22.386,
+      "end": 22.587
+    },
+    {
+      "word": "town",
+      "start": 22.668,
+      "end": 23.029
+    },
+    {
+      "word": "here,",
+      "start": 23.109,
+      "end": 23.502
+    },
+    {
+      "word": "we",
+      "start": 24.093,
+      "end": 24.194
+    },
+    {
+      "word": "can",
+      "start": 24.234,
+      "end": 24.354
+    },
+    {
+      "word": "go",
+      "start": 24.395,
+      "end": 24.515
+    },
+    {
+      "word": "ahead",
+      "start": 24.555,
+      "end": 24.816
+    },
+    {
+      "word": "and",
+      "start": 24.977,
+      "end": 25.077
+    },
+    {
+      "word": "wrap",
+      "start": 25.198,
+      "end": 25.459
+    },
+    {
+      "word": "this",
+      "start": 25.499,
+      "end": 25.64
+    },
+    {
+      "word": "up.",
+      "start": 25.66,
+      "end": 25.74
+    },
+    {
+      "word": "I",
+      "start": 25.9,
+      "end": 25.961
+    },
+    {
+      "word": "said",
+      "start": 25.981,
+      "end": 26.101
+    },
+    {
+      "word": "at",
+      "start": 26.121,
+      "end": 26.162
+    },
+    {
+      "word": "the",
+      "start": 26.182,
+      "end": 26.262
+    },
+    {
+      "word": "beginning",
+      "start": 26.282,
+      "end": 26.483
+    },
+    {
+      "word": "of",
+      "start": 26.503,
+      "end": 26.543
+    },
+    {
+      "word": "the",
+      "start": 26.563,
+      "end": 26.644
+    }
+  ],
+  "decoded": [
+    {
+      "word": "this",
+      "start": 4.706,
+      "end": 4.826
+    },
+    {
+      "word": "bass",
+      "start": 4.927,
+      "end": 5.227
+    },
+    {
+      "word": "as",
+      "start": 5.287,
+      "end": 5.367
+    },
+    {
+      "word": "well",
+      "start": 5.428,
+      "end": 5.668
+    },
+    {
+      "word": "from",
+      "start": 5.708,
+      "end": 5.849
+    },
+    {
+      "word": "the",
+      "start": 5.869,
+      "end": 5.929
+    },
+    {
+      "word": "subwoofer.",
+      "start": 5.969,
+      "end": 6.49
+    },
+    {
+      "word": "So",
+      "start": 10.88,
+      "end": 11.04
+    },
+    {
+      "word": "no",
+      "start": 11.782,
+      "end": 11.922
+    },
+    {
+      "word": "real",
+      "start": 11.982,
+      "end": 12.142
+    },
+    {
+      "word": "complaints",
+      "start": 12.182,
+      "end": 12.603
+    },
+    {
+      "word": "with",
+      "start": 12.684,
+      "end": 12.804
+    },
+    {
+      "word": "the",
+      "start": 12.824,
+      "end": 12.884
+    },
+    {
+      "word": "sound",
+      "start": 12.944,
+      "end": 13.165
+    },
+    {
+      "word": "system.",
+      "start": 13.185,
+      "end": 13.485
+    },
+    {
+      "word": "I",
+      "start": 13.585,
+      "end": 13.606
+    },
+    {
+      "word": "think",
+      "start": 13.626,
+      "end": 13.726
+    },
+    {
+      "word": "it's",
+      "start": 13.746,
+      "end": 13.826
+    },
+    {
+      "word": "fine",
+      "start": 13.946,
+      "end": 14.187
+    },
+    {
+      "word": "for",
+      "start": 14.228,
+      "end": 14.408
+    },
+    {
+      "word": "an",
+      "start": 14.489,
+      "end": 14.569
+    },
+    {
+      "word": "$80,000",
+      "start": 14.97,
+      "end": 16.155
+    },
+    {
+      "word": "vehicle.",
+      "start": 16.175,
+      "end": 16.557
+    },
+    {
+      "word": "And",
+      "start": 17.319,
+      "end": 17.46
+    },
+    {
+      "word": "you",
+      "start": 17.48,
+      "end": 17.56
+    },
+    {
+      "word": "know,",
+      "start": 17.58,
+      "end": 17.681
+    },
+    {
+      "word": "anything",
+      "start": 17.701,
+      "end": 17.902
+    },
+    {
+      "word": "that",
+      "start": 17.922,
+      "end": 18.022
+    },
+    {
+      "word": "says",
+      "start": 18.062,
+      "end": 18.223
+    },
+    {
+      "word": "Mark",
+      "start": 18.263,
+      "end": 18.464
+    },
+    {
+      "word": "Levinson,",
+      "start": 18.484,
+      "end": 18.785
+    },
+    {
+      "word": "I'm",
+      "start": 18.805,
+      "end": 18.865
+    },
+    {
+      "word": "always",
+      "start": 18.886,
+      "end": 19.006
+    },
+    {
+      "word": "going",
+      "start": 19.106,
+      "end": 19.227
+    },
+    {
+      "word": "to",
+      "start": 19.247,
+      "end": 19.307
+    },
+    {
+      "word": "trust",
+      "start": 19.348,
+      "end": 19.649
+    },
+    {
+      "word": "that",
+      "start": 19.689,
+      "end": 19.81
+    },
+    {
+      "word": "it's",
+      "start": 19.85,
+      "end": 19.951
+    },
+    {
+      "word": "pretty",
+      "start": 19.991,
+      "end": 20.192
+    },
+    {
+      "word": "nice",
+      "start": 20.232,
+      "end": 20.393
+    },
+    {
+      "word": "quality.",
+      "start": 20.453,
+      "end": 20.835
+    },
+    {
+      "word": "But",
+      "start": 20.875,
+      "end": 20.996
+    },
+    {
+      "word": "I",
+      "start": 21.498,
+      "end": 21.558
+    },
+    {
+      "word": "suppose",
+      "start": 21.598,
+      "end": 21.86
+    },
+    {
+      "word": "as",
+      "start": 21.9,
+      "end": 21.96
+    },
+    {
+      "word": "we",
+      "start": 22.0,
+      "end": 22.101
+    },
+    {
+      "word": "get",
+      "start": 22.141,
+      "end": 22.282
+    },
+    {
+      "word": "into",
+      "start": 22.402,
+      "end": 22.603
+    },
+    {
+      "word": "town",
+      "start": 22.664,
+      "end": 23.025
+    },
+    {
+      "word": "here,",
+      "start": 23.045,
+      "end": 23.166
+    },
+    {
+      "word": "we",
+      "start": 24.089,
+      "end": 24.189
+    },
+    {
+      "word": "can",
+      "start": 24.21,
+      "end": 24.35
+    },
+    {
+      "word": "go",
+      "start": 24.371,
+      "end": 24.491
+    },
+    {
+      "word": "ahead",
+      "start": 24.552,
+      "end": 24.813
+    },
+    {
+      "word": "and",
+      "start": 24.974,
+      "end": 25.075
+    },
+    {
+      "word": "wrap",
+      "start": 25.196,
+      "end": 25.438
+    },
+    {
+      "word": "this",
+      "start": 25.498,
+      "end": 25.659
+    },
+    {
+      "word": "up.",
+      "start": 25.78,
+      "end": 25.88
+    },
+    {
+      "word": "I",
+      "start": 25.921,
+      "end": 25.961
+    },
+    {
+      "word": "said",
+      "start": 26.001,
+      "end": 26.102
+    },
+    {
+      "word": "at",
+      "start": 26.122,
+      "end": 26.182
+    },
+    {
+      "word": "the",
+      "start": 26.202,
+      "end": 26.263
+    },
+    {
+      "word": "beginning",
+      "start": 26.283,
+      "end": 26.464
+    },
+    {
+      "word": "of",
+      "start": 26.484,
+      "end": 26.525
+    },
+    {
+      "word": "the",
+      "start": 26.545,
+      "end": 26.605
+    },
+    {
+      "word": "video,",
+      "start": 26.625,
+      "end": 26.746
+    }
+  ],
+  "confirmation": [
+    {
+      "word": "highs",
+      "start": 2.766,
+      "end": 3.128
+    },
+    {
+      "word": "and",
+      "start": 3.169,
+      "end": 3.229
+    },
+    {
+      "word": "it's",
+      "start": 3.269,
+      "end": 3.37
+    },
+    {
+      "word": "got",
+      "start": 3.39,
+      "end": 3.531
+    },
+    {
+      "word": "a",
+      "start": 3.551,
+      "end": 3.591
+    },
+    {
+      "word": "lot",
+      "start": 3.671,
+      "end": 3.872
+    },
+    {
+      "word": "of",
+      "start": 3.913,
+      "end": 3.953
+    },
+    {
+      "word": "power",
+      "start": 4.033,
+      "end": 4.456
+    },
+    {
+      "word": "from",
+      "start": 4.516,
+      "end": 4.677
+    },
+    {
+      "word": "this",
+      "start": 4.697,
+      "end": 4.838
+    },
+    {
+      "word": "base",
+      "start": 4.918,
+      "end": 5.22
+    },
+    {
+      "word": "as",
+      "start": 5.3,
+      "end": 5.381
+    },
+    {
+      "word": "well",
+      "start": 5.441,
+      "end": 5.682
+    },
+    {
+      "word": "from",
+      "start": 5.723,
+      "end": 5.863
+    },
+    {
+      "word": "the",
+      "start": 5.883,
+      "end": 5.944
+    },
+    {
+      "word": "subwoofer",
+      "start": 5.984,
+      "end": 6.306
+    },
+    {
+      "word": "so",
+      "start": 10.966,
+      "end": 11.067
+    },
+    {
+      "word": "no",
+      "start": 11.771,
+      "end": 11.911
+    },
+    {
+      "word": "real",
+      "start": 11.972,
+      "end": 12.133
+    },
+    {
+      "word": "complaints",
+      "start": 12.173,
+      "end": 12.595
+    },
+    {
+      "word": "with",
+      "start": 12.676,
+      "end": 12.796
+    },
+    {
+      "word": "the",
+      "start": 12.817,
+      "end": 12.897
+    },
+    {
+      "word": "sound",
+      "start": 12.937,
+      "end": 13.158
+    },
+    {
+      "word": "system",
+      "start": 13.179,
+      "end": 13.46
+    },
+    {
+      "word": "i",
+      "start": 13.581,
+      "end": 13.641
+    },
+    {
+      "word": "think",
+      "start": 13.661,
+      "end": 13.782
+    },
+    {
+      "word": "it's",
+      "start": 13.802,
+      "end": 13.903
+    },
+    {
+      "word": "fine",
+      "start": 13.943,
+      "end": 14.204
+    },
+    {
+      "word": "for",
+      "start": 14.245,
+      "end": 14.406
+    },
+    {
+      "word": "an",
+      "start": 14.426,
+      "end": 14.466
+    },
+    {
+      "word": "80-ish",
+      "start": 15.008,
+      "end": 15.49
+    },
+    {
+      "word": "thousand",
+      "start": 15.531,
+      "end": 15.872
+    },
+    {
+      "word": "dollar",
+      "start": 15.892,
+      "end": 16.133
+    },
+    {
+      "word": "vehicle",
+      "start": 16.174,
+      "end": 16.555
+    },
+    {
+      "word": "and",
+      "start": 17.339,
+      "end": 17.459
+    },
+    {
+      "word": "you",
+      "start": 17.479,
+      "end": 17.56
+    },
+    {
+      "word": "know",
+      "start": 17.58,
+      "end": 17.66
+    },
+    {
+      "word": "anything",
+      "start": 17.68,
+      "end": 17.901
+    },
+    {
+      "word": "that",
+      "start": 17.921,
+      "end": 18.022
+    },
+    {
+      "word": "says",
+      "start": 18.062,
+      "end": 18.223
+    },
+    {
+      "word": "mark",
+      "start": 18.263,
+      "end": 18.464
+    },
+    {
+      "word": "levinson",
+      "start": 18.484,
+      "end": 18.765
+    },
+    {
+      "word": "i'm",
+      "start": 18.785,
+      "end": 18.845
+    },
+    {
+      "word": "always",
+      "start": 18.865,
+      "end": 18.986
+    },
+    {
+      "word": "going",
+      "start": 19.106,
+      "end": 19.227
+    },
+    {
+      "word": "to",
+      "start": 19.247,
+      "end": 19.307
+    },
+    {
+      "word": "trust",
+      "start": 19.347,
+      "end": 19.648
+    },
+    {
+      "word": "that",
+      "start": 19.689,
+      "end": 19.809
+    },
+    {
+      "word": "it's",
+      "start": 19.849,
+      "end": 19.949
+    },
+    {
+      "word": "pretty",
+      "start": 19.99,
+      "end": 20.19
+    },
+    {
+      "word": "nice",
+      "start": 20.23,
+      "end": 20.391
+    },
+    {
+      "word": "quality",
+      "start": 20.451,
+      "end": 20.833
+    },
+    {
+      "word": "but",
+      "start": 20.873,
+      "end": 20.993
+    },
+    {
+      "word": "i",
+      "start": 21.495,
+      "end": 21.555
+    },
+    {
+      "word": "suppose",
+      "start": 21.595,
+      "end": 21.856
+    },
+    {
+      "word": "as",
+      "start": 21.896,
+      "end": 21.957
+    },
+    {
+      "word": "we",
+      "start": 21.997,
+      "end": 22.097
+    },
+    {
+      "word": "get",
+      "start": 22.137,
+      "end": 22.278
+    },
+    {
+      "word": "into",
+      "start": 22.398,
+      "end": 22.599
+    },
+    {
+      "word": "town",
+      "start": 22.659,
+      "end": 23.04
+    },
+    {
+      "word": "here",
+      "start": 23.101,
+      "end": 23.341
+    },
+    {
+      "word": "we",
+      "start": 24.104,
+      "end": 24.205
+    },
+    {
+      "word": "can",
+      "start": 24.225,
+      "end": 24.345
+    },
+    {
+      "word": "go",
+      "start": 24.385,
+      "end": 24.486
+    },
+    {
+      "word": "ahead",
+      "start": 24.506,
+      "end": 24.606
+    },
+    {
+      "word": "and",
+      "start": 24.968,
+      "end": 25.068
+    },
+    {
+      "word": "wrap",
+      "start": 25.189,
+      "end": 25.47
+    },
+    {
+      "word": "this",
+      "start": 25.49,
+      "end": 25.651
+    },
+    {
+      "word": "up",
+      "start": 25.772,
+      "end": 25.852
+    },
+    {
+      "word": "i",
+      "start": 25.913,
+      "end": 25.953
+    },
+    {
+      "word": "said",
+      "start": 25.993,
+      "end": 26.093
+    },
+    {
+      "word": "at",
+      "start": 26.134,
+      "end": 26.174
+    },
+    {
+      "word": "the",
+      "start": 26.194,
+      "end": 26.254
+    },
+    {
+      "word": "beginning",
+      "start": 26.274,
+      "end": 26.495
+    },
+    {
+      "word": "of",
+      "start": 26.516,
+      "end": 26.556
+    },
+    {
+      "word": "the",
+      "start": 26.576,
+      "end": 26.636
+    },
+    {
+      "word": "video",
+      "start": 26.676,
+      "end": 26.918
+    },
+    {
+      "word": "we",
+      "start": 26.958,
+      "end": 27.098
+    },
+    {
+      "word": "discussed",
+      "start": 27.139,
+      "end": 27.822
+    },
+    {
+      "word": "the",
+      "start": 27.882,
+      "end": 27.963
+    },
+    {
+      "word": "whole",
+      "start": 28.003,
+      "end": 28.184
+    },
+    {
+      "word": "forerunner",
+      "start": 28.244,
+      "end": 28.626
+    }
+  ],
+  "retry": [
+    {
+      "word": "It's",
+      "start": 0.806,
+      "end": 0.947
+    },
+    {
+      "word": "got",
+      "start": 1.007,
+      "end": 1.288
+    },
+    {
+      "word": "really,",
+      "start": 1.669,
+      "end": 2.111
+    },
+    {
+      "word": "really",
+      "start": 2.151,
+      "end": 2.372
+    },
+    {
+      "word": "crispy",
+      "start": 2.412,
+      "end": 2.753
+    },
+    {
+      "word": "highs,",
+      "start": 2.773,
+      "end": 3.135
+    },
+    {
+      "word": "and",
+      "start": 3.155,
+      "end": 3.235
+    },
+    {
+      "word": "it's",
+      "start": 3.275,
+      "end": 3.375
+    },
+    {
+      "word": "got",
+      "start": 3.396,
+      "end": 3.536
+    },
+    {
+      "word": "a",
+      "start": 3.556,
+      "end": 3.596
+    },
+    {
+      "word": "lot",
+      "start": 3.677,
+      "end": 3.877
+    },
+    {
+      "word": "of",
+      "start": 3.917,
+      "end": 3.958
+    },
+    {
+      "word": "power",
+      "start": 4.038,
+      "end": 4.459
+    },
+    {
+      "word": "from",
+      "start": 4.519,
+      "end": 4.68
+    },
+    {
+      "word": "this",
+      "start": 4.7,
+      "end": 4.841
+    },
+    {
+      "word": "base",
+      "start": 4.921,
+      "end": 5.242
+    },
+    {
+      "word": "as",
+      "start": 5.302,
+      "end": 5.383
+    },
+    {
+      "word": "well,",
+      "start": 5.443,
+      "end": 5.684
+    },
+    {
+      "word": "from",
+      "start": 5.724,
+      "end": 5.864
+    },
+    {
+      "word": "the",
+      "start": 5.884,
+      "end": 5.945
+    },
+    {
+      "word": "subwoofer.",
+      "start": 5.985,
+      "end": 6.326
+    },
+    {
+      "word": "So,",
+      "start": 10.946,
+      "end": 11.067
+    },
+    {
+      "word": "no",
+      "start": 11.773,
+      "end": 11.914
+    },
+    {
+      "word": "real",
+      "start": 11.975,
+      "end": 12.136
+    },
+    {
+      "word": "complaints",
+      "start": 12.177,
+      "end": 12.6
+    },
+    {
+      "word": "with",
+      "start": 12.681,
+      "end": 12.802
+    },
+    {
+      "word": "the",
+      "start": 12.822,
+      "end": 12.883
+    },
+    {
+      "word": "sound",
+      "start": 12.923,
+      "end": 13.125
+    },
+    {
+      "word": "system.",
+      "start": 13.145,
+      "end": 13.286
+    },
+    {
+      "word": "I",
+      "start": 13.567,
+      "end": 13.628
+    },
+    {
+      "word": "think",
+      "start": 13.648,
+      "end": 13.769
+    },
+    {
+      "word": "it's",
+      "start": 13.789,
+      "end": 13.89
+    },
+    {
+      "word": "fine",
+      "start": 13.93,
+      "end": 14.172
+    },
+    {
+      "word": "for",
+      "start": 14.232,
+      "end": 14.394
+    },
+    {
+      "word": "an",
+      "start": 14.494,
+      "end": 14.595
+    },
+    {
+      "word": "$80,000-ish",
+      "start": 14.615,
+      "end": 15.462
+    },
+    {
+      "word": "vehicle.",
+      "start": 15.482,
+      "end": 15.825
+    },
+    {
+      "word": "And,",
+      "start": 17.308,
+      "end": 17.449
+    },
+    {
+      "word": "you",
+      "start": 17.489,
+      "end": 17.55
+    },
+    {
+      "word": "know,",
+      "start": 17.57,
+      "end": 17.67
+    },
+    {
+      "word": "anything",
+      "start": 17.69,
+      "end": 17.891
+    },
+    {
+      "word": "that",
+      "start": 17.912,
+      "end": 18.012
+    },
+    {
+      "word": "says",
+      "start": 18.052,
+      "end": 18.213
+    },
+    {
+      "word": "Mark",
+      "start": 18.274,
+      "end": 18.455
+    },
+    {
+      "word": "Levinson,",
+      "start": 18.495,
+      "end": 18.837
+    },
+    {
+      "word": "I'm",
+      "start": 18.857,
+      "end": 18.917
+    },
+    {
+      "word": "always",
+      "start": 18.937,
+      "end": 19.098
+    },
+    {
+      "word": "going",
+      "start": 19.118,
+      "end": 19.239
+    },
+    {
+      "word": "to",
+      "start": 19.259,
+      "end": 19.319
+    },
+    {
+      "word": "trust",
+      "start": 19.359,
+      "end": 19.661
+    },
+    {
+      "word": "that",
+      "start": 19.701,
+      "end": 19.822
+    },
+    {
+      "word": "it's",
+      "start": 19.862,
+      "end": 19.963
+    },
+    {
+      "word": "pretty",
+      "start": 20.003,
+      "end": 20.204
+    },
+    {
+      "word": "nice",
+      "start": 20.244,
+      "end": 20.385
+    },
+    {
+      "word": "quality.",
+      "start": 20.405,
+      "end": 20.566
+    },
+    {
+      "word": "But",
+      "start": 20.866,
+      "end": 20.987
+    },
+    {
+      "word": "I",
+      "start": 21.489,
+      "end": 21.549
+    },
+    {
+      "word": "suppose",
+      "start": 21.589,
+      "end": 21.85
+    },
+    {
+      "word": "as",
+      "start": 21.89,
+      "end": 21.971
+    },
+    {
+      "word": "we",
+      "start": 21.991,
+      "end": 22.091
+    },
+    {
+      "word": "get",
+      "start": 22.131,
+      "end": 22.272
+    },
+    {
+      "word": "into",
+      "start": 22.392,
+      "end": 22.593
+    },
+    {
+      "word": "town",
+      "start": 22.654,
+      "end": 23.035
+    },
+    {
+      "word": "here,",
+      "start": 23.095,
+      "end": 23.336
+    },
+    {
+      "word": "we",
+      "start": 24.099,
+      "end": 24.2
+    },
+    {
+      "word": "can",
+      "start": 24.22,
+      "end": 24.34
+    },
+    {
+      "word": "go",
+      "start": 24.38,
+      "end": 24.501
+    },
+    {
+      "word": "ahead",
+      "start": 24.561,
+      "end": 24.822
+    },
+    {
+      "word": "and",
+      "start": 24.983,
+      "end": 25.083
+    },
+    {
+      "word": "wrap",
+      "start": 25.204,
+      "end": 25.445
+    },
+    {
+      "word": "this",
+      "start": 25.505,
+      "end": 25.626
+    },
+    {
+      "word": "up.",
+      "start": 25.646,
+      "end": 25.706
+    },
+    {
+      "word": "I",
+      "start": 25.906,
+      "end": 25.947
+    },
+    {
+      "word": "said",
+      "start": 25.987,
+      "end": 26.107
+    },
+    {
+      "word": "at",
+      "start": 26.128,
+      "end": 26.168
+    },
+    {
+      "word": "the",
+      "start": 26.188,
+      "end": 26.248
+    },
+    {
+      "word": "beginning",
+      "start": 26.268,
+      "end": 26.489
+    },
+    {
+      "word": "of",
+      "start": 26.509,
+      "end": 26.55
+    },
+    {
+      "word": "the",
+      "start": 26.57,
+      "end": 26.63
+    },
+    {
+      "word": "video,",
+      "start": 26.67,
+      "end": 26.931
+    },
+    {
+      "word": "we",
+      "start": 26.952,
+      "end": 27.092
+    },
+    {
+      "word": "discussed",
+      "start": 27.132,
+      "end": 27.816
+    },
+    {
+      "word": "the",
+      "start": 27.876,
+      "end": 27.956
+    },
+    {
+      "word": "whole",
+      "start": 27.997,
+      "end": 28.178
+    },
+    {
+      "word": "4Runner",
+      "start": 28.258,
+      "end": 28.66
+    },
+    {
+      "word": "vs.",
+      "start": 28.68,
+      "end": 28.921
+    },
+    {
+      "word": "Land",
+      "start": 28.981,
+      "end": 29.142
+    },
+    {
+      "word": "Cruiser",
+      "start": 29.182,
+      "end": 29.464
+    },
+    {
+      "word": "vs.",
+      "start": 29.524,
+      "end": 29.745
+    },
+    {
+      "word": "GS.",
+      "start": 29.826,
+      "end": 29.926
+    }
+  ]
+}

@@ -73,12 +73,13 @@ def _audit(data: ASRData, samples):
     # Candidate discovery is deliberately weaker than automatic replacement.
     # The old helper has a hidden 2.5-second floor and a 75% short-gap gate;
     # ordinary pauses within a missing sentence made both Vietnam examples pass.
+    # A two-second voiced floor also hid short sentences (Lexus GX, 36:14).
     # Strict VAD nominates these regions; two anchored decodes still must agree.
     for start, end in ranges:
         if not (0.05 < start and end < len(samples) / 16000 - 0.05 and end - start < 6):
             continue
         voiced = sum(max(0, min(b / 1000, end) - max(a / 1000, start)) for a, b in speech)
-        if voiced >= 2.0 and voiced / (end - start) >= 0.5:
+        if voiced >= 1.0 and voiced / (end - start) >= 0.5:
             if not any(g.start < end and g.end > start for g in gaps):
                 gaps.append(_SpeechBackedGap(start, end, voiced, voiced / (end - start), True))
     return sorted(
@@ -91,7 +92,8 @@ def _quantity_evidence(words):
     """Compare equivalent number/unit spellings without rewriting source text.
 
     A number and its unit are one timed acoustic group, even when one decoder
-    emits `1,541km` and the other emits `1541 kilometer`. Values remain exact.
+    emits `1,541km` and the other emits `1541 kilometer`. Dollar amounts may
+    use a thousand scale; values and an explicit `-ish` qualifier remain exact.
     """
     units = {"km", "kilometer", "kilometers", "kilometre", "kilometres"}
     result = []
@@ -99,6 +101,27 @@ def _quantity_evidence(words):
     while index < len(words):
         word = words[index]
         text = str(word["word"]).strip().rstrip(".;:!?").casefold()
+        money = re.fullmatch(r"\$(\d{1,3}(?:,\d{3})+|\d+)(-ish)?", text)
+        scaled_money = re.fullmatch(r"(\d+)(-ish)?", text)
+        if money:
+            amount, approximate = money.groups()
+            word = {**word, "word": "$" + amount.replace(",", "") + (approximate or "")}
+        elif scaled_money and index + 2 < len(words):
+            scale = str(words[index + 1]["word"]).strip().rstrip(".,;:!?").casefold()
+            currency = str(words[index + 2]["word"]).strip().rstrip(".,;:!?").casefold()
+            if (
+                scale == "thousand"
+                and currency in {"dollar", "dollars"}
+                and 0 <= words[index + 1]["start"] - word["end"] <= 1.0
+                and 0 <= words[index + 2]["start"] - words[index + 1]["end"] <= 1.0
+            ):
+                amount, approximate = scaled_money.groups()
+                word = {
+                    **word,
+                    "word": f"${int(amount) * 1000}{approximate or ''}",
+                    "end": words[index + 2]["end"],
+                }
+                index += 2
         match = re.fullmatch(r"(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)([a-z]*)", text)
         if match:
             number, unit = match.groups()
@@ -128,10 +151,11 @@ def _corroborates_repair(first, second):
         ]
 
     # Generic word keys discard punctuation; decimals and signs are semantic.
-    if numbers(first) != numbers(second):
+    first_quantities, second_quantities = _quantity_evidence(first), _quantity_evidence(second)
+    if numbers(first_quantities) != numbers(second_quantities):
         return False
     return corroborates(first, second) or corroborates(
-        _quantity_evidence(first), _quantity_evidence(second)
+        first_quantities, second_quantities
     )
 
 
@@ -144,8 +168,8 @@ def _checkpoint(config):
 def _matching_anchors(original: ASRData, decoded: ASRData):
     """Find unique three-word anchors outside the suspect neighborhood.
 
-    Keep a two-second margin around the suspect interval; choose the nearest
-    common safe anchors so unrelated context variations cannot block a repair.
+    Keep a two-second margin by default. If surrounding context disagrees,
+    tight anchors must also match all acoustic edges within 200ms.
     """
     old, new = _words(original), _words(decoded)
     old_keys, new_keys = [word_key(w) for w in old], [word_key(w) for w in new]
@@ -166,22 +190,38 @@ def _matching_anchors(original: ASRData, decoded: ASRData):
     return matches
 
 
-def _anchors(original, decoded, start, end, allowed=None):
+def _anchors(original, decoded, start, end, allowed=None, *, tight=False):
     old, new = _words(original), _words(decoded)
     matches = _matching_anchors(original, decoded)
     if allowed is not None:
         matches = [m for m in matches if m[0] in allowed]
+
+    def stable_edge(match):
+        # Close anchors require acoustic agreement for all three words. A
+        # stretched "I" must remain inside the repair, while an unchanged next
+        # sentence can stop it before unrelated filler variations (uh / a).
+        i, j = match
+        return all(
+            abs(old[i + k][edge] - new[j + k][edge]) <= 0.2
+            for k in range(3)
+            for edge in ("start", "end")
+        )
+
     left = [
         m
         for m in matches
-        if old[m[0] + 2]["end"] <= start - 2
+        if old[m[0] + 2]["end"] <= start
+        and (old[m[0] + 2]["end"] <= start - 2 or (tight and stable_edge(m)))
         and m[1] + 3 < len(new)
         and new[m[1] + 3]["start"] >= old[m[0] + 2]["end"]
     ]
     right = [
         m
         for m in matches
-        if old[m[0]]["start"] >= end + 2 and m[1] > 0 and new[m[1] - 1]["end"] <= old[m[0]]["start"]
+        if old[m[0]]["start"] >= end
+        and (old[m[0]]["start"] >= end + 2 or (tight and stable_edge(m)))
+        and m[1] > 0
+        and new[m[1] - 1]["end"] <= old[m[0]]["start"]
     ]
     if not left or not right:
         return None
@@ -191,8 +231,8 @@ def _anchors(original, decoded, start, end, allowed=None):
     return left_match[0] + 3, right_match[0], left_match[1] + 3, right_match[1]
 
 
-def _proposal(original, decoded, start, end, allowed=None):
-    match = _anchors(original, decoded, start, end, allowed)
+def _proposal(original, decoded, start, end, allowed=None, *, tight=False):
+    match = _anchors(original, decoded, start, end, allowed, tight=tight)
     if match is None:
         return None
     lo, hi, dl, dr = match
@@ -205,6 +245,27 @@ def _proposal(original, decoded, start, end, allowed=None):
     if replacement[-1].end_time > original.segments[hi].start_time:
         return None
     return lo, hi, replacement
+
+
+def _consensus_proposal(original, first, second, start, end):
+    common = {i for i, _ in _matching_anchors(original, first)} & {
+        i for i, _ in _matching_anchors(original, second)
+    }
+    # Prefer the broader repair so an incorrect neighboring word is corrected.
+    # Localize only if context variations would otherwise veto the missing text.
+    for tight in (False, True):
+        proposal = _proposal(original, first, start, end, common, tight=tight)
+        confirmed = _proposal(original, second, start, end, common, tight=tight)
+        if (
+            proposal is not None
+            and confirmed is not None
+            and proposal[:2] == confirmed[:2]
+            and _corroborates_repair(
+                _words(ASRData(proposal[2])), _words(ASRData(confirmed[2]))
+            )
+        ):
+            return proposal, tight
+    return None
 
 
 def _decode(context, left, right, config, factory, callback):
@@ -318,26 +379,37 @@ def repair_final_coverage(data, audio_path, config, callback, factory, analysis_
                 raise ValueError("No safe surrounding anchors")
             second = _decode(context, confirm_left, confirm_right, config, factory, callback)
             record["confirmation"] = _words(second)
-            # Choose the same anchors from the intersection, not independently
-            # selected matches whose availability changes with clip boundaries.
-            common = {i for i, _ in _matching_anchors(original, first)} & {
-                i for i, _ in _matching_anchors(original, second)
-            }
-            proposal = _proposal(original, first, gap.start, gap.end, common)
-            confirmed = _proposal(original, second, gap.start, gap.end, common)
-            if proposal is None or confirmed is None or proposal[:2] != confirmed[:2]:
-                raise ValueError("Context decodes disagree on replacement boundaries")
-            lo, hi, replacement = proposal
+            agreed = _consensus_proposal(original, first, second, gap.start, gap.end)
+            if agreed is None:
+                # A 22s clip read "80-ish thousand dollar" as "$80,000".
+                # One wider independent decode can corroborate either reading;
+                # never normalize away the approximation or a changed number.
+                retry_left = max(0, round(gap.start * 1000) - CONTEXT_MS - 4000)
+                retry_right = min(duration_ms, round(gap.end * 1000) + CONTEXT_MS + 4000)
+                retry_window = (retry_left, retry_right)
+                retry_cost = (retry_right - retry_left) / 1000
+                if (
+                    retry_window not in {(left, right), (confirm_left, confirm_right)}
+                    and decoded_seconds + retry_cost <= MAX_DECODE_SECONDS
+                ):
+                    decoded_seconds += retry_cost
+                    third = _decode(context, retry_left, retry_right, config, factory, callback)
+                    record["retry_window"] = [retry_left / 1000, retry_right / 1000]
+                    record["retry"] = _words(third)
+                    agreed = _consensus_proposal(original, second, third, gap.start, gap.end)
+                    if agreed is None:
+                        agreed = _consensus_proposal(original, first, third, gap.start, gap.end)
+            if agreed is None:
+                raise ValueError("Context decodes disagree on recovered words")
+            (lo, hi, replacement), localized = agreed
+            if localized:
+                record["localized_consensus"] = True
             if any(
                 seg.start_time / 1000 < span["end"] and seg.end_time / 1000 > span["start"]
                 for seg in replacement
                 for span in data.confirmed_non_speech_ranges
             ):
                 raise ValueError("Recovery conflicts with confirmed non-speech evidence")
-            if not _corroborates_repair(
-                _words(ASRData(replacement)), _words(ASRData(confirmed[2]))
-            ):
-                raise ValueError("Context decodes disagree on recovered words")
             begin, finish = original.segments[lo].start_time, original.segments[hi].start_time
             candidate = copy.deepcopy(data)
             candidate.segments = [

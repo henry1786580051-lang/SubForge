@@ -1,0 +1,1295 @@
+{
+  "gap": {
+    "start": 1190.734,
+    "end": 1195.446,
+    "speech_seconds": 3.296000000000049,
+    "speech_ratio": 0.6994906621392311,
+    "is_internal": true
+  },
+  "before": [
+    {
+      "word": "thought.",
+      "start": 1180.785,
+      "end": 1181.046
+    },
+    {
+      "word": "Throttle",
+      "start": 1181.649,
+      "end": 1182.03
+    },
+    {
+      "word": "response",
+      "start": 1182.071,
+      "end": 1182.472
+    },
+    {
+      "word": "is",
+      "start": 1182.613,
+      "end": 1182.713
+    },
+    {
+      "word": "nice.",
+      "start": 1182.894,
+      "end": 1183.135
+    },
+    {
+      "word": "We'll",
+      "start": 1183.155,
+      "end": 1183.296
+    },
+    {
+      "word": "show",
+      "start": 1183.316,
+      "end": 1183.397
+    },
+    {
+      "word": "you",
+      "start": 1183.417,
+      "end": 1183.497
+    },
+    {
+      "word": "that",
+      "start": 1183.517,
+      "end": 1183.618
+    },
+    {
+      "word": "once",
+      "start": 1183.658,
+      "end": 1183.758
+    },
+    {
+      "word": "we",
+      "start": 1183.798,
+      "end": 1183.879
+    },
+    {
+      "word": "take",
+      "start": 1183.919,
+      "end": 1184.059
+    },
+    {
+      "word": "off",
+      "start": 1184.1,
+      "end": 1184.16
+    },
+    {
+      "word": "from",
+      "start": 1184.4,
+      "end": 1184.641
+    },
+    {
+      "word": "this",
+      "start": 1184.741,
+      "end": 1184.881
+    },
+    {
+      "word": "light.",
+      "start": 1184.961,
+      "end": 1185.142
+    },
+    {
+      "word": "We",
+      "start": 1185.162,
+      "end": 1185.242
+    },
+    {
+      "word": "already",
+      "start": 1185.262,
+      "end": 1185.482
+    },
+    {
+      "word": "talked",
+      "start": 1185.523,
+      "end": 1185.743
+    },
+    {
+      "word": "about",
+      "start": 1185.783,
+      "end": 1185.983
+    },
+    {
+      "word": "steering.",
+      "start": 1186.084,
+      "end": 1186.565
+    },
+    {
+      "word": "I",
+      "start": 1186.945,
+      "end": 1187.005
+    },
+    {
+      "word": "mean,",
+      "start": 1187.025,
+      "end": 1187.206
+    },
+    {
+      "word": "overall,",
+      "start": 1187.346,
+      "end": 1187.767
+    },
+    {
+      "word": "driving",
+      "start": 1187.807,
+      "end": 1188.148
+    },
+    {
+      "word": "this,",
+      "start": 1188.168,
+      "end": 1188.608
+    },
+    {
+      "word": "it's",
+      "start": 1188.669,
+      "end": 1188.789
+    },
+    {
+      "word": "easy,",
+      "start": 1188.909,
+      "end": 1189.47
+    },
+    {
+      "word": "and",
+      "start": 1189.67,
+      "end": 1189.731
+    },
+    {
+      "word": "I",
+      "start": 1189.771,
+      "end": 1190.734
+    },
+    {
+      "word": "I",
+      "start": 1195.446,
+      "end": 1195.486
+    },
+    {
+      "word": "remember",
+      "start": 1195.526,
+      "end": 1195.788
+    },
+    {
+      "word": "there",
+      "start": 1195.808,
+      "end": 1195.929
+    },
+    {
+      "word": "was",
+      "start": 1195.97,
+      "end": 1196.091
+    },
+    {
+      "word": "this",
+      "start": 1196.393,
+      "end": 1196.615
+    },
+    {
+      "word": "girl",
+      "start": 1196.776,
+      "end": 1196.977
+    },
+    {
+      "word": "on",
+      "start": 1197.038,
+      "end": 1197.119
+    },
+    {
+      "word": "TikTok.",
+      "start": 1197.139,
+      "end": 1197.3
+    },
+    {
+      "word": "There",
+      "start": 1197.641,
+      "end": 1197.762
+    },
+    {
+      "word": "was",
+      "start": 1197.782,
+      "end": 1197.862
+    },
+    {
+      "word": "like",
+      "start": 1197.882,
+      "end": 1197.983
+    },
+    {
+      "word": "this",
+      "start": 1198.003,
+      "end": 1198.144
+    },
+    {
+      "word": "whole",
+      "start": 1198.184,
+      "end": 1198.365
+    },
+    {
+      "word": "series",
+      "start": 1198.425,
+      "end": 1198.787
+    },
+    {
+      "word": "of",
+      "start": 1198.847,
+      "end": 1198.908
+    },
+    {
+      "word": "her",
+      "start": 1198.948,
+      "end": 1199.069
+    },
+    {
+      "word": "trying",
+      "start": 1199.109,
+      "end": 1199.471
+    },
+    {
+      "word": "to",
+      "start": 1199.531,
+      "end": 1199.611
+    },
+    {
+      "word": "get",
+      "start": 1199.672,
+      "end": 1200.03
+    },
+    {
+      "word": "a",
+      "start": 1200.496,
+      "end": 1200.536
+    },
+    {
+      "word": "new",
+      "start": 1200.577,
+      "end": 1200.657
+    },
+    {
+      "word": "Lexus",
+      "start": 1200.737,
+      "end": 1200.999
+    },
+    {
+      "word": "GX.",
+      "start": 1201.019,
+      "end": 1201.22
+    },
+    {
+      "word": "I",
+      "start": 1201.3,
+      "end": 1201.32
+    },
+    {
+      "word": "think",
+      "start": 1201.34,
+      "end": 1201.461
+    },
+    {
+      "word": "she",
+      "start": 1201.481,
+      "end": 1201.602
+    },
+    {
+      "word": "had",
+      "start": 1202.025,
+      "end": 1202.125
+    },
+    {
+      "word": "currently",
+      "start": 1202.166,
+      "end": 1202.508
+    },
+    {
+      "word": "been",
+      "start": 1202.548,
+      "end": 1202.669
+    },
+    {
+      "word": "driving",
+      "start": 1202.689,
+      "end": 1203.092
+    },
+    {
+      "word": "a",
+      "start": 1203.112,
+      "end": 1203.132
+    },
+    {
+      "word": "Toyota",
+      "start": 1203.756,
+      "end": 1204.018
+    },
+    {
+      "word": "4Runner.",
+      "start": 1204.038,
+      "end": 1204.526
+    }
+  ],
+  "decoded": [
+    {
+      "word": "thought",
+      "start": 1180.794,
+      "end": 1181.055
+    },
+    {
+      "word": "throttle",
+      "start": 1181.638,
+      "end": 1182.04
+    },
+    {
+      "word": "response",
+      "start": 1182.06,
+      "end": 1182.462
+    },
+    {
+      "word": "is",
+      "start": 1182.602,
+      "end": 1182.703
+    },
+    {
+      "word": "nice",
+      "start": 1182.883,
+      "end": 1183.124
+    },
+    {
+      "word": "we'll",
+      "start": 1183.165,
+      "end": 1183.305
+    },
+    {
+      "word": "show",
+      "start": 1183.325,
+      "end": 1183.406
+    },
+    {
+      "word": "you",
+      "start": 1183.426,
+      "end": 1183.486
+    },
+    {
+      "word": "that",
+      "start": 1183.506,
+      "end": 1183.606
+    },
+    {
+      "word": "once",
+      "start": 1183.667,
+      "end": 1183.767
+    },
+    {
+      "word": "we",
+      "start": 1183.787,
+      "end": 1183.888
+    },
+    {
+      "word": "take",
+      "start": 1183.908,
+      "end": 1184.068
+    },
+    {
+      "word": "off",
+      "start": 1184.129,
+      "end": 1184.249
+    },
+    {
+      "word": "from",
+      "start": 1184.41,
+      "end": 1184.651
+    },
+    {
+      "word": "this",
+      "start": 1184.751,
+      "end": 1184.892
+    },
+    {
+      "word": "light",
+      "start": 1184.993,
+      "end": 1185.113
+    },
+    {
+      "word": "we",
+      "start": 1185.133,
+      "end": 1185.173
+    },
+    {
+      "word": "already",
+      "start": 1185.193,
+      "end": 1185.334
+    },
+    {
+      "word": "talked",
+      "start": 1185.515,
+      "end": 1185.755
+    },
+    {
+      "word": "about",
+      "start": 1185.775,
+      "end": 1185.976
+    },
+    {
+      "word": "steering",
+      "start": 1186.076,
+      "end": 1186.538
+    },
+    {
+      "word": "i",
+      "start": 1186.939,
+      "end": 1186.999
+    },
+    {
+      "word": "mean",
+      "start": 1187.04,
+      "end": 1187.2
+    },
+    {
+      "word": "overall",
+      "start": 1187.341,
+      "end": 1187.762
+    },
+    {
+      "word": "driving",
+      "start": 1187.802,
+      "end": 1188.143
+    },
+    {
+      "word": "this",
+      "start": 1188.163,
+      "end": 1188.364
+    },
+    {
+      "word": "it's",
+      "start": 1188.665,
+      "end": 1188.785
+    },
+    {
+      "word": "easy",
+      "start": 1188.906,
+      "end": 1189.187
+    },
+    {
+      "word": "and",
+      "start": 1189.668,
+      "end": 1189.748
+    },
+    {
+      "word": "i",
+      "start": 1189.768,
+      "end": 1189.789
+    },
+    {
+      "word": "think",
+      "start": 1189.829,
+      "end": 1189.969
+    },
+    {
+      "word": "the",
+      "start": 1189.989,
+      "end": 1190.049
+    },
+    {
+      "word": "biggest",
+      "start": 1190.11,
+      "end": 1190.35
+    },
+    {
+      "word": "perk",
+      "start": 1190.411,
+      "end": 1190.772
+    },
+    {
+      "word": "is",
+      "start": 1191.033,
+      "end": 1191.113
+    },
+    {
+      "word": "just",
+      "start": 1191.193,
+      "end": 1191.394
+    },
+    {
+      "word": "how",
+      "start": 1191.414,
+      "end": 1191.474
+    },
+    {
+      "word": "easy",
+      "start": 1191.755,
+      "end": 1191.976
+    },
+    {
+      "word": "it",
+      "start": 1192.016,
+      "end": 1192.076
+    },
+    {
+      "word": "is",
+      "start": 1192.136,
+      "end": 1192.217
+    },
+    {
+      "word": "to",
+      "start": 1192.277,
+      "end": 1192.357
+    },
+    {
+      "word": "see",
+      "start": 1192.478,
+      "end": 1192.678
+    },
+    {
+      "word": "out",
+      "start": 1192.718,
+      "end": 1192.799
+    },
+    {
+      "word": "of",
+      "start": 1192.819,
+      "end": 1192.879
+    },
+    {
+      "word": "this",
+      "start": 1192.899,
+      "end": 1193.04
+    },
+    {
+      "word": "and",
+      "start": 1193.12,
+      "end": 1193.2
+    },
+    {
+      "word": "place",
+      "start": 1193.301,
+      "end": 1193.662
+    },
+    {
+      "word": "it",
+      "start": 1193.742,
+      "end": 1193.822
+    },
+    {
+      "word": "and",
+      "start": 1194.525,
+      "end": 1194.686
+    },
+    {
+      "word": "i",
+      "start": 1195.468,
+      "end": 1195.509
+    },
+    {
+      "word": "remember",
+      "start": 1195.549,
+      "end": 1195.79
+    },
+    {
+      "word": "there",
+      "start": 1195.81,
+      "end": 1195.95
+    },
+    {
+      "word": "was",
+      "start": 1195.97,
+      "end": 1196.091
+    },
+    {
+      "word": "uh",
+      "start": 1196.211,
+      "end": 1196.291
+    },
+    {
+      "word": "there",
+      "start": 1196.392,
+      "end": 1196.512
+    },
+    {
+      "word": "was",
+      "start": 1196.532,
+      "end": 1196.613
+    },
+    {
+      "word": "this",
+      "start": 1196.633,
+      "end": 1196.753
+    },
+    {
+      "word": "girl",
+      "start": 1196.773,
+      "end": 1196.954
+    },
+    {
+      "word": "on",
+      "start": 1196.974,
+      "end": 1197.014
+    },
+    {
+      "word": "tiktok",
+      "start": 1197.135,
+      "end": 1197.617
+    },
+    {
+      "word": "there",
+      "start": 1197.637,
+      "end": 1197.757
+    },
+    {
+      "word": "was",
+      "start": 1197.777,
+      "end": 1197.858
+    },
+    {
+      "word": "like",
+      "start": 1197.878,
+      "end": 1197.978
+    },
+    {
+      "word": "this",
+      "start": 1198.018,
+      "end": 1198.139
+    },
+    {
+      "word": "whole",
+      "start": 1198.199,
+      "end": 1198.36
+    },
+    {
+      "word": "series",
+      "start": 1198.44,
+      "end": 1198.782
+    },
+    {
+      "word": "of",
+      "start": 1198.842,
+      "end": 1198.902
+    },
+    {
+      "word": "her",
+      "start": 1198.942,
+      "end": 1199.063
+    },
+    {
+      "word": "trying",
+      "start": 1199.123,
+      "end": 1199.465
+    },
+    {
+      "word": "to",
+      "start": 1199.525,
+      "end": 1199.605
+    },
+    {
+      "word": "get",
+      "start": 1199.665,
+      "end": 1199.906
+    },
+    {
+      "word": "a",
+      "start": 1200.489,
+      "end": 1200.529
+    },
+    {
+      "word": "new",
+      "start": 1200.569,
+      "end": 1200.65
+    },
+    {
+      "word": "lexus",
+      "start": 1200.73,
+      "end": 1200.991
+    },
+    {
+      "word": "gx",
+      "start": 1201.011,
+      "end": 1201.272
+    },
+    {
+      "word": "i",
+      "start": 1201.312,
+      "end": 1201.333
+    },
+    {
+      "word": "think",
+      "start": 1201.353,
+      "end": 1201.473
+    },
+    {
+      "word": "she",
+      "start": 1201.493,
+      "end": 1201.594
+    },
+    {
+      "word": "was",
+      "start": 1201.614,
+      "end": 1201.674
+    },
+    {
+      "word": "had",
+      "start": 1202.016,
+      "end": 1202.117
+    },
+    {
+      "word": "currently",
+      "start": 1202.157,
+      "end": 1202.499
+    },
+    {
+      "word": "been",
+      "start": 1202.539,
+      "end": 1202.66
+    },
+    {
+      "word": "driving",
+      "start": 1202.7,
+      "end": 1203.082
+    },
+    {
+      "word": "a",
+      "start": 1203.102,
+      "end": 1203.122
+    },
+    {
+      "word": "toyota",
+      "start": 1203.746,
+      "end": 1204.008
+    },
+    {
+      "word": "4runner",
+      "start": 1204.048,
+      "end": 1204.45
+    },
+    {
+      "word": "and",
+      "start": 1204.47,
+      "end": 1205.114
+    },
+    {
+      "word": "And",
+      "start": 1205.181,
+      "end": 1205.314
+    }
+  ],
+  "confirmation": [
+    {
+      "word": "this",
+      "start": 1178.794,
+      "end": 1178.955
+    },
+    {
+      "word": "brake",
+      "start": 1179.296,
+      "end": 1179.477
+    },
+    {
+      "word": "pedal",
+      "start": 1179.497,
+      "end": 1179.638
+    },
+    {
+      "word": "a",
+      "start": 1179.658,
+      "end": 1179.678
+    },
+    {
+      "word": "little",
+      "start": 1179.698,
+      "end": 1179.859
+    },
+    {
+      "word": "bit",
+      "start": 1179.879,
+      "end": 1179.959
+    },
+    {
+      "word": "more",
+      "start": 1180.019,
+      "end": 1180.26
+    },
+    {
+      "word": "than",
+      "start": 1180.361,
+      "end": 1180.542
+    },
+    {
+      "word": "I",
+      "start": 1180.642,
+      "end": 1180.702
+    },
+    {
+      "word": "thought.",
+      "start": 1180.783,
+      "end": 1181.064
+    },
+    {
+      "word": "Throttle",
+      "start": 1181.646,
+      "end": 1182.048
+    },
+    {
+      "word": "response",
+      "start": 1182.068,
+      "end": 1182.47
+    },
+    {
+      "word": "is",
+      "start": 1182.61,
+      "end": 1182.711
+    },
+    {
+      "word": "nice.",
+      "start": 1182.891,
+      "end": 1183.112
+    },
+    {
+      "word": "We'll",
+      "start": 1183.132,
+      "end": 1183.233
+    },
+    {
+      "word": "show",
+      "start": 1183.253,
+      "end": 1183.333
+    },
+    {
+      "word": "you",
+      "start": 1183.353,
+      "end": 1183.414
+    },
+    {
+      "word": "that",
+      "start": 1183.434,
+      "end": 1183.514
+    },
+    {
+      "word": "once",
+      "start": 1183.655,
+      "end": 1183.755
+    },
+    {
+      "word": "we",
+      "start": 1183.775,
+      "end": 1183.856
+    },
+    {
+      "word": "take",
+      "start": 1183.896,
+      "end": 1184.056
+    },
+    {
+      "word": "off",
+      "start": 1184.117,
+      "end": 1184.237
+    },
+    {
+      "word": "from",
+      "start": 1184.398,
+      "end": 1184.639
+    },
+    {
+      "word": "this",
+      "start": 1184.74,
+      "end": 1184.9
+    },
+    {
+      "word": "light.",
+      "start": 1184.981,
+      "end": 1185.161
+    },
+    {
+      "word": "We",
+      "start": 1185.182,
+      "end": 1185.262
+    },
+    {
+      "word": "already",
+      "start": 1185.282,
+      "end": 1185.483
+    },
+    {
+      "word": "talked",
+      "start": 1185.523,
+      "end": 1185.744
+    },
+    {
+      "word": "about",
+      "start": 1185.784,
+      "end": 1185.985
+    },
+    {
+      "word": "steering.",
+      "start": 1186.106,
+      "end": 1186.568
+    },
+    {
+      "word": "I",
+      "start": 1186.95,
+      "end": 1187.01
+    },
+    {
+      "word": "mean,",
+      "start": 1187.05,
+      "end": 1187.211
+    },
+    {
+      "word": "overall",
+      "start": 1187.351,
+      "end": 1187.753
+    },
+    {
+      "word": "driving",
+      "start": 1187.773,
+      "end": 1187.914
+    },
+    {
+      "word": "this,",
+      "start": 1188.175,
+      "end": 1188.356
+    },
+    {
+      "word": "it's",
+      "start": 1188.657,
+      "end": 1188.777
+    },
+    {
+      "word": "easy.",
+      "start": 1188.898,
+      "end": 1189.179
+    },
+    {
+      "word": "And",
+      "start": 1189.66,
+      "end": 1189.741
+    },
+    {
+      "word": "I",
+      "start": 1189.761,
+      "end": 1189.781
+    },
+    {
+      "word": "think",
+      "start": 1189.821,
+      "end": 1189.961
+    },
+    {
+      "word": "the",
+      "start": 1189.981,
+      "end": 1190.062
+    },
+    {
+      "word": "biggest",
+      "start": 1190.102,
+      "end": 1190.343
+    },
+    {
+      "word": "perk",
+      "start": 1190.403,
+      "end": 1190.764
+    },
+    {
+      "word": "is",
+      "start": 1191.025,
+      "end": 1191.105
+    },
+    {
+      "word": "just",
+      "start": 1191.186,
+      "end": 1191.386
+    },
+    {
+      "word": "how",
+      "start": 1191.447,
+      "end": 1191.587
+    },
+    {
+      "word": "easy",
+      "start": 1191.768,
+      "end": 1191.989
+    },
+    {
+      "word": "it",
+      "start": 1192.029,
+      "end": 1192.089
+    },
+    {
+      "word": "is",
+      "start": 1192.149,
+      "end": 1192.23
+    },
+    {
+      "word": "to",
+      "start": 1192.29,
+      "end": 1192.37
+    },
+    {
+      "word": "see",
+      "start": 1192.49,
+      "end": 1192.691
+    },
+    {
+      "word": "out",
+      "start": 1192.731,
+      "end": 1192.812
+    },
+    {
+      "word": "of",
+      "start": 1192.832,
+      "end": 1192.892
+    },
+    {
+      "word": "this",
+      "start": 1192.912,
+      "end": 1193.052
+    },
+    {
+      "word": "and",
+      "start": 1193.133,
+      "end": 1193.213
+    },
+    {
+      "word": "place",
+      "start": 1193.293,
+      "end": 1193.474
+    },
+    {
+      "word": "it.",
+      "start": 1193.735,
+      "end": 1193.835
+    },
+    {
+      "word": "And",
+      "start": 1194.518,
+      "end": 1194.679
+    },
+    {
+      "word": "I",
+      "start": 1195.462,
+      "end": 1195.502
+    },
+    {
+      "word": "remember",
+      "start": 1195.542,
+      "end": 1195.783
+    },
+    {
+      "word": "there",
+      "start": 1195.803,
+      "end": 1195.944
+    },
+    {
+      "word": "was",
+      "start": 1195.964,
+      "end": 1196.084
+    },
+    {
+      "word": "a,",
+      "start": 1196.225,
+      "end": 1196.285
+    },
+    {
+      "word": "there",
+      "start": 1196.385,
+      "end": 1196.506
+    },
+    {
+      "word": "was",
+      "start": 1196.526,
+      "end": 1196.606
+    },
+    {
+      "word": "this",
+      "start": 1196.626,
+      "end": 1196.747
+    },
+    {
+      "word": "girl",
+      "start": 1196.767,
+      "end": 1196.988
+    },
+    {
+      "word": "on",
+      "start": 1197.048,
+      "end": 1197.108
+    },
+    {
+      "word": "TikTok.",
+      "start": 1197.148,
+      "end": 1197.63
+    },
+    {
+      "word": "There",
+      "start": 1197.65,
+      "end": 1197.771
+    },
+    {
+      "word": "was",
+      "start": 1197.791,
+      "end": 1197.871
+    },
+    {
+      "word": "like",
+      "start": 1197.891,
+      "end": 1198.012
+    },
+    {
+      "word": "this",
+      "start": 1198.032,
+      "end": 1198.152
+    },
+    {
+      "word": "whole",
+      "start": 1198.192,
+      "end": 1198.393
+    },
+    {
+      "word": "series",
+      "start": 1198.453,
+      "end": 1198.654
+    },
+    {
+      "word": "of",
+      "start": 1198.835,
+      "end": 1198.895
+    },
+    {
+      "word": "her",
+      "start": 1198.935,
+      "end": 1199.055
+    },
+    {
+      "word": "trying",
+      "start": 1199.116,
+      "end": 1199.457
+    },
+    {
+      "word": "to",
+      "start": 1199.517,
+      "end": 1199.597
+    },
+    {
+      "word": "get",
+      "start": 1199.657,
+      "end": 1199.898
+    },
+    {
+      "word": "a",
+      "start": 1200.48,
+      "end": 1200.521
+    },
+    {
+      "word": "new",
+      "start": 1200.561,
+      "end": 1200.641
+    },
+    {
+      "word": "Lexus",
+      "start": 1200.721,
+      "end": 1200.982
+    },
+    {
+      "word": "GX.",
+      "start": 1201.002,
+      "end": 1201.283
+    },
+    {
+      "word": "I",
+      "start": 1201.303,
+      "end": 1201.323
+    },
+    {
+      "word": "think",
+      "start": 1201.343,
+      "end": 1201.484
+    },
+    {
+      "word": "she",
+      "start": 1201.504,
+      "end": 1201.604
+    },
+    {
+      "word": "was,",
+      "start": 1201.664,
+      "end": 1201.805
+    },
+    {
+      "word": "had",
+      "start": 1202.026,
+      "end": 1202.126
+    },
+    {
+      "word": "currently",
+      "start": 1202.166,
+      "end": 1202.507
+    },
+    {
+      "word": "been",
+      "start": 1202.548,
+      "end": 1202.668
+    },
+    {
+      "word": "driving",
+      "start": 1202.708,
+      "end": 1203.089
+    },
+    {
+      "word": "a",
+      "start": 1203.11,
+      "end": 1203.13
+    },
+    {
+      "word": "Toyota",
+      "start": 1203.752,
+      "end": 1204.013
+    },
+    {
+      "word": "4Runner",
+      "start": 1204.053,
+      "end": 1204.394
+    },
+    {
+      "word": "and",
+      "start": 1205.337,
+      "end": 1205.518
+    },
+    {
+      "word": "she",
+      "start": 1205.72,
+      "end": 1205.801
+    },
+    {
+      "word": "ended",
+      "start": 1205.841,
+      "end": 1206.003
+    },
+    {
+      "word": "up",
+      "start": 1206.043,
+      "end": 1206.124
+    },
+    {
+      "word": "getting",
+      "start": 1206.144,
+      "end": 1206.366
+    },
+    {
+      "word": "the",
+      "start": 1206.386,
+      "end": 1206.467
+    },
+    {
+      "word": "luxury",
+      "start": 1206.527,
+      "end": 1206.91
+    },
+    {
+      "word": "because",
+      "start": 1206.951,
+      "end": 1207.092
+    },
+    {
+      "word": "she",
+      "start": 1207.112,
+      "end": 1207.173
+    },
+    {
+      "word": "wanted",
+      "start": 1207.193,
+      "end": 1207.334
+    }
+  ]
+}

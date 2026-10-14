@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.3.5 - 2026-10-14
+
+### Short missing-speech recovery
+
+- Nominate short internal speech gaps with at least one second of strict VAD evidence and 50% voiced coverage. The previous two-second floor missed a complete sentence in a 2.094-second exported gap.
+- Preserve the broader context repair by default. When unrelated context differs, retry with shared nearby three-word anchors whose word edges agree within 200 ms. A filler difference in the next sentence no longer rejects an independently corroborated missing sentence.
+- Permit one additional wider context decode when the initial decodes disagree, within the existing 180-second total audio budget. Added words still require two independent decodes agreeing on text, quantities and audio position; unresolved or budget-limited candidates retain review warnings.
+- Compare explicit dollar amounts and thousand-dollar spellings as one acoustic quantity while preserving exact values and the `-ish` approximation. Do not equate approximate amounts with precise amounts, or ignore changed pronouns, negation, signs or decimals.
+
+### Validation and limitations
+
+- 2980 local Python tests passed with 35 external integration tests deselected. All 68 frontend tests and frontend lint passed. Repository Ruff passed; Pyright reported 0 errors and 30 warnings.
+- 133 targeted regression tests passed, covering real GX omission fixtures, timing anchors, amount approximation, conflicting decodes, retry budgets, cancellation, non-speech exclusions and transcription recovery APIs.
+- Original-audio MLX Large V3 decoding, production WhisperX alignment and final coverage recovery repaired the two reported GX omissions. The bilingual output added two cues and adjusted four adjacent cues; all other subtitle text and timings were preserved.
+- No paid translation API was called. This is sample-specific missing-speech validation, not a guarantee of universal ASR accuracy. Other uncertain timing or acoustic candidates remain review items.
+- macOS Apple Silicon DMG is built locally; the standard Windows x64 EXE is built and installation-smoke-tested by GitHub Actions. Model weights remain separate from installers; macOS signing is ad hoc, without Apple notarization.
+
 ## v1.3.4 - 2026-10-05
 
 ### Transcription and translation recovery

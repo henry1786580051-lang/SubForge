@@ -1,4 +1,6 @@
 import copy
+import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -90,8 +92,8 @@ def test_disagreeing_decodes_leave_original_intact_and_flag_review(monkeypatch, 
         nonlocal calls
         calls += 1
         candidate = timeline()
-        if calls == 2:
-            candidate.segments[25].text = "contradiction"
+        if calls >= 2:
+            candidate.segments[25].text = f"contradiction{calls}"
         return candidate
 
     monkeypatch.setattr(fc, "_decode", decode)
@@ -400,3 +402,161 @@ def test_numeric_consensus_keeps_decimal_sign_and_grouping(changed):
     first = [{"word": "1541km", "start": 1, "end": 2}]
     second = [{"word": changed, "start": 1, "end": 2}]
     assert not fc._corroborates_repair(first, second)
+
+
+@pytest.mark.parametrize(
+    "amount,expected", [("$80,000-ish", True), ("$80,000", False), ("$18,000-ish", False)]
+)
+def test_money_consensus_preserves_scale_and_approximation(amount, expected):
+    first = [
+        {"word": "80-ish", "start": 15.01, "end": 15.49},
+        {"word": "thousand", "start": 15.53, "end": 15.87},
+        {"word": "dollar", "start": 15.89, "end": 16.13},
+        {"word": "vehicle", "start": 16.17, "end": 16.55},
+    ]
+    second = [
+        {"word": amount, "start": 15.01, "end": 16.13},
+        {"word": "vehicle", "start": 16.17, "end": 16.55},
+    ]
+    assert fc._corroborates_repair(first, second) is expected
+
+
+def test_third_context_decode_can_confirm_recovery(monkeypatch, setup):
+    data = damaged()
+    first = timeline()
+    first.segments[25].text = "wrong"
+    decodes = iter([first, timeline(), timeline()])
+    calls = []
+
+    def decode(*args):
+        calls.append((args[1], args[2]))
+        return next(decodes)
+
+    monkeypatch.setattr(fc, "_decode", decode)
+    result = run(data, setup)
+    assert len(set(calls)) == 3
+    assert not result.coverage_issues
+    assert fc._words(result) == fc._words(timeline())
+    assert "retry_window" in setup[2][0]
+
+
+def test_third_decode_respects_total_audio_budget(monkeypatch, setup):
+    data = damaged()
+    calls = 0
+
+    def decode(*args):
+        nonlocal calls
+        calls += 1
+        candidate = timeline()
+        candidate.segments[25].text = f"different{calls}"
+        return candidate
+
+    monkeypatch.setattr(fc, "_decode", decode)
+    # Two windows cost 61.7s; a third would exceed this budget.
+    monkeypatch.setattr(fc, "MAX_DECODE_SECONDS", 62)
+    before = fc._words(data)
+    assert fc._words(run(data, setup)) == before
+    assert calls == 2
+    assert data.coverage_issues
+
+
+@pytest.mark.parametrize("speech", [[(2175198, 2176606)], [(2175006, 2176702)]])
+def test_lexus_two_second_sentence_is_a_final_recovery_candidate(monkeypatch, speech):
+    from subforge.core.asr import whisperx_asr as wx
+
+    # Original GX export gap: 36:14.686-36:16.780; strict TEN-VAD voiced 1.408s.
+    data = words([("I", 2173595, 2174686), ("I", 2176780, 2177260)])
+    monkeypatch.setattr(wx, "_detect_speech_in_mlx_gaps", lambda *a, **k: speech)
+    gaps = fc._audit(data, np.zeros(2178 * 16000))
+    assert len(gaps) == 1
+    assert gaps[0].start == pytest.approx(2174.686)
+    assert gaps[0].end == pytest.approx(2176.780)
+
+
+@pytest.mark.parametrize("change", [None, "negation", "unstable_anchor"])
+def test_lexus_consensus_is_localized_without_ignoring_word_disagreements(monkeypatch, change):
+    from subforge.core.asr import whisperx_asr as wx
+
+    fixture = json.loads(
+        (Path(__file__).parents[1] / "fixtures/asr/lexus_gx_short_gaps.json").read_text()
+    )
+    offset = 1178
+
+    def load(key):
+        return words([
+            (w["word"], round((w["start"] - offset) * 1000), round((w["end"] - offset) * 1000))
+            for w in fixture[key]
+        ])
+
+    data, first, second = [load(k) for k in ("before", "decoded", "confirmation")]
+    if change == "negation":
+        next(s for s in second.segments if s.text == "perk").text = "not"
+    elif change == "unstable_anchor":
+        # The nearby right anchor must agree acoustically in both decodes.
+        next(s for s in second.segments if s.text == "remember").end_time += 250
+    before = copy.deepcopy(data)
+    decodes = iter([first, second, words([("unrelated", 1000, 1200)])])
+    monkeypatch.setattr(fc, "_decode", lambda *a: next(decodes))
+    speech = [(12942, 15806), (16366, 16798)]
+    monkeypatch.setattr(
+        wx, "_detect_speech_in_mlx_gaps",
+        lambda samples, sr, ranges, **k: [
+            (a, b) for a, b in speech
+            if any(lo * 1000 <= a and b <= hi * 1000 for lo, hi in ranges)
+        ],
+    )
+    records = []
+    monkeypatch.setattr(fc, "_save_evidence", records.extend)
+    context = SimpleNamespace(audio_path="original.wav", samples=lambda: np.zeros(30 * 16000))
+    config = SimpleNamespace(cancel_event=None, whisperx_model="local-test")
+    result = fc.repair_final_coverage(data, "original.wav", config, lambda *a: None, None, context)
+    if change:
+        assert fc._words(result) == fc._words(before)
+        assert result.coverage_issues
+    else:
+        assert not result.coverage_issues
+        assert records[0]["localized_consensus"]
+        assert "think the biggest perk" in " ".join(s.text for s in result.segments)
+        # The following sentence, including its source timing, stays intact.
+        assert [s.__dict__ for s in result.segments if s.start_time >= 17446] == [
+            s.__dict__ for s in before.segments if s.start_time >= 17446
+        ]
+
+
+def test_lexus_money_gap_requires_two_decodes_preserving_ish(monkeypatch):
+    from subforge.core.asr import whisperx_asr as wx
+
+    fixture = json.loads(
+        (Path(__file__).parents[1] / "fixtures/asr/lexus_gx_money_gap.json").read_text()
+    )
+
+    def load(key):
+        return words([
+            (w["word"], round(w["start"] * 1000), round(w["end"] * 1000))
+            for w in fixture[key]
+        ])
+
+    original = load("before")
+    first, second, third = [load(k) for k in ("decoded", "confirmation", "retry")]
+    assert fc._consensus_proposal(original, first, second, 14.686, 16.78) is None
+    decodes = iter([first, second, third])
+    monkeypatch.setattr(fc, "_decode", lambda *a: next(decodes))
+    speech = [(15198, 16606)]
+    monkeypatch.setattr(
+        wx, "_detect_speech_in_mlx_gaps",
+        lambda samples, sr, ranges, **k: [
+            (a, b) for a, b in speech
+            if any(lo * 1000 <= a and b <= hi * 1000 for lo, hi in ranges)
+        ],
+    )
+    records = []
+    monkeypatch.setattr(fc, "_save_evidence", records.extend)
+    context = SimpleNamespace(audio_path="original.wav", samples=lambda: np.zeros(30 * 16000))
+    config = SimpleNamespace(cancel_event=None, whisperx_model="local-test")
+    repaired = fc.repair_final_coverage(
+        original, "original.wav", config, lambda *a: None, None, context
+    )
+    assert not repaired.coverage_issues
+    assert records[0]["status"] == "recovered"
+    assert "retry" in records[0]
+    assert "80-ish thousand dollar vehicle" in " ".join(s.text for s in repaired.segments)
