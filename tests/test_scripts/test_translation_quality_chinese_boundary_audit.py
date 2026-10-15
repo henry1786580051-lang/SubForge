@@ -6,9 +6,9 @@ from scripts.translation_quality.chinese_boundary_audit import audit_chinese_bou
 def test_project_chinese_boundary_audit_has_closed_registry_and_call_flow() -> None:
     payload = audit_chinese_boundary_file(Path("subforge/core/translate/llm_translator.py"))
 
-    assert payload["registered_definition_count"] == 81
-    assert payload["literal_message_site_count"] == 112
-    assert payload["emitted_message_count"] == 81
+    assert payload["registered_definition_count"] == 82
+    assert payload["literal_message_site_count"] == 113
+    assert payload["emitted_message_count"] == 82
     assert payload["function_message_site_counts"] == {
         "_source_boundary_signal": 7,
         "_target_boundary_diagnostic": 1,
@@ -16,7 +16,7 @@ def test_project_chinese_boundary_audit_has_closed_registry_and_call_flow() -> N
         "clause_attachment.detect_clause_attachment_boundary": 7,
         "completion_frames.detect_completion_frame_boundary": 4,
         "consequence_predicate.detect_consequence_predicate_boundary": 1,
-        "discourse_bridge.detect_discourse_bridge_boundary": 3,
+        "discourse_bridge.detect_discourse_bridge_boundary": 4,
         "foundation.detect_foundation_boundary": 5,
         "governing_attachment.detect_governing_attachment_boundary": 6,
         "incomplete_nominal_frames.detect_incomplete_nominal_frame_boundary": 4,
@@ -50,11 +50,11 @@ def test_project_chinese_boundary_audit_has_closed_registry_and_call_flow() -> N
     assert payload["diagnostic_adapter_call_count"] == 1
     assert (
         payload["inventory_sha256"]
-        == "cbca2d2c972fcf4be648b928e6b850bc6fad76af1b66db76c330ce6cb7e30531"
+        == "7441664bc09f3810766292134e6c136ec46e561d795c73cf63cba9a5e262635e"
     )
     assert (
         payload["layout_sha256"]
-        == "1fdc6bcd90197e8f1ef3f8992bd2925a96b3b56ae9bec451b8feb096534e1520"
+        == "662ef657bcdc92a74bba2f2116b25597019248f492ba7e3b198b3f8f28773a4b"
     )
     assert (
         payload["call_flow_sha256"]

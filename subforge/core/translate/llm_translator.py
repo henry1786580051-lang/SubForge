@@ -69,6 +69,9 @@ from subforge.core.translate.quality import (
     select_translation_mode_policy,
     translation_metadata_guidance,
 )
+from subforge.core.translate.quality.chinese_boundary_detectors.discourse_bridge import (
+    split_stranded_scope_adverb,
+)
 from subforge.core.translate.quality.closed_boundary import is_closed_soft_boundary
 from subforge.core.translate.quality.numbers import normalize_grouped_numbers
 from subforge.core.translate.quality.preservation import (
@@ -6247,6 +6250,9 @@ Return exactly one JSON object with all and only the current_subtitles keys:
                 for index, item in candidate.items()
                 if item.translated_text != current[index].translated_text
             }
+            if not changed:
+                accepted.append(window)
+                continue
             proposed = {**current, **candidate}
             try:
                 for previous in accepted:
@@ -6266,7 +6272,7 @@ Return exactly one JSON object with all and only the current_subtitles keys:
             accepted.append(window)
             logger.info(
                 "Chinese boundary fluency repair corrected subtitles: %s",
-                [item.index for item in window],
+                sorted(changed),
             )
         return current
 
@@ -6569,6 +6575,32 @@ Return exactly one JSON object with all and only the current_subtitles keys:
             right_source = right.original_text.strip()
             left_translation = repaired_by_index[left.index].translated_text.strip()
             right_translation = repaired_by_index[right.index].translated_text.strip()
+
+            # English focus markers can precede their complement at a cue edge.
+            # Relocate only existing Chinese wording with explicit source support;
+            # the caller's speaker, language, and pause protections still apply.
+            scope_tail = split_stranded_scope_adverb(left_translation)
+            if scope_tail and re.search(
+                r"(?:\b(?:and|or)\s+even|\b(?:especially|particularly))[,;:]?\s*$",
+                left_source,
+                re.IGNORECASE,
+            ):
+                prefix, marker = scope_tail
+                repaired_right = (
+                    right_translation
+                    if right_translation.startswith(marker)
+                    else f"{marker}{right_translation}"
+                )
+                if prefix and right_translation:
+                    repaired_by_index[left.index] = replace(
+                        repaired_by_index[left.index], translated_text=prefix
+                    )
+                    repaired_by_index[right.index] = replace(
+                        repaired_by_index[right.index], translated_text=repaired_right
+                    )
+                    left_translation = prefix
+                    right_translation = repaired_right
+                    changed = True
 
             if LLMTranslator._source_ends_with_parallel_plural_attributes(
                 left_source
@@ -6926,7 +6958,9 @@ Return exactly one JSON object with all and only the current_subtitles keys:
                 r"[.!?][\"')\]]*$",
                 left.original_text.strip(),
             )
-            if strong_dependency and (target_signal or repeated_dependency):
+            if target_signal == "scope adverb is separated from its complement":
+                mandatory.append(left.index)
+            elif strong_dependency and (target_signal or repeated_dependency):
                 mandatory.append(left.index)
             elif separated_display and long_gap_signal:
                 mandatory.append(left.index)

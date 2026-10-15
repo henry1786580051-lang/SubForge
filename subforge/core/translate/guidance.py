@@ -298,7 +298,11 @@ def repair_mode_guidance(multispeaker: bool) -> str:
         "once. Resolve an explicit spoken self-correction to its final value only when the "
         "nearby source proves that value, and resolve contrastive references from the complete "
         "local construction rather than the nearest noun. Avoid repeating the same Chinese head "
-        "noun twice inside one cue when one coherent noun phrase conveys the source exactly."
+        "noun twice inside one cue when one coherent noun phrase conveys the source exactly. "
+        "Keep focus markers such as 甚至, 尤其是, and 特别是 attached to the phrase they introduce. "
+        "If English strands such a marker at a cue end, relocate only that grammatical marker "
+        "within the permitted repair window, keeping all names, numbers, and facts under their "
+        "source keys. Adding punctuation after a dangling marker does not complete the cue."
     )
     if not multispeaker:
         return (

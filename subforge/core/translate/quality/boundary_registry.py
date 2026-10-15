@@ -73,6 +73,7 @@ _TARGET_RULE_IDS = {
     "comparison example is stranded": "translation.boundary.target.comparison_example",
     "comparison phrase is stranded": "translation.boundary.target.comparison_phrase",
     "connective stranded at previous subtitle end": "translation.boundary.target.trailing_connective",
+    "scope adverb is separated from its complement": "translation.boundary.target.scope_adverb",
     "consequence predicate is missing": "translation.boundary.target.consequence_predicate",
     "coordinated modifier may be stranded": "translation.boundary.target.possible_coordinated_modifier",
     "coordinated subject may be stranded": "translation.boundary.target.possible_coordinated_subject",

@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.3.6 - 2026-10-15
+
+### Chinese subtitle boundary repair
+
+- Detect stranded Chinese focus markers such as 甚至, 尤其是 and 特别是, including punctuation that previously concealed an incomplete cue. Require these boundaries to enter repair and reject rewrites that leave them unresolved.
+- Relocate an existing focus marker only with explicit English support and the existing speaker, language, adjacency and pause protections. Boundaries across visible pauses still require validated contextual rewriting.
+- Report only subtitles whose text actually changed as corrected; an unchanged accepted window is no longer logged as a successful correction.
+
+### Validation and limitations
+
+- 3021 local Python tests passed, with 35 external integration tests deselected. Ruff passed; Pyright reported 0 errors and 30 existing warnings. Regressions cover the reported GLC boundary, punctuation, quoted words, lossless relocation, protected pauses/turns/languages, and overlapping repair windows.
+- Reviewed all 697 cues in the reported GLC bilingual subtitle and manually corrected 19 groups affecting 37 Chinese cues. Cue numbers, timings and English were preserved. This subtitle review is distinct from the automated regression tests; it does not establish universal translation accuracy. No paid translation API was called.
+- macOS Apple Silicon DMG is built and verified locally; the standard Windows x64 EXE is built and installation-smoke-tested by GitHub Actions. Model weights remain separate; macOS signing is ad hoc, without Apple notarization.
+
 ## v1.3.5 - 2026-10-14
 
 ### Short missing-speech recovery
