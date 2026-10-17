@@ -31,10 +31,10 @@ jobs:
         run: uv sync --frozen
 
       - name: Lint
-        run: uv run ruff check subforge backend launcher.py scripts
+        run: uv run ruff check subforge backend launcher.py desktop_dialogs.py scripts
 
       - name: Type check
-        run: uv run pyright subforge backend launcher.py scripts
+        run: uv run pyright subforge backend launcher.py desktop_dialogs.py scripts
 
       - name: Unit tests
         run: uv run pytest -m "not integration" -q

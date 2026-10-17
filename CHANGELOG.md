@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.3.7 - 2026-10-17
+
+### Native import panel and localization
+
+- Own and explicitly close each macOS import panel before returning a selected path, including cancel and error paths. A dismissed panel is no longer retained with its media preview. Prevent concurrent import panels while preserving the native all-files filter.
+- Declare Simplified Chinese in the macOS bundle and configure only the current process's native UI language before AppKit starts. Import titles, buttons and file-type filters use Chinese without changing system language preferences.
+
+### Validation and limitations
+
+- 3037 local Python tests passed, with 35 external integration tests deselected; 68 frontend tests and frontend lint passed. Ruff passed and Pyright reported 0 errors with 29 existing warnings. Regression coverage includes preview lifetime, cancellation, exceptions, repeat import, concurrent picker requests, main-thread dispatch and process-local localization.
+- Verified the packaged macOS panel's Chinese sidebar, search, buttons and file types, video import metadata, repeat open/cancel, all-files filtering and subtitle selection. Preview cleanup and failure paths have lifecycle regression coverage; no system audio loopback measurement was performed.
+- macOS Apple Silicon DMG is built and verified locally. GitHub Actions builds the standard Windows x64 EXE and checks both the packaged and installed runtime. Model weights remain separate; macOS signing is ad hoc, without Apple notarization.
+
 ## v1.3.6 - 2026-10-15
 
 ### Chinese subtitle boundary repair

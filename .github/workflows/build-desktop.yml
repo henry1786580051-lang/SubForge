@@ -8,6 +8,7 @@ on:
       - "frontend/**"
       - "resource/**"
       - "launcher.py"
+      - "desktop_dialogs.py"
       - "build_macos.py"
       - "scripts/build_desktop.py"
       - "scripts/smoke_desktop.py"

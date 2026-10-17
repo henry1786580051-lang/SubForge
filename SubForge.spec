@@ -328,6 +328,8 @@ app = BUNDLE(
     bundle_identifier='com.subforge.app',
     info_plist={
         'CFBundleDisplayName': 'SubForge',
+        'CFBundleDevelopmentRegion': 'zh-Hans',
+        'CFBundleLocalizations': ['zh-Hans'],
         'CFBundleShortVersionString': APP_VERSION,
         'CFBundleVersion': APP_VERSION,
         'NSHighResolutionCapable': True,

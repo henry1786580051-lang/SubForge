@@ -188,6 +188,7 @@ def test_native_file_dialog_grants_selected_path(monkeypatch, tmp_path):
         SAVE_DIALOG="save",
     )
     monkeypatch.setitem(launcher.sys.modules, "webview", fake_webview)
+    monkeypatch.setattr(launcher, "choose_input_file", lambda window, kind: (str(selected),))
     monkeypatch.setattr("app.security.grant_path", lambda path: granted.append(path) or selected)
 
     result = launcher.Api().open_file("media")

@@ -17,6 +17,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from desktop_dialogs import choose_input_file, configure_native_language
+
 _NULL_STREAMS = []
 
 
@@ -223,23 +225,7 @@ class Api:
         try:
             if not webview.windows:
                 return {"ok": False, "error": "No window available"}
-            file_types = (
-                ("Subtitle files (*.srt;*.vtt;*.ass)",)
-                if kind == "subtitle"
-                else (
-                    "Media files (*.mp4;*.mov;*.mkv;*.avi;*.webm;*.mp3;*.wav;*.m4a;*.flac)",
-                    "All files (*.*)",
-                )
-            )
-            if kind == "any":
-                file_types = (
-                    "Media and subtitles (*.mp4;*.mov;*.mkv;*.avi;*.webm;*.mp3;*.wav;*.m4a;*.flac;*.srt;*.vtt;*.ass)",
-                )
-            result = webview.windows[0].create_file_dialog(
-                webview.OPEN_DIALOG,
-                allow_multiple=False,
-                file_types=file_types,
-            )
+            result = choose_input_file(webview.windows[0], kind)
             if not result:
                 return {"ok": False, "cancelled": True}
             file_path = result if isinstance(result, str) else result[0]
@@ -303,6 +289,9 @@ class Api:
 
 
 def main():
+    # Configure before importing AppKit/pywebview so native bundles do not
+    # cache English while the application itself is entirely Chinese.
+    configure_native_language()
     # Start FastAPI in background thread
     port = find_available_port()
     url = f"http://{HOST}:{port}"

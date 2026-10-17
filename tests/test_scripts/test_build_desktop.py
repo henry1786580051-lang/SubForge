@@ -1,3 +1,4 @@
+import ast
 import hashlib
 import zipfile
 from types import SimpleNamespace
@@ -5,6 +6,16 @@ from types import SimpleNamespace
 import pytest
 
 from scripts import build_desktop
+
+
+def test_macos_bundle_declares_chinese_native_ui():
+    tree = ast.parse((build_desktop.ROOT / "SubForge.spec").read_text())
+    bundle = next(node for node in ast.walk(tree) if isinstance(node, ast.Call)
+                  and isinstance(node.func, ast.Name) and node.func.id == "BUNDLE")
+    info = next(arg.value for arg in bundle.keywords if arg.arg == "info_plist")
+    fields = {ast.literal_eval(key): value for key, value in zip(info.keys, info.values)}
+    assert ast.literal_eval(fields["CFBundleDevelopmentRegion"]) == "zh-Hans"
+    assert ast.literal_eval(fields["CFBundleLocalizations"]) == ["zh-Hans"]
 
 
 def test_native_bootloader_leaves_older_sdks_on_standard_fallback(monkeypatch):

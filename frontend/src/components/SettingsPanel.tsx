@@ -1308,7 +1308,7 @@ export function SettingsPanel() {
         )}
 
             </div>
-            <p className="settings-credits">SubForge {process.env.NEXT_PUBLIC_APP_VERSION || "1.3.6"} · Solar / 480 Design · CC BY 4.0 · 图标已内置</p>
+            <p className="settings-credits">SubForge {process.env.NEXT_PUBLIC_APP_VERSION || "1.3.7"} · Solar / 480 Design · CC BY 4.0 · 图标已内置</p>
           </div>
         </main>
     </div>
