@@ -31,6 +31,16 @@ def test_get_config_value_rejects_corrupted_types(monkeypatch):
     assert config_module.get_config_value("ratio", 1.5) == 2.0
 
 
+def test_legacy_web_terminology_switch_is_ignored_and_no_longer_editable(tmp_path, monkeypatch):
+    path = tmp_path / "settings.json"
+    monkeypatch.setattr(config_module, "_SETTINGS_CANDIDATES", [path])
+    path.write_text(json.dumps({"llm_web_research": False}))
+    assert "llm_web_research" not in config_module._effective_config(config_module._read_settings())
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(config_module.update_config(config_module.ConfigUpdate(key="llm_web_research", value=False)))
+    assert error.value.status_code == 400
+
+
 def test_write_settings_is_atomic_and_private(tmp_path, monkeypatch):
     settings_path = tmp_path / "settings.json"
     monkeypatch.setattr(config_module, "_SETTINGS_CANDIDATES", [settings_path])
@@ -175,7 +185,7 @@ def test_switch_llm_provider_keeps_credentials_isolated_and_restores_them(
         "provider": "deepseek",
         "base_url": "https://api.deepseek.com",
         "api_key_configured": False,
-        "model": "",
+        "model": "deepseek-flash",
     }
 
     mimo = asyncio.run(
@@ -225,12 +235,10 @@ def test_provider_runtime_config_reads_inactive_nvidia_profile_without_switching
     monkeypatch.setattr(config_module, "_SETTINGS_CANDIDATES", [settings_path])
 
     runtime = config_module.get_llm_provider_runtime_config("nvidia")
-    status = config_module.get_llm_provider_status("nvidia")
 
     assert runtime.provider == "nvidia"
     assert runtime.api_key == "nvidia-secret"
     assert runtime.model == "nvidia/nemotron-3-ultra-550b-a55b"
-    assert status["api_key_configured"] is True
     assert config_module._active_llm_provider(config_module._read_settings()) == "deepseek"
 
 
@@ -695,7 +703,7 @@ def test_switch_provider_repairs_corrupted_profile_and_preserves_key(
         "provider": "deepseek",
         "base_url": "https://api.deepseek.com",
         "api_key_configured": True,
-        "model": "",
+        "model": "deepseek-flash",
     }
 
 

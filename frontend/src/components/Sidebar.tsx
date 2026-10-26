@@ -21,15 +21,12 @@ export function Sidebar() {
     <nav className="flex-1 p-2.5 space-y-1" aria-label="工作区">
       {!sidebarCollapsed && <p className="sidebar-caption">工作区</p>}
       {stages.map((s) => item(s.label, s.icon, activeView === "workflow" && step === s.id, () => { setStep(s.id); setActiveView("workflow"); }))}
-      <div className="h-5" />
-      {!sidebarCollapsed && <p className="sidebar-caption">资源</p>}
-      {item("免费模型", "solar:gift-linear", activeView === "free-models", () => setActiveView("free-models"))}
     </nav>
     <div className="p-2.5 space-y-1 border-t border-border">
       {item("诊断日志", "solar:code-square-linear", activeView === "llm-logs", () => setActiveView("llm-logs"))}
       {item("设置", "solar:settings-linear", activeView === "settings", () => setActiveView("settings"))}
       {item(sidebarCollapsed ? "展开侧边栏" : "收起侧边栏", "solar:sidebar-minimalistic-linear", false, toggleSidebar)}
-      {!sidebarCollapsed && <p className="px-3 pt-2 text-[11px] text-text-muted">SubForge {process.env.NEXT_PUBLIC_APP_VERSION || "1.3.7"}</p>}
+      {!sidebarCollapsed && <p className="px-3 pt-2 text-[11px] text-text-muted">SubForge {process.env.NEXT_PUBLIC_APP_VERSION || "1.3.8"}</p>}
     </div>
   </aside>;
 }

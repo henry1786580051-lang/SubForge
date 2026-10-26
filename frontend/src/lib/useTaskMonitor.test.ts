@@ -116,12 +116,37 @@ describe("useTaskMonitor ordering", () => {
     vi.useRealTimers();
   });
 
-  it("does not process the old file when the editor has unsaved changes", async () => {
+  it.each(["transcribe", "subtitle"] as const)("blocks %s without losing unsaved edits", async (type) => {
     harness.store.subtitles = [segment("unsaved correction")];
-    await controls.startTask("subtitle", { subtitle_file: "/tmp/file.srt" });
+    const before = harness.store.subtitles;
+    await controls.startTask(type, { file_path: "/tmp/video.mp4", subtitle_file: "/tmp/file.srt" });
     expect(harness.start).not.toHaveBeenCalled();
+    expect(harness.flush).not.toHaveBeenCalled();
+    expect(harness.store.currentTaskId).toBe("task-1");
+    expect(harness.store.subtitles).toBe(before);
+    expect(harness.store.setSubtitles).not.toHaveBeenCalled();
+    expect(harness.store.setPreviewSubtitles).not.toHaveBeenCalled();
     expect(harness.store.setError).toHaveBeenCalledWith(expect.stringContaining("请先保存"));
     expect(harness.store.isProcessing).toBe(false);
+  });
+
+  it.each(["transcribe", "subtitle"] as const)("allows %s after the edited document is saved", async (type) => {
+    harness.store.subtitles = [segment("saved correction")];
+    harness.store.savedSubtitles = harness.store.subtitles;
+    harness.start.mockResolvedValue({ task_id: "new-task" });
+    await controls.startTask(type, { file_path: "/tmp/video.mp4", subtitle_file: "/tmp/file.srt" });
+    expect(harness.flush).toHaveBeenCalledOnce();
+    expect(harness.start).toHaveBeenCalledOnce();
+    expect(harness.store.currentTaskId).toBe("new-task");
+  });
+
+  it("allows transcription when undo has restored saved contents with a new array", async () => {
+    harness.store.subtitles = [segment("original")];
+    harness.store.savedSubtitles = [segment("original")];
+    harness.start.mockResolvedValue({ task_id: "new-task" });
+    await controls.startTask("transcribe", { file_path: "/tmp/video.mp4" });
+    expect(harness.start).toHaveBeenCalledOnce();
+    expect(harness.store.currentTaskId).toBe("new-task");
   });
 
   it("keeps cancelled previews different from the persisted input", async () => {

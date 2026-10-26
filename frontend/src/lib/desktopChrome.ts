@@ -39,8 +39,8 @@ export function handleDesktopCommand(command: unknown, cancelTask: () => Promise
     app.setActiveView("workflow");
     return;
   }
-  if (command === "navigate:settings" || command === "navigate:llm-logs" || command === "navigate:free-models") {
-    app.setActiveView(command.slice(9) as "settings" | "llm-logs" | "free-models");
+  if (command === "navigate:settings" || command === "navigate:llm-logs") {
+    app.setActiveView(command.slice(9) as "settings" | "llm-logs");
     return;
   }
   switch (command) {

@@ -21,6 +21,8 @@ LLM_PROVIDER_URLS = {
     "custom": "",
 }
 
+LLM_RECOMMENDED_MODELS = {"deepseek": "deepseek-flash"}
+
 LEGACY_MINIMAX_URLS = {
     "https://api.minimax.chat/v1",
     "https://api.minimaxi.com/v1",

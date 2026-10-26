@@ -50,12 +50,12 @@ it("synchronizes native navigation without opening files or losing the document"
     expect(useAppStore.getState().step).toBe(step);
     expect(desktopState().navigation).toBe(step);
   }
-  for (const view of ["settings", "llm-logs", "free-models"] as const) {
+  for (const view of ["settings", "llm-logs"] as const) {
     handleDesktopCommand(`navigate:${view}`, vi.fn());
     expect(desktopState().navigation).toBe(view);
   }
   handleDesktopCommand("navigate:execute", vi.fn());
-  expect(desktopState().navigation).toBe("free-models");
+  expect(desktopState().navigation).toBe("llm-logs");
   expect(useAppStore.getState().subtitleFile).toBe("/demo.srt");
   expect(useUiStore.getState().openRequested).toBe(false);
   handleDesktopCommand("sidebar", vi.fn());

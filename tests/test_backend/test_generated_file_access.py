@@ -86,7 +86,7 @@ def test_subtitle_output_and_recovery_remain_accessible(external_input, monkeypa
         security.validate_path(str(external_input.with_name("private.txt")))
 
 
-@pytest.mark.parametrize("issue_reason", [None, "context_disagreement", "suspected_non_speech_text", "mixed"])
+@pytest.mark.parametrize("issue_reason", [None, "context_disagreement", "suspected_non_speech_text", "suspected_repetition", "mixed"])
 def test_transcription_output_can_be_loaded_from_external_drive(external_input, monkeypatch, issue_reason):
     video = external_input.with_suffix(".mp4")
     video.touch()
@@ -116,7 +116,7 @@ def test_transcription_output_can_be_loaded_from_external_drive(external_input, 
         )
     )
     completed = task_manager.get_task(task.id)
-    coverage_warning = issue_reason in {"context_disagreement", "mixed"}
+    coverage_warning = issue_reason in {"context_disagreement", "suspected_repetition", "mixed"}
     assert completed.status == ("failed" if coverage_warning else "completed"), completed.error
     output = completed.result["recovery_file" if coverage_warning else "subtitle_file"]
     if coverage_warning:

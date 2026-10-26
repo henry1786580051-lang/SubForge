@@ -433,13 +433,14 @@ def _capturing_client(base_url: str):
     return client, completions
 
 
-def test_deepseek_thinking_request_uses_official_controls(monkeypatch):
+@pytest.mark.parametrize("model", ["deepseek-v4-flash", "deepseek-flash"])
+def test_deepseek_thinking_request_uses_official_controls(monkeypatch, model):
     client, completions = _capturing_client("https://api.deepseek.com/v1")
     monkeypatch.setattr(client_module, "log_llm_response", lambda _response: None)
 
     client_module.call_llm(
         [{"role": "user", "content": "translate"}],
-        "deepseek-v4-flash",
+        model,
         temperature=0.2,
         client=client,
         reasoning_mode="enabled",
@@ -468,13 +469,14 @@ def test_deepseek_thinking_request_honors_explicit_reasoning_effort(monkeypatch)
     assert completions.kwargs["reasoning_effort"] == "medium"
 
 
-def test_deepseek_non_thinking_request_keeps_sampling(monkeypatch):
+@pytest.mark.parametrize("model", ["deepseek-v4-flash", "deepseek-flash"])
+def test_deepseek_non_thinking_request_keeps_sampling(monkeypatch, model):
     client, completions = _capturing_client("https://api.deepseek.com")
     monkeypatch.setattr(client_module, "log_llm_response", lambda _response: None)
 
     client_module.call_llm(
         [{"role": "user", "content": "split"}],
-        "deepseek-v4-flash",
+        model,
         temperature=0.1,
         client=client,
         reasoning_mode="disabled",

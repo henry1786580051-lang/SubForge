@@ -535,6 +535,10 @@ export function SettingsPanel() {
               onBlur={(e) => handleSave("llm_model", e.target.value)}
               placeholder="输入或选择模型名称" className="input-field mt-2" />
 
+            {selectedProvider === "deepseek" && (
+              <p className="settings-footnote">使用官方接口翻译时会自动核实疑难术语，并保留引用来源。每个任务最多 3 次搜索、2 次抓取，工具费用上限约 ¥0.025，模型费用另计；联网失败时继续普通翻译。</p>
+            )}
+
             <div className="flex items-center gap-2 mt-2">
               <button onClick={async () => {
                 setTestingLlm(true); setLlmTestResult(null);
@@ -1078,6 +1082,8 @@ export function SettingsPanel() {
               >
                 <button
                   type="button"
+                  role="switch"
+                  aria-label="自动补录其他语言"
                   disabled={
                     hwInfo === null ||
                     hwInfo.platform !== "Darwin" ||
@@ -1089,28 +1095,33 @@ export function SettingsPanel() {
                       !settings.detect_additional_languages
                     )
                   }
-                  className={`relative h-[22px] w-10 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                    settings.detect_additional_languages &&
-                    hwInfo?.platform === "Darwin" &&
-                    hwInfo.arch === "arm64"
-                      ? "bg-accent"
-                      : "bg-black/10"
-                  }`}
-                  aria-pressed={Boolean(
+                  className="inline-flex h-[34px] w-10 shrink-0 items-center justify-center focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-checked={Boolean(
                     settings.detect_additional_languages &&
                     hwInfo?.platform === "Darwin" &&
                     hwInfo.arch === "arm64"
                   )}
                 >
                   <span
-                    className={`absolute top-[3px] h-4 w-4 rounded-full bg-white shadow-sm transition-[left] ${
+                    aria-hidden="true"
+                    className={`relative h-[22px] w-10 shrink-0 rounded-full transition-colors ${
                       settings.detect_additional_languages &&
                       hwInfo?.platform === "Darwin" &&
                       hwInfo.arch === "arm64"
-                        ? "left-[21px]"
-                        : "left-[3px]"
+                        ? "bg-accent"
+                        : "bg-text-muted/25"
                     }`}
-                  />
+                  >
+                    <span
+                      className={`absolute top-[3px] h-4 w-4 rounded-full bg-white shadow-sm transition-[left] ${
+                        settings.detect_additional_languages &&
+                        hwInfo?.platform === "Darwin" &&
+                        hwInfo.arch === "arm64"
+                          ? "left-[21px]"
+                          : "left-[3px]"
+                      }`}
+                    />
+                  </span>
                 </button>
               </SettingsField>
             )}
@@ -1308,7 +1319,7 @@ export function SettingsPanel() {
         )}
 
             </div>
-            <p className="settings-credits">SubForge {process.env.NEXT_PUBLIC_APP_VERSION || "1.3.7"} · Solar / 480 Design · CC BY 4.0 · 图标已内置</p>
+            <p className="settings-credits">SubForge {process.env.NEXT_PUBLIC_APP_VERSION || "1.3.8"} · Solar / 480 Design · CC BY 4.0 · 图标已内置</p>
           </div>
         </main>
     </div>

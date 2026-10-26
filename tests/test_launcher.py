@@ -1,6 +1,8 @@
 import threading
 import types
 
+import pytest
+
 import launcher
 
 
@@ -195,3 +197,57 @@ def test_native_file_dialog_grants_selected_path(monkeypatch, tmp_path):
 
     assert result == {"ok": True, "path": str(selected)}
     assert granted == [str(selected)]
+@pytest.mark.parametrize("frozen", [False, True])
+def test_local_api_check_bypasses_proxies_and_checks_real_routes(monkeypatch, frozen):
+    import io
+
+    from app.local_access import LocalRequestGuard
+    from app.main import app
+    from fastapi.testclient import TestClient
+
+    client = TestClient(LocalRequestGuard(app), base_url="http://127.0.0.1:49222")
+    requests = []
+
+    class DirectOpener:
+        def open(self, request, timeout):
+            requests.append(request)
+            response = client.request(
+                request.get_method(), request.full_url,
+                headers=dict(request.header_items()), content=request.data,
+            )
+            if response.status_code >= 400:
+                raise launcher.urllib.error.HTTPError(
+                    request.full_url, response.status_code, "Denied", response.headers,
+                    io.BytesIO(response.content),
+                )
+            result = io.BytesIO(response.content)
+            result.status = response.status_code
+            return result
+
+    def build_opener(handler):
+        assert isinstance(handler, launcher.urllib.request.ProxyHandler)
+        assert handler.proxies == {}
+        return DirectOpener()
+
+    monkeypatch.setattr(launcher.sys, "frozen", frozen, raising=False)
+    monkeypatch.setenv("http_proxy", "http://untrusted-proxy.invalid:9999")
+    monkeypatch.setattr(launcher.urllib.request, "build_opener", build_opener)
+    monkeypatch.setattr(launcher.urllib.request, "urlopen", lambda *args, **kwargs: pytest.fail("Must bypass system proxy"))
+    launcher._check_local_api_protection("http://127.0.0.1:49222")
+    assert len(requests) == (5 if frozen else 4)
+
+
+def test_wait_for_local_server_bypasses_system_proxies(monkeypatch):
+    from unittest.mock import MagicMock
+
+    opener = MagicMock()
+    opener.open.return_value.__enter__.return_value.status = 200
+
+    def build_opener(handler):
+        assert handler.proxies == {}
+        return opener
+
+    monkeypatch.setattr(launcher.urllib.request, "build_opener", build_opener)
+    monkeypatch.setattr(launcher.urllib.request, "urlopen", lambda *args, **kwargs: pytest.fail("Must bypass system proxy"))
+    assert launcher.wait_for_server("http://127.0.0.1:49222", [])
+    opener.open.assert_called_once_with("http://127.0.0.1:49222/api/health", timeout=0.5)

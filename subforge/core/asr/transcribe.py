@@ -324,6 +324,16 @@ def transcribe(
         if config.transcribe_model == TranscribeModelEnum.WHISPERX:
             from subforge.core.asr.final_coverage import repair_final_coverage
             from subforge.core.asr.non_speech_review import review_non_speech
+            from subforge.core.asr.repetition_review import review_repetitions
+
+            asr_data = review_repetitions(
+                asr_data,
+                audio_path,
+                config,
+                callback,
+                _create_single_asr,
+                analysis_context=analysis_context,
+            )
 
             asr_data = review_non_speech(
                 asr_data,

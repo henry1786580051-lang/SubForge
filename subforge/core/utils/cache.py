@@ -51,6 +51,7 @@ def _open_cache(name: str, **kwargs: Any) -> Cache:
 
 # Predefined cache instances for common use cases
 _llm_cache = _open_cache("llm_translation")
+_web_research_cache = _open_cache("web_terminology")
 _asr_cache = _open_cache("asr_results", tag_index=True)
 _translate_cache = _open_cache("translate_results")
 _version_state_cache = _open_cache("version_state")
@@ -61,6 +62,11 @@ _subtitle_language_cache = _open_cache("subtitle_languages")
 def get_llm_cache() -> Cache:
     """Get LLM translation cache instance."""
     return _llm_cache
+
+
+def get_web_research_cache() -> Cache:
+    """Keep bounded web evidence separate from model-response caches."""
+    return _web_research_cache
 
 
 def get_asr_cache() -> Cache:

@@ -14,7 +14,6 @@ sys.path.insert(0, str(_project_root))
 from app.api import (  # noqa: E402
     config,
     files,
-    free_models,
     llm_logs,
     subtitle,
     subtitles,
@@ -22,6 +21,7 @@ from app.api import (  # noqa: E402
     transcribe,
     websocket,
 )
+from app.local_access import LocalRequestGuard  # noqa: E402
 from subforge.config import VERSION  # noqa: E402
 
 
@@ -59,13 +59,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(LocalRequestGuard, allow_dev_frontend=not getattr(sys, "frozen", False))
 
 # API routes
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(transcribe.router, prefix="/api/transcribe", tags=["transcribe"])
 app.include_router(subtitle.router, prefix="/api/subtitle", tags=["subtitle"])
 app.include_router(config.router, prefix="/api/config", tags=["config"])
-app.include_router(free_models.router, prefix="/api/free-models", tags=["free-models"])
 app.include_router(files.router, prefix="/api/files", tags=["files"])
 app.include_router(subtitles.router, prefix="/api/subtitles", tags=["subtitles"])
 app.include_router(llm_logs.router, prefix="/api/llm-logs", tags=["llm-logs"])

@@ -2,6 +2,13 @@
 
 本指南将帮助你配置大语言模型（LLM）API，用于字幕的智能断句、优化和翻译。
 
+## DeepSeek 官方接口与联网术语核实
+
+- Base URL：`https://api.deepseek.com`。
+- Flash 推荐模型名：`deepseek-flash`，对应当前官方 Flash 服务。旧模型名仍按官方兼容规则处理，应用不会改写第三方平台的模型 ID。
+- 在“设置 → LLM 服务 → DeepSeek”中输入模型名，或检测并选择可用模型。
+- 使用官方接口翻译时，会在翻译前自动进行[联网术语核实](./web-terminology)，无需独立开关。
+
 ## 为什么需要配置 LLM？
 
 SubForge 使用 LLM 提供以下核心功能：

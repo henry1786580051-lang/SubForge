@@ -243,11 +243,6 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
   const [hardware, setHardware] = useState<{
     platform: string;
     arch: string;
-    chip: string;
-    device: string;
-    n_threads: number;
-    compute_type: string;
-    gpu: string;
   } | null>(null);
   const [models, setModels] = useState<AsrModelInfo[]>([]);
   const [downloadingModel, setDownloadingModel] = useState<string | null>(null);
@@ -764,17 +759,6 @@ function TranscribeWorkspace({ startTask, cancelTask }: WorkflowWorkspaceProps) 
             </div>
           </Panel>
 
-          <InspectorDisclosure title={<>硬件状态</>}>
-          <Panel title="硬件状态" icon="solar:cpu-bold-duotone">
-            <div className="grid grid-cols-2 gap-3">
-              <MetricTile label="芯片" value={hardware?.chip || "检测中"} wide />
-              <MetricTile label="加速" value={hardware?.gpu || "检测中"} wide />
-              <MetricTile label="线程" value={hardware ? String(hardware.n_threads) : "--"} />
-              <MetricTile label="计算" value={hardware?.compute_type || "--"} />
-            </div>
-          </Panel>
-          </InspectorDisclosure>
-
           {missingAlignmentModels.length > 0 && (
             <section
               className="rounded-lg border border-amber-200 bg-amber-50 p-4"
@@ -1123,15 +1107,6 @@ function WorkspaceFrame({ children, meta }: { children: React.ReactNode; meta: (
     <div className="workspace-heading"><h1 tabIndex={-1}>{meta.title}</h1><p>{meta.description}</p></div>
     <div className="min-h-0 flex-1 workspace-content">{children}</div>
   </div>;
-}
-
-function MetricTile({ label, value, wide }: { label: string; value: string; wide?: boolean }) {
-  return (
-    <div className={`rounded-xl border border-border bg-surface p-3 ${wide ? "col-span-2" : ""}`}>
-      <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-text-muted">{label}</p>
-      <p className="mt-1 truncate text-[13px] font-semibold text-text-primary">{value}</p>
-    </div>
-  );
 }
 
 function EmptyState({

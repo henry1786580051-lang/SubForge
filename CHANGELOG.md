@@ -1,5 +1,39 @@
 # Changelog
 
+## v1.3.8 - 2026-10-27
+
+### Transcription hallucination review
+
+- Detect repeated phrases across word-level cues before WhisperX transcription is exported. Review suspect spans against original audio using two different local decoding contexts and independent speech detectors. Preserve genuine repetitions and short replies; uncertain spans retain their text in a recovery file and require review.
+- Bound acoustic review, bypass ASR cache, propagate cancellation, and protect verified non-speech holes from gap recovery while retaining nearby voices.
+- Add the human-confirmed Roush Mustang regression: 20 invented “Are we recording now?” phrases are replaced by the corroborated “Oh yeah.” reply, with every word outside that interval unchanged. The final speech coverage audit passes on the full recording.
+
+### Processing and local API reliability
+
+- Block transcription and translation before they can replace unsaved subtitle edits, preserving the document and undo history.
+- Validate loopback Host and browser Origin for HTTP and WebSocket requests. Reject cross-site requests, preserve same-origin access on dynamic desktop ports, and allow the port 3000 development frontend only in source builds.
+- Keep loopback health and access-protection checks independent of system proxies. Packaged runtime checks verify that rejected writes leave a disposable subtitle unchanged and normal writes still work.
+- Validate the selected managed alignment model and let custom alignment models load without requiring the language's default model.
+- Enforce the web-research deadline during connection and response streaming. Close active transports on timeout or cancellation, and reject late responses before caching.
+
+### Automatic web terminology verification
+
+- Automatically verify terminology through DeepSeek Search/Fetch before LLM translation on authenticated official DeepSeek clients, without a separate switch. Keep source citations, a separate seven-day evidence cache, and a maximum of three searches plus two fetches per task. Reuse returned page content; tool failures fall back to ordinary translation.
+- Apply verified names only to the subtitle that owns the observed phrase. Evidence cannot change spoken numbers, model years or specifications and does not rewrite original subtitle text. Preserve sources, accepted terms and request counts in task results; other providers never send credentials to these tools.
+- Default new DeepSeek profiles to the official `deepseek-flash` model name while preserving existing selections and third-party provider IDs. Add a bounded, opt-in live A/B evaluation command using the production translation pipeline.
+
+### Settings cleanup
+
+- Fix the additional-language transcription switch's pill shape and click target while preserving on/off and unsupported-device behavior.
+- Remove the unnecessary model recommendation button and the transcription hardware-status panel.
+- Remove the free-model module, including web/native navigation, frontend API types, backend routes, scanner service and its unused profile-status helper.
+
+### Validation and distribution
+
+- 3153 local Python tests passed; 35 external integration tests were deselected. All 72 frontend tests, frontend lint, production build and Ruff passed; Pyright reported 0 errors and 29 existing warnings. Regression coverage includes repetitions, original audio, genuine replies, conflicting evidence, cancellation, budgets, cache bypass, recovery handoff, unsaved edits, local request protection, custom alignment and interrupted web responses.
+- Original-audio decoding and the full-recording final speech coverage audit passed for the reported repetition. Native UI checks cover preserved edits and corrected bilingual subtitle import. These checks do not establish universal transcription or translation accuracy.
+- Distribute the Apple Silicon DMG built locally and the standard Windows x64 EXE built by GitHub Actions. Both packaged and installed runtime checks are required before publication. Model weights remain separate; macOS signing is ad hoc, without Apple notarization.
+
 ## v1.3.7 - 2026-10-17
 
 ### Native import panel and localization

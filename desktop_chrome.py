@@ -33,7 +33,7 @@ def normalize_state(value: object) -> dict:
         "sidebar_collapsed": data.get("sidebar_collapsed") is True,
         "navigation": data.get("navigation")
         if data.get("navigation")
-        in ("import", "transcribe", "subtitle", "free-models", "llm-logs", "settings")
+        in ("import", "transcribe", "subtitle", "llm-logs", "settings")
         else "import",
     }
 
@@ -462,13 +462,10 @@ def install_native_toolbar(window) -> bool:
                 (10, "import", "导入素材", "folder", "1"),
                 (11, "transcribe", "语音转录", "waveform", "2"),
                 (12, "subtitle", "字幕工作区", "captions.bubble", "3"),
-                (13, "free-models", "免费模型", "square.grid.2x2", ""),
                 (14, "llm-logs", "诊断日志", "waveform.path.ecg", ""),
                 (15, "settings", "设置", "gearshape", ","),
             ]
             for tag, key, title, symbol, shortcut in specs:
-                if tag == 13:
-                    caption("资源")
                 if tag == 14:
                     spacer = AppKit.NSView.alloc().initWithFrame_(AppKit.NSZeroRect)
                     spacer.setContentHuggingPriority_forOrientation_(
@@ -522,7 +519,6 @@ def install_native_toolbar(window) -> bool:
                 10: "import",
                 11: "transcribe",
                 12: "subtitle",
-                13: "free-models",
                 14: "llm-logs",
                 15: "settings",
             }.get(sender.tag())

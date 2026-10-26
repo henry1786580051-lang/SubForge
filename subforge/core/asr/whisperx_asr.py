@@ -14,7 +14,11 @@ from typing import Any, Callable, List, Optional, Union, cast
 
 from ...config import MODEL_PATH
 from ..utils.logger import setup_logger
-from .alignment_models import alignment_model_for_language, is_alignment_model_ready
+from .alignment_models import (
+    ALIGNMENT_MODELS,
+    alignment_model_for_language,
+    is_alignment_model_ready,
+)
 from .asr_data import ASRData, ASRDataSeg, ASRWord, TimestampSource
 from .base import BaseASR
 from .compound_numbers import parse_tire_size
@@ -3460,7 +3464,9 @@ class WhisperXASR(BaseASR):
         )
         callback(65, "Loading forced alignment model...")
         align_model_name = self._resolve_align_model_name(language_code)
-        align_spec = alignment_model_for_language(language_code)
+        align_spec = next(
+            (spec for spec in ALIGNMENT_MODELS if spec.model_name == align_model_name), None
+        )
         if align_spec is not None and not is_alignment_model_ready(align_spec, self.model_dir):
             raise RuntimeError(
                 f"The {align_spec.language_name} forced alignment model is not "

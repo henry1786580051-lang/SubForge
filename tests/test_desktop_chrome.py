@@ -28,7 +28,7 @@ def test_bridge_state_is_bounded_and_does_not_trust_truthy_values():
 
 
 def test_native_navigation_accepts_only_known_destinations():
-    for page in ("import", "transcribe", "subtitle", "free-models", "llm-logs", "settings"):
+    for page in ("import", "transcribe", "subtitle", "llm-logs", "settings"):
         state = desktop_chrome.normalize_state({"navigation": page, "sidebar_collapsed": True})
         assert state["navigation"] == page
         assert state["sidebar_collapsed"] is True

@@ -163,6 +163,12 @@ def coverage_review_ranges(issues: list[dict]) -> str:
 
 
 def coverage_issue_message(issues: list[dict]) -> str:
+    if any(i.get("reason") == "suspected_repetition" for i in issues):
+        return (
+            "Repeated subtitles could not be verified against the original audio. "
+            f"Review these regions: {coverage_review_ranges(issues)}. "
+            "Partial subtitles have been preserved."
+        )
     if any(i.get("reason") == "final_audit_unavailable" for i in issues):
         return "Final speech coverage verification was unavailable. Partial subtitles have been preserved and need review."
 

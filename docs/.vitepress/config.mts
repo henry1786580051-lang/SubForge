@@ -256,6 +256,7 @@ export default defineConfig({
                 { text: '快速开始', link: '/guide/getting-started' },
                 { text: '快速示例', link: '/guide/quick-example' },
                 { text: 'LLM API 配置', link: '/guide/llm-config' },
+                { text: '联网术语核实', link: '/guide/web-terminology' },
                 { text: 'Cookie 配置', link: '/guide/cookies-config' },
                 { text: '基础配置', link: '/guide/configuration' },
                 { text: '工作流程', link: '/guide/workflow' },

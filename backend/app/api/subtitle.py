@@ -338,6 +338,12 @@ def _recovery_result(
     return result
 
 
+def _web_research_metadata(report: dict, warnings: list[str]) -> dict:
+    if report.get("status") in {"unavailable", "unsupported_provider"}:
+        warnings.append("联网术语核实未完成，已继续使用原文上下文翻译。")
+    return {"web_research": report} if report else {}
+
+
 async def _run_subtitle(
     task_id: str,
     req: SubtitleRequest,
@@ -355,6 +361,7 @@ async def _run_subtitle(
     timing_speech_segments: list[tuple[int, int]] = []
     timing_media_duration_ms: int | None = None
     pipeline_warnings: list[str] = []
+    web_research_report: dict[str, Any] = {}
     identity_supplied = pipeline_identity is not None
     pipeline_identity = pipeline_identity or LEGACY_TRANSLATION_PIPELINE
     context = create_pipeline_context(task_id)
@@ -686,6 +693,7 @@ async def _run_subtitle(
                     ),
                 )
                 context.checkpoint()
+                web_research_report = translation_context.research_report
                 context.report(65, "Translating subtitles...")
             source_lock = lock_source_segments(asr_data)
             translator = TranslatorFactory.create_translator(
@@ -792,6 +800,7 @@ async def _run_subtitle(
             message="Subtitle file saved",
         )
         final_preview_revision = task_manager.get_preview_revision(task_id)
+        web_metadata = _web_research_metadata(web_research_report, pipeline_warnings)
         completion_message = "Done with processing warnings" if pipeline_warnings else "Done"
         context.report(100, completion_message)
         completion_result: dict[str, Any] = {
@@ -800,6 +809,7 @@ async def _run_subtitle(
             "segments": final_preview,
             "warnings": pipeline_warnings,
         }
+        completion_result.update(web_metadata)
         if pipeline_identity.is_candidate:
             completion_result["pipeline"] = pipeline_identity.result_metadata()
             telemetry_path = _write_candidate_telemetry(

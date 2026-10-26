@@ -309,7 +309,7 @@ export function useTaskMonitor() {
       const store = useAppStore.getState();
       if (pendingStartRef.current !== null
         || (store.currentTaskId && store.taskStatus === "running")) return;
-      if (type === "subtitle" && hasUnsavedSubtitles(store)) {
+      if (hasUnsavedSubtitles(store)) {
         setIsProcessing(false);
         setError("请先保存字幕修改，再开始处理，以确保使用当前编辑内容。");
         return;

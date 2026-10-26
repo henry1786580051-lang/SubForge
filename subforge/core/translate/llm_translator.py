@@ -4847,6 +4847,8 @@ Return exactly one JSON object with all and only the current_subtitles keys:
         if self.target_language.value not in {"简体中文", "繁体中文", "粤语"}:
             return True, ""
 
+        from subforge.core.translate.web_research import verified_targets_for_source
+
         leaked: list[str] = []
         latin_name_pattern = (
             r"(?<![A-Za-z0-9])(?:[A-Z][a-z]{2,}|"
@@ -4866,6 +4868,12 @@ Return exactly one JSON object with all and only the current_subtitles keys:
             source_tokens = {
                 token.casefold() for token in re.findall(source_name_pattern, original_source)
             }
+            source_tokens.update(
+                token.casefold() for token in re.findall(
+                    source_name_pattern,
+                    verified_targets_for_source(self.translation_context, original_source),
+                )
+            )
             source_tokens.update(
                 part
                 for token in tuple(source_tokens)

@@ -6,7 +6,7 @@ import difflib
 import json
 import re
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 from subforge.core.asr.asr_data import ASRData
@@ -114,6 +114,7 @@ _GRAMMATICAL_TERM_TOKENS = frozenset(
         "theirs",
         "them",
         "themselves",
+        "these",
         "they",
         "this",
         "those",
@@ -165,6 +166,8 @@ class TranslationContext:
     terminology: str = ""
     style: str = ""
     custom_prompt: str = ""
+    research_notes: str = ""
+    research_report: dict[str, Any] = field(default_factory=dict)
 
     def render(self) -> str:
         parts = []
@@ -174,6 +177,8 @@ class TranslationContext:
             parts.append(f"Terminology and proper nouns:\n{self.terminology.strip()}")
         if self.style.strip():
             parts.append(f"Tone and style:\n{self.style.strip()}")
+        if self.research_notes.strip():
+            parts.append(self.research_notes.strip())
         if self.custom_prompt.strip():
             parts.append(f"User requirements:\n{self.custom_prompt.strip()}")
         return "\n\n".join(parts).strip()
@@ -185,6 +190,7 @@ class TranslationContext:
                 "terminology": self.terminology,
                 "style": self.style,
                 "custom_prompt": self.custom_prompt,
+                **({"research_notes": self.research_notes} if self.research_notes else {}),
             }
         )
 
@@ -1875,7 +1881,7 @@ def _document_numeric_contexts(segments: Iterable[str]) -> list[str]:
     return contexts
 
 
-def build_translation_context(
+def _build_translation_context(
     asr_data: ASRData,
     model: str,
     target_language: TargetLanguage,
@@ -2180,3 +2186,30 @@ def build_translation_context(
             terminology=_format_terms(deterministic_corrections),
             custom_prompt=custom_prompt,
         )
+
+
+def build_translation_context(
+    asr_data: ASRData,
+    model: str,
+    target_language: TargetLanguage,
+    custom_prompt: str = "",
+    use_cache: bool = True,
+    llm_client: Any = None,
+    cache_namespace: str = "",
+) -> TranslationContext:
+    """Build source context and automatically verify terms on supported task clients."""
+    context = _build_translation_context(
+        asr_data, model, target_language, custom_prompt, use_cache, llm_client, cache_namespace,
+    )
+    from subforge.core.translate.web_research import (
+        research_translation_terms,
+        supports_web_research,
+    )
+
+    if not supports_web_research(llm_client):
+        return context
+
+    return research_translation_terms(
+        context, transcript=_compact_transcript(segment.text for segment in asr_data.segments),
+        model=model, target_language=target_language.value, client=llm_client,
+    )
