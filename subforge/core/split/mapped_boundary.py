@@ -43,7 +43,22 @@ def map_cleaned_words(cue: ASRDataSeg) -> CueWordMapping:
     speakers = {w.speaker_id for w in raw if w.speaker_id}
     if len(speakers) > 1 or (speakers and cue.speaker_id and cue.speaker_id not in speakers):
         return fail("mixed speaker evidence")
-    before, after = [_key(w.text) for w in raw], [_key(t) for t in display]
+
+    def keys(tokens):
+        result = [_key(token) for token in tokens]
+        # Preserve the actual raw token/time while mapping the optimizer's
+        # narrow, established engine-term spelling correction. Ordinary ordinal
+        # changes ("the sixth" -> "the six") remain unsupported replacements.
+        for i in range(1, len(result)):
+            if (
+                result[i] == "sixth"
+                and result[i - 1] == "flat"
+                and (i + 1 == len(result) or result[i + 1] != "gear")
+            ):
+                result[i] = "six"
+        return result
+
+    before, after = keys(w.text for w in raw), keys(display)
     if any(not token for token in after):
         return fail("unmapped punctuation token")
     indices, deleted = [], []

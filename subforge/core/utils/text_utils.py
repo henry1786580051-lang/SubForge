@@ -69,6 +69,13 @@ def is_space_separated_language(text: str) -> bool:
     return bool(re.match(_SPACE_SEPARATED_LANGUAGES, text.strip()))
 
 
+def count_reading_units(text: str) -> int:
+    """Count CJK characters and visible words, excluding punctuation-only runs."""
+    chars = len(re.findall(_NO_SPACE_LANGUAGES, text))
+    words = re.sub(_NO_SPACE_LANGUAGES, " ", text).split()
+    return chars + sum(bool(re.search(r"\w", word)) for word in words)
+
+
 def count_words(text: str) -> int:
     """统计文本字符/单词数
 

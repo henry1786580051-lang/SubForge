@@ -536,6 +536,51 @@ def test_subtitle_pipeline_cleans_chinese_translation_punctuation(tmp_path, monk
     assert "Hello, world." in output
 
 
+@pytest.mark.parametrize("unresolved", [[], [1]])
+def test_pipeline_forwards_cjk_budget_and_reports_faithful_overflow(tmp_path, monkeypatch, unresolved):
+    import asyncio
+
+    import subforge.core.translate.context as context_module
+
+    source = tmp_path / "input.srt"
+    source.write_text(
+        "1\n00:00:00,000 --> 00:00:06,000\nThe 2026 Lexus ES350H Premium All-Wheel Drive.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config_module, "get_config_value", lambda key, default=None: {
+        "thread_num": 1, "batch_size": 1, "max_word_count_cjk": 16,
+    }.get(key, default))
+    _mock_llm_runtime(monkeypatch, {"llm_api_key": "test-key", "llm_base_url": "https://example.test/v1"})
+    monkeypatch.setattr(llm_module, "create_client", lambda **kw: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(context_module, "build_translation_context", lambda *a, **kw: context_module.TranslationContext())
+    received = {}
+
+    class Translator:
+        readability_issues = [{"id": 1, "units": 18, "limit": 16}]
+        structure_review = {"status": "needs_review" if unresolved else "passed", "unresolved_boundaries": unresolved}
+
+        def translate_subtitle(self, data):
+            data.segments[0].translated_text = "2026款雷克萨斯ES350H Premium全轮驱动版"
+            return data
+
+    def factory(**kwargs):
+        received.update(kwargs)
+        return Translator()
+
+    monkeypatch.setattr(TranslatorFactory, "create_translator", staticmethod(factory))
+    task = task_manager.create_task("subtitle")
+    asyncio.run(_run_subtitle(task.id, SubtitleRequest(
+        subtitle_file=str(source), translator="llm", need_optimize=False,
+    )))
+    done = task_manager.get_task(task.id)
+    assert done.status.value == "completed"
+    assert received["max_word_count_cjk"] == 16
+    assert "reading budget" in done.result["warnings"][0]
+    assert "ES350H Premium全轮驱动版" in Path(done.result["subtitle_file"]).read_text()
+    assert done.result["quality_review"]["structure"] == Translator.structure_review
+    assert any("字幕结构仍需复核" in w for w in done.result["warnings"]) == bool(unresolved)
+
+
 def test_subtitle_pipeline_finalizes_word_backed_sentence_timing(tmp_path, monkeypatch, passthrough_optimizer):
     import asyncio
 
@@ -765,6 +810,8 @@ def test_failed_translation_saves_punctuation_cleaned_recovery_file(
         def __init__(self, update_callback):
             self.update_callback = update_callback
 
+        recovery_review = {"status": "partial", "missing_indices": [2], "reviewed_indices": [1], "unchecked_indices": []}
+
         def translate_subtitle(self, _asr_data):
             self.update_callback(
                 [
@@ -820,7 +867,7 @@ def test_failed_translation_saves_punctuation_cleaned_recovery_file(
     assert "第一条 已经完成" in recovery
     assert "第二条" not in recovery
     assert task_result.status.value == "failed"
-    expected_result = {"recovery_file": str(recovery_path)}
+    expected_result = {"recovery_file": str(recovery_path), "quality_review": {"recovery": FakeTranslator.recovery_review}}
     if candidate:
         expected_result["pipeline"] = {
             "variant": "candidate",

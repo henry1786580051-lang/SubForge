@@ -763,6 +763,16 @@ _ENGLISH_ENTITY_RULES = (
         ("left_tail", "right_vehicle_type"),
     ),
     BoundaryScoreRule(
+        "split.boundary.english.entity.vehicle_identifier",
+        "vehicle name or drive identifier split across cues",
+        "entity",
+        BoundaryScoreDirection.RISK,
+        80,
+        ("en",),
+        ("monologue", "dialogue"),
+        ("source_vehicle_span", "boundary_position"),
+    ),
+    BoundaryScoreRule(
         "split.boundary.english.entity.city_state",
         "place name split between city and state",
         "entity",

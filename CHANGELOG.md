@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.3.9 - 2026-10-29
+
+### Opening presentations and complete vehicle identifiers
+
+- Separate a greeting/channel introduction from the following vehicle presentation using original word timings. Allow the short opening to change cue count, so the complete vehicle can occupy one cue and its generation/flagship description can follow separately.
+- Protect brand/model identifiers, spaced letter/number identifiers and drive labels from being split. Recognize complete vehicle appositions and scoped channel introductions as valid boundaries, so later normalization retains the intended layout.
+- Feed the configured CJK reading budget into LLM translation. Try one compact rewrite of an overlong opening, retaining confirmed terminology and accepting it only after ownership, identifier, numeric and independent fidelity checks. Preserve faithful overflow with a review notice rather than truncate facts.
+- Recognize a number before sentence-final punctuation as owned by that source cue. Repeated model/calendar years no longer trigger a false cross-key duplication error; genuine borrowing and decimal-prefix protection remain covered.
+- Replay the reported Lexus opening from four source layouts, with exact word/timing retention, idempotence, speaker/language/pause guards, multilingual identifiers, rejected rewrite and cancellation regressions. A bounded 38-second official `deepseek-flash` production run preserves every opening source token and keeps `2026 Lexus ES350H Premium All-Wheel Drive` in one cue. The opening becomes four cues; the model translation is 17 reading units against a soft target of 16, with facts preserved.
+
+### Syntax units, Chinese structure and reliable recovery
+
+- Plan a variable number of cues around evidenced source phrase breaks. Keep conditional complements, modal/adverb/action groups, engine specifications, nominal heads and vehicle identifiers together, using unchanged raw words and timestamps. Preserve speaker, language, pause and provenance guards.
+- Make source-backed Chinese structure defects mandatory review candidates, including stranded modifiers, conditions, qualification phrases, split engine terms and duplicated clause frames. Exclude complete disposal predicates, compound words and independently timed spoken hesitations from hard error rules. Move an adversative across a pause only with explicit source support and independent ownership/fidelity validation.
+- Resolve physical up/down pronouns from nearby lift, window or roof context. Reject an event-happening translation when that source evidence instead establishes a physical lowering or raising action.
+- Accept an exact, ordered enumeration of model identifiers without requiring invented Chinese filler; reject changed/reordered names and ordinary English prose.
+- Review intact recovery regions independently when a genuinely missing cue prevents whole-document completion. Preserve the last usable checkpoint if finalization fails, propagate cancellation, avoid further review calls after provider failure, and expose missing, reviewed, unchecked and unresolved items in task results and the desktop UI.
+- Validation: 3309 local Python tests and 77 frontend tests passed; 35 external integration tests were deselected. Ruff, frontend lint/build and Pyright (0 errors, 29 existing warnings) passed. Official `deepseek-flash` production replays cover the full 5691-word Porsche transcript and 11 reported/additional windows. The final replay bypassed local response caches and produced 623 bilingual cues; after correcting the last numeric-rule false positive, the unchanged output passes all 622 mandatory boundary checks. Preserve 130 cues over the soft CJK reading target rather than remove facts.
+- Distribute the locally built Apple Silicon DMG and the standard Windows x64 EXE built by GitHub Actions. Validate both the packaged and installed runtime before publication. Model weights remain separate; macOS uses ad-hoc signing without Apple notarization.
+
 ## v1.3.8 - 2026-10-27
 
 ### Transcription hallucination review

@@ -11,6 +11,10 @@ from .visible_pause import BoundarySignalMatch, _match
 _CONNECTIVE_TAIL = re.compile(
     r"(?:但|但是|不过|而且|并且|所以|因为|如果|尽管|除非|和|与|及|以及|或者|总之)$"
 )
+_CLOSED_COMPOUND = re.compile(
+    r"(?:温和|溫和|柔和|缓和|緩和|平和|暖和|饱和|飽和|中和|调和|調和|附和|总和|總和|求和|"
+    r"参与|參與|授与|授與|给与|給與|涉及|提及|触及|觸及|波及|普及|顾及|顧及)$"
+)
 _COPULAR_BRIDGE_TAIL = re.compile(r"在于$")
 _COPULAR_TOPIC_TAIL = re.compile(r"(?:重点|关键|原因|问题|事实|观点|想法)$")
 _COPULAR_RESULT_START = re.compile(r"^是(?:要|在|让|把|我们|你们|他们|她们|它们|这|那)")
@@ -37,15 +41,13 @@ def detect_discourse_bridge_boundary(
     if features.right and split_stranded_scope_adverb(features.raw_left):
         return _match("scope adverb is separated from its complement")
 
-    if _CONNECTIVE_TAIL.search(features.left):
+    if _CONNECTIVE_TAIL.search(features.left) and not _CLOSED_COMPOUND.search(features.left):
         return _match("connective stranded at previous subtitle end")
 
     if _COPULAR_BRIDGE_TAIL.search(features.left):
         return _match("possible copular bridge")
 
-    if _COPULAR_TOPIC_TAIL.search(features.left) and _COPULAR_RESULT_START.match(
-        features.right
-    ):
+    if _COPULAR_TOPIC_TAIL.search(features.left) and _COPULAR_RESULT_START.match(features.right):
         return _match("possible copular bridge")
 
     return None

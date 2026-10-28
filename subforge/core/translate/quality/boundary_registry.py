@@ -40,6 +40,7 @@ class BoundaryRuleDefinition:
 
 
 _TARGET_RULE_IDS = {
+    "source-backed Chinese syntax unit is split": "translation.boundary.target.source_backed_unit",
     "standalone connective": "translation.boundary.target.standalone_connective",
     "demonstrative subject is stranded": "translation.boundary.target.demonstrative_subject",
     "existential predicate is separated from its object": "translation.boundary.target.existential_object",

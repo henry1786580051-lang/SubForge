@@ -309,6 +309,7 @@ def participle_complement(features: EnglishBoundaryFeatures) -> bool:
     return bool(
         features.right[:1].islower()
         and re.fullmatch(r"[a-z][a-z'’-]*(?:ing|ed)", features.tail)
+        and features.tail not in {"anything", "everything", "nothing", "something"}
         and features.head
         in {
             "a",

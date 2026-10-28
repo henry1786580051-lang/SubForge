@@ -32,6 +32,12 @@ from subforge.core.split.boundary_registry import (
     record_boundary_score,
 )
 from subforge.core.split.structural import structural_dependency
+from subforge.core.split.syntax_units import descriptive_clause_seam, is_atomic_seam
+from subforge.core.split.vehicle_names import (
+    introduction_seam,
+    splits_vehicle_name,
+    vehicle_apposition,
+)
 from subforge.core.utils.logger import setup_logger
 
 logger = setup_logger("subtitle_boundary")
@@ -1806,6 +1812,12 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
     features = extract_english_boundary_features(left, right)
     if not features.eligible:
         return BoundaryAssessment(0, ())
+    if (
+        descriptive_clause_seam(features.left, features.right)
+        or introduction_seam(features.left, features.right)
+        or vehicle_apposition(features.left, features.right)
+    ):
+        return BoundaryAssessment(0, ())
 
     right = features.right
     risk = 0
@@ -1814,6 +1826,12 @@ def assess_english_boundary(left: str, right: str) -> BoundaryAssessment:
 
     for score_stage in _ENGLISH_BOUNDARY_SCORE_STAGES:
         risk += score_stage(features, reasons, contributions)
+    if splits_vehicle_name(features.left, features.right):
+        risk += record_boundary_score(
+            "split.boundary.english.entity.vehicle_identifier",
+            reasons=reasons,
+            contributions=contributions,
+        )
     # A lowercase continuation makes a dangling tail more likely, but is not
     # sufficient by itself: natural subtitle clauses often continue lowercase.
     if risk and right[:1].islower():
@@ -2212,7 +2230,7 @@ def _split_internal_terminal_clauses(
             continue
         suffix_text = _join_words(segment.words[boundary:])
         following = segments[segment_index + 1]
-        if not assess_english_boundary(suffix_text, following.text).unstable:
+        if not re.match(r"^(?:if|when|unless)\b", suffix_text, re.I) and not assess_english_boundary(suffix_text, following.text).unstable:
             result.append(segment)
             continue
 
@@ -2464,6 +2482,8 @@ def _boundary_cost(
     left = _join_words(words[:position])
     right = _join_words(words[position:])
     assessment = assess_english_boundary(left, right)
+    if is_atomic_seam(left, right) or (assessment.risk and splits_vehicle_name(left, right)):
+        return float("inf"), assessment.risk
     tail = words[position - 1].text.strip()
     right_tokens = _tokens(words[position].text)
     head = right_tokens[0] if right_tokens else ""
@@ -2566,6 +2586,8 @@ def _best_region_breaks(
                 if segment_cost == float("inf"):
                     continue
                 boundary_cost, boundary_risk = _boundary_cost(words, position, original)
+                if boundary_cost == float("inf"):
+                    continue
                 candidate = (
                     cost + segment_cost + boundary_cost,
                     path + [position],
@@ -2763,6 +2785,22 @@ def normalize_boundaries(
     result = _repair_stranded_temporal_clauses(result, hard_max_words=hard_max_words)
     result = _remove_singular_corrections(result)
     result = _split_internal_terminal_clauses(result)
+    from subforge.core.split.presentation import plan_presentations
+
+    result = plan_presentations(
+        result,
+        hard_max_words=hard_max_words,
+        join_words=_join_words,
+        make_cue=_make_cue,
+        hard_boundary=_is_hard_boundary,
+    )
+    from subforge.core.split.unit_planner import plan_syntax_units
+
+    result = plan_syntax_units(
+        result, soft_max=soft_max_words, hard_max=hard_max_words,
+        join_words=_join_words, make_cue=_make_cue, hard_boundary=_is_hard_boundary,
+        assess=assess_english_boundary,
+    )
     result = _repair_japanese_boundaries_until_stable(
         result,
         hard_max_chars=hard_max_cjk_chars,

@@ -195,6 +195,30 @@ describe("useTaskMonitor ordering", () => {
     expect(harness.start).toHaveBeenCalled();
   });
 
+  it("shows unresolved structure review after completion and keeps the saved output", () => {
+    dispatch(task({ status: "completed", result: {
+      subtitle_file: "/tmp/final.srt", segments: [segment("final")],
+      quality_review: { structure: { status: "needs_review", unresolved_boundaries: [19] } },
+    } }));
+    expect(harness.store.setTaskState).toHaveBeenLastCalledWith(100, expect.stringContaining("第 19 条附近"), "completed");
+    expect(harness.store.setSubtitleFile).toHaveBeenCalledWith("/tmp/final.srt");
+    expect(harness.store.subtitles).toEqual([segment("final")]);
+    expect(harness.store.setError).not.toHaveBeenCalled();
+  });
+
+  it("keeps recovery review counts visible beside the failure reason", () => {
+    dispatch(task({ status: "failed", error: "provider unavailable", result: {
+      recovery_file: "/tmp/recovery.srt", segments: [segment("saved recovery")],
+      quality_review: { recovery: {
+        status: "partial", missing_indices: [3], reviewed_indices: [1, 2], unchecked_indices: [4, 5],
+      } },
+    } }));
+    expect(harness.store.setError).toHaveBeenCalledWith(expect.stringContaining("provider unavailable"));
+    expect(harness.store.setError).toHaveBeenCalledWith(expect.stringContaining("1 条缺译（3），已复核 2 条，未复核 2 条"));
+    expect(harness.store.subtitles).toEqual([segment("saved recovery")]);
+    expect(harness.store.status).toBe("failed");
+  });
+
   it("marks a persisted final preview clean when completion contains only its revision", () => {
     dispatch(task({ preview_revision: 3, preview_segments: [segment("final preview")] }));
     dispatch(task({ status: "completed", result: { subtitle_file: "/tmp/final.srt", preview_revision: 3 } }));

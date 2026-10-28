@@ -72,7 +72,10 @@ from subforge.core.translate.quality import (
 from subforge.core.translate.quality.chinese_boundary_detectors.discourse_bridge import (
     split_stranded_scope_adverb,
 )
-from subforge.core.translate.quality.closed_boundary import is_closed_soft_boundary
+from subforge.core.translate.quality.closed_boundary import (
+    is_closed_soft_boundary,
+    is_complete_source_frame,
+)
 from subforge.core.translate.quality.numbers import normalize_grouped_numbers
 from subforge.core.translate.quality.preservation import (
     _CHINESE_ENTITY_ALIASES,
@@ -83,6 +86,7 @@ from subforge.core.translate.quality.preservation import (
 from subforge.core.translate.quality.verdict_cache import PositiveVerdictCache
 from subforge.core.translate.types import TargetLanguage
 from subforge.core.utils.cache import generate_cache_key
+from subforge.core.utils.text_utils import count_reading_units
 
 
 class LLMTranslator(BaseTranslator):
@@ -126,6 +130,7 @@ class LLMTranslator(BaseTranslator):
         llm_client: Any = None,
         cache_namespace: str = "",
         collect_canonical_evidence_telemetry: bool = False,
+        max_word_count_cjk: int | None = None,
     ):
         super().__init__(
             thread_num=thread_num,
@@ -138,6 +143,11 @@ class LLMTranslator(BaseTranslator):
 
         self.model = model
         self.custom_prompt = custom_prompt
+        self.max_word_count_cjk = max(1, int(max_word_count_cjk)) if max_word_count_cjk else None
+        self.readability_issues: list[dict] = []
+        self._presentation_indices: tuple[int, ...] = ()
+        self.structure_review: dict = {}
+        self._structure_failures: set[int] = set()
         self.is_reflect = is_reflect
         self.translation_context = translation_context or TranslationContext(
             custom_prompt=custom_prompt
@@ -263,6 +273,12 @@ class LLMTranslator(BaseTranslator):
         )
 
     def translate_subtitle(self, subtitle_data):
+        from subforge.core.split.presentation import opening_presentation_indices
+
+        self.readability_issues = []
+        self._presentation_indices = opening_presentation_indices(subtitle_data.segments)
+        self.structure_review = {}
+        self._structure_failures.clear()
         self._fatal_provider_error.clear()
         self._fatal_provider_message = ""
         self._reset_reasoning_metrics()
@@ -307,7 +323,20 @@ class LLMTranslator(BaseTranslator):
             alias = speaker_aliases.setdefault(raw_speaker, f"S{len(speaker_aliases) + 1}")
             self._all_speaker_by_index[index] = alias
         try:
-            return super().translate_subtitle(subtitle_data)
+            result = super().translate_subtitle(subtitle_data)
+            self.readability_issues = []
+            budget = self.max_word_count_cjk
+            if budget and self._readability_requirements():
+                self.readability_issues = [
+                    {
+                        "id": i,
+                        "units": count_reading_units(s.translated_text),
+                        "limit": self.max_word_count_cjk,
+                    }
+                    for i, s in enumerate(result.segments, 1)
+                    if count_reading_units(s.translated_text) > budget
+                ]
+            return result
         finally:
             self._log_reasoning_metrics()
             self._all_source_by_index = {}
@@ -316,6 +345,28 @@ class LLMTranslator(BaseTranslator):
             self._gap_after_index = {}
             self._translation_session = None
             self._active_translation_policy = None
+            self._presentation_indices = ()
+
+    def _readability_requirements(self) -> str:
+        if not self.max_word_count_cjk or self.target_language.value not in {
+            "简体中文",
+            "繁体中文",
+            "粤语",
+            "日本語",
+            "韩语",
+        }:
+            return ""
+        return (
+            "\n<subtitle_readability>\n"
+            f"Aim for at most {self.max_word_count_cjk} CJK characters/word units per cue. "
+            "Count each CJK character as one unit and each space-delimited Latin identifier as one word. "
+            "Latin names still occupy visible screen width; prefer compact natural phrasing around them. "
+            "Preserve every name, model identifier, number, negation and material qualifier. "
+            "Never shorten a model identifier, move facts between keys, or drop meaning to meet the budget. "
+            "Keep greetings/channel introductions separate from the vehicle presentation when their source keys are separate. "
+            "If faithful wording cannot fit, preserve fidelity; do not truncate or merge cues.\n"
+            "</subtitle_readability>"
+        )
 
     def _translation_mode_policy(self) -> TranslationModePolicy:
         if self._active_translation_policy is not None:
@@ -471,12 +522,24 @@ class LLMTranslator(BaseTranslator):
         left: str,
         right: str,
     ) -> QualityDiagnostic | None:
-        message = self._long_gap_chinese_boundary_signal(
+        from subforge.core.translate.quality.chinese_boundary_detectors.source_units import (
+            detect_source_unit_boundary,
+        )
+
+        sources = getattr(self, "_all_source_by_index", {})
+        unit_match = detect_source_unit_boundary(sources.get(index, ""), sources.get(index + 1, ""), left, right)
+        message = (unit_match.message if unit_match else "") or self._long_gap_chinese_boundary_signal(
             index,
             left,
             right,
         ) or self._chinese_boundary_signal(left, right)
         source = getattr(self, "_all_source_by_index", {}).get(index, "").strip()
+        if is_complete_source_frame(
+            source, sources.get(index + 1, ""), left, message,
+            gap_ms=self._gap_after_index.get(index, 0),
+            separated_gap_ms=self.SEPARATED_DISPLAY_GAP_MS,
+        ):
+            return None
         if (
             message == "possible function-word split"
             and re.search(r"的[\s，。！？；：、,.!?;:…]*$", left)
@@ -519,7 +582,7 @@ class LLMTranslator(BaseTranslator):
         prompt = get_prompt(
             self._batch_translation_prompt_name(reflect=self.is_reflect),
             target_language=self.target_language.value,
-            custom_prompt=self.custom_prompt,
+            custom_prompt=self.custom_prompt + self._readability_requirements(),
         )
 
         try:
@@ -2468,6 +2531,10 @@ Delete every fact, action, object, name, number, or clause that current_source d
 
     def _agent_loop(self, system_prompt: str, subtitle_dict: Dict[str, str]) -> Dict[str, Any]:
         """Agent loop翻译字幕块"""
+        references = {k: self._physical_motion_reference(k, v) for k, v in subtitle_dict.items()}
+        references = {k: v for k, v in references.items() if v}
+        if references:
+            system_prompt += "\nRead-only local pronoun evidence: " + json.dumps(references, ensure_ascii=False)
         # Review mode is implemented by selective alignment/fluency audits below.
         # The broad first pass should return only final text for every provider;
         # exposing a draft and reflection for every cue adds output cost without
@@ -3077,9 +3144,15 @@ Return exactly one JSON object with all and only the current_subtitles keys:
 
         quiet_component: list[str] = []
         one_touch_window: list[str] = []
+        wrong_motion: list[str] = []
         for key, source in subtitle_dict.items():
             source_text = str(source or "")
             translated = str(extract_text(response_dict.get(key, "")) or "")
+            reference = self._physical_motion_reference(key, source_text)
+            if reference and not re.search(
+                r"(?:下降|降下|降回|落下|降低|放下)" if reference["direction"] == "down" else r"(?:升起|抬升|提升|升高|抬起)", translated
+            ):
+                wrong_motion.append(str(key))
             if (
                 re.search(r"\bquiet\s+(?:air\s+)?vents?\b", source_text, re.IGNORECASE)
                 and re.search(r"出风口.{0,8}(?:安静|安靜)", translated)
@@ -3092,6 +3165,8 @@ Return exactly one JSON object with all and only the current_subtitles keys:
                 one_touch_window.append(str(key))
 
         problems: list[str] = []
+        if wrong_motion:
+            problems.append("Preserve the source's physical raising/lowering action and resolve this/it from the local lift/window/roof context; do not translate go down as an event happening. Keys: " + str(wrong_motion))
         if quiet_component:
             problems.append(
                 "A quiet vent describes low operating or wind noise, not an anthropomorphically "
@@ -3103,6 +3178,13 @@ Return exactly one JSON object with all and only the current_subtitles keys:
                 f"not use the literal generic 'automatic lowering' wording. Keys: {one_touch_window[:20]}"
             )
         return (False, " ".join(problems)) if problems else (True, "")
+
+    def _physical_motion_reference(self, key: str, source: str) -> dict:
+        from subforge.core.translate.quality.references import physical_motion_reference
+
+        if not str(key).isdigit():
+            return {}
+        return physical_motion_reference(int(key), source, getattr(self, "_all_source_by_index", {}), getattr(self, "_gap_after_index", {}))
 
     def _validate_elliptical_automotive_numbers(
         self,
@@ -4490,7 +4572,7 @@ Return exactly one JSON object with all and only the current_subtitles keys:
                 r"[A-Za-z]+\d+[A-Za-z0-9.-]*|"
                 r"\d+(?:\.\d+)+[A-Za-z]+[A-Za-z0-9.-]*|"
                 r"(?<![\w.])\d+[A-Za-z]+[A-Za-z0-9.-]*|"
-                r"(?<![\d.])\d{2,4}(?![\d.]))\b",
+                r"(?<![\d.])\d{2,4}(?!\d|\.\d))\b",
                 str(text or ""),
             )
         }
@@ -5015,7 +5097,7 @@ Return exactly one JSON object with all and only the current_subtitles keys:
         system_prompt = get_prompt(
             self._batch_translation_prompt_name(reflect=False),
             target_language=self.target_language.value,
-            custom_prompt=self.custom_prompt,
+            custom_prompt=self.custom_prompt + self._readability_requirements(),
         )
         system_prompt += self._dialogue_prompt_rules(subtitle_dict)
         style_rules = self._target_language_style_rules(subtitle_dict.values())
@@ -5180,6 +5262,7 @@ Return exactly one JSON object with all and only the current_subtitles keys:
             "translate/single",
             target_language=self.target_language.value,
         )
+        single_prompt += self._readability_requirements()
 
         def _looks_untranslated(
             text: str,
@@ -5420,6 +5503,160 @@ Return exactly one JSON object with all and only the current_subtitles keys:
         return widened
 
     def _finalize_translated_list(
+        self,
+        source_list: List[SubtitleProcessData],
+        translated_list: List[SubtitleProcessData],
+    ) -> List[SubtitleProcessData]:
+        if not self.is_running:
+            raise LLMRequestCancelled("Translation cancelled before document review")
+        finalized = self._finalize_alignment(source_list, translated_list)
+        if not self.is_reflect or is_lmstudio_qwen_38_request(self.model, self.llm_client) or not self._needs_alignment_audit():
+            by_index = {s.index: s for s in finalized}
+            self._repair_chinese_boundary_fluency(source_list, by_index, mandatory_only=True)
+            finalized = [by_index[s.index] for s in source_list]
+        finalized = self._compact_opening_presentation(source_list, finalized)
+        if not self.is_running:
+            raise LLMRequestCancelled("Translation cancelled during document review")
+        self._record_structure_review(source_list, finalized)
+        return finalized
+
+    def _record_structure_review(self, source_list, translated_list) -> None:
+        if self.target_language.value not in {"简体中文", "繁体中文", "粤语"}:
+            return
+        checked = {a.index for a, b in zip(source_list, source_list[1:]) if b.index == a.index + 1}
+        by_index = {s.index: s for s in translated_list}
+        unresolved = set(self._mandatory_chinese_fluency_candidates(source_list, by_index))
+        unresolved.update(checked & self._structure_failures)
+        previous = self.structure_review
+        unresolved.update(set(previous.get("unresolved_boundaries", [])) - checked)
+        checked.update(previous.get("checked_boundaries", []))
+        self.structure_review = {
+            "status": "needs_review" if unresolved else "passed",
+            "checked_boundaries": sorted(checked),
+            "unresolved_boundaries": sorted(unresolved),
+        }
+
+    def _can_review_recovery(self) -> bool:
+        return self.is_running and not self._fatal_provider_error.is_set()
+
+    def _compact_opening_presentation(
+        self,
+        source_list: List[SubtitleProcessData],
+        translated_list: List[SubtitleProcessData],
+    ) -> List[SubtitleProcessData]:
+        """Try one bounded, independently validated rewrite of a dense opening."""
+        if (
+            not self._presentation_indices
+            or not self._readability_requirements()
+            or self.target_language.value not in {"简体中文", "繁体中文", "粤语"}
+        ):
+            return translated_list
+        budget = self.max_word_count_cjk
+        assert budget is not None
+        source = [s for s in source_list if s.index in self._presentation_indices]
+        current = [s for s in translated_list if s.index in self._presentation_indices]
+        overlong = {s.index for s in current if count_reading_units(s.translated_text) > budget}
+        if not overlong or len(source) != len(current):
+            return translated_list
+        if not self.is_running:
+            raise LLMRequestCancelled("Translation cancelled before opening compact rewrite")
+        try:
+            repaired = self._rewrite_presentation_readability(source, current, overlong)
+            before = {s.index: s.translated_text for s in current}
+            if {s.index for s in repaired} != set(before) or len(repaired) != len(before):
+                raise ValueError("compact rewrite changed subtitle keys")
+            for item in repaired:
+                old = before[item.index]
+                if item.index not in overlong and item.translated_text != old:
+                    raise ValueError("compact rewrite changed an unrelated cue")
+                if item.index in overlong and (
+                    count_reading_units(item.translated_text) > count_reading_units(old)
+                    or len(re.sub(r"\s", "", item.translated_text)) > len(re.sub(r"\s", "", old))
+                ):
+                    raise ValueError("compact rewrite did not reduce reading load")
+            if not any(
+                count_reading_units(s.translated_text) < count_reading_units(before[s.index])
+                for s in repaired
+            ):
+                raise ValueError("compact rewrite did not improve reading load")
+            self._validate_chinese_fluency_repair(source, current, repaired)
+            if not self.is_running:
+                raise LLMRequestCancelled("Translation cancelled during opening compact rewrite")
+        except LLMRequestCancelled:
+            raise
+        except Exception as error:
+            logger.warning("Opening compact rewrite retained the validated translation: %s", error)
+            return translated_list
+        replacements = {s.index: s.translated_text for s in repaired}
+        return [
+            replace(s, translated_text=replacements.get(s.index, s.translated_text))
+            for s in translated_list
+        ]
+
+    def _rewrite_presentation_readability(
+        self,
+        source: List[SubtitleProcessData],
+        current: List[SubtitleProcessData],
+        overlong: set[int],
+    ) -> List[SubtitleProcessData]:
+        by_index = {s.index: s for s in current}
+        payload = {
+            str(s.index): {
+                "source": self._source_for_translation(s.original_text),
+                "translation": by_index[s.index].translated_text,
+                "current_units": count_reading_units(by_index[s.index].translated_text),
+                "required_terms": [
+                    term
+                    for term in (
+                        self._confirmed_context_canonical(s.original_text),
+                        self._confirmed_context_epithet_target(s.original_text),
+                        self._confirmed_context_official_identifier_target(s.original_text),
+                    )
+                    if term
+                ],
+            }
+            for s in source
+            if s.index in overlong
+        }
+        response = call_llm(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        f"Compact these {self.target_language.value} opening subtitles for readability. "
+                        + self._readability_requirements()
+                        + "Use concise faithful phrasing: 'this week I've been living with' can be '本周体验', "
+                        "and 'All-Wheel Drive' can be '全驱'. Remove redundant verbal padding, not facts. "
+                        "The full brand, model, trim, year, negation and material qualifiers must stay "
+                        "in their own key. Preserve repeated years wherever the source repeats them. "
+                        "Copy every required_terms string exactly in its own key. You may omit redundant "
+                        "pronouns and label words such as 款/版 where the year or trim already makes them clear. "
+                        "Count your proposed wording before returning it. Keep each value within the "
+                        "budget if possible; if facts cannot fit, retain them. Return only a flat JSON "
+                        "object mapping each provided key to its compact translation."
+                    ),
+                },
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            model=self.model,
+            temperature=0,
+            use_cache=self.use_cache,
+            cache_namespace=self.cache_namespace,
+            client=self.llm_client,
+            reasoning_mode="disabled",
+            max_output_tokens=1024,
+        )
+        values = parse_json_object(get_response_text(response))
+        if set(values) != set(payload) or any(
+            not isinstance(v, str) or not v.strip() for v in values.values()
+        ):
+            raise ValueError("compact rewrite returned invalid subtitle keys or values")
+        return [
+            replace(s, translated_text=values[str(s.index)].strip()) if s.index in overlong else s
+            for s in current
+        ]
+
+    def _finalize_alignment(
         self,
         source_list: List[SubtitleProcessData],
         translated_list: List[SubtitleProcessData],
@@ -6131,6 +6368,7 @@ Return exactly one JSON object with all and only the current_subtitles keys:
         self,
         source_list: List[SubtitleProcessData],
         translated_by_index: Dict[int, SubtitleProcessData],
+        *, mandatory_only: bool = False,
     ) -> None:
         """Repair only independently confirmed Chinese syntax breaks across keys.
 
@@ -6148,8 +6386,9 @@ Return exactly one JSON object with all and only the current_subtitles keys:
         if not self._all_source_by_index:
             return
 
-        candidates = self._chinese_fluency_candidates(source_list, translated_by_index)
-        if not candidates:
+        mandatory = self._mandatory_chinese_fluency_candidates(source_list, translated_by_index)
+        candidates = [] if mandatory_only else self._chinese_fluency_candidates(source_list, translated_by_index)
+        if not candidates and not mandatory:
             return
 
         batches = [
@@ -6158,7 +6397,7 @@ Return exactly one JSON object with all and only the current_subtitles keys:
         ]
         confirmed: list[int] = []
         audit_results: list[tuple[int, list[int]]] = []
-        audit_workers = min(self.thread_num, len(batches))
+        audit_workers = max(1, min(self.thread_num, len(batches)))
         with ThreadPoolExecutor(max_workers=audit_workers) as executor:
             futures = {
                 executor.submit(
@@ -6173,7 +6412,10 @@ Return exactly one JSON object with all and only the current_subtitles keys:
                 batch = futures[future]
                 try:
                     audit_results.append((batch[0], future.result()))
+                except (LLMRequestCancelled, InterruptedError):
+                    raise
                 except Exception as error:
+                    self._structure_failures.update(batch)
                     logger.warning(
                         "Chinese boundary fluency audit failed for candidate batch %s; "
                         "retaining validated text: %s",
@@ -6182,12 +6424,7 @@ Return exactly one JSON object with all and only the current_subtitles keys:
                     )
         for _first_index, result in sorted(audit_results):
             confirmed.extend(result)
-        confirmed.extend(
-            self._mandatory_chinese_fluency_candidates(
-                source_list,
-                translated_by_index,
-            )
-        )
+        confirmed.extend(mandatory)
         confirmed = list(dict.fromkeys(confirmed))
 
         if not confirmed:
@@ -6237,11 +6474,13 @@ Return exactly one JSON object with all and only the current_subtitles keys:
         accepted: list[List[SubtitleProcessData]] = []
         for window in windows:
             if not self.is_running:
-                break
+                raise LLMRequestCancelled("Translation cancelled during structural review")
             _, repaired, repair_error = self._repair_chinese_fluency_window_with_retries(
                 window, [current[item.index] for item in window]
             )
             if repaired is None:
+                with self._pending_alignment_repair_lock:
+                    self._structure_failures.update(s.index for s in window[:-1])
                 logger.warning(
                     "Chinese boundary fluency repair failed for subtitles %s; retaining "
                     "the previous translations: %s",
@@ -6251,6 +6490,8 @@ Return exactly one JSON object with all and only the current_subtitles keys:
                 continue
             candidate = {item.index: item for item in repaired}
             if set(candidate) != {item.index for item in window} or len(candidate) != len(repaired):
+                with self._pending_alignment_repair_lock:
+                    self._structure_failures.update(s.index for s in window[:-1])
                 logger.warning("Discarding fluency repair with changed cue ownership")
                 continue
             changed = {
@@ -6259,6 +6500,8 @@ Return exactly one JSON object with all and only the current_subtitles keys:
                 if item.translated_text != current[index].translated_text
             }
             if not changed:
+                with self._pending_alignment_repair_lock:
+                    self._structure_failures.difference_update(s.index for s in window[:-1])
                 accepted.append(window)
                 continue
             proposed = {**current, **candidate}
@@ -6271,12 +6514,16 @@ Return exactly one JSON object with all and only the current_subtitles keys:
                             [proposed[item.index] for item in previous],
                         )
             except Exception as error:
+                with self._pending_alignment_repair_lock:
+                    self._structure_failures.update(s.index for s in window[:-1])
                 logger.warning(
                     "Discarding overlapping repair that invalidates an accepted window: %s",
                     error,
                 )
                 continue
             current.update(candidate)
+            with self._pending_alignment_repair_lock:
+                self._structure_failures.difference_update(s.index for s in window[:-1])
             accepted.append(window)
             logger.info(
                 "Chinese boundary fluency repair corrected subtitles: %s",
@@ -6294,6 +6541,15 @@ Return exactly one JSON object with all and only the current_subtitles keys:
         Optional[Exception],
     ]:
         """Repair one independent window without mutating document state."""
+        deferred = self._defer_paused_source_connective(window, current)
+        if deferred is not None:
+            try:
+                self._validate_chinese_fluency_repair(window, current, deferred)
+                return window, deferred, None
+            except (LLMRequestCancelled, InterruptedError):
+                raise
+            except Exception:
+                logger.debug("Deferred connective did not pass window validation")
         deterministic = self._deterministic_chinese_fluency_fallback(
             window,
             current,
@@ -6321,6 +6577,8 @@ Return exactly one JSON object with all and only the current_subtitles keys:
                 self._validate_chinese_fluency_repair(window, current, candidate)
                 self._record_reasoning_metric("accepted_repairs")
                 return window, candidate, None
+            except (LLMRequestCancelled, InterruptedError):
+                raise
             except Exception as error:
                 self._record_shadow_legacy_action(
                     strategy=RepairStrategy.LOCAL_REWRITE,
@@ -6354,6 +6612,8 @@ Return exactly one JSON object with all and only the current_subtitles keys:
                 if use_reasoning:
                     self._record_reasoning_metric("accepted_repairs")
                 return window, candidate, None
+            except (LLMRequestCancelled, InterruptedError):
+                raise
             except Exception as error:
                 self._record_shadow_legacy_action(
                     strategy=RepairStrategy.LOCAL_REWRITE,
@@ -6376,6 +6636,8 @@ Return exactly one JSON object with all and only the current_subtitles keys:
                 )
                 self._validate_chinese_fluency_repair(window, current, candidate)
                 return window, candidate, None
+            except (LLMRequestCancelled, InterruptedError):
+                raise
             except Exception as error:
                 self._record_shadow_legacy_action(
                     strategy=RepairStrategy.NONE,
@@ -6394,6 +6656,8 @@ Return exactly one JSON object with all and only the current_subtitles keys:
             # unreadable cue such as ``真正的 / 全球场馆网络``.
             self._validate_chinese_fluency_repair(window, current, current)
             return window, current, None
+        except (LLMRequestCancelled, InterruptedError):
+            raise
         except Exception as current_error:
             repair_error = current_error
 
@@ -6421,6 +6685,8 @@ Return exactly one JSON object with all and only the current_subtitles keys:
             if final_reasoning:
                 self._record_reasoning_metric("accepted_repairs")
             return window, candidate, None
+        except (LLMRequestCancelled, InterruptedError):
+            raise
         except Exception as error:
             self._record_shadow_legacy_action(
                 strategy=RepairStrategy.NONE,
@@ -6430,6 +6696,41 @@ Return exactly one JSON object with all and only the current_subtitles keys:
             if final_reasoning:
                 self._record_reasoning_metric("rejected_repairs")
         return window, None, repair_error
+
+    def _defer_paused_source_connective(self, window, current):
+        """Propose only an existing adversative marker after an explicit pause.
+
+        Keep every material word in its source slot. This narrowly permits the
+        Chinese connective to introduce its own following clause; the normal
+        window ownership and independent fidelity validators must still accept it.
+        """
+        result = {s.index: s for s in current}
+        changed = False
+        for left, right in zip(window, window[1:]):
+            if right.index != left.index + 1:
+                continue
+            gap = self._gap_after_index.get(left.index, 0)
+            speakers = {self._all_speaker_by_index.get(s.index, "") for s in (left, right)} - {""}
+            languages = {s.source_language for s in (left, right)} - {""}
+            if (
+                not self.SEPARATED_DISPLAY_GAP_MS <= gap <= 10_000
+                or len(speakers) > 1 or len(languages) > 1
+                or (self._is_multispeaker_document() and len(speakers) != 1)
+                or not re.search(r"\b(?:but|however)[,;:]?\s*$", left.original_text, re.I)
+                or not re.match(r"^(?:i|you|we|they|he|she|it|this|that)\s+\w+", right.original_text, re.I)
+            ):
+                continue
+            a, b = result[left.index], result[right.index]
+            marker = re.search(r"[\s，,]*(但是|不过|(?<!不)但)[\s，。！？；：、,.!?;:…]*$", a.translated_text)
+            if not marker or not a.translated_text[:marker.start()].strip() or not b.translated_text.strip():
+                continue
+            result[left.index] = replace(a, translated_text=a.translated_text[:marker.start()].rstrip())
+            right_text = b.translated_text.lstrip()
+            if not re.match(r"^(?:但|但是|不过|然而)", right_text):
+                right_text = marker.group(1) + right_text
+            result[right.index] = replace(b, translated_text=right_text)
+            changed = True
+        return [result[s.index] for s in window] if changed else None
 
     def _rewrite_chinese_fluency_window_fresh(
         self,
@@ -6442,7 +6743,7 @@ Return exactly one JSON object with all and only the current_subtitles keys:
         payload: Dict[str, Dict[str, Any]] = {}
         for item in source_items:
             canonical = self._confirmed_context_canonical(item.original_text)
-            value = {
+            value: Dict[str, Any] = {
                 "source": self._source_for_translation(item.original_text),
                 "source_language": item.source_language,
             }
@@ -6452,6 +6753,9 @@ Return exactly one JSON object with all and only the current_subtitles keys:
             if speaker:
                 value["speaker"] = speaker
             value.update(self._display_boundary_metadata(item.index))
+            reference = self._physical_motion_reference(str(item.index), item.original_text)
+            if reference:
+                value["physical_motion_reference"] = reference
             payload[str(item.index)] = value
         first_index = source_items[0].index
         last_index = source_items[-1].index
@@ -6941,10 +7245,7 @@ Return exactly one JSON object with all and only the current_subtitles keys:
                 left_item.translated_text,
                 right_item.translated_text,
             )
-            target_signal = long_gap_signal or self._chinese_boundary_signal(
-                left_item.translated_text,
-                right_item.translated_text,
-            )
+            target_signal = self._target_boundary_signal(left.index, left_item.translated_text, right_item.translated_text)
             reasons = set(assess_english_boundary(left.original_text, right.original_text).reasons)
             strong_dependency_reasons = {
                 "numeric value separated from its unit or noun",
@@ -7315,7 +7616,7 @@ Return exactly one JSON object with all and only the current_subtitles keys:
         payload: Dict[str, Dict[str, Any]] = {}
         for item in source_items:
             canonical = self._confirmed_context_canonical(item.original_text)
-            value = {
+            value: Dict[str, Any] = {
                 "source": self._source_for_translation(item.original_text),
                 "source_language": item.source_language,
                 "current_translation": current_by_index[item.index].translated_text,
@@ -7325,6 +7626,9 @@ Return exactly one JSON object with all and only the current_subtitles keys:
             if multispeaker:
                 value["speaker"] = self._all_speaker_by_index.get(item.index, "")
             value.update(self._display_boundary_metadata(item.index))
+            reference = self._physical_motion_reference(str(item.index), item.original_text)
+            if reference:
+                value["physical_motion_reference"] = reference
             payload[str(item.index)] = value
         first_index = source_items[0].index
         last_index = source_items[-1].index
@@ -7800,6 +8104,7 @@ Rewrite only the provided translations. Keep every key, timestamp boundary, fact
             {
                 "custom_prompt": self.custom_prompt,
                 "reflect": self.is_reflect,
+                "max_word_count_cjk": self.max_word_count_cjk,
                 "context": self.translation_context.fingerprint(),
                 "dialogue_speakers": {
                     data.index: self._all_speaker_by_index.get(data.index, "") for data in chunk

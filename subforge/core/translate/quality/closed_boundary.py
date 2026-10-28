@@ -23,6 +23,36 @@ _PRONOUN_OBJECT = re.compile(
 )
 
 
+def is_complete_source_frame(
+    source: str, next_source: str, left: str, signal: str, *, gap_ms: int, separated_gap_ms: int
+) -> bool:
+    """Recognize explicit spoken answers/existence, not incomplete target grammar."""
+    if signal != "unfinished Chinese grammatical structure":
+        return False
+    compact = re.sub(r"[\s，。！？；：、,.!?;:…]+", "", left)
+    source = source.strip()
+    if (
+        re.fullmatch(r"i\s+mean[,;.!?]?", source, re.I)
+        and gap_ms >= separated_gap_ms
+        and compact in {"我是说", "我的意思是"}
+    ):
+        return True
+    if (
+        re.search(r"\b(?:always|still)\s+(?:here|there|available)[,.!?]*$", source, re.I)
+        and re.search(r"(?:一直|始终|始終|总是|總是|永远|永遠)(?:都|还|還)?在$", compact)
+        and re.match(
+            r"^(?:it['’]s|(?:i|you|we|they|he|she|it|this|that)\s+(?:is|are|was|were|can|will))\b",
+            next_source,
+            re.I,
+        )
+    ):
+        return True
+    return bool(
+        (re.fullmatch(r"no[.!?]?", source, re.I) or re.search(r"[.!?]\s+no[.!?]?$", source, re.I))
+        and re.search(r"(?:不会|不會|不能|没有|沒有|不是|不行)$", compact)
+    )
+
+
 def is_closed_soft_boundary(
     source: str,
     next_source: str,

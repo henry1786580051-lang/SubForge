@@ -87,6 +87,10 @@ def is_untranslated_output(
     target_pattern = target_patterns.get(target_language)
     if target_pattern is None:
         return False
+    from subforge.core.split.vehicle_names import is_identifier_enumeration
+
+    if is_identifier_enumeration(source, output):
+        return False
     normalized_source = re.sub(r"\s+", "", source).casefold()
     normalized_output = re.sub(r"\s+", "", output).casefold()
     if source_language and source_language != "zh" and normalized_output == normalized_source:

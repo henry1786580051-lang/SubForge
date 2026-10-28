@@ -30,6 +30,9 @@ _BA_CONTINUATION = re.compile(
     r"逐一|逐段|一(?:块|件|个|段|步)块?地|穿|切|建|完成|实施|"
     r"安装|装|放|移|送|带|连接|贴|推进|延伸|承受|承担)"
 )
+_COMPLETED_BA_LOCATION = re.compile(
+    r"(?:留在|存放在|放在|放到|装在|装进|塞进|丢在|落在).{1,20}(?:里|内|中|上|下|旁)$"
+)
 _DISPOSAL_TAIL = re.compile(
     r"(?:^|[\s，,；;。.!?])(?:将|把)"
     r"[㐀-鿿A-Za-z0-9·一二两三四五六七八九十百千万]{2,24}$"
@@ -46,9 +49,7 @@ _PREDICATE_WITHOUT_COMPLEMENT = re.compile(
     r"(?:安装到|安装在|放到|放在|装到|装在|移到|移至|送到|带到|"
     r"连接到|贴到|推进到|延伸到|通向|进入|用于|承受)$"
 )
-_CAUSATIVE_OBJECT_TAIL = re.compile(
-    r"(?:让|使|令)(?:我|我们|你|你们|他|她|它|他们|她们|它们)$"
-)
+_CAUSATIVE_OBJECT_TAIL = re.compile(r"(?:让|使|令)(?:我|我们|你|你们|他|她|它|他们|她们|它们)$")
 _COMPLETED_PASSIVE_BEARING = re.compile(r"^(?:将)?由.{1,12}(?:来)?(?:承受|承担)$")
 _LOCATIVE_PHRASE = re.compile(
     r"(?:在|沿着|沿|向|往|从|通过|借助|利用).{1,24}"
@@ -65,11 +66,13 @@ def detect_governing_attachment_boundary(
     features: ChineseBoundaryFeatures,
 ) -> BoundarySignalMatch | None:
     """Return the first disposal/governing signal in legacy precedence order."""
-    ba_tail = _BA_TAIL.search(features.compact_left) or _BA_ANY_TAIL.search(
-        features.compact_left
-    )
+    ba_tail = _BA_TAIL.search(features.compact_left) or _BA_ANY_TAIL.search(features.compact_left)
     ba_has_predicate = bool(
-        ba_tail and _BA_PREDICATE_IN_OBJECT.search(ba_tail.group("object"))
+        ba_tail
+        and (
+            _BA_PREDICATE_IN_OBJECT.search(ba_tail.group("object"))
+            or _COMPLETED_BA_LOCATION.search(ba_tail.group("object"))
+        )
     )
     ba_continues = bool(_BA_CONTINUATION.match(features.right))
     if ba_tail and not ba_has_predicate and ba_continues:
@@ -86,15 +89,10 @@ def detect_governing_attachment_boundary(
     if predicate_without_complement and not completed_passive_bearing:
         return _match("predicate is separated from its required complement")
 
-    if (
-        _CAUSATIVE_OBJECT_TAIL.search(features.left)
-        and not features.left_has_terminal_punctuation
-    ):
+    if _CAUSATIVE_OBJECT_TAIL.search(features.left) and not features.left_has_terminal_punctuation:
         return _match("predicate is separated from its required complement")
 
-    if _LOCATIVE_PHRASE.fullmatch(features.left) and _LOCATIVE_CONTINUATION.match(
-        features.right
-    ):
+    if _LOCATIVE_PHRASE.fullmatch(features.left) and _LOCATIVE_CONTINUATION.match(features.right):
         return _match("locative phrase is separated from its predicate")
 
     if _STANDALONE_TEMPORAL_PHRASE.fullmatch(features.right):

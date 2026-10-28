@@ -51,13 +51,20 @@ def value_unit_or_noun(features: EnglishBoundaryFeatures) -> bool:
         return True
     if standalone_magnitude_named_population(features):
         return True
-    completed_calendar_year = bool(
-        re.search(r"\b(?:19|20)\d{2},$", features.semantic_left)
+    completed_calendar_year = bool(re.search(r"\b(?:19|20)\d{2},$", features.semantic_left))
+    following_finite_clause = bool(
+        re.match(
+            r"^(?:(?:and|but|so)\s+)?(?:it['’]s|"
+            r"(?:i|you|we|they|he|she|it|this|that)\s+(?:is|are|was|were|can|could|will|would|has|have|had))\b",
+            features.semantic_right,
+            re.I,
+        )
     )
     return bool(
         re.fullmatch(r"\d[\d,.]*", features.tail)
         and features.right[:1].islower()
         and not completed_calendar_year
+        and not following_finite_clause
     )
 
 

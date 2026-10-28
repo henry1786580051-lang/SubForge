@@ -17,6 +17,11 @@ def structural_dependency(left: str, right: str) -> StructuralDependency | None:
     left, right = left.strip(), right.strip()
     if not left or not right or re.search(r"[.!?][\"\')\]]*$", left):
         return None
+    from subforge.core.split.syntax_units import unit_dependency
+
+    unit = unit_dependency(left, right)
+    if unit is not None:
+        return StructuralDependency(*unit)
     patterns = (
         (
             "fraction_quantity",

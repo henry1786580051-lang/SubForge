@@ -39,6 +39,7 @@ class TranslatorFactory:
         azure_translator_endpoint: str = "",
         cache_namespace: str = "",
         pipeline_identity: TranslationPipelineIdentity = LEGACY_TRANSLATION_PIPELINE,
+        max_word_count_cjk: int | None = None,
     ) -> BaseTranslator:
         """创建翻译器实例"""
         try:
@@ -60,6 +61,7 @@ class TranslatorFactory:
                     translation_context=translation_context,
                     llm_client=llm_client,
                     collect_canonical_evidence_telemetry=pipeline_identity.is_candidate,
+                    max_word_count_cjk=max_word_count_cjk,
                 )
             elif translator_type == TranslatorType.GOOGLE:
                 batch_num = 5

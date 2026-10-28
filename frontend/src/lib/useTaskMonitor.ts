@@ -1,6 +1,7 @@
 "use client";
 
 import { hasUnsavedSubtitles } from "./subtitleEdits";
+import { taskReviewSummary } from "./taskReview";
 
 import { useEffect, useRef, useCallback } from "react";
 import { useAppStore } from "@/store/appStore";
@@ -132,8 +133,10 @@ export function useTaskMonitor() {
       setTaskAttention(null);
 
       const result = task.result;
+      const review = taskReviewSummary(result);
+      if (review) setTaskState(100, review, "completed");
       if (typeof result?.warning === "string" && result.warning) {
-        setTaskState(100, result.warning, "completed");
+        setTaskState(100, [result.warning, review].filter(Boolean).join("；"), "completed");
       }
       if (task.type === "transcribe" && result?.subtitle_file) {
         setSubtitleFile(result.subtitle_file as string);
@@ -185,7 +188,7 @@ export function useTaskMonitor() {
       if (pollRef.current) clearInterval(pollRef.current);
       setIsProcessing(false);
       setTaskAttention(null);
-      setError(task.error || "Task failed");
+      setError([task.error || "Task failed", taskReviewSummary(task.result)].filter(Boolean).join("；"));
       const recoveryFile = task.result?.recovery_file;
       if (typeof recoveryFile === "string" && recoveryFile) {
         setSubtitleFile(recoveryFile);

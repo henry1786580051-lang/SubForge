@@ -8,6 +8,7 @@ from typing import Callable, List, Optional
 
 from subforge.core.asr.asr_data import ASRData, ASRDataSeg
 from subforge.core.entities import SubtitleProcessData
+from subforge.core.llm.client import LLMRequestCancelled
 from subforge.core.translate.quality import (
     capture_segment_integrity,
     inspect_segment_integrity,
@@ -31,11 +32,13 @@ class PartialTranslationError(RuntimeError):
         completed: List[SubtitleProcessData],
         failed_indices: List[int],
         provisional: Optional[List[SubtitleProcessData]] = None,
+        review_allowed: bool = True,
     ):
         super().__init__(message)
         self.completed = completed
         self.failed_indices = failed_indices
         self.provisional = provisional or []
+        self.review_allowed = review_allowed
 
 
 class BaseTranslator(ABC):
@@ -62,6 +65,7 @@ class BaseTranslator(ABC):
         self.update_callback = update_callback
         self.use_cache = use_cache
         self.cache_namespace = str(cache_namespace or "").strip()
+        self.recovery_review: dict = {}
         self.executor = None
         self._executor_lock = threading.Lock()
         self._cache = get_translate_cache()
@@ -80,8 +84,11 @@ class BaseTranslator(ABC):
 
     def translate_subtitle(self, subtitle_data: ASRData) -> ASRData:
         """翻译字幕文件"""
+        translate_data_list: List[SubtitleProcessData] = []
+        checkpoint: List[SubtitleProcessData] = []
         try:
             self._ensure_thread_pool()
+            self.recovery_review = {}
             asr_data = subtitle_data
 
             # 将ASRData转换为SubtitleProcessData列表
@@ -102,7 +109,11 @@ class BaseTranslator(ABC):
             try:
                 translated_list = self._parallel_translate(chunks)
             except PartialTranslationError as error:
-                recovered = self._finalize_complete_recovery(translate_data_list, error)
+                recovered = (
+                    self._finalize_complete_recovery(translate_data_list, error)
+                    if error.review_allowed and self._can_review_recovery()
+                    else None
+                )
                 if recovered is None:
                     self._publish_recovery_checkpoint(translate_data_list, error)
                     raise RuntimeError(str(error)) from error
@@ -115,9 +126,10 @@ class BaseTranslator(ABC):
                 if self.update_callback:
                     self.update_callback(translated_list)
             if not recovery_finalized:
+                checkpoint = [replace(s) for s in translated_list]
                 translated_list = self._finalize_translated_list(
                     translate_data_list,
-                    translated_list,
+                    [replace(s) for s in translated_list],
                 )
             self._validate_translated_list(translate_data_list, translated_list)
 
@@ -133,12 +145,18 @@ class BaseTranslator(ABC):
                 )
 
             return ASRData(new_segments)
-        except RuntimeError:
-            logger.exception("Translation failed")
+        except (LLMRequestCancelled, InterruptedError):
             raise
-        except Exception as e:
+        except Exception as error:
+            if checkpoint and not self.recovery_review:
+                self._publish_recovery_checkpoint(
+                    translate_data_list,
+                    PartialTranslationError(str(error), checkpoint, [], review_allowed=False),
+                )
             logger.exception("Translation failed")
-            raise RuntimeError(f"Translation failed: {str(e)}") from e
+            if isinstance(error, RuntimeError):
+                raise
+            raise RuntimeError(f"Translation failed: {str(error)}") from error
         finally:
             self.stop()
 
@@ -164,23 +182,66 @@ class BaseTranslator(ABC):
         source_list: List[SubtitleProcessData],
         error: PartialTranslationError,
     ) -> None:
-        """Publish usable progress after the one complete-recovery attempt fails.
-
-        Provisional items are not completion evidence. Do not rerun the whole
-        document finalizer here or publish its rejected intermediate mutations.
-        """
-        recovery_by_index = {item.index: item for item in error.completed}
-        recovery_by_index.update({item.index: item for item in error.provisional})
-        if not recovery_by_index:
-            return
+        """Review intact islands around missing keys without declaring completion."""
+        source_indices = {item.index for item in source_list}
+        recovery_by_index = {item.index: item for item in [*error.completed, *error.provisional] if item.index in source_indices}
+        missing = sorted(source_indices - recovery_by_index.keys())
+        self.recovery_review = {
+            "status": "partial",
+            "missing_indices": missing,
+            "reviewed_indices": [],
+            "unchecked_indices": sorted(recovery_by_index),
+        }
+        # A failed complete-recovery attempt has already spent its one finalizer
+        # call. Retry only genuinely incomplete runs, as separate intact islands.
+        if missing and error.review_allowed and self._can_review_recovery():
+            recovery_by_index = self._review_recovery_regions(source_list, recovery_by_index)
 
         recovery = [
-            recovery_by_index[item.index]
-            for item in source_list
-            if item.index in recovery_by_index
+            recovery_by_index[item.index] for item in source_list if item.index in recovery_by_index
         ]
         if self.update_callback and recovery:
             self.update_callback(recovery)
+
+    def _can_review_recovery(self) -> bool:
+        return self.is_running
+
+    def _review_recovery_regions(
+        self,
+        source_list: List[SubtitleProcessData],
+        available: dict[int, SubtitleProcessData],
+    ) -> dict[int, SubtitleProcessData]:
+        regions: list[list[SubtitleProcessData]] = []
+        for source in source_list:
+            if source.index not in available:
+                continue
+            if not regions or regions[-1][-1].index + 1 != source.index:
+                regions.append([])
+            regions[-1].append(source)
+        reviewed: list[int] = []
+        result = dict(available)
+        for region in regions:
+            if not self.is_running:
+                raise LLMRequestCancelled("Translation cancelled during recovery review")
+            snapshot = [replace(available[s.index]) for s in region]
+            try:
+                candidate = self._finalize_translated_list([replace(s) for s in region], snapshot)
+                self._validate_translated_list(region, candidate)
+                source_by_index = {s.index: s for s in region}
+                if {s.index for s in candidate} != set(source_by_index) or any(
+                    s.original_text != source_by_index[s.index].original_text for s in candidate
+                ):
+                    raise ValueError("Recovery review changed source ownership")
+            except (LLMRequestCancelled, InterruptedError):
+                raise
+            except Exception:
+                logger.exception("Recovery island review failed; preserving its checkpoint")
+                continue
+            result.update({s.index: s for s in candidate})
+            reviewed.extend(s.index for s in region)
+        self.recovery_review["reviewed_indices"] = reviewed
+        self.recovery_review["unchecked_indices"] = sorted(set(available) - set(reviewed))
+        return result
 
     def _finalize_complete_recovery(
         self,
@@ -200,6 +261,8 @@ class BaseTranslator(ABC):
         try:
             recovery = self._finalize_translated_list(source_list, recovery)
             self._validate_translated_list(source_list, recovery)
+        except (LLMRequestCancelled, InterruptedError):
+            raise
         except Exception:
             logger.exception(
                 "Complete provisional translation did not pass document-level recovery"
@@ -232,10 +295,12 @@ class BaseTranslator(ABC):
 
         for future in as_completed(future_to_chunk):
             if not self.is_running:
-                break
+                raise LLMRequestCancelled("Translation cancelled before batch completion")
             try:
                 result = future.result()
                 translated_list.extend(result)
+            except (LLMRequestCancelled, InterruptedError):
+                raise
             except Exception as e:
                 logger.error(f"Translation chunk failed: {e}")
                 failed_errors.append(str(e))
@@ -254,6 +319,9 @@ class BaseTranslator(ABC):
                 else:
                     partial_failures_only = False
                     failed_count += len(future_to_chunk[future])
+
+        if not self.is_running:
+            raise LLMRequestCancelled("Translation cancelled before document review")
 
         # Never return a mixed-language result as complete. Recovery output is
         # handled by the API layer, but distinguish provider errors from local
@@ -282,16 +350,15 @@ class BaseTranslator(ABC):
             )
             message = (
                 f"Translation failed: {failed_count}/{total_segments} segments failed "
-                f"({fail_rate:.0%}). {guidance}" + detail
+                f"({fail_rate:.2%}). {guidance}" + detail
             )
-            if partial_failures_only and failed_indices:
-                raise PartialTranslationError(
-                    message,
-                    completed=translated_list,
-                    failed_indices=list(dict.fromkeys(failed_indices)),
-                    provisional=provisional_list,
-                )
-            raise RuntimeError(message)
+            raise PartialTranslationError(
+                message,
+                completed=translated_list,
+                failed_indices=sorted({s.index for chunk in chunks for s in chunk} - {s.index for s in [*translated_list, *provisional_list]}),
+                provisional=provisional_list,
+                review_allowed=partial_failures_only,
+            )
 
         return translated_list
 
